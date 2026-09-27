@@ -37,3 +37,11 @@ export async function getModel() {
   const p = getProvider();
   return p(await getModelId());
 }
+
+/** Prefer a vision-capable model for image analysis; fall back to the default. */
+export async function getVisionModel() {
+  const p = getProvider();
+  const { models, defaultModelId } = await listModels();
+  const vision = models.find((m) => m.supportsImageIn);
+  return p(vision?.id ?? defaultModelId);
+}

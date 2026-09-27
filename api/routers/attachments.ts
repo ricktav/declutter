@@ -102,6 +102,23 @@ export const attachmentsRouter = createRouter({
     }
   }),
 
+  urlForAttachment: publicQuery
+    .input(z.object({ attachmentId: z.number() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const att = await db.query.attachments.findFirst({
+        where: eq(attachments.id, input.attachmentId),
+      });
+      if (!att) return { attachment: null, url: null };
+      if (!att.storageKey) return { attachment: att, url: null };
+      try {
+        const { url } = await storage.getPresignedUrl({ key: att.storageKey });
+        return { attachment: att, url };
+      } catch {
+        return { attachment: att, url: null };
+      }
+    }),
+
   listForItem: publicQuery.input(z.object({ itemId: z.number() })).query(({ input }) =>
     getDb()
       .select()

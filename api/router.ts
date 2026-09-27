@@ -8,6 +8,7 @@ import { attachmentsRouter } from "./routers/attachments";
 import { aiRouter } from "./routers/ai";
 import { wikiRouter } from "./routers/wiki";
 import { eventsRouter } from "./routers/events";
+import { annotationsRouter } from "./routers/annotations";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -20,6 +21,7 @@ export const appRouter = createRouter({
   ai: aiRouter,
   wiki: wikiRouter,
   events: eventsRouter,
+  annotations: annotationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

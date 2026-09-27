@@ -18,6 +18,7 @@ import {
   X,
   ExternalLink,
   Loader2,
+  MapPin,
 } from "lucide-react";
 import type { AttributeDef } from "@db/schema";
 
@@ -37,10 +38,18 @@ function AttachmentView({ att }: { att: { id: number; kind: string; title: strin
     );
   if (att.kind === "image" && url.data?.url)
     return (
-      <a href={url.data.url} target="_blank" rel="noreferrer">
-        <img src={url.data.url} alt={att.title ?? ""} className="max-h-40 rounded border border-border" />
-        {att.title && <div className="text-[11px] text-muted-foreground mt-0.5">{att.title}</div>}
-      </a>
+      <div>
+        <a href={url.data.url} target="_blank" rel="noreferrer">
+          <img src={url.data.url} alt={att.title ?? ""} className="max-h-40 rounded border border-border" />
+        </a>
+        <div className="flex items-center gap-2 mt-0.5">
+          {att.title && <div className="text-[11px] text-muted-foreground">{att.title}</div>}
+          <Link to={`/annotate/${att.id}`}
+            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
+            <MapPin className="h-3 w-3" /> Annotate
+          </Link>
+        </div>
+      </div>
     );
   return (
     <div className="text-[13px] whitespace-pre-wrap">
@@ -493,8 +502,38 @@ export default function ItemDetail() {
               ))}
             </div>
           </section>
+
+          {/* pinned in photos */}
+          <PinnedInPhotos itemId={it.id} />
         </div>
       </div>
     </div>
+  );
+}
+
+function PinnedInPhotos({ itemId }: { itemId: number }) {
+  const pins = trpc.annotations.listForItem.useQuery({ itemId });
+  const list = (pins.data ?? []).filter((p) => p.status === "confirmed");
+  if (!pins.data) return null;
+  return (
+    <section className="rounded-lg border border-border bg-white p-4">
+      <h2 className="micro-label text-muted-foreground mb-2">Seen in photos</h2>
+      {list.length === 0 && (
+        <div className="text-[13px] text-muted-foreground">
+          Not pinned in any photo yet — annotate a photo and link this item.
+        </div>
+      )}
+      <div className="space-y-1">
+        {list.map((p) => (
+          <div key={p.id} className="text-[13px] flex items-center gap-2">
+            <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <Link to={`/annotate/${p.attachmentId}`} className="text-primary hover:underline">
+              {p.attachment?.title ?? `photo #${p.attachmentId}`}
+            </Link>
+            {p.label && <span className="text-muted-foreground text-[11px]">as “{p.label}”</span>}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

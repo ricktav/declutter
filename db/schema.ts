@@ -8,6 +8,7 @@ import {
   json,
   timestamp,
   index,
+  double,
 } from "drizzle-orm/mysql-core";
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,25 @@ export const timeLogs = mysqlTable("time_logs", {
 });
 
 // ---------------------------------------------------------------------------
+// Photo annotations — pins on image attachments, linked to items
+// ---------------------------------------------------------------------------
+export const photoAnnotations = mysqlTable(
+  "photo_annotations",
+  {
+    id: serial("id").primaryKey(),
+    attachmentId: bigint("attachmentId", { mode: "number", unsigned: true }).notNull(),
+    xPct: double("xPct").notNull(),
+    yPct: double("yPct").notNull(),
+    label: varchar("label", { length: 255 }).notNull().default(""),
+    itemId: bigint("itemId", { mode: "number", unsigned: true }),
+    origin: mysqlEnum("origin", ["user", "ai"]).notNull().default("user"),
+    status: mysqlEnum("status", ["suggested", "confirmed"]).notNull().default("confirmed"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [index("pins_att_idx").on(t.attachmentId), index("pins_item_idx").on(t.itemId)],
+);
+
+// ---------------------------------------------------------------------------
 // Relations — typed links between items; AI may suggest, user confirms
 // ---------------------------------------------------------------------------
 export const relations = mysqlTable(
@@ -227,3 +247,4 @@ export type Relation = typeof relations.$inferSelect;
 export type AppEvent = typeof events.$inferSelect;
 export type WikiPage = typeof wikiPages.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+export type PhotoAnnotation = typeof photoAnnotations.$inferSelect;
