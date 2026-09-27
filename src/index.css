@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -71,5 +73,61 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+/* ---- HomeBase workshop-ledger palette (overrides) ---- */
+@layer base {
+  :root {
+    --background: 120 33% 96%;          /* honeydew wash */
+    --foreground: 110 3% 24%;           /* charcoal */
+    --card: 0 0% 100%;
+    --card-foreground: 110 3% 24%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 110 3% 24%;
+    --primary: 128 21% 30%;             /* deep moss */
+    --primary-foreground: 100 30% 96%;
+    --secondary: 110 15% 90%;           /* pale sage */
+    --secondary-foreground: 110 4% 24%;
+    --muted: 110 14% 92%;
+    --muted-foreground: 110 4% 42%;
+    --accent: 120 22% 85%;              /* sage hover */
+    --accent-foreground: 110 4% 22%;
+    --destructive: 4 62% 42%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 110 8% 80%;
+    --input: 110 8% 76%;
+    --ring: 128 21% 30%;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+}
+
+@layer utilities {
+  .font-data {
+    font-family: ui-monospace, 'Fira Code', 'SFMono-Regular', Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .micro-label {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.6875rem;
+    font-weight: 600;
+  }
+}
+
+@layer components {
+  .ledger-table th {
+    @apply micro-label text-muted-foreground text-left px-3 py-2 border-b border-border;
+  }
+  .ledger-table td {
+    @apply px-3 py-2 border-b border-border text-[13px] align-top;
+  }
+  .ledger-table tbody tr {
+    @apply transition-colors;
+  }
+  .ledger-table tbody tr:hover {
+    background-color: hsl(120 22% 85% / 0.45);
   }
 }

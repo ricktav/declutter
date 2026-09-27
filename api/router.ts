@@ -1,12 +1,25 @@
 import { createRouter, publicQuery } from "./middleware";
+import { areasRouter } from "./routers/areas";
+import { itemsRouter } from "./routers/items";
+import { inboxRouter } from "./routers/inbox";
+import { ideasRouter } from "./routers/ideas";
+import { tasksRouter } from "./routers/tasks";
+import { attachmentsRouter } from "./routers/attachments";
+import { aiRouter } from "./routers/ai";
+import { wikiRouter } from "./routers/wiki";
+import { eventsRouter } from "./routers/events";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
-
-  // TODO: add feature routers here, e.g.
-  // todo: createRouter({
-  //   list: publicQuery.query(() => findTodos()),
-  // }),
+  areas: areasRouter,
+  items: itemsRouter,
+  inbox: inboxRouter,
+  ideas: ideasRouter,
+  tasks: tasksRouter,
+  attachments: attachmentsRouter,
+  ai: aiRouter,
+  wiki: wikiRouter,
+  events: eventsRouter,
 });
 
 export type AppRouter = typeof appRouter;
