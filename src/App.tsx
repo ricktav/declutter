@@ -10,6 +10,7 @@ import TasksPage from "@/pages/Tasks";
 import WikiPage from "@/pages/Wiki";
 import ActivityPage from "@/pages/Activity";
 import AnnotatePage from "@/pages/Annotate";
+import SnapPage from "@/pages/Snap";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/snap" element={<SnapPage />} />
           <Route path="/inbox" element={<InboxPage />} />
           <Route path="/areas/:slug" element={<AreaView />} />
           <Route path="/items/:id" element={<ItemDetail />} />

@@ -12,6 +12,7 @@ export default defineConfig({
     inspectAttr(), react()],
   server: {
     port: 3000,
+    host: true, // listen on 0.0.0.0 — reachable from LAN (phone on same wifi)
   },
   resolve: {
     alias: {
