@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
@@ -24,8 +24,27 @@ import {
   MapPin,
   Crop,
   Camera,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import type { AttributeDef } from "@db/schema";
+
+/** Link to the original, uncropped photo a cutout came from — opens full-size in a new tab. */
+function SourceLink({ attachmentId }: { attachmentId: number }) {
+  const source = trpc.attachments.sourcePhoto.useQuery({ attachmentId });
+  if (!source.data?.available || !source.data.url) return null;
+  return (
+    <a
+      href={source.data.url}
+      target="_blank"
+      rel="noreferrer"
+      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
+      title="View original source photo"
+    >
+      <ExternalLink className="h-3.5 w-3.5" />
+    </a>
+  );
+}
 
 function AttachmentView({ att }: { att: { id: number; kind: string; title: string | null; content: string | null; url: string | null; storageKey: string | null } }) {
   const url = trpc.attachments.url.useQuery(
@@ -97,6 +116,25 @@ export default function ItemDetail() {
 
   const item = trpc.items.get.useQuery({ id: itemId });
   const history = trpc.events.forEntity.useQuery({ entityType: "item", entityId: itemId });
+  const siblings = trpc.items.listByArea.useQuery(
+    { areaId: item.data?.areaId ?? 0 },
+    { enabled: !!item.data?.areaId },
+  );
+  const siblingIds = (siblings.data ?? []).map((s) => s.id);
+  const siblingIndex = siblingIds.indexOf(itemId);
+  const prevId = siblingIndex > 0 ? siblingIds[siblingIndex - 1] : null;
+  const nextId = siblingIndex >= 0 && siblingIndex < siblingIds.length - 1 ? siblingIds[siblingIndex + 1] : null;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "ArrowLeft" && prevId) navigate(`/items/${prevId}`);
+      if (e.key === "ArrowRight" && nextId) navigate(`/items/${nextId}`);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [prevId, nextId, navigate]);
 
   const [editingAttrs, setEditingAttrs] = useState(false);
   const [attrDraft, setAttrDraft] = useState<Record<string, string>>({});
@@ -259,6 +297,22 @@ export default function ItemDetail() {
           />
         </div>
         <div className="flex gap-1.5 shrink-0">
+          <div className="flex rounded-md border border-input overflow-hidden mr-1" title="Prev/next item in this area (← / →)">
+            <button
+              className="h-8 w-8 flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent border-r border-input"
+              disabled={!prevId}
+              onClick={() => prevId && navigate(`/items/${prevId}`)}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              className="h-8 w-8 flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent"
+              disabled={!nextId}
+              onClick={() => nextId && navigate(`/items/${nextId}`)}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
           <Button size="sm" variant="outline" className="h-8 text-[12px]"
             onClick={() => openAsk("item", it.id, it.name)}>
             <Sparkles className="h-3.5 w-3.5 mr-1" /> Ask AI
@@ -636,13 +690,16 @@ export default function ItemDetail() {
                     <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
                   </div>
                   {a.kind === "image" && a.sourceCaptureId && (
-                    <button
-                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
-                      title="Re-crop from original photo"
-                      onClick={() => setRecropId(a.id)}
-                    >
-                      <Crop className="h-3.5 w-3.5" />
-                    </button>
+                    <>
+                      <SourceLink attachmentId={a.id} />
+                      <button
+                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
+                        title="Re-crop from original photo"
+                        onClick={() => setRecropId(a.id)}
+                      >
+                        <Crop className="h-3.5 w-3.5" />
+                      </button>
+                    </>
                   )}
                   <ConfirmDelete
                     trigger={

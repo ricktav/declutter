@@ -38,6 +38,24 @@ const KIND_ICONS = {
   voice: Mic,
 };
 
+/** Small square thumbnail for a processed capture; falls back to its kind icon. */
+function ProcessedThumb({ storageKey, kind }: { storageKey: string | null; kind: keyof typeof KIND_ICONS }) {
+  const Icon = KIND_ICONS[kind];
+  const url = trpc.attachments.url.useQuery({ key: storageKey ?? "" }, { enabled: !!storageKey && kind === "image" });
+  if (kind === "image" && url.data?.url) {
+    return (
+      <div className="h-8 w-8 shrink-0 overflow-hidden rounded border border-border bg-muted/40">
+        <img src={url.data.url} alt="" className="h-full w-full object-cover" />
+      </div>
+    );
+  }
+  return (
+    <div className="h-8 w-8 shrink-0 flex items-center justify-center rounded border border-border bg-muted/40 text-muted-foreground">
+      <Icon className="h-3.5 w-3.5" />
+    </div>
+  );
+}
+
 type CompareSide = {
   label: string;
   suggestion: import("@db/schema").TriageSuggestion | null;
@@ -404,6 +422,11 @@ export default function InboxPage() {
   const captures = trpc.inbox.list.useQuery();
   const pending = (captures.data ?? []).filter((c) => c.status === "pending");
   const done = (captures.data ?? []).filter((c) => c.status !== "pending");
+  const [lightboxKey, setLightboxKey] = useState<string | null>(null);
+  const lightboxUrl = trpc.attachments.url.useQuery(
+    { key: lightboxKey ?? "" },
+    { enabled: !!lightboxKey },
+  );
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
@@ -434,20 +457,30 @@ export default function InboxPage() {
         <>
           <h2 className="micro-label text-muted-foreground mt-8 mb-2">Processed</h2>
           <div className="rounded-lg border border-border bg-white divide-y divide-border">
-            {done.slice(0, 20).map((c) => {
-              const Icon = KIND_ICONS[c.kind];
-              return (
-                <div key={c.id} className="flex items-center gap-2 px-4 py-2 text-[13px] text-muted-foreground">
-                  <Icon className="h-3.5 w-3.5" />
-                  <span className="flex-1 truncate">{c.rawText ?? c.url ?? "(file)"}</span>
-                  <span className="micro-label">{c.status}</span>
-                  <span className="font-data text-[11px]">{timeAgo(c.createdAt)}</span>
-                </div>
-              );
-            })}
+            {done.slice(0, 20).map((c) => (
+              <div
+                key={c.id}
+                className={`flex items-center gap-2 px-4 py-2 text-[13px] text-muted-foreground ${c.kind === "image" && c.storageKey ? "cursor-zoom-in" : ""}`}
+                onDoubleClick={() => c.kind === "image" && c.storageKey && setLightboxKey(c.storageKey)}
+                title={c.kind === "image" ? "Double-click to view full size" : undefined}
+              >
+                <ProcessedThumb storageKey={c.storageKey} kind={c.kind} />
+                <span className="flex-1 truncate">{c.rawText ?? c.url ?? "(file)"}</span>
+                <span className="micro-label">{c.status}</span>
+                <span className="font-data text-[11px]">{timeAgo(c.createdAt)}</span>
+              </div>
+            ))}
           </div>
         </>
       )}
+
+      <Dialog open={!!lightboxKey} onOpenChange={(o) => !o && setLightboxKey(null)}>
+        <DialogContent className="max-w-4xl p-2 bg-black/95 border-none">
+          {lightboxUrl.data?.url && (
+            <img src={lightboxUrl.data.url} alt="" className="w-full h-auto max-h-[85vh] object-contain rounded" />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
