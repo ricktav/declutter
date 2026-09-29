@@ -68,6 +68,11 @@ export const areasRouter = createRouter({
       z.object({
         id: z.number(),
         name: z.string().min(1).optional(),
+        slug: z
+          .string()
+          .min(1)
+          .regex(/^[a-z0-9-]+$/)
+          .optional(),
         icon: z.string().optional(),
         color: z.string().optional(),
         description: z.string().nullable().optional(),
@@ -77,6 +82,12 @@ export const areasRouter = createRouter({
     .mutation(async ({ input }) => {
       const db = getDb();
       const { id, ...rest } = input;
+      if (rest.slug) {
+        const clash = await db.query.areas.findFirst({ where: eq(areas.slug, rest.slug) });
+        if (clash && clash.id !== id) {
+          throw new Error(`Slug "${rest.slug}" is already used by area "${clash.name}".`);
+        }
+      }
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
       await db.update(areas).set(patch).where(eq(areas.id, id));

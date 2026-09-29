@@ -31,8 +31,7 @@ export function RoomPicker({
   }, []);
 
   // discover rooms per house+floor from items
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const roomOptions: any = (trpc.houses as any).rooms.useQuery(
+  const roomOptions = trpc.houses.rooms.useQuery(
     { houseId: value.houseId ?? 0 },
     { enabled: value.houseId != null },
   );

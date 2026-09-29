@@ -11,10 +11,141 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
-import { Plus, Sparkles, Archive, Trash2 } from "lucide-react";
+import { Plus, Sparkles, Archive, Trash2, Pencil } from "lucide-react";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { useNavigate } from "react-router";
 import type { AttributeDef } from "@db/schema";
+import { AREA_ICONS, AREA_COLORS } from "@/lib/areaStyle";
+import { cn } from "@/lib/utils";
+import type { Area } from "@db/schema";
+
+function slugify(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function EditAreaDialog({ area }: { area: Area }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(area.name);
+  const [slug, setSlug] = useState(area.slug);
+  const [slugTouched, setSlugTouched] = useState(true);
+  const [icon, setIcon] = useState(area.icon);
+  const [color, setColor] = useState(area.color);
+  const [description, setDescription] = useState(area.description ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const utils = trpc.useUtils();
+
+  const update = trpc.areas.update.useMutation({
+    onSuccess: (updated) => {
+      utils.areas.list.invalidate();
+      utils.areas.get.invalidate();
+      utils.items.listByArea.invalidate();
+      setOpen(false);
+      if (updated && updated.slug !== area.slug) navigate(`/areas/${updated.slug}`, { replace: true });
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const slugValid = /^[a-z0-9-]+$/.test(slug);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="h-8 w-8 p-0">
+          <Pencil className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit area</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <input
+            className="w-full rounded-md border border-input px-3 py-2 text-sm"
+            placeholder="Name"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (!slugTouched) setSlug(slugify(e.target.value));
+            }}
+            autoFocus
+          />
+          <div>
+            <input
+              className="w-full rounded-md border border-input px-3 py-2 text-sm font-data"
+              placeholder="slug-used-in-url"
+              value={slug}
+              onChange={(e) => {
+                setSlugTouched(true);
+                setSlug(e.target.value);
+              }}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              URL-fragment (a-z, 0-9, koppeltekens). Alleen wijzigen als je de URL van dit overzicht wilt veranderen — naam en items blijven gewoon werken.
+            </p>
+            {!slugValid && slug.length > 0 && (
+              <p className="mt-1 text-[11px] text-destructive">Slug mag alleen kleine letters, cijfers en koppeltekens bevatten.</p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {AREA_ICONS.map((i) => (
+              <button
+                key={i.key}
+                type="button"
+                title={i.label}
+                onClick={() => setIcon(i.key)}
+                className={cn(
+                  "h-8 w-8 rounded-md border flex items-center justify-center",
+                  icon === i.key ? "border-primary bg-primary/10 text-primary" : "border-input text-muted-foreground",
+                )}
+              >
+                <i.icon className="h-4 w-4" />
+              </button>
+            ))}
+            <div className="ml-auto flex gap-1.5">
+              {AREA_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setColor(c)}
+                  className={cn(
+                    "h-8 w-8 rounded-md border-2",
+                    color === c ? "border-foreground" : "border-transparent",
+                  )}
+                  style={{ background: c }}
+                />
+              ))}
+            </div>
+          </div>
+          <textarea
+            className="w-full rounded-md border border-input px-3 py-2 text-sm min-h-[60px]"
+            placeholder="Description (optional)"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          {error && <p className="text-[12px] text-destructive">{error}</p>}
+          <div className="flex justify-end">
+            <Button
+              disabled={!name.trim() || !slug.trim() || !slugValid || update.isPending}
+              onClick={() =>
+                update.mutate({
+                  id: area.id,
+                  name: name.trim(),
+                  slug: slug.trim(),
+                  icon,
+                  color,
+                  description: description || null,
+                })
+              }
+            >
+              Save
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function AddItemDialog({ areaId, defs }: { areaId: number; defs: AttributeDef[] }) {
   const [open, setOpen] = useState(false);
@@ -177,6 +308,7 @@ export default function AreaView() {
             <Sparkles className="h-4 w-4 mr-1" /> Ask AI
           </Button>
           <AddItemDialog areaId={area.data.id} defs={(area.data.attributeDefs as AttributeDef[]) ?? []} />
+          <EditAreaDialog area={area.data} />
           <ConfirmDelete
             trigger={
               <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive">
