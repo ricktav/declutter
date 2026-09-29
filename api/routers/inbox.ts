@@ -76,6 +76,23 @@ async function runTriage(model: Awaited<ReturnType<typeof getModel>>, content: T
 
 type TriageContent = Awaited<ReturnType<typeof buildTriageContent>>;
 
+/** pull the provider's own error message out of an AI SDK error (best effort) */
+function providerErrorDetail(err: unknown): string | null {
+  const anyErr = err as {
+    responseBody?: unknown;
+    response?: { body?: unknown };
+    data?: unknown;
+  };
+  const raw = anyErr?.responseBody ?? anyErr?.response?.body ?? anyErr?.data;
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const msg = parsed?.error?.message ?? parsed?.message ?? null;
+    return typeof msg === "string" && msg ? msg : null;
+  } catch {
+    return null;
+  }
+}
+
 export const inboxRouter = createRouter({
   list: publicQuery.query(async () => {
     return getDb().select().from(captures).orderBy(desc(captures.createdAt)).limit(100);
@@ -145,7 +162,12 @@ export const inboxRouter = createRouter({
       return { ok: true as const, suggestion };
     } catch (err) {
       const classified = classifyAiError(err);
-      return { ok: false as const, error: classified.message, retryable: classified instanceof AiMisconfigured === false };
+      const detail = providerErrorDetail(err);
+      return {
+        ok: false as const,
+        error: detail ? `${classified.message} — ${detail}` : classified.message,
+        retryable: classified instanceof AiMisconfigured === false,
+      };
     }
   }),
 
@@ -186,7 +208,13 @@ export const inboxRouter = createRouter({
         return { label, suggestion: res.value, error: null, ms: 0 };
       }
       const classified = classifyAiError(res.reason);
-      return { label, suggestion: null, error: classified.message, ms: 0 };
+      const detail = providerErrorDetail(res.reason);
+      return {
+        label,
+        suggestion: null,
+        error: detail ? `${classified.message} — ${detail}` : classified.message,
+        ms: 0,
+      };
     };
 
     const result = {
