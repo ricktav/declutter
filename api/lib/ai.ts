@@ -1,47 +1,81 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { listModels, AiMisconfigured } from "./ai-client";
 
-let provider: ReturnType<typeof createOpenAICompatible> | null = null;
+/**
+ * Provider chain:
+ *   1. LLM_BASE_URL + LLM_API_KEY (+ LLM_MODEL / LLM_VISION_MODEL) — any
+ *      OpenAI-compatible endpoint: xAI Grok, OpenAI, DeepSeek, Ollama, …
+ *   2. Kimi platform gateway (KIMI_AGENTGW_*) — when running on Kimi
+ *   3. otherwise: AI features degrade with a clear "not configured" notice
+ */
 
-function getProvider() {
-  if (!provider) {
+interface ResolvedProvider {
+  chat: ReturnType<ReturnType<typeof createOpenAICompatible>>;
+  vision: ReturnType<ReturnType<typeof createOpenAICompatible>>;
+  name: string;
+}
+
+let resolved: ResolvedProvider | null = null;
+
+function fromEnv(): ResolvedProvider | null {
+  const baseURL = process.env.LLM_BASE_URL;
+  const apiKey = process.env.LLM_API_KEY;
+  if (!baseURL || !apiKey) return null;
+  const p = createOpenAICompatible({
+    name: "custom-llm",
+    baseURL,
+    apiKey,
+    supportsStructuredOutputs: true,
+  });
+  const chatModel = process.env.LLM_MODEL;
+  if (!chatModel) {
+    throw new AiMisconfigured("LLM_BASE_URL/LLM_API_KEY are set but LLM_MODEL is missing.");
+  }
+  const visionModel = process.env.LLM_VISION_MODEL ?? chatModel;
+  return { chat: p(chatModel), vision: p(visionModel), name: "custom" };
+}
+
+let kimiChat: ResolvedProvider | null = null;
+
+async function fromKimi(): Promise<ResolvedProvider> {
+  if (!kimiChat) {
     const baseURL = process.env.KIMI_AGENTGW_BASE_URL;
     const apiKey = process.env.KIMI_AGENTGW_API_KEY;
     if (!baseURL || !apiKey) {
       throw new AiMisconfigured(
-        "AI is not provisioned for this site yet. Publish (or reopen) the site once, then retry.",
+        "No LLM configured. Set LLM_BASE_URL/LLM_API_KEY/LLM_MODEL in .env " +
+          "(e.g. Grok: https://api.x.ai/v1), or run on the Kimi platform.",
       );
     }
-    provider = createOpenAICompatible({
+    const p = createOpenAICompatible({
       name: "kimi-gw",
       baseURL,
       apiKey,
       includeUsage: true,
       supportsStructuredOutputs: true,
     });
+    const { models, defaultModelId } = await listModels();
+    const visionId = models.find((m) => m.supportsImageIn)?.id ?? defaultModelId;
+    kimiChat = { chat: p(defaultModelId), vision: p(visionId), name: "kimi" };
   }
-  return provider;
+  return kimiChat;
 }
 
-let cachedModelId: string | null = null;
-
-export async function getModelId(): Promise<string> {
-  if (!cachedModelId) {
-    const { defaultModelId } = await listModels();
-    cachedModelId = defaultModelId;
+async function resolveProvider(): Promise<ResolvedProvider> {
+  if (!resolved) {
+    resolved = fromEnv() ?? (await fromKimi());
   }
-  return cachedModelId;
+  return resolved;
 }
 
 export async function getModel() {
-  const p = getProvider();
-  return p(await getModelId());
+  return (await resolveProvider()).chat;
 }
 
-/** Prefer a vision-capable model for image analysis; fall back to the default. */
 export async function getVisionModel() {
-  const p = getProvider();
-  const { models, defaultModelId } = await listModels();
-  const vision = models.find((m) => m.supportsImageIn);
-  return p(vision?.id ?? defaultModelId);
+  return (await resolveProvider()).vision;
+}
+
+export async function getProviderName(): Promise<string> {
+  return (await resolveProvider()).name;
 }
