@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
-import { Plug, CheckCircle2, XCircle, Loader2, Trash2, Columns2 } from "lucide-react";
+import { Plug, CheckCircle2, XCircle, Loader2, Trash2, Columns2, MessageSquare } from "lucide-react";
 
 const PRESETS = [
   { label: "xAI Grok", baseUrl: "https://api.x.ai/v1" },
@@ -20,6 +20,8 @@ export default function SettingsPage() {
   const [visionModel, setVisionModel] = useState("");
   const [testResult, setTestResult] = useState<{ ok: boolean; models?: string[]; error?: string } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [promptResult, setPromptResult] = useState<{ ok: boolean; reply?: string; ms?: number; error?: string } | null>(null);
+  const [promptTesting, setPromptTesting] = useState(false);
 
   // Provider B (A/B comparison)
   const [bBaseUrl, setBBaseUrl] = useState("");
@@ -27,6 +29,8 @@ export default function SettingsPage() {
   const [bModel, setBModel] = useState("");
   const [bTestResult, setBTestResult] = useState<{ ok: boolean; models?: string[]; error?: string } | null>(null);
   const [bTesting, setBTesting] = useState(false);
+  const [bPromptResult, setBPromptResult] = useState<{ ok: boolean; reply?: string; ms?: number; error?: string } | null>(null);
+  const [bPromptTesting, setBPromptTesting] = useState(false);
 
   useEffect(() => {
     if (current.data) {
@@ -42,6 +46,7 @@ export default function SettingsPage() {
     onSuccess: () => utils.settings.get.invalidate(),
   });
   const test = trpc.settings.testConnection.useMutation();
+  const testPrompt = trpc.settings.testPrompt.useMutation();
 
   const runTest = async () => {
     setTesting(true);
@@ -64,6 +69,32 @@ export default function SettingsPage() {
     });
     setBTestResult(res);
     setBTesting(false);
+  };
+
+  const runPromptTest = async () => {
+    setPromptTesting(true);
+    setPromptResult(null);
+    const res = await testPrompt.mutateAsync({
+      llmBaseUrl: baseUrl || undefined,
+      llmApiKey: apiKey || undefined,
+      model,
+      provider: "1",
+    });
+    setPromptResult(res);
+    setPromptTesting(false);
+  };
+
+  const runBPromptTest = async () => {
+    setBPromptTesting(true);
+    setBPromptResult(null);
+    const res = await testPrompt.mutateAsync({
+      llmBaseUrl: bBaseUrl || undefined,
+      llmApiKey: bApiKey || undefined,
+      model: bModel,
+      provider: "2",
+    });
+    setBPromptResult(res);
+    setBPromptTesting(false);
   };
 
   const sourceLabel: Record<string, string> = {
@@ -125,7 +156,11 @@ export default function SettingsPage() {
           <span className="micro-label text-muted-foreground">API key</span>
           <input
             className="mt-1 w-full rounded-md border border-input px-3 py-2 text-[13px] font-data"
-            placeholder={current.data?.settings.llmApiKeyMasked ? "••• (saved — leave empty to keep)" : "xai-… / sk-… / any string for Ollama"}
+            placeholder={
+              (current.data?.settings.llmApiKeyMasked ?? current.data?.env?.llmApiKeyMasked)
+                ? `••• ${current.data?.settings.llmApiKeyMasked ?? current.data?.env?.llmApiKeyMasked} (leave empty to keep)`
+                : "xai-… / sk-… / any string for Ollama"
+            }
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
@@ -211,6 +246,17 @@ export default function SettingsPage() {
           </Button>
           <Button
             size="sm"
+            variant="outline"
+            className="h-8 text-[12px]"
+            disabled={promptTesting || !model}
+            title="Send a real generation request and show the reply + latency — works with providers that don't expose /models"
+            onClick={runPromptTest}
+          >
+            {promptTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <MessageSquare className="h-3.5 w-3.5 mr-1" />}
+            Test with prompt
+          </Button>
+          <Button
+            size="sm"
             variant="ghost"
             className="h-8 text-[12px] text-muted-foreground"
             onClick={() => {
@@ -221,6 +267,18 @@ export default function SettingsPage() {
             <Trash2 className="h-3.5 w-3.5 mr-1" /> Clear saved settings
           </Button>
         </div>
+        {promptResult && (
+          promptResult.ok ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
+              Replied <b className="font-data">“{promptResult.reply}”</b> in <span className="font-data">{promptResult.ms} ms</span> — the model
+              generated a real response with these settings.
+            </div>
+          ) : (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-800">
+              {promptResult.error}
+            </div>
+          )
+        )}
       </div>
 
       <p className="text-[12px] text-muted-foreground mt-4">
@@ -277,7 +335,11 @@ export default function SettingsPage() {
           <span className="micro-label text-muted-foreground">API key</span>
           <input
             className="mt-1 w-full rounded-md border border-input px-3 py-2 text-[13px] font-data"
-            placeholder={current.data?.settings.llm2ApiKeyMasked ? `••• (saved — leave empty to keep)` : "sk-or-…"}
+            placeholder={
+              (current.data?.settings.llm2ApiKeyMasked ?? current.data?.env2?.llm2ApiKeyMasked)
+                ? `••• ${current.data?.settings.llm2ApiKeyMasked ?? current.data?.env2?.llm2ApiKeyMasked} (leave empty to keep)`
+                : "sk-or-…"
+            }
             type="password"
             value={bApiKey}
             onChange={(e) => setBApiKey(e.target.value)}
@@ -346,7 +408,30 @@ export default function SettingsPage() {
           >
             Save Provider B
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 text-[12px] border-violet-300 text-violet-700 hover:bg-violet-50"
+            disabled={bPromptTesting || !bModel}
+            title="Send a real generation request and show the reply + latency"
+            onClick={runBPromptTest}
+          >
+            {bPromptTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <MessageSquare className="h-3.5 w-3.5 mr-1" />}
+            Test with prompt
+          </Button>
         </div>
+        {bPromptResult && (
+          bPromptResult.ok ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
+              Replied <b className="font-data">“{bPromptResult.reply}”</b> in <span className="font-data">{bPromptResult.ms} ms</span> — the model
+              generated a real response with these settings.
+            </div>
+          ) : (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-800">
+              {bPromptResult.error}
+            </div>
+          )
+        )}
       </div>
     </div>
   );

@@ -178,9 +178,10 @@ export default function Dashboard() {
   const openTasks = (tasks.data ?? []).filter((t) => t.status !== "done").length;
   const newIdeas = (ideas.data ?? []).filter((i) => i.status === "new").length;
   const totalItems = (areas.data ?? []).reduce((s, a) => s + a.itemCount, 0);
+  const firstArea = (areas.data ?? []).find((a) => a.itemCount > 0) ?? areas.data?.[0];
 
   const stats = [
-    { label: "Items", value: totalItems, icon: Package, to: "/areas/computers" },
+    { label: "Items", value: totalItems, icon: Package, to: firstArea ? `/areas/${firstArea.slug}` : "/settings" },
     { label: "Inbox pending", value: pending, icon: Inbox, to: "/inbox" },
     { label: "New ideas", value: newIdeas, icon: Lightbulb, to: "/ideas" },
     { label: "Open tasks", value: openTasks, icon: ListChecks, to: "/tasks" },

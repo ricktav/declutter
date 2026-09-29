@@ -133,4 +133,69 @@ export const settingsRouter = createRouter({
         return { ok: false as const, error: `Connection failed: ${(err as Error).message}` };
       }
     }),
+
+  /** real generation test: send a tiny prompt, report latency + reply */
+  testPrompt: publicQuery
+    .input(
+      z.object({
+        llmBaseUrl: z.string().optional(),
+        llmApiKey: z.string().optional(),
+        model: z.string(),
+        provider: z.enum(["1", "2"]).default("1"),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const s = loadSettings();
+      const want2 = input.provider === "2";
+      const baseURL = (
+        input.llmBaseUrl ??
+        (want2 ? (s.llm2BaseUrl ?? process.env.LLM2_BASE_URL) : (s.llmBaseUrl ?? process.env.LLM_BASE_URL)) ??
+        ""
+      ).replace(/\/+$/, "");
+      const apiKey =
+        input.llmApiKey ||
+        (want2 ? (s.llm2ApiKey || process.env.LLM2_API_KEY) : (s.llmApiKey || process.env.LLM_API_KEY)) ||
+        "";
+      if (!baseURL || !input.model.trim()) {
+        return { ok: false as const, error: "Base URL and model are required." };
+      }
+      const started = Date.now();
+      try {
+        const res = await fetch(`${baseURL}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            model: input.model.trim(),
+            messages: [{ role: "user", content: "Reply with exactly: ok" }],
+            max_tokens: 16,
+          }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        const ms = Date.now() - started;
+        const text = await res.text();
+        let reply: string | null = null;
+        try {
+          const body = JSON.parse(text) as {
+            choices?: Array<{ message?: { content?: string } }>;
+            error?: { message?: string };
+          };
+          reply = body.choices?.[0]?.message?.content?.trim() ?? null;
+          if (!res.ok) {
+            return {
+              ok: false as const,
+              error: `HTTP ${res.status}: ${body.error?.message ?? text.slice(0, 300)}`,
+              ms,
+            };
+          }
+        } catch {
+          if (!res.ok) return { ok: false as const, error: `HTTP ${res.status}: ${text.slice(0, 300)}`, ms };
+        }
+        return { ok: true as const, reply: reply ?? "(empty reply)", ms };
+      } catch (err) {
+        return { ok: false as const, error: `Request failed: ${(err as Error).message}`, ms: Date.now() - started };
+      }
+    }),
 });
