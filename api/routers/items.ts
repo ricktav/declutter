@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { eq, desc, or, and } from "drizzle-orm";
+import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, attachments, relations, tasks, ideaItems, ideas } from "@db/schema";
+import { areas, items, attachments, relations, tasks, ideaItems, ideas, events } from "@db/schema";
 import { logEvent } from "../lib/events";
+import { getModel } from "../lib/ai";
 
 /** crude name-similarity: shared significant tokens */
 function nameScore(a: string, b: string): number {
@@ -69,6 +71,19 @@ export const itemsRouter = createRouter({
       ? await db.select().from(items).where(or(...otherIds.map((i) => eq(items.id, i))))
       : [];
     const nameMap = new Map(others.map((o) => [o.id, o.name]));
+    // attach the LLM's "why" for AI-suggested links from the event log
+    const linkEvents = await db
+      .select()
+      .from(events)
+      .where(and(eq(events.entityType, "item"), eq(events.entityId, item.id), eq(events.action, "links-suggested")))
+      .orderBy(desc(events.createdAt));
+    const reasonMap = new Map<number, string>();
+    for (const ev of linkEvents) {
+      const payload = ev.payload as { links?: { itemId: number; reason: string }[] } | null;
+      for (const l of payload?.links ?? []) {
+        if (!reasonMap.has(l.itemId)) reasonMap.set(l.itemId, l.reason);
+      }
+    }
     const itemTasks = await db
       .select()
       .from(tasks)
@@ -90,6 +105,9 @@ export const itemsRouter = createRouter({
         otherItemId: r.fromItemId === item.id ? r.toItemId : r.fromItemId,
         otherItemName: nameMap.get(r.fromItemId === item.id ? r.toItemId : r.fromItemId) ?? "?",
         direction: r.fromItemId === item.id ? ("out" as const) : ("in" as const),
+        reason: r.origin === "ai" && r.status === "suggested"
+          ? (reasonMap.get(r.fromItemId === item.id ? r.toItemId : r.fromItemId) ?? null)
+          : null,
       })),
       tasks: itemTasks,
       ideas: itemIdeas,
@@ -124,11 +142,12 @@ export const itemsRouter = createRouter({
         payload: { areaId: input.areaId, attributes: input.attributes },
       });
 
-      // auto-suggest relations to similar items (recorded as suggestions)
+      // name-based suggestions run regardless; the LLM adds semantic matches
+      // from the same area (it only sees same-area items, so links are scoped)
       const siblings = await db
         .select()
         .from(items)
-        .where(and(eq(items.status, "active")));
+        .where(and(eq(items.status, "active"), eq(items.areaId, input.areaId)));
       const suggestions: number[] = [];
       for (const s of siblings) {
         if (s.id === id) continue;
@@ -153,7 +172,62 @@ export const itemsRouter = createRouter({
           payload: { suggestedItemIds: suggestions },
         });
       }
-      return { id, suggestedRelations: suggestions.length };
+
+      // LLM: semantic suggested-links to existing items in this area
+      let suggestedLinks: { itemId: number; reason: string }[] = [];
+      const otherSiblings = siblings.filter((s) => s.id !== id);
+      if (otherSiblings.length > 0) {
+        try {
+          const model = await getModel();
+          const linksSchema = z.object({
+            links: z.array(
+              z.object({
+                itemId: z.number().describe("id of the existing item to link to"),
+                reason: z.string().describe("one short sentence: why they belong together"),
+              }),
+            ),
+          });
+          const { object } = await generateObject({
+            model,
+            schema: linksSchema,
+            messages: [
+              {
+                role: "user",
+                content: `A new item was just added to a home inventory.\n\nNEW ITEM (area: ${input.name}'s area, name: "${input.name}"${input.description ? `, description: "${input.description}"` : ""}).\n\nEXISTING ITEMS IN THE SAME AREA (id — name${input.description ? " — description" : ""}):\n${otherSiblings
+                  .slice(0, 100)
+                  .map((s) => `- ${s.id} — ${s.name}${s.description ? ` — ${s.description.slice(0, 120)}` : ""}`)
+                  .join("\n")}\n\nWhich of these existing items does the new item have a HIGH likelihood of being related to? Suggest only links you are fairly confident about (same setup, accessory of, part of, replacement for, used together, depends on). Return an empty list if nothing is clearly related. For each suggested link give a one-sentence reason.`,
+              },
+            ],
+          });
+          const valid = new Set(otherSiblings.map((s) => s.id));
+          for (const l of object.links) {
+            if (!valid.has(l.itemId) || suggestions.includes(l.itemId)) continue;
+            await db.insert(relations).values({
+              fromItemId: id,
+              toItemId: l.itemId,
+              type: "related-to",
+              origin: "ai",
+              status: "suggested",
+            });
+            suggestions.push(l.itemId);
+            suggestedLinks.push({ itemId: l.itemId, reason: l.reason });
+          }
+          if (suggestedLinks.length) {
+            await logEvent({
+              entityType: "item",
+              entityId: id,
+              action: "links-suggested",
+              summary: `LLM suggested ${suggestedLinks.length} semantic link(s) for "${input.name}"`,
+              actor: "ai",
+              payload: { links: suggestedLinks },
+            });
+          }
+        } catch {
+          // AI suggestions are best-effort — creation must never fail on them
+        }
+      }
+      return { id, suggestedRelations: suggestions.length, suggestedLinks };
     }),
 
   update: publicQuery

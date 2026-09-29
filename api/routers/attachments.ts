@@ -2,7 +2,7 @@ import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { attachments } from "@db/schema";
+import { attachments, photoAnnotations } from "@db/schema";
 import { putFile, deleteStoredFile, urlForKey } from "../lib/filestore";
 import { logEvent } from "../lib/events";
 
@@ -67,6 +67,7 @@ export const attachmentsRouter = createRouter({
     if (row?.storageKey) {
       await deleteStoredFile(row.storageKey);
     }
+    await db.delete(photoAnnotations).where(eq(photoAnnotations.attachmentId, input.id));
     await db.delete(attachments).where(eq(attachments.id, input.id));
     await logEvent({
       entityType: "attachment",

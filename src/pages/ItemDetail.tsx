@@ -4,6 +4,7 @@ import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { fileToBase64, timeAgo } from "@/lib/format";
 import {
   Sparkles,
@@ -189,12 +190,19 @@ export default function ItemDetail() {
               <><Archive className="h-3.5 w-3.5 mr-1" /> Archive</>
             )}
           </Button>
-          <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive"
-            onClick={() => {
-              if (confirm(`Delete "${it.name}"? This cannot be undone.`)) remove.mutate({ id: itemId });
-            }}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          <ConfirmDelete
+            trigger={
+              <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            }
+            title={`Delete "${it.name}"?`}
+            description="Permanently deletes this item, its attachments, tasks, relations and photo pins. This cannot be undone."
+            confirmText={it.name}
+            confirmLabel="Delete item"
+            pending={remove.isPending}
+            onConfirm={() => remove.mutate({ id: itemId })}
+          />
         </div>
       </div>
 
@@ -207,11 +215,16 @@ export default function ItemDetail() {
           <div className="space-y-1.5">
             {suggested.map((r) => (
               <div key={r.id} className="flex items-center gap-2 text-[13px]">
-                <span>
-                  {it.name} <span className="font-data text-[11px] text-violet-600">{r.type}</span>{" "}
+                <span className="min-w-0">
                   <Link to={`/items/${r.otherItemId}`} className="font-medium text-primary hover:underline">
                     {r.otherItemName}
-                  </Link>
+                  </Link>{" "}
+                  <span className="font-data text-[11px] text-violet-600">{r.type}</span>
+                  {(r as { reason?: string | null }).reason && (
+                    <span className="block text-[11px] text-violet-800">
+                      {(r as { reason?: string | null }).reason}
+                    </span>
+                  )}
                 </span>
                 <span className="ml-auto flex gap-1">
                   <Button size="sm" variant="outline" className="h-6 text-[11px] px-2"
@@ -423,10 +436,18 @@ export default function ItemDetail() {
                     <AttachmentView att={a} />
                     <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
                   </div>
-                  <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
-                    onClick={() => removeAttachment.mutate({ id: a.id })}>
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                  <ConfirmDelete
+                    trigger={
+                      <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    }
+                    title={`Delete ${a.kind === "note" ? "note" : a.kind === "link" ? "link" : "attachment"}?`}
+                    description="The file (and any AI pins on it) will be permanently removed."
+                    confirmLabel="Delete"
+                    pending={removeAttachment.isPending}
+                    onConfirm={() => removeAttachment.mutate({ id: a.id })}
+                  />
                 </div>
               ))}
             </div>

@@ -11,7 +11,9 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
-import { Plus, Sparkles, Archive } from "lucide-react";
+import { Plus, Sparkles, Archive, Trash2 } from "lucide-react";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
+import { useNavigate } from "react-router";
 import type { AttributeDef } from "@db/schema";
 
 function AddItemDialog({ areaId, defs }: { areaId: number; defs: AttributeDef[] }) {
@@ -114,8 +116,22 @@ export default function AreaView() {
   const { openAsk } = useAsk();
   const [q, setQ] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const navigate = useNavigate();
 
   const area = trpc.areas.get.useQuery({ slug: slug! }, { enabled: !!slug });
+  const utils = trpc.useUtils();
+  const removeArea = trpc.areas.remove.useMutation({
+    onSuccess: () => {
+      utils.areas.list.invalidate();
+      navigate("/");
+    },
+  });
+  const removeItem = trpc.items.remove.useMutation({
+    onSuccess: () => {
+      utils.items.listByArea.invalidate();
+      utils.areas.list.invalidate();
+    },
+  });
   const itemsList = trpc.items.listByArea.useQuery(
     { areaId: area.data?.id ?? 0, includeArchived: showArchived },
     { enabled: !!area.data },
@@ -157,6 +173,19 @@ export default function AreaView() {
             <Sparkles className="h-4 w-4 mr-1" /> Ask AI
           </Button>
           <AddItemDialog areaId={area.data.id} defs={(area.data.attributeDefs as AttributeDef[]) ?? []} />
+          <ConfirmDelete
+            trigger={
+              <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            }
+            title={`Delete area "${area.data.name}"?`}
+            description={`Permanently deletes this area and ALL ${itemsList.data?.length ?? 0} item(s) in it — attachments, tasks, relations, everything. This cannot be undone.`}
+            confirmText={area.data.name}
+            confirmLabel="Delete area"
+            pending={removeArea.isPending}
+            onConfirm={() => removeArea.mutate({ id: area.data!.id })}
+          />
         </div>
       </div>
       {area.data.description && (
@@ -189,11 +218,12 @@ export default function AreaView() {
                 <th key={c.key}>{c.label}</th>
               ))}
               <th>Updated</th>
+              <th className="w-8" />
             </tr>
           </thead>
           <tbody>
             {filtered.map((it) => (
-              <tr key={it.id} className={it.status === "archived" ? "opacity-50" : ""}>
+              <tr key={it.id} className={`group ${it.status === "archived" ? "opacity-50" : ""}`}>
                 <td>
                   <Link to={`/items/${it.id}`} className="font-medium text-primary hover:underline">
                     {it.name}
@@ -210,11 +240,25 @@ export default function AreaView() {
                   </td>
                 ))}
                 <td className="font-data text-[11px] text-muted-foreground">{timeAgo(it.updatedAt)}</td>
+                <td>
+                  <ConfirmDelete
+                    trigger={
+                      <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    }
+                    title={`Delete "${it.name}"?`}
+                    description="Permanently deletes this item, its attachments, tasks, relations and photo pins."
+                    confirmLabel="Delete"
+                    pending={removeItem.isPending}
+                    onConfirm={() => removeItem.mutate({ id: it.id })}
+                  />
+                </td>
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={columns.length + 2} className="text-center text-muted-foreground py-8">
+                <td colSpan={columns.length + 3} className="text-center text-muted-foreground py-8">
                   No items yet — add one, or capture something via the inbox.
                 </td>
               </tr>
