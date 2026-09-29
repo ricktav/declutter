@@ -1,0 +1,212 @@
+import { useEffect, useState } from "react";
+import { trpc } from "@/providers/trpc";
+import { Button } from "@/components/ui/button";
+import { Plug, CheckCircle2, XCircle, Loader2, Trash2 } from "lucide-react";
+
+const PRESETS = [
+  { label: "xAI Grok", baseUrl: "https://api.x.ai/v1" },
+  { label: "OpenAI", baseUrl: "https://api.openai.com/v1" },
+  { label: "Ollama (local)", baseUrl: "http://localhost:11434/v1" },
+  { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
+];
+
+export default function SettingsPage() {
+  const utils = trpc.useUtils();
+  const current = trpc.settings.get.useQuery();
+
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("");
+  const [visionModel, setVisionModel] = useState("");
+  const [testResult, setTestResult] = useState<{ ok: boolean; models?: string[]; error?: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    if (current.data) {
+      setBaseUrl(current.data.settings.llmBaseUrl ?? current.data.env?.llmBaseUrl ?? "");
+      setModel(current.data.settings.llmModel ?? current.data.env?.llmModel ?? "");
+      setVisionModel(current.data.settings.llmVisionModel ?? current.data.env?.llmVisionModel ?? "");
+    }
+  }, [current.data]);
+
+  const save = trpc.settings.update.useMutation({
+    onSuccess: () => utils.settings.get.invalidate(),
+  });
+  const test = trpc.settings.testConnection.useMutation();
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    const res = await test.mutateAsync({
+      llmBaseUrl: baseUrl || undefined,
+      llmApiKey: apiKey || undefined,
+    });
+    setTestResult(res);
+    setTesting(false);
+  };
+
+  const sourceLabel: Record<string, string> = {
+    settings: "Settings (this page)",
+    env: ".env file",
+    kimi: "Kimi platform",
+    none: "not configured",
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto px-6 py-8">
+      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+      <p className="text-sm text-muted-foreground mt-1">
+        LLM provider for triage, chat, object detection and wiki enhancement.
+      </p>
+
+      <div className="mt-4 rounded-lg border border-border bg-white px-4 py-3 flex items-center gap-2 text-[13px]">
+        <Plug className="h-4 w-4 text-muted-foreground" />
+        Active provider:{" "}
+        <b>{sourceLabel[current.data?.source ?? "none"] ?? current.data?.source}</b>
+        {current.data?.settings.llmApiKeyMasked && (
+          <span className="font-data text-[11px] text-muted-foreground ml-auto">
+            key {current.data.settings.llmApiKeyMasked}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-6 rounded-lg border border-border bg-white p-4 space-y-4">
+        <div>
+          <div className="micro-label text-muted-foreground mb-1.5">Preset</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {PRESETS.map((p) => (
+              <button
+                key={p.label}
+                onClick={() => setBaseUrl(p.baseUrl)}
+                className={`rounded-full px-3 py-1 text-[12px] transition-colors ${
+                  baseUrl === p.baseUrl
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted hover:bg-accent"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <label className="block">
+          <span className="micro-label text-muted-foreground">Base URL</span>
+          <input
+            className="mt-1 w-full rounded-md border border-input px-3 py-2 text-[13px] font-data"
+            placeholder="https://api.x.ai/v1"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+        </label>
+
+        <label className="block">
+          <span className="micro-label text-muted-foreground">API key</span>
+          <input
+            className="mt-1 w-full rounded-md border border-input px-3 py-2 text-[13px] font-data"
+            placeholder={current.data?.settings.llmApiKeyMasked ? "••• (saved — leave empty to keep)" : "xai-… / sk-… / any string for Ollama"}
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+          />
+        </label>
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" className="h-8 text-[12px]" onClick={runTest} disabled={testing}>
+            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Plug className="h-3.5 w-3.5 mr-1" />}
+            Test connection
+          </Button>
+          {testResult && (
+            testResult.ok ? (
+              <span className="flex items-center gap-1 text-[12px] text-emerald-700">
+                <CheckCircle2 className="h-3.5 w-3.5" /> {testResult.models?.length ?? 0} models available
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[12px] text-destructive">
+                <XCircle className="h-3.5 w-3.5" /> {testResult.error}
+              </span>
+            )
+          )}
+        </div>
+
+        {testResult?.ok && testResult.models && (
+          <div>
+            <div className="micro-label text-muted-foreground mb-1.5">Available models (click to use)</div>
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+              {testResult.models.map((m) => (
+                <button
+                  key={m}
+                  onClick={() => {
+                    setModel(m);
+                    if (!visionModel) setVisionModel(m);
+                  }}
+                  className={`rounded px-2 py-1 text-[11px] font-data transition-colors ${
+                    model === m ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="block">
+            <span className="micro-label text-muted-foreground">Chat model</span>
+            <input
+              className="mt-1 w-full rounded-md border border-input px-3 py-2 text-[13px] font-data"
+              placeholder="grok-4.7"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+            />
+          </label>
+          <label className="block">
+            <span className="micro-label text-muted-foreground">Vision model (photos)</span>
+            <input
+              className="mt-1 w-full rounded-md border border-input px-3 py-2 text-[13px] font-data"
+              placeholder="same as chat if empty"
+              value={visionModel}
+              onChange={(e) => setVisionModel(e.target.value)}
+            />
+          </label>
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          <Button
+            size="sm"
+            className="h-8 text-[12px]"
+            disabled={save.isPending || !baseUrl || !model}
+            onClick={() =>
+              save.mutate({
+                llmBaseUrl: baseUrl,
+                llmApiKey: apiKey || undefined,
+                llmModel: model,
+                llmVisionModel: visionModel || undefined,
+              })
+            }
+          >
+            Save
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 text-[12px] text-muted-foreground"
+            onClick={() => {
+              save.mutate({ clear: true });
+              setApiKey("");
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1" /> Clear saved settings
+          </Button>
+        </div>
+      </div>
+
+      <p className="text-[12px] text-muted-foreground mt-4">
+        Precedence: this page → <span className="font-data">.env</span> <span className="font-data">LLM_*</span> variables →
+        Kimi platform gateway. Settings are stored in <span className="font-data">settings.json</span> next to the app
+        (not committed to git).
+      </p>
+    </div>
+  );
+}

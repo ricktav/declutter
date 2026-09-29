@@ -23,6 +23,7 @@ import {
   Camera,
   Menu,
   X,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
@@ -83,6 +84,7 @@ const NAV = [
   { to: "/tasks", label: "Tasks", icon: ListChecks },
   { to: "/wiki", label: "Wiki", icon: BookOpen },
   { to: "/activity", label: "Activity", icon: History },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function Layout() {

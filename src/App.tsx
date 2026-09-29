@@ -11,6 +11,7 @@ import WikiPage from "@/pages/Wiki";
 import ActivityPage from "@/pages/Activity";
 import AnnotatePage from "@/pages/Annotate";
 import SnapPage from "@/pages/Snap";
+import SettingsPage from "@/pages/Settings";
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/wiki" element={<WikiPage />} />
           <Route path="/activity" element={<ActivityPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

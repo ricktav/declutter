@@ -1,50 +1,48 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { listModels, AiMisconfigured } from "./ai-client";
+import { loadSettings } from "./settings";
 
 /**
  * Provider chain:
- *   1. LLM_BASE_URL + LLM_API_KEY (+ LLM_MODEL / LLM_VISION_MODEL) — any
- *      OpenAI-compatible endpoint: xAI Grok, OpenAI, DeepSeek, Ollama, …
- *   2. Kimi platform gateway (KIMI_AGENTGW_*) — when running on Kimi
- *   3. otherwise: AI features degrade with a clear "not configured" notice
+ *   1. Settings page (settings.json) — saved from the UI
+ *   2. LLM_BASE_URL + LLM_API_KEY + LLM_MODEL env vars
+ *      (any OpenAI-compatible endpoint: xAI Grok, OpenAI, Ollama, …)
+ *   3. Kimi platform gateway (KIMI_AGENTGW_*) — when running on Kimi
+ *   4. otherwise: AI features degrade with a clear "not configured" notice
  */
 
 interface ResolvedProvider {
   chat: ReturnType<ReturnType<typeof createOpenAICompatible>>;
   vision: ReturnType<ReturnType<typeof createOpenAICompatible>>;
-  name: string;
+  source: "settings" | "env" | "kimi";
 }
 
-let resolved: ResolvedProvider | null = null;
+let cached: { key: string; provider: ResolvedProvider } | null = null;
 
-function fromEnv(): ResolvedProvider | null {
-  const baseURL = process.env.LLM_BASE_URL;
-  const apiKey = process.env.LLM_API_KEY;
+function fromCustom(baseURL?: string, apiKey?: string, model?: string, visionModel?: string, source: "settings" | "env" = "env"): ResolvedProvider | null {
   if (!baseURL || !apiKey) return null;
+  if (!model) {
+    throw new AiMisconfigured("LLM base URL and key are set but no model is chosen.");
+  }
   const p = createOpenAICompatible({
     name: "custom-llm",
     baseURL,
     apiKey,
     supportsStructuredOutputs: true,
   });
-  const chatModel = process.env.LLM_MODEL;
-  if (!chatModel) {
-    throw new AiMisconfigured("LLM_BASE_URL/LLM_API_KEY are set but LLM_MODEL is missing.");
-  }
-  const visionModel = process.env.LLM_VISION_MODEL ?? chatModel;
-  return { chat: p(chatModel), vision: p(visionModel), name: "custom" };
+  return { chat: p(model), vision: p(visionModel ?? model), source };
 }
 
-let kimiChat: ResolvedProvider | null = null;
+let kimiProvider: ResolvedProvider | null = null;
 
 async function fromKimi(): Promise<ResolvedProvider> {
-  if (!kimiChat) {
+  if (!kimiProvider) {
     const baseURL = process.env.KIMI_AGENTGW_BASE_URL;
     const apiKey = process.env.KIMI_AGENTGW_API_KEY;
     if (!baseURL || !apiKey) {
       throw new AiMisconfigured(
-        "No LLM configured. Set LLM_BASE_URL/LLM_API_KEY/LLM_MODEL in .env " +
-          "(e.g. Grok: https://api.x.ai/v1), or run on the Kimi platform.",
+        "No LLM configured. Open Settings in the app and add a provider " +
+          "(e.g. Grok: https://api.x.ai/v1 + your xAI key), or set LLM_* in .env.",
       );
     }
     const p = createOpenAICompatible({
@@ -56,16 +54,23 @@ async function fromKimi(): Promise<ResolvedProvider> {
     });
     const { models, defaultModelId } = await listModels();
     const visionId = models.find((m) => m.supportsImageIn)?.id ?? defaultModelId;
-    kimiChat = { chat: p(defaultModelId), vision: p(visionId), name: "kimi" };
+    kimiProvider = { chat: p(defaultModelId), vision: p(visionId), source: "kimi" };
   }
-  return kimiChat;
+  return kimiProvider;
 }
 
 async function resolveProvider(): Promise<ResolvedProvider> {
-  if (!resolved) {
-    resolved = fromEnv() ?? (await fromKimi());
-  }
-  return resolved;
+  const s = loadSettings();
+  const cacheKey = JSON.stringify(s);
+  if (cached && cached.key === cacheKey) return cached.provider;
+
+  const provider =
+    fromCustom(s.llmBaseUrl, s.llmApiKey, s.llmModel, s.llmVisionModel, "settings") ??
+    fromCustom(process.env.LLM_BASE_URL, process.env.LLM_API_KEY, process.env.LLM_MODEL, process.env.LLM_VISION_MODEL) ??
+    (await fromKimi());
+
+  cached = { key: cacheKey, provider };
+  return provider;
 }
 
 export async function getModel() {
@@ -76,6 +81,6 @@ export async function getVisionModel() {
   return (await resolveProvider()).vision;
 }
 
-export async function getProviderName(): Promise<string> {
-  return (await resolveProvider()).name;
+export async function getProviderSource(): Promise<string> {
+  return (await resolveProvider()).source;
 }
