@@ -37,6 +37,14 @@ await ensureColumn("items", "floor", "`floor` varchar(32) NULL");
 await ensureColumn("items", "room", "`room` varchar(128) NULL");
 await ensureColumn("items", "parentId", "`parentId` bigint unsigned NULL");
 
+// PR #1 — rooms/geometry + verification gate (additive; nothing queries these yet)
+await ensureColumn("items", "roomId", "`roomId` bigint unsigned NULL");
+await ensureColumn("items", "verificationStatus", "`verificationStatus` varchar(32) NOT NULL DEFAULT 'confirmed'");
+await ensureColumn("items", "pos", "`pos` json NULL");
+await ensureColumn("attachments", "houseId", "`houseId` bigint unsigned NULL");
+await ensureColumn("attachments", "roomId", "`roomId` bigint unsigned NULL");
+await ensureColumn("captures", "exifGps", "`exifGps` json NULL");
+
 // houses table (idempotent create)
 await conn.query(`CREATE TABLE IF NOT EXISTS houses (
   id bigint unsigned NOT NULL AUTO_INCREMENT,
@@ -47,6 +55,40 @@ await conn.query(`CREATE TABLE IF NOT EXISTS houses (
   notes text NULL,
   createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+// rooms — canonical geometry per house (PR #1)
+await conn.query(`CREATE TABLE IF NOT EXISTS rooms (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  houseId bigint unsigned NOT NULL,
+  name varchar(128) NOT NULL,
+  source varchar(64) NOT NULL,
+  scanDate timestamp NULL,
+  widthM double NULL,
+  depthM double NULL,
+  wallHeightM double NULL,
+  walls json NULL,
+  openings json NULL,
+  lat double NULL,
+  lng double NULL,
+  createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updatedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY rooms_house_idx (houseId)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+// measurements — human-validated dimensions against a room or item (PR #1)
+await conn.query(`CREATE TABLE IF NOT EXISTS measurements (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  targetType varchar(16) NOT NULL,
+  targetId bigint unsigned NOT NULL,
+  field varchar(64) NULL,
+  valueM double NOT NULL,
+  method varchar(32) NOT NULL,
+  note text NULL,
+  createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY meas_target_idx (targetType, targetId)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
 await conn.end();
