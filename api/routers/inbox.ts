@@ -455,7 +455,16 @@ export const inboxRouter = createRouter({
         await db.insert(attachments).values({
           itemId,
           areaId: input.areaId,
-          kind: cap.kind === "link" ? "link" : cap.storageKey ? cap.kind : "note",
+          // scan/voice captures don't have a generic attachment-kind equivalent yet
+          // (scan routes through the geometry normalizer instead) — fall back to file/note
+          kind:
+            cap.kind === "link"
+              ? "link"
+              : cap.kind === "image" || cap.kind === "file"
+                ? cap.kind
+                : cap.storageKey
+                  ? "file"
+                  : "note",
           title: cap.url ?? input.itemName,
           content: cap.rawText ?? null,
           url: cap.url ?? null,

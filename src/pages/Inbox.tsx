@@ -24,10 +24,19 @@ import {
   Columns2,
   AlertCircle,
   ScanSearch,
+  Boxes,
+  Mic,
 } from "lucide-react";
 import type { Capture } from "@db/schema";
 
-const KIND_ICONS = { note: StickyNote, link: Link2, image: ImageIcon, file: FileIcon };
+const KIND_ICONS = {
+  note: StickyNote,
+  link: Link2,
+  image: ImageIcon,
+  file: FileIcon,
+  scan: Boxes,
+  voice: Mic,
+};
 
 type CompareSide = {
   label: string;

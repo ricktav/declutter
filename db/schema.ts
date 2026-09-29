@@ -52,19 +52,69 @@ export const items = mysqlTable(
     id: serial("id").primaryKey(),
     areaId: bigint("areaId", { mode: "number", unsigned: true }).notNull(),
     houseId: bigint("houseId", { mode: "number", unsigned: true }),
+    roomId: bigint("roomId", { mode: "number", unsigned: true }),
     parentId: bigint("parentId", { mode: "number", unsigned: true }),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
     status: varchar("status", { length: 32 }).$type<"active" | "archived">().notNull().default("active"),
+    verificationStatus: varchar("verificationStatus", { length: 32 })
+      .$type<"detected" | "confirmed" | "rejected">()
+      .notNull()
+      .default("confirmed"),
     attributes: json("attributes").$type<Record<string, string | number>>(),
+    pos: json("pos").$type<ItemPos>(),
     floor: varchar("floor", { length: 32 }),
     room: varchar("room", { length: 128 }),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
     archivedAt: timestamp("archivedAt"),
   },
-  (t) => [index("items_area_idx").on(t.areaId), index("items_house_idx").on(t.houseId)],
+  (t) => [
+    index("items_area_idx").on(t.areaId),
+    index("items_house_idx").on(t.houseId),
+    index("items_room_idx").on(t.roomId),
+  ],
 );
+
+// Footprint on a room's 2D/3D plan — absent until the item is placed.
+export interface ItemPos {
+  xM: number;
+  yM: number;
+  wM: number;
+  dM: number;
+  rotDeg: number;
+  baseM?: number; // height of the surface it's stacked on; 0 = floor
+}
+
+// ---------------------------------------------------------------------------
+// Rooms — canonical geometry for a scanned/mapped space, house_id-scoped.
+// walls/openings hold the raw provider geometry (GeoJSON-shaped for MappedIn).
+// ---------------------------------------------------------------------------
+export const rooms = mysqlTable(
+  "rooms",
+  {
+    id: serial("id").primaryKey(),
+    houseId: bigint("houseId", { mode: "number", unsigned: true }).notNull(),
+    name: varchar("name", { length: 128 }).notNull(),
+    source: varchar("source", { length: 64 }).$type<"mappedin" | "roomplan" | "manual">().notNull(),
+    scanDate: timestamp("scanDate"),
+    widthM: double("widthM"),
+    depthM: double("depthM"),
+    wallHeightM: double("wallHeightM"),
+    walls: json("walls").$type<RoomGeometry["walls"]>(),
+    openings: json("openings").$type<RoomGeometry["openings"]>(),
+    lat: double("lat"), // override for a room scanned as its own structure (shed, garage)
+    lng: double("lng"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => [index("rooms_house_idx").on(t.houseId)],
+);
+
+export interface RoomGeometry {
+  walls: Array<{ points: [number, number][] }>;
+  openings: Array<{ edge: string; offsetM: number; widthM: number; connectsTo?: number }>;
+}
 
 // ---------------------------------------------------------------------------
 // Attachments — images / files (storageKey), links (url), notes (content)
@@ -75,6 +125,8 @@ export const attachments = mysqlTable(
     id: serial("id").primaryKey(),
     itemId: bigint("itemId", { mode: "number", unsigned: true }),
     areaId: bigint("areaId", { mode: "number", unsigned: true }),
+    houseId: bigint("houseId", { mode: "number", unsigned: true }),
+    roomId: bigint("roomId", { mode: "number", unsigned: true }),
     kind: varchar("kind", { length: 32 }).$type<"image" | "link" | "note" | "file">().notNull(),
     title: varchar("title", { length: 255 }),
     content: text("content"),
@@ -84,7 +136,30 @@ export const attachments = mysqlTable(
     size: bigint("size", { mode: "number" }),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
-  (t) => [index("att_item_idx").on(t.itemId)],
+  (t) => [
+    index("att_item_idx").on(t.itemId),
+    index("att_house_idx").on(t.houseId),
+    index("att_room_idx").on(t.roomId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Measurements — human-validated dimensions (laser/tape) against a room edge
+// or an item footprint; a second data point, never a silent overwrite.
+// ---------------------------------------------------------------------------
+export const measurements = mysqlTable(
+  "measurements",
+  {
+    id: serial("id").primaryKey(),
+    targetType: varchar("targetType", { length: 16 }).$type<"room" | "item">().notNull(),
+    targetId: bigint("targetId", { mode: "number", unsigned: true }).notNull(),
+    field: varchar("field", { length: 64 }), // e.g. "width", "depth", "wall:right"
+    valueM: double("valueM").notNull(),
+    method: varchar("method", { length: 32 }).$type<"laser" | "tape" | "scan">().notNull(),
+    note: text("note"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [index("meas_target_idx").on(t.targetType, t.targetId)],
 );
 
 // ---------------------------------------------------------------------------
@@ -92,10 +167,14 @@ export const attachments = mysqlTable(
 // ---------------------------------------------------------------------------
 export const captures = mysqlTable("captures", {
   id: serial("id").primaryKey(),
-  kind: varchar("kind", { length: 32 }).$type<"note" | "link" | "image" | "file">().notNull().default("note"),
+  kind: varchar("kind", { length: 32 })
+    .$type<"note" | "link" | "image" | "file" | "scan" | "voice">()
+    .notNull()
+    .default("note"),
   rawText: text("rawText"),
   url: text("url"),
   storageKey: varchar("storageKey", { length: 512 }),
+  exifGps: json("exifGps").$type<{ lat: number; lng: number } | null>(),
   status: varchar("status", { length: 32 }).$type<"pending" | "triaged" | "dismissed" | "processed">().notNull().default("pending"),
   suggestion: json("suggestion").$type<TriageSuggestion>(),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
@@ -251,6 +330,9 @@ export const chatMessages = mysqlTable(
 );
 
 // ---- inferred types ----
+export type House = typeof houses.$inferSelect;
+export type Room = typeof rooms.$inferSelect;
+export type Measurement = typeof measurements.$inferSelect;
 export type Area = typeof areas.$inferSelect;
 export type Item = typeof items.$inferSelect;
 export type Attachment = typeof attachments.$inferSelect;
