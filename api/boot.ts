@@ -36,4 +36,9 @@ if (env.isProduction) {
   serve({ fetch: app.fetch, port }, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
+
+  // long-polling, gated to production like the HTTP listener above — a dev
+  // hot-reload would otherwise spawn a new poller on every file save
+  const { startTelegramBot } = await import("./lib/telegramBot");
+  startTelegramBot();
 }

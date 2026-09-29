@@ -9,6 +9,7 @@ import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { putFile, readFileBytes } from "../lib/filestore";
 import { cropPercent } from "../lib/crop";
+import { createCapture } from "../lib/captures";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -126,42 +127,27 @@ export const inboxRouter = createRouter({
   create: publicQuery
     .input(
       z.object({
-        kind: z.enum(["note", "link", "image", "file"]),
+        kind: z.enum(["note", "link", "image", "file", "scan", "voice"]),
         rawText: z.string().optional(),
         url: z.string().optional(),
         fileName: z.string().optional(),
         contentBase64: z.string().max(14_000_000).optional(),
         mimeType: z.string().optional(),
+        exifGps: z.object({ lat: z.number(), lng: z.number() }).nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {
-      const db = getDb();
-      let storageKey: string | null = null;
-      if ((input.kind === "image" || input.kind === "file") && input.contentBase64) {
-        const bytes = Uint8Array.from(Buffer.from(input.contentBase64, "base64"));
-        const saved = await putFile({
-          bytes,
-          fileName: `inbox/${input.fileName ?? "capture"}`,
-          contentType: input.mimeType,
-        });
-        storageKey = saved.key;
-      }
-      const [{ id }] = await db
-        .insert(captures)
-        .values({
-          kind: input.kind,
-          rawText: input.rawText ?? null,
-          url: input.url ?? null,
-          storageKey,
-        })
-        .$returningId();
-      await logEvent({
-        entityType: "capture",
-        entityId: id,
-        action: "created",
-        summary: `Inbox capture (${input.kind}) added`,
+      const row = await createCapture({
+        kind: input.kind,
+        rawText: input.rawText,
+        url: input.url,
+        bytes: input.contentBase64 ? Uint8Array.from(Buffer.from(input.contentBase64, "base64")) : undefined,
+        fileName: input.fileName ?? "capture",
+        contentType: input.mimeType,
+        exifGps: input.exifGps,
+        source: "user",
       });
-      return { id, storageKey };
+      return { id: row.id, storageKey: row.storageKey };
     }),
 
   /** Ask the LLM to propose where this capture belongs */
