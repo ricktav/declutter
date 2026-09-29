@@ -105,6 +105,13 @@ export default function ItemDetail() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [loc, setLoc] = useState<{ houseId: number | null; floor: string; room: string }>({
+    houseId: null,
+    floor: "",
+    room: "",
+  });
+  const [editingLoc, setEditingLoc] = useState(false);
+  const [childName, setChildName] = useState("");
 
   const invalidate = () => {
     utils.items.get.invalidate({ id: itemId });
@@ -148,6 +155,8 @@ export default function ItemDetail() {
       utils.tasks.list.invalidate();
     },
   });
+  const setParent = trpc.items.setParent.useMutation({ onSuccess: invalidate });
+  const createChild = trpc.items.create.useMutation({ onSuccess: invalidate });
 
   if (item.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
   if (!item.data) return <div className="p-8 text-sm">Item not found.</div>;
@@ -170,12 +179,6 @@ export default function ItemDetail() {
     setEditingAttrs(false);
   };
 
-  const [loc, setLoc] = useState<{ houseId: number | null; floor: string; room: string }>({
-    houseId: null,
-    floor: "",
-    room: "",
-  });
-  const [editingLoc, setEditingLoc] = useState(false);
   const startEditLoc = () => {
     setLoc({ houseId: it.houseId ?? null, floor: it.floor ?? "", room: it.room ?? "" });
     setEditingLoc(true);
@@ -189,10 +192,6 @@ export default function ItemDetail() {
     });
     setEditingLoc(false);
   };
-
-  const setParent = trpc.items.setParent.useMutation({ onSuccess: invalidate });
-  const createChild = trpc.items.create.useMutation({ onSuccess: invalidate });
-  const [childName, setChildName] = useState("");
 
   const uploadFile = async (f: File) => {
     const contentBase64 = await fileToBase64(f);
