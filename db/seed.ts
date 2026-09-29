@@ -1,14 +1,11 @@
 import { getDb } from "../api/queries/connection";
 import { areas } from "./schema";
+import { eq } from "drizzle-orm";
 
 async function seed() {
   const db = getDb();
 
   const existing = await db.select().from(areas);
-  if (existing.length) {
-    console.log(`Areas already seeded (${existing.length}), skipping.`);
-    return;
-  }
 
   const areaDefs = [
     {
@@ -37,10 +34,39 @@ async function seed() {
   ];
 
   for (const a of areaDefs) {
+    if (existing.some((e) => e.slug === a.slug)) continue; // idempotent: never duplicate areas
     await db.insert(areas).values(a);
   }
 
-  console.log("Seeded areas (no sample items — this is your inventory).");
+  console.log("Areas in place (no sample items — this is your inventory).");
+
+  // self-healing: make sure the computers area carries the full attribute
+  // schema (role/ip/network/purchase/warranty + generic spec fields)
+  const COMPUTER_DEFS = [
+    { key: "role", label: "Role", type: "select" as const, options: ["laptop", "desktop", "server", "nas", "network", "peripheral", "software", "service"] },
+    { key: "hostname", label: "Hostname", type: "text" as const },
+    { key: "ip", label: "IP address", type: "text" as const },
+    { key: "mac", label: "MAC address", type: "text" as const },
+    { key: "network", label: "Network / VLAN", type: "text" as const },
+    { key: "cpu", label: "CPU", type: "text" as const },
+    { key: "ram_gb", label: "RAM (GB)", type: "number" as const },
+    { key: "storage_gb", label: "Storage (GB)", type: "number" as const },
+    { key: "os", label: "OS", type: "text" as const },
+    { key: "serial", label: "Serial number", type: "text" as const },
+    { key: "purchase_date", label: "Purchased", type: "text" as const },
+    { key: "warranty_until", label: "Warranty until", type: "text" as const },
+    { key: "status_note", label: "Status note", type: "text" as const },
+  ];
+  // refresh from db so the self-heal below sees current rows
+  const current = await db.select().from(areas);
+  const computers = current.find((a) => a.slug === "computers");
+  if (computers) {
+    const hasIp = (computers.attributeDefs as { key: string }[] | null)?.some((d) => d.key === "ip");
+    if (!hasIp) {
+      await db.update(areas).set({ attributeDefs: COMPUTER_DEFS }).where(eq(areas.id, computers.id));
+      console.log("Updated 'computers' attribute schema (ip, hostname, network, warranty, …).");
+    }
+  }
 }
 
 seed().then(() => process.exit(0)).catch((e) => {

@@ -5,6 +5,7 @@ import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
+import { RoomPicker } from "@/components/RoomPicker";
 import { fileToBase64, timeAgo } from "@/lib/format";
 import {
   Sparkles,
@@ -90,7 +91,15 @@ export default function ItemDetail() {
 
   const update = trpc.items.update.useMutation({ onSuccess: invalidate });
   const setArchived = trpc.items.setArchived.useMutation({ onSuccess: invalidate });
-  const remove = trpc.items.remove.useMutation({ onSuccess: () => navigate(-1) });
+  const remove = trpc.items.remove.useMutation({
+    onSuccess: (res) => {
+      if ("ok" in res && res.ok === false) {
+        alert(res.error);
+        return;
+      }
+      navigate(-1);
+    },
+  });
   const addAttachment = trpc.attachments.add.useMutation({
     onSuccess: () => {
       setNewNote("");
@@ -138,27 +147,29 @@ export default function ItemDetail() {
     setEditingAttrs(false);
   };
 
-  const houses = trpc.houses.list.useQuery();
-  const [locHouse, setLocHouse] = useState<number | "">("");
-  const [locFloor, setLocFloor] = useState("");
-  const [locRoom, setLocRoom] = useState("");
+  const [loc, setLoc] = useState<{ houseId: number | null; floor: string; room: string }>({
+    houseId: null,
+    floor: "",
+    room: "",
+  });
   const [editingLoc, setEditingLoc] = useState(false);
   const startEditLoc = () => {
-    setLocHouse(it.houseId ?? "");
-    setLocFloor(it.floor ?? "");
-    setLocRoom(it.room ?? "");
+    setLoc({ houseId: it.houseId ?? null, floor: it.floor ?? "", room: it.room ?? "" });
     setEditingLoc(true);
   };
   const saveLoc = () => {
     update.mutate({
       id: itemId,
-      houseId: locHouse === "" ? null : Number(locHouse),
-      floor: locFloor || null,
-      room: locRoom || null,
+      houseId: loc.houseId,
+      floor: loc.floor || null,
+      room: loc.room || null,
     });
     setEditingLoc(false);
   };
-  const FLOORS = ["basement", "ground", "1", "2", "3", "attic"];
+
+  const setParent = trpc.items.setParent.useMutation({ onSuccess: invalidate });
+  const createChild = trpc.items.create.useMutation({ onSuccess: invalidate });
+  const [childName, setChildName] = useState("");
 
   const uploadFile = async (f: File) => {
     const contentBase64 = await fileToBase64(f);
@@ -436,35 +447,79 @@ export default function ItemDetail() {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-2">
-                <select
-                  className="rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
-                  value={locHouse}
-                  onChange={(e) => setLocHouse(e.target.value === "" ? "" : Number(e.target.value))}
-                >
-                  <option value="">house…</option>
-                  {(houses.data ?? []).map((h) => (
-                    <option key={h.id} value={h.id}>{h.name}</option>
-                  ))}
-                </select>
-                <select
-                  className="rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
-                  value={locFloor}
-                  onChange={(e) => setLocFloor(e.target.value)}
-                >
-                  <option value="">floor…</option>
-                  {FLOORS.map((f) => (
-                    <option key={f} value={f}>{f}</option>
-                  ))}
-                </select>
-                <input
-                  className="rounded-md border border-input px-2 py-1.5 text-[13px]"
-                  placeholder="room"
-                  value={locRoom}
-                  onChange={(e) => setLocRoom(e.target.value)}
-                />
+              <div className="space-y-2">
+                <RoomPicker value={loc} onChange={setLoc} />
+                <p className="text-[10px] text-muted-foreground">
+                  Area = what the thing is (computers). This = where it physically is.
+                </p>
               </div>
             )}
+          </section>
+
+          {/* sub-objects: set → mouse, cupboard → shelf, … (nesting) */}
+          <section className="rounded-lg border border-border bg-white p-4">
+            <h2 className="micro-label text-muted-foreground mb-2">
+              Sub-objects {it.children.length > 0 && `(${it.children.length})`}
+            </h2>
+            {it.children.length === 0 && (
+              <div className="text-[13px] text-muted-foreground">None — parts, accessories or contents live here.</div>
+            )}
+            <div className="space-y-1">
+              {it.children.map((c) => (
+                <div key={c.id} className="flex items-center gap-2 text-[13px] group">
+                  <Link to={`/items/${c.id}`} className="text-primary hover:underline flex-1 truncate">
+                    {c.name}
+                  </Link>
+                  <button
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
+                    title="Detach (does not delete the sub-object)"
+                    onClick={() => setParent.mutate({ id: c.id, parentId: null })}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-1.5 mt-2">
+              <input
+                className="flex-1 rounded border border-input px-2 py-1 text-[12px]"
+                placeholder="new sub-object (e.g. mouse, monitor)…"
+                value={childName}
+                onChange={(e) => setChildName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && childName.trim()) {
+                    createChild.mutate({
+                      areaId: it.areaId,
+                      name: childName.trim(),
+                      parentId: it.id,
+                      houseId: it.houseId,
+                      floor: it.floor,
+                      room: it.room,
+                    });
+                    setChildName("");
+                  }
+                }}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[11px]"
+                disabled={!childName.trim() || createChild.isPending}
+                onClick={() => {
+                  createChild.mutate({
+                    areaId: it.areaId,
+                    name: childName.trim(),
+                    parentId: it.id,
+                    houseId: it.houseId,
+                    floor: it.floor,
+                    room: it.room,
+                  });
+                  setChildName("");
+                }}
+              >
+                <Plus className="h-3 w-3 mr-0.5" /> add
+              </Button>
+            </div>
           </section>
         </div>
 

@@ -35,6 +35,7 @@ await ensureColumn("photo_annotations", "hPct", "`hPct` double NULL");
 await ensureColumn("items", "houseId", "`houseId` bigint unsigned NULL");
 await ensureColumn("items", "floor", "`floor` varchar(32) NULL");
 await ensureColumn("items", "room", "`room` varchar(128) NULL");
+await ensureColumn("items", "parentId", "`parentId` bigint unsigned NULL");
 
 // houses table (idempotent create)
 await conn.query(`CREATE TABLE IF NOT EXISTS houses (

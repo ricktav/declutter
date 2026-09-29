@@ -127,7 +127,11 @@ export default function AreaView() {
     },
   });
   const removeItem = trpc.items.remove.useMutation({
-    onSuccess: () => {
+    onSuccess: (res) => {
+      if ("ok" in res && res.ok === false) {
+        alert(res.error);
+        return;
+      }
       utils.items.listByArea.invalidate();
       utils.areas.list.invalidate();
     },

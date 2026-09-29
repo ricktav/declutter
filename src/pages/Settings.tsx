@@ -51,49 +51,77 @@ export default function SettingsPage() {
   const runTest = async () => {
     setTesting(true);
     setTestResult(null);
-    const res = await test.mutateAsync({
-      llmBaseUrl: baseUrl || undefined,
-      llmApiKey: apiKey || undefined,
-    });
-    setTestResult(res);
+    try {
+      const res = await Promise.race([
+        test.mutateAsync({
+          llmBaseUrl: baseUrl || undefined,
+          llmApiKey: apiKey || undefined,
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out after 25s — the provider did not answer. Check the base URL.")), 26_000)),
+      ]);
+      setTestResult(res);
+    } catch (e) {
+      setTestResult({ ok: false, error: (e as Error).message });
+    }
     setTesting(false);
   };
 
   const runBTest = async () => {
     setBTesting(true);
     setBTestResult(null);
-    const res = await test.mutateAsync({
-      llmBaseUrl: bBaseUrl || undefined,
-      llmApiKey: bApiKey || undefined,
-      provider: "2",
-    });
-    setBTestResult(res);
+    try {
+      const res = await Promise.race([
+        test.mutateAsync({
+          llmBaseUrl: bBaseUrl || undefined,
+          llmApiKey: bApiKey || undefined,
+          provider: "2",
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out after 25s — the provider did not answer.")), 26_000)),
+      ]);
+      setBTestResult(res);
+    } catch (e) {
+      setBTestResult({ ok: false, error: (e as Error).message });
+    }
     setBTesting(false);
   };
 
   const runPromptTest = async () => {
     setPromptTesting(true);
     setPromptResult(null);
-    const res = await testPrompt.mutateAsync({
-      llmBaseUrl: baseUrl || undefined,
-      llmApiKey: apiKey || undefined,
-      model,
-      provider: "1",
-    });
-    setPromptResult(res);
+    try {
+      const res = await Promise.race([
+        testPrompt.mutateAsync({
+          llmBaseUrl: baseUrl || undefined,
+          llmApiKey: apiKey || undefined,
+          model,
+          provider: "1",
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out after 30s — the provider did not reply. Check base URL, key and model.")), 31_000)),
+      ]);
+      setPromptResult(res);
+    } catch (e) {
+      setPromptResult({ ok: false, error: (e as Error).message });
+    }
     setPromptTesting(false);
   };
 
   const runBPromptTest = async () => {
     setBPromptTesting(true);
     setBPromptResult(null);
-    const res = await testPrompt.mutateAsync({
-      llmBaseUrl: bBaseUrl || undefined,
-      llmApiKey: bApiKey || undefined,
-      model: bModel,
-      provider: "2",
-    });
-    setBPromptResult(res);
+    try {
+      const res = await Promise.race([
+        testPrompt.mutateAsync({
+          llmBaseUrl: bBaseUrl || undefined,
+          llmApiKey: bApiKey || undefined,
+          model: bModel,
+          provider: "2",
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out after 30s — the provider did not reply.")), 31_000)),
+      ]);
+      setBPromptResult(res);
+    } catch (e) {
+      setBPromptResult({ ok: false, error: (e as Error).message });
+    }
     setBPromptTesting(false);
   };
 
@@ -110,6 +138,12 @@ export default function SettingsPage() {
       <p className="text-sm text-muted-foreground mt-1">
         LLM provider for triage, chat, object detection and wiki enhancement.
       </p>
+      {current.isError && (
+        <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+          Could not load provider info: {String((current.error as { message?: string })?.message ?? current.error) ?? "server error"}. Fields below show
+          what is saved in the app; restart the dev server if you just edited <span className="font-data">.env</span>.
+        </div>
+      )}
 
       <div className="mt-4 rounded-lg border border-border bg-white px-4 py-3 flex items-center gap-2 text-[13px]">
         <Plug className="h-4 w-4 text-muted-foreground" />

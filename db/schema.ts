@@ -52,6 +52,7 @@ export const items = mysqlTable(
     id: serial("id").primaryKey(),
     areaId: bigint("areaId", { mode: "number", unsigned: true }).notNull(),
     houseId: bigint("houseId", { mode: "number", unsigned: true }),
+    parentId: bigint("parentId", { mode: "number", unsigned: true }),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
     status: varchar("status", { length: 32 }).$type<"active" | "archived">().notNull().default("active"),

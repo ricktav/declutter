@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, desc, or, and } from "drizzle-orm";
+import { eq, desc, or, and, asc } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -92,6 +92,11 @@ export const itemsRouter = createRouter({
       .from(tasks)
       .where(eq(tasks.itemId, item.id))
       .orderBy(desc(tasks.createdAt));
+    const children = await db
+      .select()
+      .from(items)
+      .where(eq(items.parentId, item.id))
+      .orderBy(asc(items.name));
     const links = await db.select().from(ideaItems).where(eq(ideaItems.itemId, item.id));
     const itemIdeas = links.length
       ? await db
@@ -115,6 +120,7 @@ export const itemsRouter = createRouter({
       })),
       tasks: itemTasks,
       ideas: itemIdeas,
+      children,
     };
   }),
 
@@ -125,6 +131,10 @@ export const itemsRouter = createRouter({
         name: z.string().min(1),
         description: z.string().optional(),
         attributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+        parentId: z.number().nullable().optional(),
+        houseId: z.number().nullable().optional(),
+        floor: z.string().nullable().optional(),
+        room: z.string().nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -136,6 +146,10 @@ export const itemsRouter = createRouter({
           name: input.name,
           description: input.description ?? null,
           attributes: input.attributes ?? null,
+          parentId: input.parentId ?? null,
+          houseId: input.houseId ?? null,
+          floor: input.floor ?? null,
+          room: input.room ?? null,
         })
         .$returningId();
       await logEvent({
@@ -286,6 +300,17 @@ export const itemsRouter = createRouter({
   remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
+    const children = await db
+      .select({ id: items.id })
+      .from(items)
+      .where(eq(items.parentId, input.id));
+    if (children.length > 0) {
+      return {
+        ok: false as const,
+        error: `Cannot delete "${item?.name ?? "item"}" — ${children.length} sub-object(s) are attached to it. Delete or move those first.`,
+      };
+    }
+    await db.update(items).set({ parentId: null }).where(eq(items.parentId, input.id));
     await db.delete(relations).where(
       or(eq(relations.fromItemId, input.id), eq(relations.toItemId, input.id)),
     );
@@ -298,8 +323,41 @@ export const itemsRouter = createRouter({
       action: "deleted",
       summary: `Item "${item?.name ?? input.id}" deleted`,
     });
-    return { ok: true };
+    return { ok: true as const };
   }),
+
+  /** attach/detach a sub-object (set → mouse, cupboard → shelf) */
+  setParent: publicQuery
+    .input(z.object({ id: z.number(), parentId: z.number().nullable() }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      if (input.parentId) {
+        if (input.parentId === input.id) {
+          return { ok: false as const, error: "An item cannot contain itself." };
+        }
+        // prevent cycles: walk up the chain from the new parent
+        let cursor = input.parentId;
+        const visited = new Set<number>();
+        for (let i = 0; i < 50; i++) {
+          if (visited.has(cursor)) break;
+          visited.add(cursor);
+          if (cursor === input.id) {
+            return { ok: false as const, error: "That would create a loop (an object cannot contain itself, directly or indirectly)." };
+          }
+          const p = await db.query.items.findFirst({ where: eq(items.id, cursor) });
+          if (!p?.parentId) break;
+          cursor = p.parentId;
+        }
+      }
+      await db.update(items).set({ parentId: input.parentId }).where(eq(items.id, input.id));
+      await logEvent({
+        entityType: "item",
+        entityId: input.id,
+        action: input.parentId ? "attached" : "detached",
+        summary: input.parentId ? `Item #${input.id} attached under #${input.parentId}` : `Item #${input.id} detached from its parent`,
+      });
+      return { ok: true as const };
+    }),
 
   // ---- relations ----
   addRelation: publicQuery

@@ -120,7 +120,7 @@ export const settingsRouter = createRouter({
       try {
         const res = await fetch(`${baseURL}/models`, {
           headers: { Authorization: `Bearer ${apiKey}` },
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(20_000),
         });
         const text = await res.text();
         if (!res.ok) {
@@ -172,7 +172,7 @@ export const settingsRouter = createRouter({
             messages: [{ role: "user", content: "Reply with exactly: ok" }],
             max_tokens: 16,
           }),
-          signal: AbortSignal.timeout(60_000),
+          signal: AbortSignal.timeout(25_000),
         });
         const ms = Date.now() - started;
         const text = await res.text();

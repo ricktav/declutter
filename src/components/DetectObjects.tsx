@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AreaPicker } from "@/components/AreaPicker";
+import { RoomPicker } from "@/components/RoomPicker";
 import { Check, Loader2, ScanSearch, AlertTriangle } from "lucide-react";
 
 type Suggestion = {
@@ -110,10 +111,11 @@ export function DetectObjectsModal({
   const [mode, setMode] = useState<"existing" | "new">("existing");
   const [newName, setNewName] = useState("");
   const [newArea, setNewArea] = useState<number | null>(null);
-  const [houseId, setHouseId] = useState<number | null>(null);
-  const [floor, setFloor] = useState("");
-  const [room, setRoom] = useState("");
-  const houses = trpc.houses.list.useQuery();
+  const [loc, setLoc] = useState<{ houseId: number | null; floor: string; room: string }>({
+    houseId: null,
+    floor: "",
+    room: "",
+  });
   const areas = trpc.areas.list.useQuery();
 
   const captureQuery = trpc.inbox.list.useQuery(undefined, { enabled: open });
@@ -135,9 +137,7 @@ export function DetectObjectsModal({
       setAiError(null);
       setMode("existing");
       setNewName("");
-      setHouseId(null);
-      setFloor("");
-      setRoom("");
+      setLoc({ houseId: null, floor: "", room: "" });
     }
   }, [open]);
 
@@ -187,25 +187,25 @@ export function DetectObjectsModal({
       itemId: mode === "existing" ? sel.matchedItemId : null,
       itemName: mode === "existing" ? (sel.matchedItemName ?? sel.label) : newName.trim() || sel.label,
       areaId: newArea ?? selAreaDefault ?? 0,
-      houseId: houseId ?? null,
-      floor: floor || undefined,
-      room: room || undefined,
+      houseId: loc.houseId ?? null,
+      floor: loc.floor || undefined,
+      room: loc.room || undefined,
       markProcessed,
     });
   };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
+      <DialogContent className="w-screen h-[100dvh] max-w-none rounded-none p-4 overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Detect objects in snap</DialogTitle>
+          <DialogTitle>Detect objects in snap — drag boxes on the original, file each as a cutout</DialogTitle>
         </DialogHeader>
 
-        <div className="flex gap-4 items-start">
-          <div className="flex-1 min-w-0 rounded-lg border border-border bg-white p-2">
+        <div className="flex gap-4 items-start h-[calc(100dvh-7rem)]">
+          <div className="flex-1 min-w-0 rounded-lg border border-border bg-white p-2 overflow-auto h-full flex items-start">
             {imgUrl.data?.url ? (
-              <div className="relative select-none">
-                <img src={imgUrl.data.url} alt="snap" className="w-full rounded" draggable={false} />
+              <div className="relative select-none mx-auto">
+                <img src={imgUrl.data.url} alt="snap" className="max-h-[calc(100dvh-9rem)] w-auto rounded" draggable={false} />
                 {suggestions.map((s) => (
                   <Box
                     key={s.key}
@@ -221,12 +221,12 @@ export function DetectObjectsModal({
               <div className="py-16 text-center text-[13px] text-muted-foreground">Loading photo…</div>
             )}
             <div className="mt-2 text-[11px] text-muted-foreground">
-              Boxes are the cutouts — drag to move, corner handle to resize. Each confirmed object gets its own
-              cropped image linked to the item (more snaps = more angles).
+              Full-size view. Boxes are the cutouts — drag to move, corner handle to resize. Each confirmed object
+              gets its own cropped image linked to the item (more snaps = more angles).
             </div>
           </div>
 
-          <aside className="w-80 shrink-0 space-y-3">
+          <aside className="w-80 shrink-0 space-y-3 overflow-y-auto h-full pb-4">
             <Button
               size="sm"
               className="w-full h-8 text-[12px]"
@@ -323,34 +323,7 @@ export function DetectObjectsModal({
                   </div>
                 )}
 
-                <div className="grid grid-cols-3 gap-1.5">
-                  <select
-                    className="rounded border border-input bg-white px-1.5 py-1 text-[11px]"
-                    value={houseId ?? ""}
-                    onChange={(e) => setHouseId(e.target.value ? Number(e.target.value) : null)}
-                  >
-                    <option value="">house…</option>
-                    {(houses.data ?? []).map((h) => (
-                      <option key={h.id} value={h.id}>{h.name}</option>
-                    ))}
-                  </select>
-                  <select
-                    className="rounded border border-input bg-white px-1.5 py-1 text-[11px]"
-                    value={floor}
-                    onChange={(e) => setFloor(e.target.value)}
-                  >
-                    <option value="">floor…</option>
-                    {["basement", "ground", "1", "2", "3", "attic"].map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-                  <input
-                    className="rounded border border-input bg-white px-1.5 py-1 text-[11px]"
-                    placeholder="room"
-                    value={room}
-                    onChange={(e) => setRoom(e.target.value)}
-                  />
-                </div>
+                <RoomPicker value={loc} onChange={setLoc} />
 
                 <div className="flex gap-2 pt-1">
                   <Button
