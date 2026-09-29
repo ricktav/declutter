@@ -196,14 +196,21 @@ export function DetectObjectsModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="w-screen h-[100dvh] max-w-none rounded-none p-4 overflow-y-auto">
+      <DialogContent className="w-screen h-[100dvh] max-w-none sm:max-w-none rounded-none p-4 overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Detect objects in snap — drag boxes on the original, file each as a cutout</DialogTitle>
         </DialogHeader>
 
         <div className="flex gap-4 items-start h-[calc(100dvh-7rem)]">
           <div className="flex-1 min-w-0 rounded-lg border border-border bg-white p-2 overflow-auto h-full flex items-start">
-            {imgUrl.data?.url ? (
+            {imgUrl.isError ? (
+              <div className="py-16 text-center text-[13px]">
+                <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 inline-block">
+                  Photo unavailable: {imgUrl.error instanceof Error ? imgUrl.error.message : "could not resolve URL"}
+                  <div className="mt-0.5 font-data text-[10px] break-all text-amber-700">key: {captureKey}</div>
+                </div>
+              </div>
+            ) : imgUrl.data?.url ? (
               <div className="relative select-none mx-auto">
                 <img src={imgUrl.data.url} alt="snap" className="max-h-[calc(100dvh-9rem)] w-auto rounded" draggable={false} />
                 {suggestions.map((s) => (

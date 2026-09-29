@@ -29,6 +29,7 @@ function AttachmentView({ att }: { att: { id: number; kind: string; title: strin
     { key: att.storageKey! },
     { enabled: !!att.storageKey && att.kind === "image" },
   );
+  const [imgFailed, setImgFailed] = useState(false);
   if (att.kind === "link")
     return (
       <a href={att.url ?? "#"} target="_blank" rel="noreferrer"
@@ -38,11 +39,33 @@ function AttachmentView({ att }: { att: { id: number; kind: string; title: strin
         <ExternalLink className="h-3 w-3 shrink-0" />
       </a>
     );
+  if (att.kind === "image" && url.isError)
+    return (
+      <div className="rounded border border-amber-300 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+        <span className="font-medium">Image unavailable:</span>{" "}
+        {url.error instanceof Error ? url.error.message : "could not resolve storage URL"}
+        <div className="mt-0.5 font-data text-[10px] break-all text-amber-700">key: {att.storageKey}</div>
+      </div>
+    );
+  if (att.kind === "image" && imgFailed && url.data?.url)
+    return (
+      <div className="rounded border border-amber-300 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+        <span className="font-medium">Image failed to load</span> — the file may be missing on disk.
+        <a href={url.data.url} target="_blank" rel="noreferrer" className="block mt-0.5 font-data text-[10px] break-all text-amber-700 underline">
+          {url.data.url}
+        </a>
+      </div>
+    );
   if (att.kind === "image" && url.data?.url)
     return (
       <div>
         <a href={url.data.url} target="_blank" rel="noreferrer">
-          <img src={url.data.url} alt={att.title ?? ""} className="max-h-40 rounded border border-border" />
+          <img
+            src={url.data.url}
+            alt={att.title ?? ""}
+            className="max-h-40 rounded border border-border"
+            onError={() => setImgFailed(true)}
+          />
         </a>
         <div className="flex items-center gap-2 mt-0.5">
           {att.title && <div className="text-[11px] text-muted-foreground">{att.title}</div>}

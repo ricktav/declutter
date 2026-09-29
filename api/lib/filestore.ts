@@ -46,19 +46,36 @@ export async function putFile(opts: {
   return { key: `local/${rel}`, size: opts.bytes.byteLength };
 }
 
+/** Strip a legacy "uploads/" prefix if present. */
+function stripLegacy(key: string): string {
+  return key.replace(/^uploads\//, "");
+}
+
 export async function readFileBytes(key: string): Promise<Uint8Array> {
   if (key.startsWith("local/")) {
     const rel = key.slice("local/".length);
     return new Uint8Array(fs.readFileSync(path.join(UPLOAD_DIR, rel)));
   }
+  if (key.startsWith("plat/")) {
+    const { storage } = await import("./storage");
+    return storage.readFile({ fileKey: key.slice(5) });
+  }
+  // bare key (legacy): try local disk first, platform storage second
+  const rel = stripLegacy(key);
+  const localPath = path.join(UPLOAD_DIR, rel);
+  if (fs.existsSync(localPath)) return new Uint8Array(fs.readFileSync(localPath));
   const { storage } = await import("./storage");
-  return storage.readFile({ fileKey: key.startsWith("plat/") ? key.slice(5) : key });
+  return storage.readFile({ fileKey: key });
 }
 
 export async function deleteStoredFile(key: string): Promise<void> {
   if (key.startsWith("local/")) {
     const rel = key.slice("local/".length);
     fs.rmSync(path.join(UPLOAD_DIR, rel), { force: true });
+    return;
+  }
+  if (!key.startsWith("plat/") && fs.existsSync(path.join(UPLOAD_DIR, stripLegacy(key)))) {
+    fs.rmSync(path.join(UPLOAD_DIR, stripLegacy(key)), { force: true });
     return;
   }
   try {
@@ -73,6 +90,11 @@ export async function deleteStoredFile(key: string): Promise<void> {
 export async function urlForKey(key: string): Promise<string | null> {
   if (key.startsWith("local/")) {
     return `/uploads/${key.slice("local/".length)}`;
+  }
+  if (!key.startsWith("plat/")) {
+    // bare key (legacy): serve from local disk if the file is there
+    const rel = stripLegacy(key);
+    if (fs.existsSync(path.join(UPLOAD_DIR, rel))) return `/uploads/${rel}`;
   }
   try {
     const { storage } = await import("./storage");
