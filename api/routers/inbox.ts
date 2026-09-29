@@ -19,9 +19,17 @@ const detectObjectsSchema = z.object({
       yPct: z.number().min(0).max(100).describe("vertical center, 0-100% of image height"),
       wPct: z.number().min(1).max(100).describe("width of the bounding box, 0-100% of image width"),
       hPct: z.number().min(1).max(100).describe("height of the bounding box, 0-100% of image height"),
+      matchedItemId: z
+        .number()
+        .nullable()
+        .describe(
+          "if this object visually matches one of the reference photos shown above (same physical object, not just the same category), the exact item ID given in that photo's caption. Otherwise null - do not guess from the name alone.",
+        ),
     }),
   ),
 });
+
+const MAX_REFERENCE_PHOTOS = 20;
 
 /** crude name-similarity, same approach as the items router */
 function nameScore(a: string, b: string): number {
@@ -257,7 +265,35 @@ export const inboxRouter = createRouter({
     }
     try {
       const bytes = await readFileBytes(cap.storageKey);
-      const allItems = await db.select().from(items).where(eq(items.status, "active"));
+      const allItems = await db
+        .select()
+        .from(items)
+        .where(eq(items.status, "active"))
+        .orderBy(desc(items.updatedAt));
+
+      // reference photos let the model recognize a re-photographed item by
+      // sight instead of guessing from name text alone (which misses
+      // whenever it phrases the label differently the second time round)
+      const photoRows = await db
+        .select({ itemId: attachments.itemId, storageKey: attachments.storageKey })
+        .from(attachments)
+        .where(eq(attachments.kind, "image"));
+      const photoByItem = new Map<number, string>();
+      for (const p of photoRows) {
+        if (p.itemId && p.storageKey && !photoByItem.has(p.itemId)) photoByItem.set(p.itemId, p.storageKey);
+      }
+      const refItems = allItems.filter((it) => photoByItem.has(it.id)).slice(0, MAX_REFERENCE_PHOTOS);
+      const refContent: Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }> = [];
+      for (const it of refItems) {
+        try {
+          const refBytes = await readFileBytes(photoByItem.get(it.id)!);
+          refContent.push({ type: "text", text: `Reference photo — existing item [id ${it.id}]: "${it.name}"` });
+          refContent.push({ type: "image", image: refBytes });
+        } catch {
+          // file missing on disk — skip this one reference, not fatal
+        }
+      }
+
       const model = await getVisionModel();
       const { object } = await generateObject({
         model,
@@ -266,16 +302,24 @@ export const inboxRouter = createRouter({
           {
             role: "user",
             content: [
+              ...refContent,
               {
                 type: "text",
-                text: `Identify the distinct physical objects worth inventorying in this photo (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. For each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height. Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\nThe user's existing inventory items (your label will be matched against these names):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`,
+                text: `Identify the distinct physical objects worth inventorying in the PHOTO BELOW (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. For each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height. Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — a name-only guess is not enough, only match if you actually recognize it visually.\n\n" : ""}The user's full existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}\n\nPHOTO TO ANALYZE:`,
               },
               { type: "image", image: bytes },
             ],
           },
         ],
       });
+      const itemById = new Map(allItems.map((it) => [it.id, it]));
       const suggestions = object.objects.slice(0, 15).map((o) => {
+        // trust the model's own visual match (it saw the reference photo) over
+        // text similarity; fall back to name-overlap only when it found nothing
+        const visualMatch = o.matchedItemId != null ? itemById.get(o.matchedItemId) : undefined;
+        if (visualMatch) {
+          return { ...o, matchedItemId: visualMatch.id, matchedItemName: visualMatch.name, matchScore: 95 };
+        }
         let matchedItemId: number | null = null;
         let matchedItemName: string | null = null;
         let best = 0;

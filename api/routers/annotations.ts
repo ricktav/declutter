@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, or } from "drizzle-orm";
+import { eq, or, desc } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -28,9 +28,17 @@ const detectSchema = z.object({
       yPct: z.number().min(0).max(100).describe("vertical center, 0-100% of image height"),
       wPct: z.number().min(0).max(100).optional().describe("width of the bounding box, 0-100% of image width"),
       hPct: z.number().min(0).max(100).optional().describe("height of the bounding box, 0-100% of image height"),
+      matchedItemId: z
+        .number()
+        .nullable()
+        .describe(
+          "if this object visually matches one of the reference photos shown above (same physical object, not just the same category), the exact item ID given in that photo's caption. Otherwise null - do not guess from the name alone.",
+        ),
     }),
   ),
 });
+
+const MAX_REFERENCE_PHOTOS = 20;
 
 export const annotationsRouter = createRouter({
   listForAttachment: publicQuery
@@ -172,7 +180,33 @@ export const annotationsRouter = createRouter({
 
       try {
         const bytes = await readFileBytes(att.storageKey);
-        const allItems = await db.select().from(items).where(eq(items.status, "active"));
+        const allItems = await db
+          .select()
+          .from(items)
+          .where(eq(items.status, "active"))
+          .orderBy(desc(items.updatedAt));
+
+        // reference photos let the model recognize a re-photographed item by
+        // sight instead of guessing from name text alone
+        const photoRows = await db
+          .select({ itemId: attachments.itemId, storageKey: attachments.storageKey })
+          .from(attachments)
+          .where(eq(attachments.kind, "image"));
+        const photoByItem = new Map<number, string>();
+        for (const p of photoRows) {
+          if (p.itemId && p.storageKey && !photoByItem.has(p.itemId)) photoByItem.set(p.itemId, p.storageKey);
+        }
+        const refItems = allItems.filter((it) => photoByItem.has(it.id)).slice(0, MAX_REFERENCE_PHOTOS);
+        const refContent: Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }> = [];
+        for (const it of refItems) {
+          try {
+            const refBytes = await readFileBytes(photoByItem.get(it.id)!);
+            refContent.push({ type: "text", text: `Reference photo — existing item [id ${it.id}]: "${it.name}"` });
+            refContent.push({ type: "image", image: refBytes });
+          } catch {
+            // file missing on disk — skip this one reference, not fatal
+          }
+        }
 
         const model = await getVisionModel();
         const { object } = await generateObject({
@@ -182,9 +216,10 @@ export const annotationsRouter = createRouter({
             {
               role: "user",
               content: [
+                ...refContent,
                 {
                   type: "text",
-                  text: `Identify the distinct physical objects worth inventorying in this photo (devices, tools, containers, appliances, furniture — NOT wall, floor, ceiling, windows, or other background). List up to 15 of the most significant objects. Do not pad the list with duplicates, parts of already-listed objects, or background — fewer accurate objects is better than many vague ones.\n\nFor each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height.\n\nThe user's existing inventory items (match labels to these names when they clearly refer to the same object):\n${allItems.slice(0, 200).map((i) => `- ${i.name}`).join("\n") || "(none yet)"}`,
+                  text: `Identify the distinct physical objects worth inventorying in the PHOTO BELOW (devices, tools, containers, appliances, furniture — NOT wall, floor, ceiling, windows, or other background). List up to 15 of the most significant objects. Do not pad the list with duplicates, parts of already-listed objects, or background — fewer accurate objects is better than many vague ones.\n\nFor each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height.\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}The user's full existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}\n\nPHOTO TO ANALYZE:`,
                 },
                 { type: "image", image: bytes },
               ],
@@ -192,20 +227,25 @@ export const annotationsRouter = createRouter({
           ],
         });
 
+        const itemById = new Map(allItems.map((it) => [it.id, it]));
         let created = 0;
         let matched = 0;
         for (const obj of object.objects.slice(0, 30)) {
-          let itemId: number | null = null;
-          let best = 0;
-          for (const it of allItems) {
-            const s = nameScore(obj.label, it.name);
-            if (s > best) {
-              best = s;
-              itemId = it.id;
+          let itemId: number | null = obj.matchedItemId != null && itemById.has(obj.matchedItemId) ? obj.matchedItemId : null;
+          if (itemId) {
+            matched++;
+          } else {
+            let best = 0;
+            for (const it of allItems) {
+              const s = nameScore(obj.label, it.name);
+              if (s > best) {
+                best = s;
+                itemId = it.id;
+              }
             }
+            if (best < 0.5) itemId = null;
+            else matched++;
           }
-          if (best < 0.5) itemId = null;
-          else matched++;
           await db.insert(photoAnnotations).values({
             attachmentId: input.attachmentId,
             xPct: obj.xPct,
