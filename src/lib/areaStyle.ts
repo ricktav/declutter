@@ -6,8 +6,8 @@ import {
   Wrench,
   BookOpen,
   Film,
-  LucideIcon,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 export const AREA_ICONS: { key: string; label: string; icon: LucideIcon }[] = [
   { key: "box", label: "Box", icon: Box },
