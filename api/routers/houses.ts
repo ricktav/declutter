@@ -1,0 +1,82 @@
+import { z } from "zod";
+import { eq, asc } from "drizzle-orm";
+import { createRouter, publicQuery } from "../middleware";
+import { getDb } from "../queries/connection";
+import { houses, items } from "@db/schema";
+import { logEvent } from "../lib/events";
+
+export const housesRouter = createRouter({
+  list: publicQuery.query(async () => {
+    const db = getDb();
+    const all = await db.select().from(houses).orderBy(asc(houses.name), asc(houses.id));
+    const counts = await db.select({ houseId: items.houseId, count: items.id }).from(items);
+    const countMap = new Map<number, number>();
+    for (const c of counts) {
+      if (c.houseId) countMap.set(c.houseId, (countMap.get(c.houseId) ?? 0) + 1);
+    }
+    return all.map((h) => ({ ...h, itemCount: countMap.get(h.id) ?? 0 }));
+  }),
+
+  create: publicQuery
+    .input(
+      z.object({
+        name: z.string().min(1),
+        address: z.string().optional(),
+        lat: z.number().min(-90).max(90).optional(),
+        lng: z.number().min(-180).max(180).optional(),
+        notes: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const [{ id }] = await db
+        .insert(houses)
+        .values({
+          name: input.name,
+          address: input.address ?? null,
+          lat: input.lat ?? null,
+          lng: input.lng ?? null,
+          notes: input.notes ?? null,
+        })
+        .$returningId();
+      await logEvent({
+        entityType: "house",
+        entityId: id,
+        action: "created",
+        summary: `House "${input.name}" added`,
+      });
+      return db.query.houses.findFirst({ where: eq(houses.id, id) });
+    }),
+
+  update: publicQuery
+    .input(
+      z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        address: z.string().nullable().optional(),
+        lat: z.number().min(-90).max(90).nullable().optional(),
+        lng: z.number().min(-180).max(180).nullable().optional(),
+        notes: z.string().nullable().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { id, ...rest } = input;
+      const patch: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
+      await getDb().update(houses).set(patch).where(eq(houses.id, id));
+      return { ok: true };
+    }),
+
+  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    const db = getDb();
+    await db.update(items).set({ houseId: null }).where(eq(items.houseId, input.id));
+    await db.delete(houses).where(eq(houses.id, input.id));
+    await logEvent({
+      entityType: "house",
+      entityId: input.id,
+      action: "deleted",
+      summary: `House #${input.id} deleted (items unassigned)`,
+    });
+    return { ok: true };
+  }),
+});

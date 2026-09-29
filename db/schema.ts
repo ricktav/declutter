@@ -36,20 +36,33 @@ export interface AttributeDef {
 // ---------------------------------------------------------------------------
 // Items — things inside an area. attributes = free-form key/value map.
 // ---------------------------------------------------------------------------
+export const houses = mysqlTable("houses", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  address: text("address"),
+  lat: double("lat"),
+  lng: double("lng"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 export const items = mysqlTable(
   "items",
   {
     id: serial("id").primaryKey(),
     areaId: bigint("areaId", { mode: "number", unsigned: true }).notNull(),
+    houseId: bigint("houseId", { mode: "number", unsigned: true }),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
     status: varchar("status", { length: 32 }).$type<"active" | "archived">().notNull().default("active"),
     attributes: json("attributes").$type<Record<string, string | number>>(),
+    floor: varchar("floor", { length: 32 }),
+    room: varchar("room", { length: 128 }),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
     archivedAt: timestamp("archivedAt"),
   },
-  (t) => [index("items_area_idx").on(t.areaId)],
+  (t) => [index("items_area_idx").on(t.areaId), index("items_house_idx").on(t.houseId)],
 );
 
 // ---------------------------------------------------------------------------
@@ -82,7 +95,7 @@ export const captures = mysqlTable("captures", {
   rawText: text("rawText"),
   url: text("url"),
   storageKey: varchar("storageKey", { length: 512 }),
-  status: varchar("status", { length: 32 }).$type<"pending" | "triaged" | "dismissed">().notNull().default("pending"),
+  status: varchar("status", { length: 32 }).$type<"pending" | "triaged" | "dismissed" | "processed">().notNull().default("pending"),
   suggestion: json("suggestion").$type<TriageSuggestion>(),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });

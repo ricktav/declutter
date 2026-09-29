@@ -32,6 +32,21 @@ async function ensureColumn(table, column, ddl) {
 
 await ensureColumn("photo_annotations", "wPct", "`wPct` double NULL");
 await ensureColumn("photo_annotations", "hPct", "`hPct` double NULL");
+await ensureColumn("items", "houseId", "`houseId` bigint unsigned NULL");
+await ensureColumn("items", "floor", "`floor` varchar(32) NULL");
+await ensureColumn("items", "room", "`room` varchar(128) NULL");
+
+// houses table (idempotent create)
+await conn.query(`CREATE TABLE IF NOT EXISTS houses (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  name varchar(128) NOT NULL,
+  address text NULL,
+  lat double NULL,
+  lng double NULL,
+  notes text NULL,
+  createdAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
 await conn.end();
 console.log("schema up to date");

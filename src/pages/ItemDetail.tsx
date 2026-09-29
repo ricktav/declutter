@@ -138,6 +138,28 @@ export default function ItemDetail() {
     setEditingAttrs(false);
   };
 
+  const houses = trpc.houses.list.useQuery();
+  const [locHouse, setLocHouse] = useState<number | "">("");
+  const [locFloor, setLocFloor] = useState("");
+  const [locRoom, setLocRoom] = useState("");
+  const [editingLoc, setEditingLoc] = useState(false);
+  const startEditLoc = () => {
+    setLocHouse(it.houseId ?? "");
+    setLocFloor(it.floor ?? "");
+    setLocRoom(it.room ?? "");
+    setEditingLoc(true);
+  };
+  const saveLoc = () => {
+    update.mutate({
+      id: itemId,
+      houseId: locHouse === "" ? null : Number(locHouse),
+      floor: locFloor || null,
+      room: locRoom || null,
+    });
+    setEditingLoc(false);
+  };
+  const FLOORS = ["basement", "ground", "1", "2", "3", "attic"];
+
   const uploadFile = async (f: File) => {
     const contentBase64 = await fileToBase64(f);
     addAttachment.mutate({
@@ -382,6 +404,67 @@ export default function ItemDetail() {
                 </div>
               ))}
             </div>
+          </section>
+
+          {/* location: house → floor → room (areas are the topic, not the place) */}
+          <section className="rounded-lg border border-border bg-white p-4">
+            <div className="flex items-center mb-2">
+              <h2 className="micro-label text-muted-foreground">Location</h2>
+              {!editingLoc ? (
+                <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto" onClick={startEditLoc}>
+                  Edit
+                </Button>
+              ) : (
+                <Button size="sm" className="h-6 text-[11px] ml-auto" onClick={saveLoc}>Save</Button>
+              )}
+            </div>
+            {!editingLoc ? (
+              <div className="text-[13px] space-y-0.5">
+                {!it.house && !it.floor && !it.room && (
+                  <div className="text-muted-foreground">No location set.</div>
+                )}
+                {it.house && (
+                  <div>
+                    <b>{it.house.name}</b>
+                    {it.house.address && <span className="text-muted-foreground"> — {it.house.address}</span>}
+                  </div>
+                )}
+                {(it.floor || it.room) && (
+                  <div className="text-muted-foreground">
+                    {[it.floor, it.room].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                <select
+                  className="rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
+                  value={locHouse}
+                  onChange={(e) => setLocHouse(e.target.value === "" ? "" : Number(e.target.value))}
+                >
+                  <option value="">house…</option>
+                  {(houses.data ?? []).map((h) => (
+                    <option key={h.id} value={h.id}>{h.name}</option>
+                  ))}
+                </select>
+                <select
+                  className="rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
+                  value={locFloor}
+                  onChange={(e) => setLocFloor(e.target.value)}
+                >
+                  <option value="">floor…</option>
+                  {FLOORS.map((f) => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+                <input
+                  className="rounded-md border border-input px-2 py-1.5 text-[13px]"
+                  placeholder="room"
+                  value={locRoom}
+                  onChange={(e) => setLocRoom(e.target.value)}
+                />
+              </div>
+            )}
           </section>
         </div>
 

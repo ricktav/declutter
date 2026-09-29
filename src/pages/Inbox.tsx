@@ -2,6 +2,7 @@ import { useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { AreaPicker } from "@/components/AreaPicker";
+import { DetectObjectsModal } from "@/components/DetectObjects";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +23,7 @@ import {
   AlertTriangle,
   Columns2,
   AlertCircle,
+  ScanSearch,
 } from "lucide-react";
 import type { Capture } from "@db/schema";
 
@@ -52,6 +54,7 @@ function TriageCard({ capture }: { capture: Capture }) {
   const [matchedId, setMatchedId] = useState<number | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
+  const [detectOpen, setDetectOpen] = useState(false);
 
   const triage = trpc.inbox.triage.useMutation({
     onSuccess: (res) => {
@@ -108,8 +111,18 @@ function TriageCard({ capture }: { capture: Capture }) {
             )}
           </div>
           {capture.storageKey && capture.kind === "image" && (
-            <div className="mt-2">
-              <CaptureImage storageKey={capture.storageKey} />
+            <div className="mt-2 flex items-start gap-2">
+              <button title="View / detect objects" onClick={() => setDetectOpen(true)}>
+                <CaptureImage storageKey={capture.storageKey} />
+              </button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-[11px]"
+                onClick={() => setDetectOpen(true)}
+              >
+                <ScanSearch className="h-3 w-3 mr-1" /> detect objects
+              </Button>
             </div>
           )}
           <div className="font-data text-[11px] text-muted-foreground mt-1">
@@ -172,6 +185,12 @@ function TriageCard({ capture }: { capture: Capture }) {
           {aiError}
         </div>
       )}
+
+      <DetectObjectsModal
+        captureId={capture.id}
+        open={detectOpen}
+        onClose={() => setDetectOpen(false)}
+      />
 
       <CompareModal
         result={compareResult}

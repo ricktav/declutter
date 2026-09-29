@@ -5,9 +5,34 @@ import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { captures, areas, items, attachments, type TriageSuggestion } from "@db/schema";
 import { logEvent } from "../lib/events";
-import { getModel, getSecondModel } from "../lib/ai";
+import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { putFile, readFileBytes } from "../lib/filestore";
+import { cropPercent } from "../lib/crop";
+
+const detectObjectsSchema = z.object({
+  objects: z.array(
+    z.object({
+      label: z.string().describe("short specific name of the detected object"),
+      xPct: z.number().min(0).max(100).describe("horizontal center, 0-100% of image width"),
+      yPct: z.number().min(0).max(100).describe("vertical center, 0-100% of image height"),
+      wPct: z.number().min(1).max(100).describe("width of the bounding box, 0-100% of image width"),
+      hPct: z.number().min(1).max(100).describe("height of the bounding box, 0-100% of image height"),
+    }),
+  ),
+});
+
+/** crude name-similarity, same approach as the items router */
+function nameScore(a: string, b: string): number {
+  const tok = (s: string) =>
+    new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2));
+  const A = tok(a);
+  const B = tok(b);
+  if (!A.size || !B.size) return 0;
+  let shared = 0;
+  for (const t of A) if (B.has(t)) shared++;
+  return shared / Math.min(A.size, B.size);
+}
 
 const triageSchema = z.object({
   areaSlug: z.string().describe("slug of the best-matching area"),
@@ -237,6 +262,155 @@ export const inboxRouter = createRouter({
   }),
 
   /** Accept a suggestion (possibly edited) — creates/links the item */
+  /** AI: detect objects in an inbox photo, match against inventory — suggestions only, nothing persisted */
+  detectObjects: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    const db = getDb();
+    const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
+    if (!cap?.storageKey) {
+      return { ok: false as const, error: "This capture has no stored image." };
+    }
+    try {
+      const bytes = await readFileBytes(cap.storageKey);
+      const allItems = await db.select().from(items).where(eq(items.status, "active"));
+      const model = await getVisionModel();
+      const { object } = await generateObject({
+        model,
+        schema: detectObjectsSchema,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `Identify the distinct physical objects worth inventorying in this photo (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. For each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height. Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\nThe user's existing inventory items (your label will be matched against these names):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`,
+              },
+              { type: "image", image: bytes },
+            ],
+          },
+        ],
+      });
+      const suggestions = object.objects.slice(0, 15).map((o) => {
+        let matchedItemId: number | null = null;
+        let matchedItemName: string | null = null;
+        let best = 0;
+        for (const it of allItems) {
+          const s = nameScore(o.label, it.name);
+          if (s > best) {
+            best = s;
+            matchedItemId = it.id;
+            matchedItemName = it.name;
+          }
+        }
+        if (best < 0.5) {
+          matchedItemId = null;
+          matchedItemName = null;
+        }
+        return { ...o, matchedItemId, matchedItemName, matchScore: Math.round(best * 100) };
+      });
+      await logEvent({
+        entityType: "capture",
+        entityId: input.id,
+        action: "objects-detected",
+        summary: `AI detected ${suggestions.length} object(s) in inbox capture #${input.id}`,
+        actor: "ai",
+        payload: { count: suggestions.length },
+      });
+      return { ok: true as const, suggestions };
+    } catch (err) {
+      const classified = classifyAiError(err);
+      const raw = (err as { responseBody?: string })?.responseBody;
+      let detail: string | null = null;
+      try {
+        detail = raw ? (JSON.parse(raw).error?.message ?? null) : null;
+      } catch { detail = null; }
+      return { ok: false as const, error: detail ? `${classified.message} — ${detail}` : classified.message };
+    }
+  }),
+
+  /** File one detected object: create/link item + cutout attachment cropped from the original snap */
+  fileObject: publicQuery
+    .input(
+      z.object({
+        id: z.number(), // capture id
+        label: z.string().min(1),
+        xPct: z.number().min(0).max(100),
+        yPct: z.number().min(0).max(100),
+        wPct: z.number().min(1).max(100),
+        hPct: z.number().min(1).max(100),
+        itemId: z.number().nullable(), // null = create new
+        itemName: z.string().min(1), // used when creating
+        areaId: z.number(), // used when creating
+        houseId: z.number().nullable().optional(),
+        floor: z.string().optional(),
+        room: z.string().optional(),
+        markProcessed: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
+      if (!cap?.storageKey) throw new Error("capture has no stored image");
+
+      let itemId = input.itemId;
+      if (!itemId) {
+        const [{ id: newId }] = await db
+          .insert(items)
+          .values({
+            areaId: input.areaId,
+            name: input.itemName,
+            description: `Detected in snap: ${cap.rawText ?? "photo"}`,
+            houseId: input.houseId ?? null,
+            floor: input.floor ?? null,
+            room: input.room ?? null,
+          })
+          .$returningId();
+        itemId = newId;
+        await logEvent({
+          entityType: "item",
+          entityId: itemId,
+          action: "created",
+          summary: `Item "${input.itemName}" created from detected object`,
+          actor: "ai",
+        });
+      }
+
+      // cutout: crop the box from the ORIGINAL snap and store as an attachment
+      const bytes = await readFileBytes(cap.storageKey);
+      const cropped = await cropPercent(bytes, {
+        xPct: input.xPct,
+        yPct: input.yPct,
+        wPct: input.wPct,
+        hPct: input.hPct,
+      });
+      const saved = await putFile({
+        bytes: new Uint8Array(cropped),
+        fileName: `items/${itemId}/cutout-${Date.now()}.jpg`,
+        contentType: "image/jpeg",
+      });
+      const item = await db.query.items.findFirst({ where: eq(items.id, itemId) });
+      await db.insert(attachments).values({
+        itemId,
+        areaId: item?.areaId ?? input.areaId,
+        kind: "image",
+        title: `Cutout: ${input.label}`,
+        storageKey: saved.key,
+        mimeType: "image/jpeg",
+        size: saved.size,
+      });
+      await logEvent({
+        entityType: "item",
+        entityId: itemId,
+        action: "cutout-added",
+        summary: `Cutout "${input.label}" added to item #${itemId} from capture #${input.id}`,
+        actor: "ai",
+        payload: { box: { xPct: input.xPct, yPct: input.yPct, wPct: input.wPct, hPct: input.hPct } },
+      });
+      if (input.markProcessed) {
+        await db.update(captures).set({ status: "processed" }).where(eq(captures.id, input.id));
+      }
+      return { ok: true as const, itemId };
+    }),
+
   accept: publicQuery
     .input(
       z.object({

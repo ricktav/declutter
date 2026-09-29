@@ -3,7 +3,7 @@ import { eq, desc, or, and } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, attachments, relations, tasks, ideaItems, ideas, events } from "@db/schema";
+import { areas, items, attachments, relations, tasks, ideaItems, ideas, events, houses } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { getModel } from "../lib/ai";
 
@@ -54,6 +54,9 @@ export const itemsRouter = createRouter({
     const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
     if (!item) return null;
     const area = await db.query.areas.findFirst({ where: eq(areas.id, item.areaId) });
+    const house = item.houseId
+      ? await db.query.houses.findFirst({ where: eq(houses.id, item.houseId) })
+      : null;
     const atts = await db
       .select()
       .from(attachments)
@@ -99,6 +102,7 @@ export const itemsRouter = createRouter({
     return {
       ...item,
       area,
+      house,
       attachments: atts,
       relations: rels.map((r) => ({
         ...r,
@@ -237,6 +241,9 @@ export const itemsRouter = createRouter({
         name: z.string().min(1).optional(),
         description: z.string().nullable().optional(),
         attributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+        houseId: z.number().nullable().optional(),
+        floor: z.string().nullable().optional(),
+        room: z.string().nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {
