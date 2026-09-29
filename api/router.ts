@@ -11,6 +11,8 @@ import { eventsRouter } from "./routers/events";
 import { annotationsRouter } from "./routers/annotations";
 import { settingsRouter } from "./routers/settings";
 import { housesRouter } from "./routers/houses";
+import { roomsRouter } from "./routers/rooms";
+import { measurementsRouter } from "./routers/measurements";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -26,6 +28,8 @@ export const appRouter = createRouter({
   annotations: annotationsRouter,
   settings: settingsRouter,
   houses: housesRouter,
+  rooms: roomsRouter,
+  measurements: measurementsRouter,
 });
 
 export type AppRouter = typeof appRouter;

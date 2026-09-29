@@ -3,7 +3,7 @@ import { eq, desc, or, and, asc } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, attachments, relations, tasks, ideaItems, ideas, events, houses } from "@db/schema";
+import { areas, items, attachments, relations, tasks, ideaItems, ideas, events, houses, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { getModel } from "../lib/ai";
 
@@ -133,8 +133,13 @@ export const itemsRouter = createRouter({
         attributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
         parentId: z.number().nullable().optional(),
         houseId: z.number().nullable().optional(),
+        roomId: z.number().nullable().optional(),
         floor: z.string().nullable().optional(),
         room: z.string().nullable().optional(),
+        // defaults to "confirmed": a human calling this procedure (via the UI)
+        // already made the decision. Automated filers (normalizer, bot
+        // preprocessing) pass "detected" explicitly.
+        verificationStatus: z.enum(["detected", "confirmed", "rejected"]).optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -148,8 +153,10 @@ export const itemsRouter = createRouter({
           attributes: input.attributes ?? null,
           parentId: input.parentId ?? null,
           houseId: input.houseId ?? null,
+          roomId: input.roomId ?? null,
           floor: input.floor ?? null,
           room: input.room ?? null,
+          verificationStatus: input.verificationStatus ?? "confirmed",
         })
         .$returningId();
       await logEvent({
@@ -256,16 +263,29 @@ export const itemsRouter = createRouter({
         description: z.string().nullable().optional(),
         attributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
         houseId: z.number().nullable().optional(),
+        roomId: z.number().nullable().optional(),
         floor: z.string().nullable().optional(),
         room: z.string().nullable().optional(),
+        pos: z
+          .object({
+            xM: z.number(),
+            yM: z.number(),
+            wM: z.number(),
+            dM: z.number(),
+            rotDeg: z.number(),
+            baseM: z.number().optional(),
+          })
+          .nullable()
+          .optional(),
       }),
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      const { id, attributes, ...rest } = input;
+      const { id, attributes, pos, ...rest } = input;
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
       if (attributes !== undefined) patch.attributes = attributes;
+      if (pos !== undefined) patch.pos = pos as ItemPos | null;
       await db.update(items).set(patch).where(eq(items.id, id));
       await logEvent({
         entityType: "item",
@@ -273,6 +293,35 @@ export const itemsRouter = createRouter({
         action: "updated",
         summary: `Item #${id} updated (${Object.keys(patch).join(", ") || "no changes"})`,
         payload: patch as Record<string, unknown>,
+      });
+      return { ok: true };
+    }),
+
+  /**
+   * The verification gate: distinguishes an item a human actually looked at
+   * from one an AI/scan pipeline auto-filed. Mirrors photoAnnotations'
+   * origin/status pattern. Separate from setArchived's lifecycle status —
+   * an item can be confirmed-and-archived, or detected-and-active.
+   */
+  setVerification: publicQuery
+    .input(
+      z.object({
+        id: z.number(),
+        verificationStatus: z.enum(["detected", "confirmed", "rejected"]),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      await db
+        .update(items)
+        .set({ verificationStatus: input.verificationStatus })
+        .where(eq(items.id, input.id));
+      await logEvent({
+        entityType: "item",
+        entityId: input.id,
+        action: `verification:${input.verificationStatus}`,
+        summary: `Item #${input.id} marked ${input.verificationStatus}`,
+        actor: input.verificationStatus === "detected" ? "system" : "user",
       });
       return { ok: true };
     }),
