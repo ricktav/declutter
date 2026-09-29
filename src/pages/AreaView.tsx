@@ -11,7 +11,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
-import { Plus, Sparkles, Archive, Trash2, Pencil } from "lucide-react";
+import { Plus, Sparkles, Archive, Trash2, Pencil, LayoutGrid, List as ListIcon, ImageOff } from "lucide-react";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { useNavigate } from "react-router";
 import type { AttributeDef } from "@db/schema";
@@ -21,6 +21,29 @@ import type { Area } from "@db/schema";
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/** Small square thumbnail from an item's first image attachment (the cutout, when one exists). */
+function Thumb({ storageKey, size = "sm" }: { storageKey: string | null; size?: "sm" | "lg" }) {
+  const dim = size === "sm" ? "h-9 w-9" : "aspect-square w-full";
+  const url = trpc.attachments.url.useQuery(
+    { key: storageKey ?? "" },
+    { enabled: !!storageKey },
+  );
+  if (!storageKey || (!url.isLoading && !url.data?.url)) {
+    return (
+      <div className={cn(dim, "flex items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground")}>
+        <ImageOff className={size === "sm" ? "h-3.5 w-3.5" : "h-6 w-6"} />
+      </div>
+    );
+  }
+  return (
+    <div className={cn(dim, "overflow-hidden rounded-md border border-border bg-muted/40")}>
+      {url.data?.url && (
+        <img src={url.data.url} alt="" className="h-full w-full object-cover" />
+      )}
+    </div>
+  );
 }
 
 function EditAreaDialog({ area }: { area: Area }) {
@@ -247,6 +270,7 @@ export default function AreaView() {
   const { openAsk } = useAsk();
   const [q, setQ] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [view, setView] = useState<"list" | "gallery">("list");
   const navigate = useNavigate();
 
   const area = trpc.areas.get.useQuery({ slug: slug! }, { enabled: !!slug });
@@ -343,12 +367,53 @@ export default function AreaView() {
           />
           show archived
         </label>
+        <div className="ml-auto flex gap-1 rounded-md border border-border p-0.5">
+          <button
+            className={cn("rounded p-1", view === "list" ? "bg-muted" : "text-muted-foreground")}
+            onClick={() => setView("list")}
+            title="List"
+          >
+            <ListIcon className="h-3.5 w-3.5" />
+          </button>
+          <button
+            className={cn("rounded p-1", view === "gallery" ? "bg-muted" : "text-muted-foreground")}
+            onClick={() => setView("gallery")}
+            title="Gallery"
+          >
+            <LayoutGrid className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
+      {view === "gallery" ? (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+          {filtered.map((it) => (
+            <Link
+              key={it.id}
+              to={`/items/${it.id}`}
+              className={`group rounded-lg border border-border bg-white p-2 hover:border-primary/50 ${it.status === "archived" ? "opacity-50" : ""}`}
+            >
+              <Thumb storageKey={it.imageKey} size="lg" />
+              <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{it.name}</div>
+              {it.status === "archived" && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                  <Archive className="h-3 w-3" /> archived
+                </span>
+              )}
+            </Link>
+          ))}
+          {filtered.length === 0 && (
+            <div className="col-span-full text-center text-muted-foreground py-8">
+              No items yet — add one, or capture something via the inbox.
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="mt-3 rounded-lg border border-border bg-white overflow-x-auto">
         <table className="ledger-table w-full border-collapse">
           <thead>
             <tr>
+              <th className="w-12" />
               <th>Name</th>
               {columns.map((c) => (
                 <th key={c.key}>{c.label}</th>
@@ -360,6 +425,9 @@ export default function AreaView() {
           <tbody>
             {filtered.map((it) => (
               <tr key={it.id} className={`group ${it.status === "archived" ? "opacity-50" : ""}`}>
+                <td>
+                  <Thumb storageKey={it.imageKey} />
+                </td>
                 <td>
                   <Link to={`/items/${it.id}`} className="font-medium text-primary hover:underline">
                     {it.name}
@@ -394,7 +462,7 @@ export default function AreaView() {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={columns.length + 3} className="text-center text-muted-foreground py-8">
+                <td colSpan={columns.length + 4} className="text-center text-muted-foreground py-8">
                   No items yet — add one, or capture something via the inbox.
                 </td>
               </tr>
@@ -402,6 +470,7 @@ export default function AreaView() {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
