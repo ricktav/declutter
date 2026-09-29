@@ -1,6 +1,5 @@
 import { getDb } from "../api/queries/connection";
-import { areas, items } from "./schema";
-import { eq } from "drizzle-orm";
+import { areas } from "./schema";
 
 async function seed() {
   const db = getDb();
@@ -41,31 +40,7 @@ async function seed() {
     await db.insert(areas).values(a);
   }
 
-  const computers = await db.query.areas.findFirst({ where: eq(areas.slug, "computers") });
-  if (computers) {
-    await db.insert(items).values([
-      {
-        areaId: computers.id,
-        name: "ThinkPad X1 Carbon",
-        description: "Main daily laptop.",
-        attributes: { role: "laptop", cpu: "Intel i7-1260P", ram_gb: 32, storage_gb: 1024, os: "Fedora 40", location: "desk" },
-      },
-      {
-        areaId: computers.id,
-        name: "Synology DS923+",
-        description: "Main NAS. Runs Plex, backups, photo library.",
-        attributes: { role: "nas", cpu: "Ryzen R1600", ram_gb: 8, storage_gb: 16384, os: "DSM 7.2", location: "utility closet" },
-      },
-      {
-        areaId: computers.id,
-        name: "Old Desktop (i5-8400)",
-        description: "Retired gaming rig, currently unused.",
-        attributes: { role: "desktop", cpu: "Intel i5-8400", ram_gb: 16, storage_gb: 512, os: "Windows 10", location: "attic", status_note: "candidate to repurpose or sell" },
-      },
-    ]);
-  }
-
-  console.log("Seeded areas + sample items.");
+  console.log("Seeded areas (no sample items — this is your inventory).");
 }
 
 seed().then(() => process.exit(0)).catch((e) => {
