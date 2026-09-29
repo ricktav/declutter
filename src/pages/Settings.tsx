@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
-import { Plug, CheckCircle2, XCircle, Loader2, Trash2 } from "lucide-react";
+import { Plug, CheckCircle2, XCircle, Loader2, Trash2, Columns2 } from "lucide-react";
 
 const PRESETS = [
   { label: "xAI Grok", baseUrl: "https://api.x.ai/v1" },
@@ -21,11 +21,20 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<{ ok: boolean; models?: string[]; error?: string } | null>(null);
   const [testing, setTesting] = useState(false);
 
+  // Provider B (A/B comparison)
+  const [bBaseUrl, setBBaseUrl] = useState("");
+  const [bApiKey, setBApiKey] = useState("");
+  const [bModel, setBModel] = useState("");
+  const [bTestResult, setBTestResult] = useState<{ ok: boolean; models?: string[]; error?: string } | null>(null);
+  const [bTesting, setBTesting] = useState(false);
+
   useEffect(() => {
     if (current.data) {
       setBaseUrl(current.data.settings.llmBaseUrl ?? current.data.env?.llmBaseUrl ?? "");
       setModel(current.data.settings.llmModel ?? current.data.env?.llmModel ?? "");
       setVisionModel(current.data.settings.llmVisionModel ?? current.data.env?.llmVisionModel ?? "");
+      setBBaseUrl(current.data.settings.llm2BaseUrl ?? current.data.env2?.llm2BaseUrl ?? "");
+      setBModel(current.data.settings.llm2Model ?? current.data.env2?.llm2Model ?? "");
     }
   }, [current.data]);
 
@@ -43,6 +52,18 @@ export default function SettingsPage() {
     });
     setTestResult(res);
     setTesting(false);
+  };
+
+  const runBTest = async () => {
+    setBTesting(true);
+    setBTestResult(null);
+    const res = await test.mutateAsync({
+      llmBaseUrl: bBaseUrl || undefined,
+      llmApiKey: bApiKey || undefined,
+      provider: "2",
+    });
+    setBTestResult(res);
+    setBTesting(false);
   };
 
   const sourceLabel: Record<string, string> = {
@@ -207,6 +228,126 @@ export default function SettingsPage() {
         Kimi platform gateway. Settings are stored in <span className="font-data">settings.json</span> next to the app
         (not committed to git).
       </p>
+
+      {/* Provider B */}
+      <div className="mt-8 flex items-center gap-2">
+        <Columns2 className="h-4 w-4 text-violet-600" />
+        <h2 className="text-sm font-semibold">Provider B — A/B comparison</h2>
+      </div>
+      <p className="text-[12px] text-muted-foreground mt-1">
+        Optional second provider. With both configured, every inbox capture gets an{" "}
+        <b>A/B</b> button that runs the same triage prompt on both models side by side. Provider A keeps doing all
+        the real work — B is for comparison only.
+      </p>
+
+      <div className="mt-3 rounded-lg border border-violet-200 bg-white p-4 space-y-4">
+        {current.data?.env2 && !current.data.settings.llm2BaseUrl && (
+          <div className="rounded bg-violet-50 border border-violet-200 px-3 py-2 text-[12px] text-violet-900">
+            Currently using <span className="font-data">LLM2_*</span> from <span className="font-data">.env</span>
+            {current.data.env2.llm2BaseUrl && <> ({current.data.env2.llm2BaseUrl})</>}.
+          </div>
+        )}
+        <div className="flex gap-1.5 flex-wrap">
+          {PRESETS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => setBBaseUrl(p.baseUrl)}
+              className={`rounded-full px-3 py-1 text-[12px] transition-colors ${
+                bBaseUrl === p.baseUrl
+                  ? "bg-violet-600 text-white"
+                  : "bg-muted hover:bg-accent"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="block">
+          <span className="micro-label text-muted-foreground">Base URL</span>
+          <input
+            className="mt-1 w-full rounded-md border border-input px-3 py-2 text-[13px] font-data"
+            placeholder="https://openrouter.ai/api/v1"
+            value={bBaseUrl}
+            onChange={(e) => setBBaseUrl(e.target.value)}
+          />
+        </label>
+
+        <label className="block">
+          <span className="micro-label text-muted-foreground">API key</span>
+          <input
+            className="mt-1 w-full rounded-md border border-input px-3 py-2 text-[13px] font-data"
+            placeholder={current.data?.settings.llm2ApiKeyMasked ? `••• (saved — leave empty to keep)` : "sk-or-…"}
+            type="password"
+            value={bApiKey}
+            onChange={(e) => setBApiKey(e.target.value)}
+          />
+        </label>
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" className="h-8 text-[12px]" onClick={runBTest} disabled={bTesting}>
+            {bTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Plug className="h-3.5 w-3.5 mr-1" />}
+            Test connection
+          </Button>
+          {bTestResult && (
+            bTestResult.ok ? (
+              <span className="flex items-center gap-1 text-[12px] text-emerald-700">
+                <CheckCircle2 className="h-3.5 w-3.5" /> {bTestResult.models?.length ?? 0} models available
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[12px] text-destructive">
+                <XCircle className="h-3.5 w-3.5" /> {bTestResult.error}
+              </span>
+            )
+          )}
+        </div>
+
+        {bTestResult?.ok && bTestResult.models && (
+          <div>
+            <div className="micro-label text-muted-foreground mb-1.5">Available models (click to use)</div>
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+              {bTestResult.models.map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setBModel(m)}
+                  className={`rounded px-2 py-1 text-[11px] font-data transition-colors ${
+                    bModel === m ? "bg-violet-600 text-white" : "bg-muted hover:bg-accent"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <label className="block">
+          <span className="micro-label text-muted-foreground">Model</span>
+          <input
+            className="mt-1 w-full rounded-md border border-input px-3 py-2 text-[13px] font-data"
+            placeholder="e.g. openai/gpt-5"
+            value={bModel}
+            onChange={(e) => setBModel(e.target.value)}
+          />
+        </label>
+
+        <div className="flex items-center gap-2 pt-1">
+          <Button
+            size="sm"
+            className="h-8 text-[12px] bg-violet-600 hover:bg-violet-700"
+            disabled={save.isPending || !bBaseUrl || !bModel}
+            onClick={() =>
+              save.mutate({
+                llm2BaseUrl: bBaseUrl,
+                llm2ApiKey: bApiKey || undefined,
+                llm2Model: bModel,
+              })
+            }
+          >
+            Save Provider B
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

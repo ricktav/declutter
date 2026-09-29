@@ -5,7 +5,7 @@ import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { captures, areas, items, attachments, type TriageSuggestion } from "@db/schema";
 import { logEvent } from "../lib/events";
-import { getModel } from "../lib/ai";
+import { getModel, getSecondModel } from "../lib/ai";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { putFile, readFileBytes } from "../lib/filestore";
 
@@ -18,6 +18,63 @@ const triageSchema = z.object({
   note: z.string().describe("one-line summary of what this capture is"),
   confidence: z.enum(["high", "medium", "low"]),
 });
+
+type CaptureRow = typeof captures.$inferSelect;
+
+async function buildTriageContent(cap: CaptureRow): Promise<
+  Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }>
+> {
+  const db = getDb();
+  const allAreas = await db.select().from(areas);
+  const allItems = await db.select().from(items).where(eq(items.status, "active"));
+
+  const context = [
+    "AREAS (slug — name):",
+    ...allAreas.map((a) => `- ${a.slug} — ${a.name}${a.description ? `: ${a.description}` : ""}`),
+    "",
+    "EXISTING ITEMS (id — name):",
+    ...allItems.slice(0, 200).map((i) => `- ${i.id} — ${i.name}`),
+  ].join("\n");
+
+  let textPrompt = `You are triaging a capture into a home inventory system.\n\n${context}\n\nCAPTURE (kind: ${cap.kind}):\n${cap.rawText ?? ""}\n${cap.url ? `URL: ${cap.url}` : ""}\n\nDecide: which area does this belong to? Is it about an existing item (give its id) or a new item? Extract obvious attributes (e.g. for computers: cpu, ram, storage, os, role).`;
+
+  const parts: Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }> = [
+    { type: "text", text: textPrompt },
+  ];
+  if (cap.kind === "image" && cap.storageKey) {
+    try {
+      const bytes = await readFileBytes(cap.storageKey);
+      parts.push({ type: "image", image: bytes });
+    } catch {
+      textPrompt += "\n(image bytes unavailable — triage from text only)";
+      parts[0] = { type: "text", text: textPrompt };
+    }
+  }
+  return parts;
+}
+
+function toSuggestion(object: z.infer<typeof triageSchema>): TriageSuggestion {
+  return {
+    areaSlug: object.areaSlug,
+    itemName: object.itemName,
+    matchedItemId: object.matchedItemId ?? undefined,
+    isNewItem: object.isNewItem,
+    attributes: object.attributes,
+    note: object.note,
+    confidence: object.confidence,
+  };
+}
+
+async function runTriage(model: Awaited<ReturnType<typeof getModel>>, content: TriageContent) {
+  const { object } = await generateObject({
+    model,
+    schema: triageSchema,
+    messages: [{ role: "user", content }],
+  });
+  return toSuggestion(object);
+}
+
+type TriageContent = Awaited<ReturnType<typeof buildTriageContent>>;
 
 export const inboxRouter = createRouter({
   list: publicQuery.query(async () => {
@@ -71,56 +128,17 @@ export const inboxRouter = createRouter({
     const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
     if (!cap) throw new Error("capture not found");
 
-    const allAreas = await db.select().from(areas);
-    const allItems = await db.select().from(items).where(eq(items.status, "active"));
-
-    const context = [
-      "AREAS (slug — name):",
-      ...allAreas.map((a) => `- ${a.slug} — ${a.name}${a.description ? `: ${a.description}` : ""}`),
-      "",
-      "EXISTING ITEMS (id — name):",
-      ...allItems.slice(0, 200).map((i) => `- ${i.id} — ${i.name}`),
-    ].join("\n");
-
     try {
       const model = await getModel();
-      const contentParts: Array<
-        { type: "text"; text: string } | { type: "image"; image: Uint8Array }
-      > = [];
-      let textPrompt = `You are triaging a capture into a home inventory system.\n\n${context}\n\nCAPTURE (kind: ${cap.kind}):\n${cap.rawText ?? ""}\n${cap.url ? `URL: ${cap.url}` : ""}\n\nDecide: which area does this belong to? Is it about an existing item (give its id) or a new item? Extract obvious attributes (e.g. for computers: cpu, ram, storage, os, role).`;
-      contentParts.push({ type: "text", text: textPrompt });
+      const content = await buildTriageContent(cap);
+      const suggestion = await runTriage(model, content);
 
-      if (cap.kind === "image" && cap.storageKey) {
-        try {
-          const bytes = await readFileBytes(cap.storageKey);
-          contentParts.push({ type: "image", image: bytes });
-        } catch {
-          textPrompt += "\n(image bytes unavailable — triage from text only)";
-          contentParts[0] = { type: "text", text: textPrompt };
-        }
-      }
-
-      const { object } = await generateObject({
-        model,
-        schema: triageSchema,
-        messages: [{ role: "user", content: contentParts }],
-      });
-
-      const suggestion: TriageSuggestion = {
-        areaSlug: object.areaSlug,
-        itemName: object.itemName,
-        matchedItemId: object.matchedItemId ?? undefined,
-        isNewItem: object.isNewItem,
-        attributes: object.attributes,
-        note: object.note,
-        confidence: object.confidence,
-      };
       await db.update(captures).set({ suggestion }).where(eq(captures.id, input.id));
       await logEvent({
         entityType: "capture",
         entityId: input.id,
         action: "triaged",
-        summary: `AI triage: "${object.itemName}" → ${object.areaSlug} (${object.confidence} confidence)`,
+        summary: `AI triage: "${suggestion.itemName}" → ${suggestion.areaSlug} (${suggestion.confidence} confidence)`,
         actor: "ai",
         payload: suggestion as Record<string, unknown>,
       });
@@ -129,6 +147,65 @@ export const inboxRouter = createRouter({
       const classified = classifyAiError(err);
       return { ok: false as const, error: classified.message, retryable: classified instanceof AiMisconfigured === false };
     }
+  }),
+
+  /** Run the same triage prompt on Provider A and Provider B, side by side */
+  compare: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    const db = getDb();
+    const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
+    if (!cap) throw new Error("capture not found");
+
+    let content: TriageContent;
+    try {
+      content = await buildTriageContent(cap);
+    } catch (err) {
+      return { ok: false as const, error: `Failed to build prompt: ${(err as Error).message}` };
+    }
+
+    const second = await getSecondModel();
+    if (!second) {
+      return {
+        ok: false as const,
+        error:
+          "No Provider B configured. Add LLM2_* to .env " +
+          "(e.g. LLM2_BASE_URL=https://openrouter.ai/api/v1) or set it on the Settings page.",
+      };
+    }
+
+    const aModel = await getModel();
+    const [aRes, bRes] = await Promise.allSettled([
+      runTriage(aModel, content),
+      runTriage(second.model, content),
+    ]);
+
+    const side = (
+      res: PromiseSettledResult<TriageSuggestion>,
+      label: string,
+    ): { label: string; suggestion: TriageSuggestion | null; error: string | null; ms: number } => {
+      if (res.status === "fulfilled") {
+        return { label, suggestion: res.value, error: null, ms: 0 };
+      }
+      const classified = classifyAiError(res.reason);
+      return { label, suggestion: null, error: classified.message, ms: 0 };
+    };
+
+    const result = {
+      ok: true as const,
+      a: side(aRes, "Provider A"),
+      b: side(bRes, "Provider B"),
+    };
+    await logEvent({
+      entityType: "capture",
+      entityId: input.id,
+      action: "compared",
+      summary: `A/B triage comparison on capture #${input.id}`,
+      actor: "ai",
+      payload: {
+        aOk: !!result.a.suggestion,
+        bOk: !!result.b.suggestion,
+      } as Record<string, unknown>,
+    });
+    return result;
   }),
 
   /** Accept a suggestion (possibly edited) — creates/links the item */

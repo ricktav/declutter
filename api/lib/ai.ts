@@ -84,3 +84,23 @@ export async function getVisionModel() {
 export async function getProviderSource(): Promise<string> {
   return (await resolveProvider()).source;
 }
+
+/**
+ * Optional second provider (Provider B) for side-by-side comparison.
+ * Resolves from: settings.json llm2* fields -> LLM2_* env vars -> null.
+ * Never falls back to the Kimi gateway — an A/B against itself is pointless.
+ */
+export async function getSecondModel(): Promise<{ model: ResolvedProvider["chat"]; source: "settings" | "env" } | null> {
+  const s = loadSettings();
+  const provider =
+    fromCustom(s.llm2BaseUrl, s.llm2ApiKey, s.llm2Model, s.llm2VisionModel, "settings") ??
+    fromCustom(process.env.LLM2_BASE_URL, process.env.LLM2_API_KEY, process.env.LLM2_MODEL, process.env.LLM2_VISION_MODEL);
+  if (!provider) return null;
+  return { model: provider.chat, source: provider.source as "settings" | "env" };
+}
+
+/** short human label for a provider source, for comparison displays */
+export function providerLabel(source: "settings" | "env" | "kimi"): string {
+  return source === "settings" ? "Settings (A)" : source === "env" ? "Env .env (A)" : "Kimi platform (A)";
+}
+

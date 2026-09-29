@@ -8,6 +8,10 @@ export interface AppSettings {
   llmApiKey?: string;
   llmModel?: string;
   llmVisionModel?: string;
+  llm2BaseUrl?: string;
+  llm2ApiKey?: string;
+  llm2Model?: string;
+  llm2VisionModel?: string;
 }
 
 export function loadSettings(): AppSettings {

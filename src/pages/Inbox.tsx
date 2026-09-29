@@ -2,6 +2,12 @@ import { useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { AreaPicker } from "@/components/AreaPicker";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/format";
 import {
@@ -14,10 +20,20 @@ import {
   File as FileIcon,
   Loader2,
   AlertTriangle,
+  Columns2,
+  AlertCircle,
 } from "lucide-react";
 import type { Capture } from "@db/schema";
 
 const KIND_ICONS = { note: StickyNote, link: Link2, image: ImageIcon, file: FileIcon };
+
+type CompareSide = {
+  label: string;
+  suggestion: import("@db/schema").TriageSuggestion | null;
+  error: string | null;
+  ms: number;
+};
+type CompareResult = { a: CompareSide; b: CompareSide };
 
 function CaptureImage({ storageKey }: { storageKey: string }) {
   const url = trpc.attachments.url.useQuery({ key: storageKey });
@@ -35,6 +51,7 @@ function TriageCard({ capture }: { capture: Capture }) {
   const [matchMode, setMatchMode] = useState<"new" | "existing" | null>(null);
   const [matchedId, setMatchedId] = useState<number | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
 
   const triage = trpc.inbox.triage.useMutation({
     onSuccess: (res) => {
@@ -52,6 +69,15 @@ function TriageCard({ capture }: { capture: Capture }) {
   });
   const dismiss = trpc.inbox.dismiss.useMutation({
     onSuccess: () => utils.inbox.list.invalidate(),
+  });
+  const compare = trpc.inbox.compare.useMutation({
+    onSuccess: (res) => {
+      if (res.ok) {
+        setAiError(null);
+        setCompareResult({ a: res.a, b: res.b });
+      } else setAiError(res.error);
+    },
+    onError: (e) => setAiError(e.message),
   });
 
   // resolve effective selections (user override beats suggestion)
@@ -91,6 +117,24 @@ function TriageCard({ capture }: { capture: Capture }) {
           </div>
         </div>
         <div className="flex gap-1.5 shrink-0">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[12px]"
+            title="Run the same triage on Provider A and Provider B, side by side"
+            disabled={compare.isPending}
+            onClick={() => {
+              setAiError(null);
+              compare.mutate({ id: capture.id });
+            }}
+          >
+            {compare.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+            ) : (
+              <Columns2 className="h-3.5 w-3.5 mr-1" />
+            )}
+            A/B
+          </Button>
           {!s && (
             <Button
               size="sm"
@@ -128,6 +172,26 @@ function TriageCard({ capture }: { capture: Capture }) {
           {aiError}
         </div>
       )}
+
+      <CompareModal
+        result={compareResult}
+        onClose={() => setCompareResult(null)}
+        onUse={(side) => {
+          if (!side.suggestion) return;
+          const sg = side.suggestion;
+          const area = areas.data?.find((a) => a.slug === sg.areaSlug);
+          if (area) setAreaId(area.id);
+          setItemName(sg.itemName ?? null);
+          if (sg.matchedItemId) {
+            setMatchMode("existing");
+            setMatchedId(sg.matchedItemId);
+          } else {
+            setMatchMode("new");
+            setMatchedId(null);
+          }
+          setCompareResult(null);
+        }}
+      />
 
       {s && (
         <div className="mt-3 rounded-md border border-violet-200 bg-violet-50/60 p-3">
@@ -208,6 +272,103 @@ function TriageCard({ capture }: { capture: Capture }) {
         </div>
       )}
     </div>
+  );
+}
+
+function CompareModal({
+  result,
+  onClose,
+  onUse,
+}: {
+  result: CompareResult | null;
+  onClose: () => void;
+  onUse: (side: CompareSide) => void;
+}) {
+  return (
+    <Dialog open={!!result} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Provider A vs Provider B — same prompt, both models</DialogTitle>
+        </DialogHeader>
+        {result && (
+          <div className="grid sm:grid-cols-2 gap-3">
+            {[result.a, result.b].map((side) => (
+              <div
+                key={side.label}
+                className="rounded-lg border border-border bg-white p-3 space-y-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="micro-label text-muted-foreground">{side.label}</span>
+                  {side.suggestion && (
+                    <span
+                      className={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        side.suggestion.confidence === "high"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : side.suggestion.confidence === "medium"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-red-100 text-red-800"
+                      }`}
+                    >
+                      {side.suggestion.confidence}
+                    </span>
+                  )}
+                </div>
+
+                {side.error ? (
+                  <div className="flex gap-2 items-start rounded bg-red-50 border border-red-200 px-2 py-1.5 text-[12px] text-red-800">
+                    <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span className="break-words">{side.error}</span>
+                  </div>
+                ) : side.suggestion ? (
+                  <>
+                    <div>
+                      <div className="micro-label text-muted-foreground">Area</div>
+                      <div className="text-[13px] font-medium">{side.suggestion.areaSlug}</div>
+                    </div>
+                    <div>
+                      <div className="micro-label text-muted-foreground">Item</div>
+                      <div className="text-[13px] font-medium">
+                        {side.suggestion.itemName}
+                        {side.suggestion.matchedItemId && (
+                          <span className="ml-1 text-[11px] text-muted-foreground font-data">
+                            (existing #{side.suggestion.matchedItemId})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="micro-label text-muted-foreground">Note</div>
+                      <div className="text-[12px]">{side.suggestion.note}</div>
+                    </div>
+                    {Object.keys(side.suggestion.attributes ?? {}).length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(side.suggestion.attributes ?? {}).map(([k, v]) => (
+                          <span
+                            key={k}
+                            className="font-data text-[11px] rounded bg-accent px-1.5 py-0.5"
+                          >
+                            {k}: {v}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <Button
+                      size="sm"
+                      className="h-7 text-[12px] w-full"
+                      onClick={() => onUse(side)}
+                    >
+                      <Check className="h-3.5 w-3.5 mr-1" /> Use this result
+                    </Button>
+                  </>
+                ) : (
+                  <div className="text-[12px] text-muted-foreground">No result.</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
