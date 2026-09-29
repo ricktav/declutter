@@ -161,6 +161,8 @@ export const photoAnnotations = mysqlTable(
     attachmentId: bigint("attachmentId", { mode: "number", unsigned: true }).notNull(),
     xPct: double("xPct").notNull(),
     yPct: double("yPct").notNull(),
+    wPct: double("wPct"),
+    hPct: double("hPct"),
     label: varchar("label", { length: 255 }).notNull().default(""),
     itemId: bigint("itemId", { mode: "number", unsigned: true }),
     origin: varchar("origin", { length: 32 }).$type<"user" | "ai">().notNull().default("user"),

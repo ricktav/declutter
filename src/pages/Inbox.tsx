@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
+import { AreaPicker } from "@/components/AreaPicker";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/format";
 import {
@@ -137,17 +138,9 @@ function TriageCard({ capture }: { capture: Capture }) {
           <div className="grid sm:grid-cols-3 gap-2">
             <label className="block">
               <span className="micro-label text-muted-foreground">Area</span>
-              <select
-                className="mt-0.5 w-full rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
-                value={effAreaId ?? ""}
-                onChange={(e) => setAreaId(Number(e.target.value))}
-              >
-                {(areas.data ?? []).map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-0.5">
+                <AreaPicker value={effAreaId ?? null} onChange={setAreaId} />
+              </div>
             </label>
             <label className="block sm:col-span-2">
               <span className="micro-label text-muted-foreground">Item</span>

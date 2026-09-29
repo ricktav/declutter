@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
+import { AreaPicker } from "@/components/AreaPicker";
 import {
   Sparkles,
   Loader2,
@@ -18,6 +19,8 @@ type Pin = {
   id: number;
   xPct: number;
   yPct: number;
+  wPct: number | null;
+  hPct: number | null;
   label: string;
   itemId: number | null;
   itemName: string | null;
@@ -166,6 +169,41 @@ export default function AnnotatePage() {
                 onClick={onImageClick}
                 draggable={false}
               />
+              <svg
+                className="absolute inset-0 h-full w-full pointer-events-none"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+              >
+                {pins
+                  .filter((p) => p.wPct != null && p.hPct != null)
+                  .map((p) => (
+                    <rect
+                      key={p.id}
+                      x={p.xPct - (p.wPct ?? 0) / 2}
+                      y={p.yPct - (p.hPct ?? 0) / 2}
+                      width={p.wPct ?? 0}
+                      height={p.hPct ?? 0}
+                      rx={1.5}
+                      vectorEffect="non-scaling-stroke"
+                      strokeWidth={2}
+                      fill={
+                        p.status === "suggested"
+                          ? "rgba(124,58,237,0.10)"
+                          : p.itemId
+                            ? "rgba(210,255,0,0.12)"
+                            : "rgba(40,44,32,0.10)"
+                      }
+                      stroke={
+                        p.status === "suggested"
+                          ? "#7c3aed"
+                          : p.itemId
+                            ? "#2d4a22"
+                            : "#282c20"
+                      }
+                      strokeDasharray={p.status === "suggested" ? "4 2" : undefined}
+                    />
+                  ))}
+              </svg>
               {pins.map((p, i) => (
                 <div
                   key={p.id}
@@ -227,17 +265,12 @@ export default function AnnotatePage() {
                 </div>
               )}
               {!pendingItem && pendingLabel.trim() && (
-                <div className="flex items-center gap-2 text-[12px]">
+                <div className="space-y-1 text-[12px]">
                   <span className="text-muted-foreground">create as new item in</span>
-                  <select
-                    className="rounded border border-input bg-white px-1.5 py-1 text-[12px]"
-                    value={newItemArea}
-                    onChange={(e) => setNewItemArea(Number(e.target.value))}
-                  >
-                    {(areas.data ?? []).map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
+                  <AreaPicker
+                    value={newItemArea === "" ? null : newItemArea}
+                    onChange={(id) => setNewItemArea(id)}
+                  />
                 </div>
               )}
               <div className="flex gap-2 justify-end">
@@ -267,7 +300,7 @@ export default function AnnotatePage() {
             <div className="micro-label text-muted-foreground mb-2">Pins ({confirmed.length})</div>
             {confirmed.length === 0 && (
               <div className="text-[12px] text-muted-foreground">
-                None yet — click the photo or run AI detection.
+                None yet — click the photo to pin by hand, or run AI detection (boxes + pins for up to 15 objects).
               </div>
             )}
             <div className="space-y-1.5">
