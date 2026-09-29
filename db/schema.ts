@@ -116,6 +116,14 @@ export interface RoomGeometry {
   openings: Array<{ edge: string; offsetM: number; widthM: number; connectsTo?: number }>;
 }
 
+// Percent-of-original-image box, same shape used for detected object frames.
+export interface CropBox {
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
+}
+
 // ---------------------------------------------------------------------------
 // Attachments — images / files (storageKey), links (url), notes (content)
 // ---------------------------------------------------------------------------
@@ -134,12 +142,17 @@ export const attachments = mysqlTable(
     storageKey: varchar("storageKey", { length: 512 }),
     mimeType: varchar("mimeType", { length: 128 }),
     size: bigint("size", { mode: "number" }),
+    // provenance for a cutout: which capture it was cropped from, and the
+    // box used — lets a cutout be re-cropped later without re-detecting
+    sourceCaptureId: bigint("sourceCaptureId", { mode: "number", unsigned: true }),
+    cropBox: json("cropBox").$type<CropBox | null>(),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
   (t) => [
     index("att_item_idx").on(t.itemId),
     index("att_house_idx").on(t.houseId),
     index("att_room_idx").on(t.roomId),
+    index("att_source_capture_idx").on(t.sourceCaptureId),
   ],
 );
 

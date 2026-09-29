@@ -5,6 +5,7 @@ import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { photoAnnotations, attachments, items } from "@db/schema";
 import { readFileBytes } from "../lib/filestore";
+import { toThumbnail } from "../lib/crop";
 import { getVisionModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
@@ -200,7 +201,7 @@ export const annotationsRouter = createRouter({
         const refContent: Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }> = [];
         for (const it of refItems) {
           try {
-            const refBytes = await readFileBytes(photoByItem.get(it.id)!);
+            const refBytes = await toThumbnail(await readFileBytes(photoByItem.get(it.id)!));
             refContent.push({ type: "text", text: `Reference photo — existing item [id ${it.id}]: "${it.name}"` });
             refContent.push({ type: "image", image: refBytes });
           } catch {

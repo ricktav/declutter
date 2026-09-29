@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
+import { RecropDialog } from "@/components/RecropDialog";
 import { fileToBase64, timeAgo } from "@/lib/format";
 import {
   Sparkles,
@@ -21,6 +22,8 @@ import {
   ExternalLink,
   Loader2,
   MapPin,
+  Crop,
+  Camera,
 } from "lucide-react";
 import type { AttributeDef } from "@db/schema";
 
@@ -105,6 +108,7 @@ export default function ItemDetail() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const [loc, setLoc] = useState<{ houseId: number | null; floor: string; room: string }>({
     houseId: null,
     floor: "",
@@ -112,6 +116,7 @@ export default function ItemDetail() {
   });
   const [editingLoc, setEditingLoc] = useState(false);
   const [childName, setChildName] = useState("");
+  const [recropId, setRecropId] = useState<number | null>(null);
 
   const invalidate = () => {
     utils.items.get.invalidate({ id: itemId });
@@ -572,7 +577,20 @@ export default function ItemDetail() {
                   if (f) uploadFile(f);
                   e.target.value = "";
                 }} />
+              <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadFile(f);
+                  e.target.value = "";
+                }} />
               <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto"
+                onClick={() => cameraRef.current?.click()}
+                disabled={addAttachment.isPending}
+                title="Take a photo — another angle, a label, a serial number">
+                <Camera className="h-3 w-3 mr-1" />
+                snap
+              </Button>
+              <Button size="sm" variant="ghost" className="h-6 text-[11px]"
                 onClick={() => fileRef.current?.click()}
                 disabled={addAttachment.isPending}>
                 {addAttachment.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <ImagePlus className="h-3 w-3 mr-1" />}
@@ -596,6 +614,15 @@ export default function ItemDetail() {
                     <AttachmentView att={a} />
                     <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
                   </div>
+                  {a.kind === "image" && a.sourceCaptureId && (
+                    <button
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
+                      title="Re-crop from original photo"
+                      onClick={() => setRecropId(a.id)}
+                    >
+                      <Crop className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <ConfirmDelete
                     trigger={
                       <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
@@ -688,6 +715,7 @@ export default function ItemDetail() {
           <PinnedInPhotos itemId={it.id} />
         </div>
       </div>
+      <RecropDialog attachmentId={recropId} open={recropId != null} onClose={() => setRecropId(null)} />
     </div>
   );
 }

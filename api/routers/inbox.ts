@@ -8,7 +8,7 @@ import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { putFile, readFileBytes } from "../lib/filestore";
-import { cropPercent } from "../lib/crop";
+import { cropPercent, toThumbnail } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 
 const detectObjectsSchema = z.object({
@@ -286,7 +286,7 @@ export const inboxRouter = createRouter({
       const refContent: Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }> = [];
       for (const it of refItems) {
         try {
-          const refBytes = await readFileBytes(photoByItem.get(it.id)!);
+          const refBytes = await toThumbnail(await readFileBytes(photoByItem.get(it.id)!));
           refContent.push({ type: "text", text: `Reference photo — existing item [id ${it.id}]: "${it.name}"` });
           refContent.push({ type: "image", image: refBytes });
         } catch {
@@ -426,6 +426,8 @@ export const inboxRouter = createRouter({
         storageKey: saved.key,
         mimeType: "image/jpeg",
         size: saved.size,
+        sourceCaptureId: cap.id,
+        cropBox: { xPct: input.xPct, yPct: input.yPct, wPct: input.wPct, hPct: input.hPct },
       });
       await logEvent({
         entityType: "item",

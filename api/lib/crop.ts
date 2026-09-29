@@ -27,3 +27,15 @@ export async function cropPercent(
     .jpeg({ quality: 88 })
     .toBuffer();
 }
+
+/**
+ * Downscale an image for use as vision-model context (reference photos,
+ * candidate crops) where full resolution just adds request size/latency
+ * without adding identification value.
+ */
+export async function toThumbnail(input: Uint8Array, maxDim = 320): Promise<Buffer> {
+  return sharp(Buffer.from(input))
+    .resize(maxDim, maxDim, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 70 })
+    .toBuffer();
+}

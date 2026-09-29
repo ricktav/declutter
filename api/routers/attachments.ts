@@ -2,9 +2,17 @@ import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { attachments, photoAnnotations } from "@db/schema";
-import { putFile, deleteStoredFile, urlForKey } from "../lib/filestore";
+import { attachments, photoAnnotations, captures, type CropBox } from "@db/schema";
+import { putFile, deleteStoredFile, readFileBytes, urlForKey } from "../lib/filestore";
+import { cropPercent } from "../lib/crop";
 import { logEvent } from "../lib/events";
+
+const cropBoxInput = z.object({
+  xPct: z.number().min(0).max(100),
+  yPct: z.number().min(0).max(100),
+  wPct: z.number().min(1).max(100),
+  hPct: z.number().min(1).max(100),
+});
 
 export const attachmentsRouter = createRouter({
   add: publicQuery
@@ -101,4 +109,52 @@ export const attachmentsRouter = createRouter({
       .where(eq(attachments.itemId, input.itemId))
       .orderBy(desc(attachments.createdAt)),
   ),
+
+  /** The original photo a cutout was cropped from, plus its current box — for a re-crop UI. */
+  sourcePhoto: publicQuery
+    .input(z.object({ attachmentId: z.number() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const att = await db.query.attachments.findFirst({ where: eq(attachments.id, input.attachmentId) });
+      if (!att?.sourceCaptureId) return { available: false as const };
+      const cap = await db.query.captures.findFirst({ where: eq(captures.id, att.sourceCaptureId) });
+      if (!cap?.storageKey) return { available: false as const };
+      return {
+        available: true as const,
+        url: await urlForKey(cap.storageKey),
+        cropBox: att.cropBox as CropBox | null,
+      };
+    }),
+
+  /** Re-crop a cutout from its original source photo with a new box — replaces the image in place. */
+  recrop: publicQuery
+    .input(z.object({ attachmentId: z.number(), box: cropBoxInput }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const att = await db.query.attachments.findFirst({ where: eq(attachments.id, input.attachmentId) });
+      if (!att?.sourceCaptureId) throw new Error("This cutout has no source photo to re-crop from.");
+      const cap = await db.query.captures.findFirst({ where: eq(captures.id, att.sourceCaptureId) });
+      if (!cap?.storageKey) throw new Error("Source photo is no longer available.");
+
+      const bytes = await readFileBytes(cap.storageKey);
+      const cropped = await cropPercent(bytes, input.box);
+      const saved = await putFile({
+        bytes: new Uint8Array(cropped),
+        fileName: `items/${att.itemId ?? "attachment"}/cutout-${Date.now()}.jpg`,
+        contentType: "image/jpeg",
+      });
+      const oldKey = att.storageKey;
+      await db
+        .update(attachments)
+        .set({ storageKey: saved.key, size: saved.size, cropBox: input.box })
+        .where(eq(attachments.id, input.attachmentId));
+      if (oldKey) await deleteStoredFile(oldKey);
+      await logEvent({
+        entityType: "attachment",
+        entityId: input.attachmentId,
+        action: "recropped",
+        summary: `Cutout "${att.title ?? input.attachmentId}" re-cropped from its source photo`,
+      });
+      return { ok: true, storageKey: saved.key };
+    }),
 });

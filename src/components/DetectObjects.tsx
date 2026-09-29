@@ -26,7 +26,7 @@ type Suggestion = {
 };
 
 /** One draggable/resizable detection box on the original snap. */
-function Box({
+export function Box({
   box,
   color,
   onChange,
