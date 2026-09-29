@@ -4,7 +4,7 @@ import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { photoAnnotations, attachments, items } from "@db/schema";
-import { storage } from "../lib/storage";
+import { readFileBytes } from "../lib/filestore";
 import { getVisionModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
@@ -165,7 +165,7 @@ export const annotationsRouter = createRouter({
       }
 
       try {
-        const bytes = await storage.readFile({ fileKey: att.storageKey });
+        const bytes = await readFileBytes(att.storageKey);
         const allItems = await db.select().from(items).where(eq(items.status, "active"));
 
         const model = await getVisionModel();

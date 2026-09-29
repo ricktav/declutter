@@ -19,6 +19,12 @@ app.use("/api/trpc/*", async (c) => {
 });
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
+// locally stored uploads (self-hosted file storage) — needed in dev and prod
+{
+  const { serveStatic } = await import("@hono/node-server/serve-static");
+  app.use("/uploads/*", serveStatic({ root: "./" }));
+}
+
 export default app;
 
 if (env.isProduction) {

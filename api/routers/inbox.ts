@@ -7,7 +7,7 @@ import { captures, areas, items, attachments, type TriageSuggestion } from "@db/
 import { logEvent } from "../lib/events";
 import { getModel } from "../lib/ai";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
-import { storage } from "../lib/storage";
+import { putFile, readFileBytes } from "../lib/filestore";
 
 const triageSchema = z.object({
   areaSlug: z.string().describe("slug of the best-matching area"),
@@ -40,16 +40,12 @@ export const inboxRouter = createRouter({
       let storageKey: string | null = null;
       if ((input.kind === "image" || input.kind === "file") && input.contentBase64) {
         const bytes = Uint8Array.from(Buffer.from(input.contentBase64, "base64"));
-        try {
-          const saved = await storage.uploadFile({
-            fileContent: bytes,
-            fileName: `inbox/${input.fileName ?? "capture"}`,
-            contentType: input.mimeType,
-          });
-          storageKey = saved.key;
-        } catch {
-          // storage unprovisioned — keep capture without the file bytes
-        }
+        const saved = await putFile({
+          bytes,
+          fileName: `inbox/${input.fileName ?? "capture"}`,
+          contentType: input.mimeType,
+        });
+        storageKey = saved.key;
       }
       const [{ id }] = await db
         .insert(captures)
@@ -96,7 +92,7 @@ export const inboxRouter = createRouter({
 
       if (cap.kind === "image" && cap.storageKey) {
         try {
-          const bytes = await storage.readFile({ fileKey: cap.storageKey });
+          const bytes = await readFileBytes(cap.storageKey);
           contentParts.push({ type: "image", image: bytes });
         } catch {
           textPrompt += "\n(image bytes unavailable — triage from text only)";

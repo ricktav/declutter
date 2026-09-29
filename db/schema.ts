@@ -1,6 +1,5 @@
 import {
   mysqlTable,
-  mysqlEnum,
   serial,
   bigint,
   varchar,
@@ -44,7 +43,7 @@ export const items = mysqlTable(
     areaId: bigint("areaId", { mode: "number", unsigned: true }).notNull(),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
-    status: mysqlEnum("status", ["active", "archived"]).notNull().default("active"),
+    status: varchar("status", { length: 32 }).$type<"active" | "archived">().notNull().default("active"),
     attributes: json("attributes").$type<Record<string, string | number>>(),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
@@ -62,7 +61,7 @@ export const attachments = mysqlTable(
     id: serial("id").primaryKey(),
     itemId: bigint("itemId", { mode: "number", unsigned: true }),
     areaId: bigint("areaId", { mode: "number", unsigned: true }),
-    kind: mysqlEnum("kind", ["image", "link", "note", "file"]).notNull(),
+    kind: varchar("kind", { length: 32 }).$type<"image" | "link" | "note" | "file">().notNull(),
     title: varchar("title", { length: 255 }),
     content: text("content"),
     url: text("url"),
@@ -79,11 +78,11 @@ export const attachments = mysqlTable(
 // ---------------------------------------------------------------------------
 export const captures = mysqlTable("captures", {
   id: serial("id").primaryKey(),
-  kind: mysqlEnum("kind", ["note", "link", "image", "file"]).notNull().default("note"),
+  kind: varchar("kind", { length: 32 }).$type<"note" | "link" | "image" | "file">().notNull().default("note"),
   rawText: text("rawText"),
   url: text("url"),
   storageKey: varchar("storageKey", { length: 512 }),
-  status: mysqlEnum("status", ["pending", "triaged", "dismissed"]).notNull().default("pending"),
+  status: varchar("status", { length: 32 }).$type<"pending" | "triaged" | "dismissed">().notNull().default("pending"),
   suggestion: json("suggestion").$type<TriageSuggestion>(),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
@@ -108,7 +107,7 @@ export const ideas = mysqlTable(
     areaId: bigint("areaId", { mode: "number", unsigned: true }),
     title: varchar("title", { length: 255 }).notNull(),
     body: text("body"),
-    status: mysqlEnum("status", ["new", "exploring", "converted", "archived"])
+    status: varchar("status", { length: 32 }).$type<"new" | "exploring" | "converted" | "archived">()
       .notNull()
       .default("new"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
@@ -135,7 +134,7 @@ export const tasks = mysqlTable(
     ideaId: bigint("ideaId", { mode: "number", unsigned: true }),
     title: varchar("title", { length: 255 }).notNull(),
     notes: text("notes"),
-    status: mysqlEnum("status", ["todo", "doing", "done"]).notNull().default("todo"),
+    status: varchar("status", { length: 32 }).$type<"todo" | "doing" | "done">().notNull().default("todo"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     startedAt: timestamp("startedAt"),
     completedAt: timestamp("completedAt"),
@@ -164,8 +163,8 @@ export const photoAnnotations = mysqlTable(
     yPct: double("yPct").notNull(),
     label: varchar("label", { length: 255 }).notNull().default(""),
     itemId: bigint("itemId", { mode: "number", unsigned: true }),
-    origin: mysqlEnum("origin", ["user", "ai"]).notNull().default("user"),
-    status: mysqlEnum("status", ["suggested", "confirmed"]).notNull().default("confirmed"),
+    origin: varchar("origin", { length: 32 }).$type<"user" | "ai">().notNull().default("user"),
+    status: varchar("status", { length: 32 }).$type<"suggested" | "confirmed">().notNull().default("confirmed"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
   (t) => [index("pins_att_idx").on(t.attachmentId), index("pins_item_idx").on(t.itemId)],
@@ -181,8 +180,8 @@ export const relations = mysqlTable(
     fromItemId: bigint("fromItemId", { mode: "number", unsigned: true }).notNull(),
     toItemId: bigint("toItemId", { mode: "number", unsigned: true }).notNull(),
     type: varchar("type", { length: 64 }).notNull().default("related-to"),
-    origin: mysqlEnum("origin", ["user", "ai"]).notNull().default("user"),
-    status: mysqlEnum("status", ["suggested", "confirmed"]).notNull().default("confirmed"),
+    origin: varchar("origin", { length: 32 }).$type<"user" | "ai">().notNull().default("user"),
+    status: varchar("status", { length: 32 }).$type<"suggested" | "confirmed">().notNull().default("confirmed"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
   (t) => [index("rel_from_idx").on(t.fromItemId), index("rel_to_idx").on(t.toItemId)],
@@ -200,7 +199,7 @@ export const events = mysqlTable(
     action: varchar("action", { length: 64 }).notNull(),
     summary: varchar("summary", { length: 512 }).notNull(),
     payload: json("payload").$type<Record<string, unknown>>(),
-    actor: mysqlEnum("actor", ["user", "ai", "system"]).notNull().default("user"),
+    actor: varchar("actor", { length: 32 }).$type<"user" | "ai" | "system">().notNull().default("user"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
   (t) => [index("events_created_idx").on(t.createdAt)],
@@ -211,7 +210,7 @@ export const events = mysqlTable(
 // ---------------------------------------------------------------------------
 export const wikiPages = mysqlTable("wiki_pages", {
   id: serial("id").primaryKey(),
-  entityType: mysqlEnum("entityType", ["area", "item", "index"]).notNull(),
+  entityType: varchar("entityType", { length: 32 }).$type<"area" | "item" | "index">().notNull(),
   entityId: bigint("entityId", { mode: "number" }).notNull().default(0),
   slug: varchar("slug", { length: 128 }).notNull().unique(),
   title: varchar("title", { length: 255 }).notNull(),
@@ -226,9 +225,9 @@ export const chatMessages = mysqlTable(
   "chat_messages",
   {
     id: serial("id").primaryKey(),
-    scope: mysqlEnum("scope", ["global", "area", "item"]).notNull().default("global"),
+    scope: varchar("scope", { length: 32 }).$type<"global" | "area" | "item">().notNull().default("global"),
     scopeId: bigint("scopeId", { mode: "number" }).notNull().default(0),
-    role: mysqlEnum("role", ["user", "assistant"]).notNull(),
+    role: varchar("role", { length: 32 }).$type<"user" | "assistant">().notNull(),
     content: text("content").notNull(),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },

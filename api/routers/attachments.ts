@@ -1,10 +1,9 @@
 import { z } from "zod";
-import { TRPCError } from "@trpc/server";
 import { eq, desc } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { attachments } from "@db/schema";
-import { storage } from "../lib/storage";
+import { putFile, deleteStoredFile, urlForKey } from "../lib/filestore";
 import { logEvent } from "../lib/events";
 
 export const attachmentsRouter = createRouter({
@@ -29,24 +28,13 @@ export const attachmentsRouter = createRouter({
 
       if ((input.kind === "image" || input.kind === "file") && input.contentBase64) {
         const bytes = Uint8Array.from(Buffer.from(input.contentBase64, "base64"));
-        try {
-          const saved = await storage.uploadFile({
-            fileContent: bytes,
-            fileName: `attachments/${input.fileName ?? "file"}`,
-            contentType: input.mimeType,
-          });
-          storageKey = saved.key;
-          size = saved.size;
-        } catch (err) {
-          const code = (err as { code?: string })?.code ?? "STORAGE_ERROR";
-          throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message:
-              code === "STORAGE_NOT_PROVISIONED"
-                ? "File storage is not provisioned yet. Publish (or reopen) the site once, then retry. Notes and links still work."
-                : `Upload failed (${code})`,
-          });
-        }
+        const saved = await putFile({
+          bytes,
+          fileName: `attachments/${input.fileName ?? "file"}`,
+          contentType: input.mimeType,
+        });
+        storageKey = saved.key;
+        size = saved.size;
       }
 
       const [{ id }] = await db
@@ -77,11 +65,7 @@ export const attachmentsRouter = createRouter({
     const db = getDb();
     const row = await db.query.attachments.findFirst({ where: eq(attachments.id, input.id) });
     if (row?.storageKey) {
-      try {
-        await storage.deleteFile({ fileKey: row.storageKey });
-      } catch {
-        // storage may be unprovisioned; still drop the row
-      }
+      await deleteStoredFile(row.storageKey);
     }
     await db.delete(attachments).where(eq(attachments.id, input.id));
     await logEvent({
@@ -94,12 +78,7 @@ export const attachmentsRouter = createRouter({
   }),
 
   url: publicQuery.input(z.object({ key: z.string() })).query(async ({ input }) => {
-    try {
-      const { url } = await storage.getPresignedUrl({ key: input.key });
-      return { url };
-    } catch {
-      return { url: null };
-    }
+    return { url: await urlForKey(input.key) };
   }),
 
   urlForAttachment: publicQuery
@@ -111,12 +90,7 @@ export const attachmentsRouter = createRouter({
       });
       if (!att) return { attachment: null, url: null };
       if (!att.storageKey) return { attachment: att, url: null };
-      try {
-        const { url } = await storage.getPresignedUrl({ key: att.storageKey });
-        return { attachment: att, url };
-      } catch {
-        return { attachment: att, url: null };
-      }
+      return { attachment: att, url: await urlForKey(att.storageKey) };
     }),
 
   listForItem: publicQuery.input(z.object({ itemId: z.number() })).query(({ input }) =>
