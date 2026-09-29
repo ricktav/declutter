@@ -56,6 +56,9 @@ export default function AnnotatePage() {
     },
   });
   const removePin = trpc.annotations.remove.useMutation({ onSuccess: invalidate });
+  const reposition = trpc.annotations.update.useMutation({ onSuccess: invalidate });
+  const [dragPos, setDragPos] = useState<Record<number, { xPct: number; yPct: number }>>({});
+  const dragging = useRef<number | null>(null);
   const createItem = trpc.items.create.useMutation();
   const detect = trpc.annotations.detect.useMutation({
     onSuccess: (res) => {
@@ -77,6 +80,32 @@ export default function AnnotatePage() {
       setNewItemArea(areas.data[0].id);
     }
   }, [areas.data, newItemArea]);
+
+  const onPinPointerDown = (e: React.PointerEvent, pinId: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    (e.target as Element).setPointerCapture(e.pointerId);
+    dragging.current = pinId;
+  };
+  const onPinPointerMove = (e: React.PointerEvent) => {
+    const pinId = dragging.current;
+    const rect = imgRef.current?.getBoundingClientRect();
+    if (!pinId || !rect) return;
+    setDragPos((prev) => ({
+      ...prev,
+      [pinId]: {
+        xPct: Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100)),
+        yPct: Math.min(100, Math.max(0, ((e.clientY - rect.top) / rect.height) * 100)),
+      },
+    }));
+  };
+  const onPinPointerUp = () => {
+    const pinId = dragging.current;
+    dragging.current = null;
+    if (!pinId) return;
+    const pos = dragPos[pinId];
+    if (pos) reposition.mutate({ id: pinId, xPct: pos.xPct, yPct: pos.yPct });
+  };
 
   const onImageClick = (e: React.MouseEvent<HTMLImageElement>) => {
     const rect = imgRef.current?.getBoundingClientRect();
@@ -176,11 +205,13 @@ export default function AnnotatePage() {
               >
                 {pins
                   .filter((p) => p.wPct != null && p.hPct != null)
-                  .map((p) => (
+                  .map((p) => {
+                    const pos = dragPos[p.id] ?? p;
+                    return (
                     <rect
                       key={p.id}
-                      x={p.xPct - (p.wPct ?? 0) / 2}
-                      y={p.yPct - (p.hPct ?? 0) / 2}
+                      x={pos.xPct - (p.wPct ?? 0) / 2}
+                      y={pos.yPct - (p.hPct ?? 0) / 2}
                       width={p.wPct ?? 0}
                       height={p.hPct ?? 0}
                       rx={1.5}
@@ -202,13 +233,19 @@ export default function AnnotatePage() {
                       }
                       strokeDasharray={p.status === "suggested" ? "4 2" : undefined}
                     />
-                  ))}
+                    );
+                  })}
               </svg>
-              {pins.map((p, i) => (
+              {pins.map((p, i) => {
+                const pos = dragPos[p.id] ?? p;
+                return (
                 <div
                   key={p.id}
-                  className="absolute -translate-x-1/2 -translate-y-1/2 group"
-                  style={{ left: `${p.xPct}%`, top: `${p.yPct}%` }}
+                  className="absolute -translate-x-1/2 -translate-y-1/2 group cursor-grab active:cursor-grabbing touch-none"
+                  style={{ left: `${pos.xPct}%`, top: `${pos.yPct}%` }}
+                  onPointerDown={(e) => onPinPointerDown(e, p.id)}
+                  onPointerMove={onPinPointerMove}
+                  onPointerUp={onPinPointerUp}
                 >
                   <div
                     className={`flex items-center justify-center h-6 w-6 rounded-full border-2 text-[10px] font-data shadow ${
@@ -226,7 +263,8 @@ export default function AnnotatePage() {
                     {p.itemName && p.label && p.itemName !== p.label ? ` → ${p.itemName}` : ""}
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {pending && (
                 <div
                   className="absolute -translate-x-1/2 -translate-y-1/2"

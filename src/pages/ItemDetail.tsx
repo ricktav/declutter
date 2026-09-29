@@ -213,7 +213,7 @@ export default function ItemDetail() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-8">
+    <div key={itemId} className="max-w-5xl mx-auto px-6 py-8">
       {it.verificationStatus === "detected" && (
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
           <span className="text-[13px] text-amber-900">
@@ -242,8 +242,11 @@ export default function ItemDetail() {
           </div>
           <input
             className="text-2xl font-semibold tracking-tight bg-transparent outline-none border-b border-transparent focus:border-input w-full mt-0.5"
-            value={it.name}
-            onChange={(e) => update.mutate({ id: itemId, name: e.target.value })}
+            defaultValue={it.name}
+            onBlur={(e) => {
+              if (e.target.value.trim() && e.target.value !== it.name)
+                update.mutate({ id: itemId, name: e.target.value.trim() });
+            }}
           />
           <textarea
             className="w-full text-sm text-muted-foreground bg-transparent outline-none mt-1 min-h-[40px] resize-y"
