@@ -126,6 +126,7 @@ export default function ItemDetail() {
 
   const update = trpc.items.update.useMutation({ onSuccess: invalidate });
   const setArchived = trpc.items.setArchived.useMutation({ onSuccess: invalidate });
+  const setVerification = trpc.items.setVerification.useMutation({ onSuccess: invalidate });
   const remove = trpc.items.remove.useMutation({
     onSuccess: (res) => {
       if ("ok" in res && res.ok === false) {
@@ -213,6 +214,23 @@ export default function ItemDetail() {
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
+      {it.verificationStatus === "detected" && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+          <span className="text-[13px] text-amber-900">
+            Auto-detected, not yet reviewed — confirm it's right, or reject it.
+          </span>
+          <div className="ml-auto flex gap-1.5">
+            <Button size="sm" className="h-7 text-[12px] bg-amber-700 hover:bg-amber-800"
+              onClick={() => setVerification.mutate({ id: itemId, verificationStatus: "confirmed" })}>
+              <Check className="h-3.5 w-3.5 mr-1" /> Confirm
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 text-[12px]"
+              onClick={() => remove.mutate({ id: itemId })}>
+              <X className="h-3.5 w-3.5 mr-1" /> Reject
+            </Button>
+          </div>
+        </div>
+      )}
       {/* header */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">

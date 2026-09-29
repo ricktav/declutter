@@ -395,6 +395,11 @@ export default function AreaView() {
             >
               <Thumb storageKey={it.imageKey} size="lg" />
               <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{it.name}</div>
+              {it.verificationStatus === "detected" && (
+                <span className="inline-block text-[10px] font-medium text-amber-700 bg-amber-100 rounded px-1.5">
+                  needs review
+                </span>
+              )}
               {it.status === "archived" && (
                 <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
                   <Archive className="h-3 w-3" /> archived
@@ -432,6 +437,11 @@ export default function AreaView() {
                   <Link to={`/items/${it.id}`} className="font-medium text-primary hover:underline">
                     {it.name}
                   </Link>
+                  {it.verificationStatus === "detected" && (
+                    <span className="ml-1.5 inline-block text-[10px] font-medium text-amber-700 bg-amber-100 rounded px-1.5">
+                      needs review
+                    </span>
+                  )}
                   {it.status === "archived" && (
                     <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
                       <Archive className="h-3 w-3" /> archived
