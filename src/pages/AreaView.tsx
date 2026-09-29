@@ -11,8 +11,9 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
-import { Plus, Sparkles, Archive, Trash2, Pencil, LayoutGrid, List as ListIcon, ImageOff } from "lucide-react";
+import { Plus, Sparkles, Archive, Trash2, Pencil, LayoutGrid, List as ListIcon } from "lucide-react";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
+import { Thumb } from "@/components/Thumb";
 import { useNavigate } from "react-router";
 import type { AttributeDef } from "@db/schema";
 import { AREA_ICONS, AREA_COLORS } from "@/lib/areaStyle";
@@ -21,29 +22,6 @@ import type { Area } from "@db/schema";
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-/** Small square thumbnail from an item's first image attachment (the cutout, when one exists). */
-function Thumb({ storageKey, size = "sm" }: { storageKey: string | null; size?: "sm" | "lg" }) {
-  const dim = size === "sm" ? "h-9 w-9" : "aspect-square w-full";
-  const url = trpc.attachments.url.useQuery(
-    { key: storageKey ?? "" },
-    { enabled: !!storageKey },
-  );
-  if (!storageKey || (!url.isLoading && !url.data?.url)) {
-    return (
-      <div className={cn(dim, "flex items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground")}>
-        <ImageOff className={size === "sm" ? "h-3.5 w-3.5" : "h-6 w-6"} />
-      </div>
-    );
-  }
-  return (
-    <div className={cn(dim, "overflow-hidden rounded-md border border-border bg-muted/40")}>
-      {url.data?.url && (
-        <img src={url.data.url} alt="" className="h-full w-full object-cover" />
-      )}
-    </div>
-  );
 }
 
 function EditAreaDialog({ area }: { area: Area }) {

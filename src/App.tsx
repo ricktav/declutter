@@ -4,6 +4,7 @@ import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import InboxPage from "@/pages/Inbox";
 import AreaView from "@/pages/AreaView";
+import AllItems from "@/pages/AllItems";
 import ItemDetail from "@/pages/ItemDetail";
 import IdeasPage from "@/pages/Ideas";
 import TasksPage from "@/pages/Tasks";
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/snap" element={<SnapPage />} />
           <Route path="/inbox" element={<InboxPage />} />
           <Route path="/areas/:slug" element={<AreaView />} />
+          <Route path="/items" element={<AllItems />} />
           <Route path="/items/:id" element={<ItemDetail />} />
           <Route path="/annotate/:attachmentId" element={<AnnotatePage />} />
           <Route path="/ideas" element={<IdeasPage />} />

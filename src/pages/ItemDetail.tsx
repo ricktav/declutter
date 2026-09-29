@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
@@ -46,7 +47,13 @@ function SourceLink({ attachmentId }: { attachmentId: number }) {
   );
 }
 
-function AttachmentView({ att }: { att: { id: number; kind: string; title: string | null; content: string | null; url: string | null; storageKey: string | null } }) {
+function AttachmentView({
+  att,
+  onZoom,
+}: {
+  att: { id: number; kind: string; title: string | null; content: string | null; url: string | null; storageKey: string | null };
+  onZoom?: (url: string) => void;
+}) {
   const url = trpc.attachments.url.useQuery(
     { key: att.storageKey! },
     { enabled: !!att.storageKey && att.kind === "image" },
@@ -81,14 +88,19 @@ function AttachmentView({ att }: { att: { id: number; kind: string; title: strin
   if (att.kind === "image" && url.data?.url)
     return (
       <div>
-        <a href={url.data.url} target="_blank" rel="noreferrer">
+        <button
+          type="button"
+          className="cursor-zoom-in block"
+          onClick={() => onZoom?.(url.data!.url!)}
+          title="Click to zoom in"
+        >
           <img
             src={url.data.url}
             alt={att.title ?? ""}
             className="max-h-40 rounded border border-border"
             onError={() => setImgFailed(true)}
           />
-        </a>
+        </button>
         <div className="flex items-center gap-2 mt-0.5">
           {att.title && <div className="text-[11px] text-muted-foreground">{att.title}</div>}
           <Link to={`/annotate/${att.id}`}
@@ -155,6 +167,7 @@ export default function ItemDetail() {
   const [editingLoc, setEditingLoc] = useState(false);
   const [childName, setChildName] = useState("");
   const [recropId, setRecropId] = useState<number | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   const invalidate = () => {
     utils.items.get.invalidate({ id: itemId });
@@ -686,7 +699,7 @@ export default function ItemDetail() {
               {it.attachments.map((a) => (
                 <div key={a.id} className="group flex items-start gap-2">
                   <div className="flex-1 min-w-0">
-                    <AttachmentView att={a} />
+                    <AttachmentView att={a} onZoom={setLightboxUrl} />
                     <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
                   </div>
                   {a.kind === "image" && a.sourceCaptureId && (
@@ -794,6 +807,13 @@ export default function ItemDetail() {
         </div>
       </div>
       <RecropDialog attachmentId={recropId} open={recropId != null} onClose={() => setRecropId(null)} />
+      <Dialog open={!!lightboxUrl} onOpenChange={(o) => !o && setLightboxUrl(null)}>
+        <DialogContent className="max-w-4xl p-2 bg-black/95 border-none">
+          {lightboxUrl && (
+            <img src={lightboxUrl} alt="" className="w-full h-auto max-h-[85vh] object-contain rounded" />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

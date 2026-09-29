@@ -49,6 +49,31 @@ export const itemsRouter = createRouter({
       return rows.map((r) => ({ ...r, imageKey: imgMap.get(r.id) ?? null }));
     }),
 
+  /** Every active item across every area, for the cross-area browser (search/sort by area or location). */
+  listAll: publicQuery
+    .input(z.object({ includeArchived: z.boolean().default(false) }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const rows = await db
+        .select()
+        .from(items)
+        .where(input.includeArchived ? undefined : eq(items.status, "active"))
+        .orderBy(desc(items.updatedAt));
+      const allAreas = await db.select().from(areas);
+      const areaById = new Map(allAreas.map((a) => [a.id, a]));
+      const atts = await db.select().from(attachments).where(eq(attachments.kind, "image"));
+      const imgMap = new Map<number, string>();
+      for (const a of atts) {
+        if (a.itemId && a.storageKey && !imgMap.has(a.itemId)) imgMap.set(a.itemId, a.storageKey);
+      }
+      return rows.map((r) => ({
+        ...r,
+        imageKey: imgMap.get(r.id) ?? null,
+        areaName: areaById.get(r.areaId)?.name ?? null,
+        areaSlug: areaById.get(r.areaId)?.slug ?? null,
+      }));
+    }),
+
   get: publicQuery.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
