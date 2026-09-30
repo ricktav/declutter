@@ -411,7 +411,7 @@ export default function AnnotatePage() {
                       }}
                     >
                       {showIcons && (
-                        <div className="absolute -top-2.5 -right-2.5 flex gap-1 z-10">
+                        <div className="absolute -top-8 right-0 flex gap-1 z-10">
                           <button
                             className="h-5 w-5 rounded-full bg-white shadow border border-destructive/50 text-destructive flex items-center justify-center hover:bg-destructive/10"
                             title="Reject suggestion"
