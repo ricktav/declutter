@@ -179,20 +179,28 @@ export const measurements = mysqlTable(
 // ---------------------------------------------------------------------------
 // Inbox captures — frictionless drop zone, triaged (optionally by AI) later
 // ---------------------------------------------------------------------------
-export const captures = mysqlTable("captures", {
-  id: serial("id").primaryKey(),
-  kind: varchar("kind", { length: 32 })
-    .$type<"note" | "link" | "image" | "file" | "scan" | "voice">()
-    .notNull()
-    .default("note"),
-  rawText: text("rawText"),
-  url: text("url"),
-  storageKey: varchar("storageKey", { length: 512 }),
-  exifGps: json("exifGps").$type<{ lat: number; lng: number } | null>(),
-  status: varchar("status", { length: 32 }).$type<"pending" | "triaged" | "dismissed" | "processed">().notNull().default("pending"),
-  suggestion: json("suggestion").$type<TriageSuggestion>(),
-  createdAt: timestamp("createdAt").notNull().defaultNow(),
-});
+export const captures = mysqlTable(
+  "captures",
+  {
+    id: serial("id").primaryKey(),
+    kind: varchar("kind", { length: 32 })
+      .$type<"note" | "link" | "image" | "file" | "scan" | "voice">()
+      .notNull()
+      .default("note"),
+    rawText: text("rawText"),
+    url: text("url"),
+    storageKey: varchar("storageKey", { length: 512 }),
+    // sha256 of the file's bytes - lets an image/file capture be deduped
+    // against one already in the inbox (a re-sent Telegram photo, the same
+    // file uploaded twice) without comparing content on every insert
+    contentHash: varchar("contentHash", { length: 64 }),
+    exifGps: json("exifGps").$type<{ lat: number; lng: number } | null>(),
+    status: varchar("status", { length: 32 }).$type<"pending" | "triaged" | "dismissed" | "processed">().notNull().default("pending"),
+    suggestion: json("suggestion").$type<TriageSuggestion>(),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [index("captures_hash_idx").on(t.contentHash)],
+);
 
 export interface TriageSuggestion {
   areaSlug?: string;

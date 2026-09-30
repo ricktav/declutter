@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+import { eq } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { captures, type Capture } from "@db/schema";
 import { logEvent } from "./events";
@@ -27,8 +29,15 @@ export interface CreateCaptureInput {
 export async function createCapture(input: CreateCaptureInput): Promise<Capture> {
   const db = getDb();
   let storageKey: string | null = null;
+  let contentHash: string | null = null;
 
   if (input.bytes) {
+    contentHash = createHash("sha256").update(input.bytes).digest("hex");
+    // same bytes already in the inbox (a re-sent Telegram photo, the same
+    // file uploaded twice) - return that one instead of storing a duplicate
+    const dup = await db.query.captures.findFirst({ where: eq(captures.contentHash, contentHash) });
+    if (dup) return dup;
+
     const saved = await putFile({
       bytes: input.bytes,
       fileName: `inbox/${input.fileName ?? input.kind}`,
@@ -44,6 +53,7 @@ export async function createCapture(input: CreateCaptureInput): Promise<Capture>
       rawText: input.rawText ?? null,
       url: input.url ?? null,
       storageKey,
+      contentHash,
       exifGps: input.exifGps ?? null,
     })
     .$returningId();
