@@ -25,6 +25,7 @@ type Pin = {
   label: string;
   itemId: number | null;
   itemName: string | null;
+  itemAreaColor: string | null;
   origin: "user" | "ai";
   status: "suggested" | "confirmed";
   flagged: boolean;
@@ -120,9 +121,12 @@ export default function AnnotatePage() {
     setPendingItem(null);
   };
 
-  const savePending = async () => {
+  // accepts an override so selecting an existing item can save immediately
+  // (Enter or click) without waiting for pendingItem's state update to land
+  const savePending = async (overrideItem?: { id: number; name: string } | null) => {
     if (!pending) return;
-    let itemId = pendingItem?.id;
+    const linkedItem = overrideItem !== undefined ? overrideItem : pendingItem;
+    let itemId = linkedItem?.id;
     if (!itemId && pendingLabel.trim() && newItemArea !== "") {
       const res = await createItem.mutateAsync({
         areaId: Number(newItemArea),
@@ -136,7 +140,7 @@ export default function AnnotatePage() {
       attachmentId: attId,
       xPct: pending.xPct,
       yPct: pending.yPct,
-      label: pendingLabel.trim() || pendingItem?.name || "",
+      label: pendingLabel.trim() || linkedItem?.name || "",
       itemId,
     });
     setPending(null);
@@ -255,10 +259,17 @@ export default function AnnotatePage() {
                         ? "border-amber-600 bg-amber-400 text-amber-950"
                         : p.status === "suggested"
                           ? "border-violet-500 bg-violet-500/80 text-white border-dashed"
-                          : p.itemId
-                            ? "border-[#2d4a22] bg-[#d2ff00] text-[#282c20]"
-                            : "border-white bg-[#282c20] text-white"
+                          : p.itemId && p.itemAreaColor
+                            ? "border-white/70 text-white"
+                            : p.itemId
+                              ? "border-[#2d4a22] bg-[#d2ff00] text-[#282c20]"
+                              : "border-white bg-[#282c20] text-white"
                     }`}
+                    style={
+                      !p.flagged && p.status !== "suggested" && p.itemId && p.itemAreaColor
+                        ? { background: p.itemAreaColor }
+                        : undefined
+                    }
                   >
                     {i + 1}
                   </div>
@@ -290,14 +301,25 @@ export default function AnnotatePage() {
           {pending && (
             <div className="rounded-lg border border-primary bg-white p-3 space-y-2">
               <div className="micro-label text-primary">New pin</div>
-              <input
-                className="w-full rounded-md border border-input px-2 py-1.5 text-[13px]"
-                placeholder="Label — e.g. 'USB-C dock'"
+              <ItemPicker
+                placeholder="Search or name this object…"
                 value={pendingLabel}
-                onChange={(e) => setPendingLabel(e.target.value)}
+                onQueryChange={(v) => {
+                  setPendingLabel(v);
+                  if (pendingItem) setPendingItem(null);
+                }}
+                onSelect={(item) => {
+                  setPendingItem(item);
+                  setPendingLabel(item.name);
+                  savePending(item);
+                }}
+                allowCreate
+                onCreateNew={(name) => {
+                  setPendingLabel(name);
+                  setPendingItem(null);
+                }}
                 autoFocus
               />
-              <ItemPicker placeholder="link existing item…" onSelect={setPendingItem} />
               {pendingItem && (
                 <div className="text-[12px] rounded bg-accent px-2 py-1 flex items-center gap-1">
                   linked: <b>{pendingItem.name}</b>
@@ -319,7 +341,7 @@ export default function AnnotatePage() {
                 <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setPending(null)}>
                   Cancel
                 </Button>
-                <Button size="sm" className="h-7 text-[12px]" onClick={savePending}
+                <Button size="sm" className="h-7 text-[12px]" onClick={() => savePending()}
                   disabled={addPin.isPending || createItem.isPending}>
                   <Plus className="h-3.5 w-3.5 mr-1" /> Add pin
                 </Button>
@@ -395,24 +417,28 @@ function SuggestedPinRow({
   );
   return (
     <div className="rounded border border-violet-200 bg-white p-2 space-y-1.5">
-      <input
-        className="w-full rounded border border-input px-2 py-1 text-[12px]"
+      <ItemPicker
+        placeholder="Search or name this object…"
         value={label}
-        onChange={(e) => setLabel(e.target.value)}
+        onQueryChange={(v) => {
+          setLabel(v);
+          if (item) setItem(null);
+        }}
+        onSelect={(sel) => {
+          setItem(sel);
+          setLabel(sel.name);
+        }}
+        allowCreate
+        onCreateNew={setLabel}
       />
-      <div className="flex items-center gap-1.5">
-        <div className="flex-1 min-w-0">
-          <ItemPicker
-            placeholder={item ? item.name : "link item…"}
-            onSelect={setItem}
-          />
-        </div>
-        {item && (
-          <button onClick={() => setItem(null)} className="text-muted-foreground shrink-0">
+      {item && (
+        <div className="text-[12px] rounded bg-accent px-2 py-1 flex items-center gap-1">
+          linked: <b>{item.name}</b>
+          <button className="ml-auto" onClick={() => setItem(null)}>
             <X className="h-3 w-3" />
           </button>
-        )}
-      </div>
+        </div>
+      )}
       <div className="flex justify-end gap-1">
         <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2" onClick={onReject}>
           <X className="h-3 w-3 mr-0.5" /> reject

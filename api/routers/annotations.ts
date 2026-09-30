@@ -3,7 +3,7 @@ import { eq, or, desc } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { photoAnnotations, attachments, items } from "@db/schema";
+import { photoAnnotations, attachments, items, areas } from "@db/schema";
 import { readFileBytes } from "../lib/filestore";
 import { toThumbnail } from "../lib/crop";
 import { getVisionModel } from "../lib/ai";
@@ -55,7 +55,17 @@ export const annotationsRouter = createRouter({
         ? await db.select().from(items).where(or(...itemIds.map((i) => eq(items.id, i))))
         : [];
       const nameMap = new Map(linked.map((i) => [i.id, i.name]));
-      return pins.map((p) => ({ ...p, itemName: p.itemId ? (nameMap.get(p.itemId) ?? null) : null }));
+      // area color, not just name - the pin marker's fill reflects the
+      // linked item's category, so a "black desk lamp" and a "Sonos
+      // speaker" read differently on the photo at a glance
+      const allAreas = await db.select().from(areas);
+      const areaColorById = new Map(allAreas.map((a) => [a.id, a.color]));
+      const areaColorByItem = new Map(linked.map((i) => [i.id, areaColorById.get(i.areaId) ?? null]));
+      return pins.map((p) => ({
+        ...p,
+        itemName: p.itemId ? (nameMap.get(p.itemId) ?? null) : null,
+        itemAreaColor: p.itemId ? (areaColorByItem.get(p.itemId) ?? null) : null,
+      }));
     }),
 
   /** items pinned anywhere (back-references for the item page) */
