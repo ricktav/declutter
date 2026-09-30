@@ -25,6 +25,7 @@ import {
   X,
   Settings,
   Search,
+  MapPin,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
@@ -82,6 +83,7 @@ const NAV = [
   { to: "/snap", label: "Snap", icon: Camera },
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/items", label: "All Items", icon: Search },
+  { to: "/map", label: "Map", icon: MapPin },
   { to: "/ideas", label: "Ideas", icon: Lightbulb },
   { to: "/tasks", label: "Tasks", icon: ListChecks },
   { to: "/wiki", label: "Wiki", icon: BookOpen },

@@ -8,6 +8,7 @@ import {
   timestamp,
   index,
   double,
+  boolean,
 } from "drizzle-orm/mysql-core";
 
 // ---------------------------------------------------------------------------
@@ -273,6 +274,8 @@ export const photoAnnotations = mysqlTable(
     itemId: bigint("itemId", { mode: "number", unsigned: true }),
     origin: varchar("origin", { length: 32 }).$type<"user" | "ai">().notNull().default("user"),
     status: varchar("status", { length: 32 }).$type<"suggested" | "confirmed">().notNull().default("confirmed"),
+    // "needs attention", independent of confirm status - the Map view's focus marker
+    flagged: boolean("flagged").notNull().default(false),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
   (t) => [index("pins_att_idx").on(t.attachmentId), index("pins_item_idx").on(t.itemId)],

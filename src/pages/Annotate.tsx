@@ -13,6 +13,7 @@ import {
   Plus,
   ArrowLeft,
   MapPin,
+  Flag,
 } from "lucide-react";
 
 type Pin = {
@@ -26,6 +27,7 @@ type Pin = {
   itemName: string | null;
   origin: "user" | "ai";
   status: "suggested" | "confirmed";
+  flagged: boolean;
 };
 
 export default function AnnotatePage() {
@@ -249,11 +251,13 @@ export default function AnnotatePage() {
                 >
                   <div
                     className={`flex items-center justify-center h-6 w-6 rounded-full border-2 text-[10px] font-data shadow ${
-                      p.status === "suggested"
-                        ? "border-violet-500 bg-violet-500/80 text-white border-dashed"
-                        : p.itemId
-                          ? "border-[#2d4a22] bg-[#d2ff00] text-[#282c20]"
-                          : "border-white bg-[#282c20] text-white"
+                      p.flagged
+                        ? "border-amber-600 bg-amber-400 text-amber-950"
+                        : p.status === "suggested"
+                          ? "border-violet-500 bg-violet-500/80 text-white border-dashed"
+                          : p.itemId
+                            ? "border-[#2d4a22] bg-[#d2ff00] text-[#282c20]"
+                            : "border-white bg-[#282c20] text-white"
                     }`}
                   >
                     {i + 1}
@@ -355,6 +359,13 @@ export default function AnnotatePage() {
                   ) : (
                     <span className="text-[10px] text-muted-foreground">unlinked</span>
                   )}
+                  <button
+                    className={p.flagged ? "text-amber-600" : "opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-amber-600"}
+                    title={p.flagged ? "Needs attention — click to clear" : "Mark as needing attention"}
+                    onClick={() => reposition.mutate({ id: p.id, flagged: !p.flagged })}
+                  >
+                    <Flag className="h-3.5 w-3.5" />
+                  </button>
                   <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
                     onClick={() => removePin.mutate({ id: p.id })}>
                     <X className="h-3.5 w-3.5" />

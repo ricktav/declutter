@@ -120,6 +120,7 @@ export const annotationsRouter = createRouter({
         yPct: z.number().min(0).max(100).optional(),
         wPct: z.number().min(0).max(100).optional(),
         hPct: z.number().min(0).max(100).optional(),
+        flagged: z.boolean().optional(),
       }),
     )
     .mutation(async ({ input }) => {

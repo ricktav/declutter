@@ -13,6 +13,7 @@ import { settingsRouter } from "./routers/settings";
 import { housesRouter } from "./routers/houses";
 import { roomsRouter } from "./routers/rooms";
 import { measurementsRouter } from "./routers/measurements";
+import { mapRouter } from "./routers/map";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -30,6 +31,7 @@ export const appRouter = createRouter({
   houses: housesRouter,
   rooms: roomsRouter,
   measurements: measurementsRouter,
+  map: mapRouter,
 });
 
 export type AppRouter = typeof appRouter;

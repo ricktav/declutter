@@ -11,6 +11,7 @@ import TasksPage from "@/pages/Tasks";
 import WikiPage from "@/pages/Wiki";
 import ActivityPage from "@/pages/Activity";
 import AnnotatePage from "@/pages/Annotate";
+import MapPage from "@/pages/Map";
 import SnapPage from "@/pages/Snap";
 import SettingsPage from "@/pages/Settings";
 
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/items" element={<AllItems />} />
           <Route path="/items/:id" element={<ItemDetail />} />
           <Route path="/annotate/:attachmentId" element={<AnnotatePage />} />
+          <Route path="/map" element={<MapPage />} />
           <Route path="/ideas" element={<IdeasPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/wiki" element={<WikiPage />} />
