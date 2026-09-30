@@ -160,7 +160,11 @@ export default function AnnotatePage() {
   };
   const confirmSuggestion = (p: Pin) => {
     const draft = getDraft(p);
-    resolve.mutate({ id: p.id, confirm: true, label: draft.label, itemId: draft.item?.id ?? null });
+    // once linked, the item's own name IS the label - a free-text AI
+    // description ("ultrawide monitor") shouldn't outlive the link to the
+    // actual inventory record ("Samsung ultrawide monitor")
+    const label = draft.item ? draft.item.name : draft.label;
+    resolve.mutate({ id: p.id, confirm: true, label, itemId: draft.item?.id ?? null });
     setSuggestionDrafts((prev) => {
       const { [p.id]: _drop, ...rest } = prev;
       return rest;
@@ -333,13 +337,16 @@ export default function AnnotatePage() {
       utils.items.listByArea.invalidate();
       utils.areas.list.invalidate();
     }
+    // once linked, the item's own name is the label - not the free-text
+    // description that found it
+    const label = linkedItem ? linkedItem.name : pendingLabel.trim();
     await addPin.mutateAsync({
       attachmentId: attId,
       xPct: pending.xPct,
       yPct: pending.yPct,
       wPct: pending.wPct,
       hPct: pending.hPct,
-      label: pendingLabel.trim() || linkedItem?.name || "",
+      label,
       itemId,
     });
     setPending(null);
@@ -623,8 +630,7 @@ export default function AnnotatePage() {
                     {i + 1}
                   </div>
                   <div className="absolute left-1/2 -translate-x-1/2 top-7 whitespace-nowrap rounded bg-black/80 text-white text-[10px] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                    {p.label || p.itemName || "untitled"}
-                    {p.itemName && p.label && p.itemName !== p.label ? ` → ${p.itemName}` : ""}
+                    {p.itemName || p.label || "untitled"}
                   </div>
                 </div>
                 );
@@ -730,7 +736,8 @@ export default function AnnotatePage() {
                     className="h-7 text-[12px]"
                     disabled={reposition.isPending}
                     onClick={() => {
-                      reposition.mutate({ id: editingPin.id, label: editLabel.trim(), itemId: editItem?.id ?? null });
+                      const label = editItem ? editItem.name : editLabel.trim();
+                      reposition.mutate({ id: editingPin.id, label, itemId: editItem?.id ?? null });
                       setEditingPinId(null);
                     }}
                   >
@@ -856,15 +863,15 @@ export default function AnnotatePage() {
                 <div key={p.id} className="flex items-center gap-2 text-[13px] group">
                   <span className="font-data text-[11px] text-muted-foreground w-5">{i + 1}.</span>
                   <span className="flex-1 min-w-0 truncate">
-                    {p.label || <span className="text-muted-foreground">untitled</span>}
+                    {p.itemId && p.itemName ? (
+                      <Link to={`/items/${p.itemId}`} className="text-primary hover:underline">
+                        {p.itemName}
+                      </Link>
+                    ) : (
+                      p.label || <span className="text-muted-foreground">untitled</span>
+                    )}
                   </span>
-                  {p.itemId && p.itemName ? (
-                    <Link to={`/items/${p.itemId}`} className="text-[11px] text-primary hover:underline truncate max-w-24">
-                      {p.itemName}
-                    </Link>
-                  ) : (
-                    <span className="text-[10px] text-muted-foreground">unlinked</span>
-                  )}
+                  {!p.itemId && <span className="text-[10px] text-muted-foreground shrink-0">unlinked</span>}
                   <button
                     className={p.flagged ? "text-amber-600" : "opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-amber-600"}
                     title={p.flagged ? "Needs attention — click to clear" : "Mark as needing attention"}
