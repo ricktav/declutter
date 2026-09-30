@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { attachments, photoAnnotations, captures, type CropBox } from "@db/schema";
@@ -182,6 +182,15 @@ export const attachmentsRouter = createRouter({
         throw new Error("Source photo is no longer available.");
       }
 
+      // this item already has a photo from this same original photo (e.g.
+      // pinning it again, or re-saving an edit) - don't pile up duplicates
+      if (sourceCaptureId) {
+        const dup = await db.query.attachments.findFirst({
+          where: and(eq(attachments.itemId, input.itemId), eq(attachments.sourceCaptureId, sourceCaptureId)),
+        });
+        if (dup) return { id: dup.id, storageKey: dup.storageKey, created: false as const };
+      }
+
       const cropped = await cropPercent(bytes, input.box);
       const saved = await putFile({
         bytes: new Uint8Array(cropped),
@@ -207,6 +216,6 @@ export const attachmentsRouter = createRouter({
         action: "created",
         summary: `Photo cropped from pin location and added to item #${input.itemId}`,
       });
-      return { id, storageKey: saved.key };
+      return { id, storageKey: saved.key, created: true as const };
     }),
 });

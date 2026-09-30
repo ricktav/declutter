@@ -8,6 +8,7 @@ import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
 import { RecropDialog } from "@/components/RecropDialog";
+import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
 import { fileToBase64, timeAgo } from "@/lib/format";
 import {
   Sparkles,
@@ -27,6 +28,7 @@ import {
   Camera,
   ChevronLeft,
   ChevronRight,
+  Images,
 } from "lucide-react";
 import type { AttributeDef } from "@db/schema";
 
@@ -168,6 +170,7 @@ export default function ItemDetail() {
   const [childName, setChildName] = useState("");
   const [recropId, setRecropId] = useState<number | null>(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   const invalidate = () => {
     utils.items.get.invalidate({ id: itemId });
@@ -684,6 +687,12 @@ export default function ItemDetail() {
                 {addAttachment.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <ImagePlus className="h-3 w-3 mr-1" />}
                 file
               </Button>
+              <Button size="sm" variant="ghost" className="h-6 text-[11px]"
+                onClick={() => setLibraryOpen(true)}
+                title="Crop a photo already in the inbox">
+                <Images className="h-3 w-3 mr-1" />
+                library
+              </Button>
             </div>
             {uploadError && (
               <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
@@ -807,6 +816,7 @@ export default function ItemDetail() {
         </div>
       </div>
       <RecropDialog attachmentId={recropId} open={recropId != null} onClose={() => setRecropId(null)} />
+      <ChooseFromLibraryDialog itemId={itemId} open={libraryOpen} onClose={() => setLibraryOpen(false)} />
       <Dialog open={!!lightboxUrl} onOpenChange={(o) => !o && setLightboxUrl(null)}>
         <DialogContent className="max-w-4xl p-2 bg-black/95 border-none">
           {lightboxUrl && (

@@ -4,6 +4,7 @@ import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { fileToBase64 } from "@/lib/format";
 import { AreaPicker } from "@/components/AreaPicker";
+import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
 import { DetectObjectsModal } from "@/components/DetectObjects";
 import {
   Dialog,
@@ -60,25 +61,34 @@ function ProcessedThumb({ storageKey, kind }: { storageKey: string | null; kind:
   );
 }
 
-/** Jump from a processed photo straight into the pin-objects canvas - same
- * find-or-create-attachment step the Map view uses, just entered from here. */
-function PinCaptureButton({ captureId }: { captureId: number }) {
+/** Jump from a photo straight into the pin-objects canvas - same
+ * find-or-create-attachment step the Map view uses, just entered from here.
+ * A labeled button, not just an icon - an icon-only version of this was easy
+ * to miss next to the rest of a processed row's clutter. */
+function PinCaptureButton({ captureId, houseId = null }: { captureId: number; houseId?: number | null }) {
   const navigate = useNavigate();
   const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
     onSuccess: (res) => navigate(`/annotate/${res.attachmentId}`),
   });
   return (
-    <button
-      className="shrink-0 text-muted-foreground hover:text-primary disabled:opacity-50"
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-6 text-[11px] shrink-0"
       title="Pin objects on this photo"
       disabled={ensure.isPending}
       onClick={(e) => {
         e.stopPropagation();
-        ensure.mutate({ captureId, houseId: null });
+        ensure.mutate({ captureId, houseId });
       }}
     >
-      {ensure.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
-    </button>
+      {ensure.isPending ? (
+        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+      ) : (
+        <MapPin className="h-3 w-3 mr-1" />
+      )}
+      Pin
+    </Button>
   );
 }
 
@@ -139,7 +149,78 @@ type CompareResult = { a: CompareSide; b: CompareSide };
 function CaptureImage({ storageKey }: { storageKey: string }) {
   const url = trpc.attachments.url.useQuery({ key: storageKey });
   if (!url.data?.url) return null;
-  return <img src={url.data.url} alt="" className="max-h-32 rounded border border-border" />;
+  return (
+    <img
+      src={url.data.url}
+      alt=""
+      className="h-44 w-44 object-cover rounded-lg border border-border"
+    />
+  );
+}
+
+/** Before a pending (untriaged) photo goes into the pin canvas, confirm
+ * where it was taken - unlike an already-filed item, nothing here carries a
+ * location yet, and that confirmation rides along in the URL so a new item
+ * created while pinning starts out placed instead of homeless. */
+function PinPendingButton({ captureId }: { captureId: number }) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [loc, setLoc] = useState<RoomValue>({ houseId: null, floor: "", room: "" });
+  const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
+    onSuccess: (res) => {
+      const params = new URLSearchParams({
+        houseId: loc.houseId != null ? String(loc.houseId) : "none",
+        floor: loc.floor.trim() || "none",
+        room: loc.room.trim() || "none",
+      });
+      navigate(`/annotate/${res.attachmentId}?${params.toString()}`);
+    },
+  });
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-6 text-[11px]"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <MapPin className="h-3 w-3 mr-1" /> Pin
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Where was this taken?</DialogTitle>
+          </DialogHeader>
+          <p className="text-[12px] text-muted-foreground -mt-2">
+            Confirms the location before pinning - a new item created there starts out placed.
+          </p>
+          <RoomPicker value={loc} onChange={setLoc} />
+          <div className="flex justify-end gap-2 mt-1">
+            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={ensure.isPending}
+              onClick={() => ensure.mutate({ captureId, houseId: loc.houseId })}
+            >
+              {ensure.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              ) : (
+                <MapPin className="h-3.5 w-3.5 mr-1" />
+              )}
+              Continue to pin
+            </Button>
+          </div>
+          {ensure.isError && <div className="text-[12px] text-destructive">{ensure.error.message}</div>}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
 
 function TriageCard({ capture }: { capture: Capture }) {
@@ -210,18 +291,21 @@ function TriageCard({ capture }: { capture: Capture }) {
             )}
           </div>
           {capture.storageKey && capture.kind === "image" && (
-            <div className="mt-2 flex items-start gap-2">
+            <div className="mt-2 flex items-start gap-3">
               <button title="View / detect objects" onClick={() => setDetectOpen(true)}>
                 <CaptureImage storageKey={capture.storageKey} />
               </button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-6 text-[11px]"
-                onClick={() => setDetectOpen(true)}
-              >
-                <ScanSearch className="h-3 w-3 mr-1" /> detect objects
-              </Button>
+              <div className="flex flex-col gap-1.5 pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[11px]"
+                  onClick={() => setDetectOpen(true)}
+                >
+                  <ScanSearch className="h-3 w-3 mr-1" /> detect objects
+                </Button>
+                <PinPendingButton captureId={capture.id} />
+              </div>
             </div>
           )}
           <div className="font-data text-[11px] text-muted-foreground mt-1">

@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
 import {
   LayoutDashboard,
   Inbox,
@@ -27,6 +30,8 @@ import {
   MapPin,
   ChevronDown,
   ChevronRight,
+  Pencil,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
@@ -144,6 +149,21 @@ export default function Layout() {
   const [locationsCollapsed, toggleLocations] = useCollapsed("sidebar.locations.collapsed");
   const pendingCount = (inbox.data ?? []).filter((c) => c.status === "pending").length;
 
+  const [editingLocation, setEditingLocation] = useState<{
+    houseId: number | null;
+    floor: string | null;
+    room: string;
+  } | null>(null);
+  const [renameTo, setRenameTo] = useState<RoomValue>({ houseId: null, floor: "", room: "" });
+  const utils = trpc.useUtils();
+  const renameLocation = trpc.map.renameLocation.useMutation({
+    onSuccess: () => {
+      utils.map.listLocations.invalidate();
+      utils.items.listAll.invalidate();
+      setEditingLocation(null);
+    },
+  });
+
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     cn(
       "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors",
@@ -206,8 +226,8 @@ export default function Layout() {
               const key = `${l.houseId ?? "none"}|${l.floor ?? "none"}|${l.room}`;
               const to = `/items?houseId=${l.houseId ?? "none"}&floor=${encodeURIComponent(l.floor ?? "none")}&room=${encodeURIComponent(l.room)}`;
               return (
-                <NavLink key={key} to={to} className={navLinkClass} onClick={() => setMenuOpen(false)}>
-                  <MapPin className="h-4 w-4 text-[#b4b8a5]" />
+                <NavLink key={key} to={to} className={(a) => cn(navLinkClass(a), "group")} onClick={() => setMenuOpen(false)}>
+                  <MapPin className="h-4 w-4 text-[#b4b8a5] shrink-0" />
                   <span className="flex-1 min-w-0 truncate">
                     {l.room}
                     {l.houseName || l.floor ? (
@@ -215,6 +235,18 @@ export default function Layout() {
                     ) : null}
                   </span>
                   <span className="font-data text-[11px] opacity-60">{l.count}</span>
+                  <button
+                    className="shrink-0 opacity-0 group-hover:opacity-100 hover:text-[#f4f4ed]"
+                    title="Rename or merge this location"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setEditingLocation({ houseId: l.houseId, floor: l.floor, room: l.room });
+                      setRenameTo({ houseId: l.houseId, floor: l.floor ?? "", room: l.room });
+                    }}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
                 </NavLink>
               );
             })}
@@ -266,6 +298,49 @@ export default function Layout() {
         </div>
         <Outlet context={{ navigate }} />
       </main>
+
+      <Dialog open={!!editingLocation} onOpenChange={(o) => !o && setEditingLocation(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename or merge location</DialogTitle>
+          </DialogHeader>
+          {editingLocation && (
+            <div className="space-y-3">
+              <p className="text-[12px] text-muted-foreground">
+                Updates every item currently filed under "{editingLocation.room}
+                {editingLocation.floor ? ` · ${editingLocation.floor}` : ""}". Set it to match another
+                location's house/floor/room exactly to merge the two.
+              </p>
+              <RoomPicker value={renameTo} onChange={setRenameTo} />
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setEditingLocation(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!renameTo.room.trim() || renameLocation.isPending}
+                  onClick={() =>
+                    renameLocation.mutate({
+                      from: editingLocation,
+                      to: {
+                        houseId: renameTo.houseId,
+                        floor: renameTo.floor.trim() || null,
+                        room: renameTo.room.trim(),
+                      },
+                    })
+                  }
+                >
+                  {renameLocation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
+                  Save
+                </Button>
+              </div>
+              {renameLocation.isError && (
+                <div className="text-[12px] text-destructive">{renameLocation.error.message}</div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router";
+import { useParams, useSearchParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
@@ -89,6 +89,7 @@ function NewItemPhotoDialog({
   const create = trpc.attachments.createCutoutFromAttachment.useMutation({
     onSuccess: () => {
       utils.attachments.listForItem.invalidate({ itemId });
+      utils.items.get.invalidate({ id: itemId });
       utils.items.listAll.invalidate();
       utils.items.listByArea.invalidate();
       onClose();
@@ -173,6 +174,22 @@ export default function AnnotatePage() {
   const utils = trpc.useUtils();
   const imgRef = useRef<HTMLImageElement>(null);
 
+  // a location confirmed on the way in here (e.g. from Inbox's pending-item
+  // "Pin" flow, which has no location of its own yet) - only applied to a
+  // brand-new item created while pinning, so it doesn't start out homeless
+  const [searchParams] = useSearchParams();
+  const confirmedLocation = (() => {
+    const room = searchParams.get("room");
+    if (!room || room === "none") return null;
+    const houseIdParam = searchParams.get("houseId");
+    const floorParam = searchParams.get("floor");
+    return {
+      houseId: houseIdParam && houseIdParam !== "none" ? Number(houseIdParam) : null,
+      floor: floorParam && floorParam !== "none" ? floorParam : null,
+      room,
+    };
+  })();
+
   const pinsQuery = trpc.annotations.listForAttachment.useQuery({ attachmentId: attId });
   const urlQuery = trpc.attachments.urlForAttachment.useQuery({ attachmentId: attId });
   const areas = trpc.areas.list.useQuery();
@@ -225,6 +242,20 @@ export default function AnnotatePage() {
   const [dragPos, setDragPos] = useState<Record<number, { xPct: number; yPct: number }>>({});
   const dragging = useRef<number | null>(null);
   const createItem = trpc.items.create.useMutation();
+  const addItemPhoto = trpc.attachments.createCutoutFromAttachment.useMutation({
+    onSuccess: (res, vars) => {
+      if (res.created) {
+        utils.attachments.listForItem.invalidate({ itemId: vars.itemId });
+        utils.items.get.invalidate({ id: vars.itemId });
+      }
+    },
+  });
+  // pinning an item onto a photo - new or already existing - means that
+  // photo is now "seen in photos" for it too; quiet best-effort, the pin
+  // itself is the action the user asked for, this is just a bonus
+  const ensureItemPhoto = (itemId: number, box: CropBox) => {
+    addItemPhoto.mutate({ itemId, sourceAttachmentId: attId, box });
+  };
   const detect = trpc.annotations.detect.useMutation({
     onSuccess: (res) => {
       if (res.ok) {
@@ -286,6 +317,15 @@ export default function AnnotatePage() {
     // actual inventory record ("Samsung ultrawide monitor")
     const label = draft.item ? draft.item.name : draft.label;
     resolve.mutate({ id: p.id, confirm: true, label, itemId: draft.item?.id ?? null });
+    if (draft.item) {
+      const box = boxFor(p);
+      ensureItemPhoto(draft.item.id, {
+        xPct: box.xPct,
+        yPct: box.yPct,
+        wPct: box.wPct ?? 20,
+        hPct: box.hPct ?? 20,
+      });
+    }
     setSuggestionDrafts((prev) => {
       const { [p.id]: _drop, ...rest } = prev;
       return rest;
@@ -448,24 +488,29 @@ export default function AnnotatePage() {
   const savePending = async (overrideItem?: { id: number; name: string } | null) => {
     if (!pending) return;
     const linkedItem = overrideItem !== undefined ? overrideItem : pendingItem;
+    const box: CropBox =
+      pending.wPct != null && pending.hPct != null
+        ? { xPct: pending.xPct, yPct: pending.yPct, wPct: pending.wPct, hPct: pending.hPct }
+        : { xPct: pending.xPct, yPct: pending.yPct, wPct: 20, hPct: 20 };
     let itemId = linkedItem?.id;
     if (!itemId && pendingLabel.trim() && newItemArea !== "") {
       const res = await createItem.mutateAsync({
         areaId: Number(newItemArea),
         name: pendingLabel.trim(),
+        houseId: confirmedLocation?.houseId,
+        floor: confirmedLocation?.floor,
+        room: confirmedLocation?.room,
       });
       itemId = res.id;
       utils.items.listByArea.invalidate();
+      utils.items.listAll.invalidate();
       utils.areas.list.invalidate();
+      utils.map.listLocations.invalidate();
       // a brand-new item needs a photo too - offer one cropped from right
       // here, defaulting to the pin's own box if one was drawn
-      setNewItemPhotoPrompt({
-        itemId: res.id,
-        itemName: pendingLabel.trim(),
-        box: pending.wPct != null && pending.hPct != null
-          ? { xPct: pending.xPct, yPct: pending.yPct, wPct: pending.wPct, hPct: pending.hPct }
-          : { xPct: pending.xPct, yPct: pending.yPct, wPct: 20, hPct: 20 },
-      });
+      setNewItemPhotoPrompt({ itemId: res.id, itemName: pendingLabel.trim(), box });
+    } else if (itemId) {
+      ensureItemPhoto(itemId, box);
     }
     // once linked, the item's own name is the label - not the free-text
     // description that found it
@@ -863,6 +908,15 @@ export default function AnnotatePage() {
                     onClick={() => {
                       const label = editItem ? editItem.name : editLabel.trim();
                       reposition.mutate({ id: editingPin.id, label, itemId: editItem?.id ?? null });
+                      if (editItem) {
+                        const box = boxFor(editingPin);
+                        ensureItemPhoto(editItem.id, {
+                          xPct: box.xPct,
+                          yPct: box.yPct,
+                          wPct: box.wPct ?? 20,
+                          hPct: box.hPct ?? 20,
+                        });
+                      }
                       setEditingPinId(null);
                     }}
                   >

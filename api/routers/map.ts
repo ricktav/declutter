@@ -116,4 +116,48 @@ export const mapRouter = createRouter({
       });
       return { attachmentId: id };
     }),
+
+  /**
+   * Rename a location, or merge it into another one by renaming it to match
+   * exactly - bulk-updates every item currently filed under `from` to `to`
+   * in one go, since a location is just a (houseId, floor, room) tuple on
+   * items, not a row of its own.
+   */
+  renameLocation: publicQuery
+    .input(
+      z.object({
+        from: z.object({
+          houseId: z.number().nullable(),
+          floor: z.string().nullable(),
+          room: z.string().min(1),
+        }),
+        to: z.object({
+          houseId: z.number().nullable(),
+          floor: z.string().nullable(),
+          room: z.string().min(1),
+        }),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const { from, to } = input;
+      const where = and(
+        eq(items.room, from.room),
+        from.floor == null ? isNull(items.floor) : eq(items.floor, from.floor),
+        from.houseId == null ? isNull(items.houseId) : eq(items.houseId, from.houseId),
+      );
+      const affected = await db.select({ id: items.id }).from(items).where(where);
+      const changed = affected.length;
+      await db
+        .update(items)
+        .set({ room: to.room, floor: to.floor, houseId: to.houseId })
+        .where(where);
+      await logEvent({
+        entityType: "item",
+        entityId: 0,
+        action: "location-renamed",
+        summary: `Location "${from.room}" renamed to "${to.room}" (${changed} item(s))`,
+      });
+      return { ok: true, changed };
+    }),
 });
