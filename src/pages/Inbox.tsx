@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { AreaPicker } from "@/components/AreaPicker";
@@ -26,6 +27,7 @@ import {
   ScanSearch,
   Boxes,
   Mic,
+  MapPin,
 } from "lucide-react";
 import type { Capture } from "@db/schema";
 
@@ -53,6 +55,28 @@ function ProcessedThumb({ storageKey, kind }: { storageKey: string | null; kind:
     <div className="h-8 w-8 shrink-0 flex items-center justify-center rounded border border-border bg-muted/40 text-muted-foreground">
       <Icon className="h-3.5 w-3.5" />
     </div>
+  );
+}
+
+/** Jump from a processed photo straight into the pin-objects canvas - same
+ * find-or-create-attachment step the Map view uses, just entered from here. */
+function PinCaptureButton({ captureId }: { captureId: number }) {
+  const navigate = useNavigate();
+  const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
+    onSuccess: (res) => navigate(`/annotate/${res.attachmentId}`),
+  });
+  return (
+    <button
+      className="shrink-0 text-muted-foreground hover:text-primary disabled:opacity-50"
+      title="Pin objects on this photo"
+      disabled={ensure.isPending}
+      onClick={(e) => {
+        e.stopPropagation();
+        ensure.mutate({ captureId, houseId: null });
+      }}
+    >
+      {ensure.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
+    </button>
   );
 }
 
@@ -468,6 +492,7 @@ export default function InboxPage() {
                 <span className="flex-1 truncate">{c.rawText ?? c.url ?? "(file)"}</span>
                 <span className="micro-label">{c.status}</span>
                 <span className="font-data text-[11px]">{timeAgo(c.createdAt)}</span>
+                {c.kind === "image" && c.storageKey && <PinCaptureButton captureId={c.id} />}
               </div>
             ))}
           </div>
