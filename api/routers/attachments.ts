@@ -157,4 +157,56 @@ export const attachmentsRouter = createRouter({
       });
       return { ok: true, storageKey: saved.key };
     }),
+
+  /** Give a freshly-created item its first photo: crop a box out of the
+   * attachment being annotated (its original source capture when it has
+   * one, otherwise the attachment's own image) so pinning a new object
+   * doesn't leave it imageless. */
+  createCutoutFromAttachment: publicQuery
+    .input(z.object({ itemId: z.number(), sourceAttachmentId: z.number(), box: cropBoxInput }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const source = await db.query.attachments.findFirst({ where: eq(attachments.id, input.sourceAttachmentId) });
+      if (!source) throw new Error("Source photo not found.");
+
+      let bytes: Uint8Array;
+      let sourceCaptureId: number | null = null;
+      if (source.sourceCaptureId) {
+        const cap = await db.query.captures.findFirst({ where: eq(captures.id, source.sourceCaptureId) });
+        if (!cap?.storageKey) throw new Error("Source photo is no longer available.");
+        bytes = await readFileBytes(cap.storageKey);
+        sourceCaptureId = cap.id;
+      } else if (source.storageKey) {
+        bytes = await readFileBytes(source.storageKey);
+      } else {
+        throw new Error("Source photo is no longer available.");
+      }
+
+      const cropped = await cropPercent(bytes, input.box);
+      const saved = await putFile({
+        bytes: new Uint8Array(cropped),
+        fileName: `items/${input.itemId}/cutout-${Date.now()}.jpg`,
+        contentType: "image/jpeg",
+      });
+      const [{ id }] = await db
+        .insert(attachments)
+        .values({
+          itemId: input.itemId,
+          kind: "image",
+          storageKey: saved.key,
+          mimeType: "image/jpeg",
+          size: saved.size,
+          sourceCaptureId,
+          cropBox: input.box,
+          title: "Photo",
+        })
+        .$returningId();
+      await logEvent({
+        entityType: "attachment",
+        entityId: id,
+        action: "created",
+        summary: `Photo cropped from pin location and added to item #${input.itemId}`,
+      });
+      return { id, storageKey: saved.key };
+    }),
 });

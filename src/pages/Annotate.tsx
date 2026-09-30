@@ -4,6 +4,13 @@ import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { AreaPicker } from "@/components/AreaPicker";
+import { Box } from "@/components/DetectObjects";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   Sparkles,
@@ -15,6 +22,8 @@ import {
   ArrowLeft,
   Flag,
 } from "lucide-react";
+
+type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
 
 type Draft = { label: string; item: { id: number; name: string } | null };
 
@@ -53,6 +62,75 @@ function LinkedItemChip({
         </div>
       )}
     </div>
+  );
+}
+
+/** After creating a brand-new item while pinning, give it a first photo:
+ * crop out of the same source photo the pin was placed on, with the pin's
+ * own box as a starting point the user can drag/resize/zoom to fine-tune
+ * before it's saved. */
+function NewItemPhotoDialog({
+  photoUrl,
+  itemName,
+  sourceAttachmentId,
+  itemId,
+  initialBox,
+  onClose,
+}: {
+  photoUrl: string;
+  itemName: string;
+  sourceAttachmentId: number;
+  itemId: number;
+  initialBox: CropBox;
+  onClose: () => void;
+}) {
+  const [box, setBox] = useState<CropBox>(initialBox);
+  const utils = trpc.useUtils();
+  const create = trpc.attachments.createCutoutFromAttachment.useMutation({
+    onSuccess: () => {
+      utils.attachments.listForItem.invalidate({ itemId });
+      utils.items.listAll.invalidate();
+      utils.items.listByArea.invalidate();
+      onClose();
+    },
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="w-screen h-[100dvh] max-w-none sm:max-w-none rounded-none p-4 overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Photo for "{itemName}"</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 items-center">
+          <p className="text-[12px] text-muted-foreground -mt-2">
+            Drag to move, drag the corner to resize — this crops from the original photo.
+          </p>
+          <div className="relative select-none mx-auto max-w-full">
+            <img
+              src={photoUrl}
+              alt="source"
+              className="max-h-[calc(100dvh-11rem)] w-auto rounded touch-none"
+              draggable={false}
+            />
+            <Box box={box} color="#2d4a22" onChange={setBox} />
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="ghost" onClick={onClose} disabled={create.isPending}>
+              Skip
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => create.mutate({ itemId, sourceAttachmentId, box })}
+              disabled={create.isPending}
+            >
+              {create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
+              Save photo
+            </Button>
+          </div>
+          {create.isError && <div className="text-[12px] text-destructive">{create.error.message}</div>}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -106,6 +184,11 @@ export default function AnnotatePage() {
   const drawStart = useRef<{ xPct: number; yPct: number } | null>(null);
   const [pendingLabel, setPendingLabel] = useState("");
   const [pendingItem, setPendingItem] = useState<{ id: number; name: string } | null>(null);
+  const [newItemPhotoPrompt, setNewItemPhotoPrompt] = useState<{
+    itemId: number;
+    itemName: string;
+    box: CropBox;
+  } | null>(null);
   const [newItemArea, setNewItemArea] = useState<number | "">("");
   const [aiError, setAiError] = useState<string | null>(null);
   const [detectInfo, setDetectInfo] = useState<string | null>(null);
@@ -374,6 +457,15 @@ export default function AnnotatePage() {
       itemId = res.id;
       utils.items.listByArea.invalidate();
       utils.areas.list.invalidate();
+      // a brand-new item needs a photo too - offer one cropped from right
+      // here, defaulting to the pin's own box if one was drawn
+      setNewItemPhotoPrompt({
+        itemId: res.id,
+        itemName: pendingLabel.trim(),
+        box: pending.wPct != null && pending.hPct != null
+          ? { xPct: pending.xPct, yPct: pending.yPct, wPct: pending.wPct, hPct: pending.hPct }
+          : { xPct: pending.xPct, yPct: pending.yPct, wPct: 20, hPct: 20 },
+      });
     }
     // once linked, the item's own name is the label - not the free-text
     // description that found it
@@ -923,6 +1015,17 @@ export default function AnnotatePage() {
           </div>
         </aside>
       </div>
+
+      {newItemPhotoPrompt && urlQuery.data?.url && (
+        <NewItemPhotoDialog
+          photoUrl={urlQuery.data.url}
+          itemName={newItemPhotoPrompt.itemName}
+          itemId={newItemPhotoPrompt.itemId}
+          sourceAttachmentId={attId}
+          initialBox={newItemPhotoPrompt.box}
+          onClose={() => setNewItemPhotoPrompt(null)}
+        />
+      )}
     </div>
   );
 }
