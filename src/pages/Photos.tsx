@@ -96,12 +96,12 @@ export default function PhotosPage() {
               {g.rows.map((p) => (
                 <Link
                   key={p.id}
-                  to={`/items/${p.itemId}`}
+                  to={p.itemId ? `/items/${p.itemId}` : `/annotate/${p.id}`}
                   className="group rounded-lg border border-border bg-white p-2 hover:border-primary/50"
                 >
                   <Thumb storageKey={p.storageKey} size="lg" />
                   <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">
-                    {p.itemName ?? "untitled"}
+                    {p.itemName ?? (p.itemId ? "untitled" : "not pinned yet")}
                   </div>
                   <div className="font-data text-[10px] text-muted-foreground">{timeAgo(p.createdAt)}</div>
                   {p.itemStatus === "archived" && (

@@ -136,6 +136,11 @@ export const attachments = mysqlTable(
     areaId: bigint("areaId", { mode: "number", unsigned: true }),
     houseId: bigint("houseId", { mode: "number", unsigned: true }),
     roomId: bigint("roomId", { mode: "number", unsigned: true }),
+    // free-text location, same convention as items.floor/items.room - set
+    // when a location is confirmed before an item exists yet (Inbox's
+    // pending-item "Pin" flow), so that photo still groups by location
+    floor: varchar("floor", { length: 32 }),
+    room: varchar("room", { length: 128 }),
     kind: varchar("kind", { length: 32 }).$type<"image" | "link" | "note" | "file">().notNull(),
     title: varchar("title", { length: 255 }),
     content: text("content"),

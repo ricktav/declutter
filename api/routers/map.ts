@@ -77,7 +77,14 @@ export const mapRouter = createRouter({
    * (one per capture, reused on repeat visits) so it becomes pinnable.
    */
   ensureAttachmentForCapture: publicQuery
-    .input(z.object({ captureId: z.number(), houseId: z.number().nullable() }))
+    .input(
+      z.object({
+        captureId: z.number(),
+        houseId: z.number().nullable(),
+        floor: z.string().nullable().optional(),
+        room: z.string().nullable().optional(),
+      }),
+    )
     .mutation(async ({ input }) => {
       const db = getDb();
       const existing = await db.query.attachments.findFirst({
@@ -92,7 +99,17 @@ export const mapRouter = createRouter({
           isNull(attachments.itemId),
         ),
       });
-      if (existing) return { attachmentId: existing.id };
+      if (existing) {
+        // a location confirmed just now (e.g. Inbox's pending-item "Pin"
+        // flow) is worth saving onto an attachment that doesn't have one yet
+        if (input.room && !existing.room) {
+          await db
+            .update(attachments)
+            .set({ houseId: input.houseId, floor: input.floor ?? null, room: input.room })
+            .where(eq(attachments.id, existing.id));
+        }
+        return { attachmentId: existing.id };
+      }
 
       const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.captureId) });
       if (!cap?.storageKey) throw new Error("Capture has no stored photo.");
@@ -105,6 +122,8 @@ export const mapRouter = createRouter({
           mimeType: "image/jpeg",
           sourceCaptureId: cap.id,
           houseId: input.houseId,
+          floor: input.floor ?? null,
+          room: input.room ?? null,
           title: "Location photo",
         })
         .$returningId();

@@ -225,12 +225,15 @@ export const attachmentsRouter = createRouter({
    * attributes. */
   listAllImages: publicQuery.query(async () => {
     const db = getDb();
+    // an item's own photo, or a photo whose location was confirmed before
+    // any item existed yet (Inbox's pending-item "Pin" flow) - either way
+    // it belongs in the catalog, grouped by whatever location it has
     const atts = await db
       .select()
       .from(attachments)
-      .where(and(eq(attachments.kind, "image"), isNotNull(attachments.itemId)))
+      .where(and(eq(attachments.kind, "image"), or(isNotNull(attachments.itemId), isNotNull(attachments.room))))
       .orderBy(desc(attachments.createdAt));
-    const itemIds = [...new Set(atts.map((a) => a.itemId!))];
+    const itemIds = [...new Set(atts.map((a) => a.itemId).filter((id): id is number => id != null))];
     const allItems = itemIds.length
       ? await db.select().from(items).where(or(...itemIds.map((id) => eq(items.id, id))))
       : [];
@@ -238,17 +241,17 @@ export const attachmentsRouter = createRouter({
     const allAreas = await db.select().from(areas);
     const areaById = new Map(allAreas.map((a) => [a.id, a]));
     return atts.map((a) => {
-      const it = itemById.get(a.itemId!);
+      const it = a.itemId != null ? itemById.get(a.itemId) : undefined;
       return {
         id: a.id,
         storageKey: a.storageKey,
         createdAt: a.createdAt,
-        itemId: a.itemId!,
+        itemId: a.itemId ?? null,
         itemName: it?.name ?? null,
         itemStatus: it?.status ?? null,
-        houseId: it?.houseId ?? null,
-        floor: it?.floor ?? null,
-        room: it?.room ?? null,
+        houseId: it?.houseId ?? a.houseId ?? null,
+        floor: it?.floor ?? a.floor ?? null,
+        room: it?.room ?? a.room ?? null,
         areaName: it ? (areaById.get(it.areaId)?.name ?? null) : null,
       };
     });
