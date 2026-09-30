@@ -26,6 +26,8 @@ import {
   Settings,
   Search,
   MapPin,
+  ChevronDown,
+  ChevronRight,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
@@ -41,6 +43,48 @@ const AREA_ICONS: Record<string, LucideIcon> = {
   calendar: Calendar,
   box: Box,
 };
+
+function useCollapsed(key: string, initial = false) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      const v = localStorage.getItem(key);
+      return v == null ? initial : v === "1";
+    } catch {
+      return initial;
+    }
+  });
+  const toggle = () =>
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem(key, next ? "1" : "0");
+      } catch {
+        // private browsing / storage disabled - collapse state just won't persist
+      }
+      return next;
+    });
+  return [collapsed, toggle] as const;
+}
+
+function SidebarSectionTitle({
+  label,
+  collapsed,
+  onToggle,
+}: {
+  label: string;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      className="w-full flex items-center gap-1 px-4 mt-6 mb-1.5 text-[#b4b8a5] hover:text-[#e0e0d0]"
+    >
+      {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+      <span className="micro-label">{label}</span>
+    </button>
+  );
+}
 
 function RunningTimerPill() {
   const running = trpc.tasks.runningTimer.useQuery(undefined, { refetchInterval: 5000 });
@@ -93,10 +137,13 @@ const NAV = [
 
 export default function Layout() {
   const areas = trpc.areas.list.useQuery();
+  const locations = trpc.map.listLocations.useQuery();
   const inbox = trpc.inbox.list.useQuery();
   const { openAsk } = useAsk();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [areasCollapsed, toggleAreas] = useCollapsed("sidebar.areas.collapsed");
+  const [locationsCollapsed, toggleLocations] = useCollapsed("sidebar.locations.collapsed");
   const pendingCount = (inbox.data ?? []).filter((c) => c.status === "pending").length;
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -136,20 +183,49 @@ export default function Layout() {
         ))}
       </nav>
 
-      <div className="micro-label text-[#b4b8a5] px-4 mt-6 mb-1.5">Areas</div>
-      <nav className="px-2 space-y-0.5 flex-1 overflow-y-auto">
-        {(areas.data ?? []).map((a) => {
-          const Icon = AREA_ICONS[a.icon] ?? Box;
-          return (
-            <NavLink key={a.id} to={`/areas/${a.slug}`} className={navLinkClass}
-              onClick={() => setMenuOpen(false)}>
-              <Icon className="h-4 w-4" style={{ color: a.color }} />
-              <span className="flex-1 truncate">{a.name}</span>
-              <span className="font-data text-[11px] opacity-60">{a.itemCount}</span>
-            </NavLink>
-          );
-        })}
-      </nav>
+      <div className="flex-1 overflow-y-auto">
+        <SidebarSectionTitle label="Areas" collapsed={areasCollapsed} onToggle={toggleAreas} />
+        {!areasCollapsed && (
+          <nav className="px-2 space-y-0.5">
+            {(areas.data ?? []).map((a) => {
+              const Icon = AREA_ICONS[a.icon] ?? Box;
+              return (
+                <NavLink key={a.id} to={`/areas/${a.slug}`} className={navLinkClass}
+                  onClick={() => setMenuOpen(false)}>
+                  <Icon className="h-4 w-4" style={{ color: a.color }} />
+                  <span className="flex-1 truncate">{a.name}</span>
+                  <span className="font-data text-[11px] opacity-60">{a.itemCount}</span>
+                </NavLink>
+              );
+            })}
+          </nav>
+        )}
+
+        <SidebarSectionTitle label="Locations" collapsed={locationsCollapsed} onToggle={toggleLocations} />
+        {!locationsCollapsed && (
+          <nav className="px-2 space-y-0.5">
+            {(locations.data ?? []).map((l) => {
+              const key = `${l.houseId ?? "none"}|${l.floor ?? "none"}|${l.room}`;
+              const to = `/items?houseId=${l.houseId ?? "none"}&floor=${encodeURIComponent(l.floor ?? "none")}&room=${encodeURIComponent(l.room)}`;
+              return (
+                <NavLink key={key} to={to} className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                  <MapPin className="h-4 w-4 text-[#b4b8a5]" />
+                  <span className="flex-1 min-w-0 truncate">
+                    {l.room}
+                    {l.houseName || l.floor ? (
+                      <span className="opacity-60"> · {[l.houseName, l.floor].filter(Boolean).join(" · ")}</span>
+                    ) : null}
+                  </span>
+                  <span className="font-data text-[11px] opacity-60">{l.count}</span>
+                </NavLink>
+              );
+            })}
+            {locations.data?.length === 0 && (
+              <div className="px-2.5 py-1 text-[12px] text-[#8a8e7a]">No locations set yet</div>
+            )}
+          </nav>
+        )}
+      </div>
 
       <div className="p-2 space-y-2">
         <RunningTimerPill />

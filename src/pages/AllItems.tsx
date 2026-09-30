@@ -1,31 +1,64 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { timeAgo } from "@/lib/format";
-import { Archive, LayoutGrid, List as ListIcon, Search } from "lucide-react";
+import { Archive, LayoutGrid, List as ListIcon, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type SortBy = "area" | "location" | "updated";
+
+// "none" is a sentinel the sidebar's Locations links use for a null
+// houseId/floor, since that's how map.listLocations groups them - distinct
+// from the param being absent entirely (which means "don't filter on this").
+function paramMatches(value: string | null, itemValue: string | number | null): boolean {
+  if (value == null) return true;
+  if (value === "none") return itemValue == null || itemValue === "";
+  return String(itemValue ?? "") === value;
+}
 
 export default function AllItems() {
   const items = trpc.items.listAll.useQuery({ includeArchived: false });
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("area");
   const [view, setView] = useState<"list" | "gallery">("list");
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const locHouseId = searchParams.get("houseId");
+  const locFloor = searchParams.get("floor");
+  const locRoom = searchParams.get("room");
+  const locationFilterActive = locRoom != null;
+
+  useEffect(() => {
+    if (locationFilterActive) setSortBy("location");
+  }, [locationFilterActive]);
+
+  const clearLocationFilter = () => setSearchParams((prev) => {
+    const next = new URLSearchParams(prev);
+    next.delete("houseId");
+    next.delete("floor");
+    next.delete("room");
+    return next;
+  });
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
-    const rows = (items.data ?? []).filter(
-      (i) =>
+    const rows = (items.data ?? []).filter((i) => {
+      if (locationFilterActive) {
+        return (
+          i.room === locRoom && paramMatches(locFloor, i.floor) && paramMatches(locHouseId, i.houseId)
+        );
+      }
+      return (
         !query ||
         i.name.toLowerCase().includes(query) ||
         (i.room ?? "").toLowerCase().includes(query) ||
         (i.floor ?? "").toLowerCase().includes(query) ||
-        (i.areaName ?? "").toLowerCase().includes(query),
-    );
+        (i.areaName ?? "").toLowerCase().includes(query)
+      );
+    });
     return rows;
-  }, [items.data, q]);
+  }, [items.data, q, locationFilterActive, locRoom, locFloor, locHouseId]);
 
   // group key + label depending on sort mode
   const groupOf = (i: (typeof filtered)[number]) => {
@@ -63,6 +96,16 @@ export default function AllItems() {
         </span>
       </div>
 
+      {locationFilterActive && (
+        <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-accent px-3 py-1 text-[12px]">
+          <span className="text-muted-foreground">location:</span>
+          <span className="font-medium">{locRoom}</span>
+          <button onClick={clearLocationFilter} className="text-muted-foreground hover:text-foreground ml-1">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-3 mt-5">
         <div className="relative w-72">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -70,6 +113,7 @@ export default function AllItems() {
             className="w-full rounded-md border border-input bg-white pl-8 pr-3 py-1.5 text-[13px]"
             placeholder="Search name, room, floor, area…"
             value={q}
+            disabled={locationFilterActive}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
@@ -188,7 +232,7 @@ export default function AllItems() {
         ))}
         {filtered.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
-            No items match "{q}".
+            {locationFilterActive ? `No items are placed in "${locRoom}" yet.` : `No items match "${q}".`}
           </div>
         )}
       </div>
