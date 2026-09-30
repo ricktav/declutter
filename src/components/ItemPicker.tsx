@@ -53,7 +53,10 @@ export function ItemPicker({
   const selectAt = (i: number) => {
     if (i < matches.length) {
       onSelect(matches[i]);
-      setQ("");
+      // only reset the internal query in uncontrolled mode - a controlled
+      // caller already set its own display value (the item's name) inside
+      // onSelect, and clearing here would stomp that right back to empty
+      if (!onQueryChange) setQ("");
     } else if (showCreateRow) {
       onCreateNew?.(q.trim());
     }
