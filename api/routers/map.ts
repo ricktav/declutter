@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, isNotNull } from "drizzle-orm";
+import { eq, and, isNotNull, isNull } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { items, attachments, captures, houses } from "@db/schema";
@@ -81,7 +81,16 @@ export const mapRouter = createRouter({
     .mutation(async ({ input }) => {
       const db = getDb();
       const existing = await db.query.attachments.findFirst({
-        where: and(eq(attachments.sourceCaptureId, input.captureId), eq(attachments.kind, "image")),
+        // itemId IS NULL is the key filter: a cutout also carries this same
+        // sourceCaptureId (that's how the photo pool finds it in the first
+        // place) but is cropped, not the full photo - without this filter
+        // the query can return someone's cutout instead of materializing
+        // the bare full-photo attachment this is meant to find/create
+        where: and(
+          eq(attachments.sourceCaptureId, input.captureId),
+          eq(attachments.kind, "image"),
+          isNull(attachments.itemId),
+        ),
       });
       if (existing) return { attachmentId: existing.id };
 
