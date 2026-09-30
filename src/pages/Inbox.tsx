@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
+import { fileToBase64 } from "@/lib/format";
 import { AreaPicker } from "@/components/AreaPicker";
 import { DetectObjectsModal } from "@/components/DetectObjects";
 import {
@@ -28,6 +29,7 @@ import {
   Boxes,
   Mic,
   MapPin,
+  Camera,
 } from "lucide-react";
 import type { Capture } from "@db/schema";
 
@@ -77,6 +79,52 @@ function PinCaptureButton({ captureId }: { captureId: number }) {
     >
       {ensure.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
     </button>
+  );
+}
+
+/** Phone-first: opens the camera directly (capture="environment" skips the
+ * gallery/file picker most browsers show for a plain file input) for the
+ * walk-the-building capture flow that used to be the standalone Snap page. */
+function MobileCameraButton() {
+  const utils = trpc.useUtils();
+  const photoRef = useRef<HTMLInputElement>(null);
+  const create = trpc.inbox.create.useMutation({
+    onSuccess: () => utils.inbox.list.invalidate(),
+  });
+  return (
+    <div className="md:hidden">
+      <input
+        ref={photoRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (!f) return;
+          const contentBase64 = await fileToBase64(f);
+          create.mutate({
+            kind: "image",
+            fileName: f.name || `snap-${Date.now()}.jpg`,
+            contentBase64,
+            mimeType: f.type || "image/jpeg",
+          });
+        }}
+      />
+      <button
+        onClick={() => photoRef.current?.click()}
+        disabled={create.isPending}
+        className="w-full rounded-xl bg-[#282c20] text-[#f4f4ed] py-5 flex items-center justify-center gap-2 active:bg-[#3a3f2e] transition-colors"
+      >
+        {create.isPending ? (
+          <Loader2 className="h-5 w-5 animate-spin text-[#d2ff00]" />
+        ) : (
+          <Camera className="h-5 w-5 text-[#d2ff00]" />
+        )}
+        <span className="text-[14px] font-semibold">Take photo</span>
+      </button>
+    </div>
   );
 }
 
@@ -459,7 +507,8 @@ export default function InboxPage() {
         Drop anything here. AI triage proposes where it belongs — you confirm, it files.
       </p>
 
-      <div className="mt-5">
+      <div className="mt-5 space-y-3">
+        <MobileCameraButton />
         <CaptureBar />
       </div>
 

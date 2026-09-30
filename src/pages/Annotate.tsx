@@ -18,6 +18,44 @@ import {
 
 type Draft = { label: string; item: { id: number; name: string } | null };
 
+/** Shows the linked item, and warns if it's already confirmed on a pin
+ * elsewhere - could be the same physical object seen twice, or a similar
+ * but distinct one (a second Sonos speaker, another matching chair) that
+ * should really get its own item record. */
+function LinkedItemChip({
+  item,
+  currentAttachmentId,
+  onUnlink,
+}: {
+  item: { id: number; name: string };
+  currentAttachmentId: number;
+  onUnlink: () => void;
+}) {
+  const pins = trpc.annotations.listForItem.useQuery({ itemId: item.id });
+  const elsewhere = (pins.data ?? []).filter(
+    (p) => p.status === "confirmed" && p.attachmentId !== currentAttachmentId,
+  );
+  return (
+    <div className="text-[12px] rounded bg-accent px-2 py-1 space-y-1">
+      <div className="flex items-center gap-1">
+        linked: <b>{item.name}</b>
+        <button className="ml-auto" onClick={onUnlink}>
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+      {elsewhere.length > 0 && (
+        <div className="flex items-start gap-1 text-amber-700">
+          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+          <span>
+            Already pinned {elsewhere.length}× elsewhere — make sure this is the same physical object, not a
+            similar one that needs its own item.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // A suggestion this close to (or overlapping) an already-confirmed pin with
 // the same-ish label is almost certainly the same physical object re-detected
 // - hide it rather than let it become a duplicate tag on re-run.
@@ -708,12 +746,7 @@ export default function AnnotatePage() {
                 autoFocus
               />
               {editItem && (
-                <div className="text-[12px] rounded bg-accent px-2 py-1 flex items-center gap-1">
-                  linked: <b>{editItem.name}</b>
-                  <button className="ml-auto" onClick={() => setEditItem(null)}>
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
+                <LinkedItemChip item={editItem} currentAttachmentId={attId} onUnlink={() => setEditItem(null)} />
               )}
               <div className="flex gap-2 justify-between">
                 <Button
@@ -787,10 +820,15 @@ export default function AnnotatePage() {
                   setPendingLabel(v);
                   if (pendingItem) setPendingItem(null);
                 }}
-                onSelect={(item) => {
+                onSelect={async (item) => {
                   setPendingItem(item);
                   setPendingLabel(item.name);
-                  savePending(item);
+                  // an item already pinned elsewhere is worth a second look
+                  // before auto-adding - skip the instant-save and let the
+                  // warning on the chip below surface first
+                  const existing = await utils.annotations.listForItem.fetch({ itemId: item.id });
+                  const elsewhere = existing.filter((p) => p.status === "confirmed" && p.attachmentId !== attId);
+                  if (elsewhere.length === 0) savePending(item);
                 }}
                 allowCreate
                 onCreateNew={(name) => {
@@ -800,12 +838,7 @@ export default function AnnotatePage() {
                 autoFocus
               />
               {pendingItem && (
-                <div className="text-[12px] rounded bg-accent px-2 py-1 flex items-center gap-1">
-                  linked: <b>{pendingItem.name}</b>
-                  <button className="ml-auto" onClick={() => setPendingItem(null)}>
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
+                <LinkedItemChip item={pendingItem} currentAttachmentId={attId} onUnlink={() => setPendingItem(null)} />
               )}
               {!pendingItem && pendingLabel.trim() && (
                 <div className="space-y-1 text-[12px]">
@@ -846,6 +879,7 @@ export default function AnnotatePage() {
                   onSelect={() => setSelectedSuggestionId(p.id)}
                   onConfirm={() => confirmSuggestion(p)}
                   onReject={() => rejectSuggestion(p)}
+                  currentAttachmentId={attId}
                 />
               ))}
             </div>
@@ -901,6 +935,7 @@ function SuggestedPinRow({
   onSelect,
   onConfirm,
   onReject,
+  currentAttachmentId,
 }: {
   number: number;
   draft: Draft;
@@ -909,6 +944,7 @@ function SuggestedPinRow({
   onSelect: () => void;
   onConfirm: () => void;
   onReject: () => void;
+  currentAttachmentId: number;
 }) {
   return (
     <div
@@ -954,17 +990,12 @@ function SuggestedPinRow({
         </button>
       </div>
       {draft.item && (
-        <div className="text-[11px] rounded bg-accent px-2 py-1 flex items-center gap-1 ml-[26px]">
-          linked: <b>{draft.item.name}</b>
-          <button
-            className="ml-auto"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDraftChange({ item: null });
-            }}
-          >
-            <X className="h-3 w-3" />
-          </button>
+        <div className="ml-[26px]" onClick={(e) => e.stopPropagation()}>
+          <LinkedItemChip
+            item={draft.item}
+            currentAttachmentId={currentAttachmentId}
+            onUnlink={() => onDraftChange({ item: null })}
+          />
         </div>
       )}
     </div>

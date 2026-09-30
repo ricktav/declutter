@@ -20,7 +20,6 @@ import {
   Briefcase,
   Calendar,
   Box,
-  Camera,
   Menu,
   X,
   Settings,
@@ -124,7 +123,6 @@ function RunningTimerPill() {
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/snap", label: "Snap", icon: Camera },
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/items", label: "All Items", icon: Search },
   { to: "/map", label: "Map", icon: MapPin },
