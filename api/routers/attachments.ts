@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, or, desc, isNotNull } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { attachments, photoAnnotations, captures, type CropBox } from "@db/schema";
+import { attachments, photoAnnotations, captures, items, areas, type CropBox } from "@db/schema";
 import { putFile, deleteStoredFile, readFileBytes, urlForKey } from "../lib/filestore";
 import { cropPercent } from "../lib/crop";
 import { logEvent } from "../lib/events";
@@ -218,4 +218,39 @@ export const attachmentsRouter = createRouter({
       });
       return { id, storageKey: saved.key, created: true as const };
     }),
+
+  /** Every photo attached to an item, across the whole inventory - the
+   * "photo catalog" (Photos page), groupable/filterable by location since
+   * that's what actually varies photo to photo, not the item's other
+   * attributes. */
+  listAllImages: publicQuery.query(async () => {
+    const db = getDb();
+    const atts = await db
+      .select()
+      .from(attachments)
+      .where(and(eq(attachments.kind, "image"), isNotNull(attachments.itemId)))
+      .orderBy(desc(attachments.createdAt));
+    const itemIds = [...new Set(atts.map((a) => a.itemId!))];
+    const allItems = itemIds.length
+      ? await db.select().from(items).where(or(...itemIds.map((id) => eq(items.id, id))))
+      : [];
+    const itemById = new Map(allItems.map((i) => [i.id, i]));
+    const allAreas = await db.select().from(areas);
+    const areaById = new Map(allAreas.map((a) => [a.id, a]));
+    return atts.map((a) => {
+      const it = itemById.get(a.itemId!);
+      return {
+        id: a.id,
+        storageKey: a.storageKey,
+        createdAt: a.createdAt,
+        itemId: a.itemId!,
+        itemName: it?.name ?? null,
+        itemStatus: it?.status ?? null,
+        houseId: it?.houseId ?? null,
+        floor: it?.floor ?? null,
+        room: it?.room ?? null,
+        areaName: it ? (areaById.get(it.areaId)?.name ?? null) : null,
+      };
+    });
+  }),
 });

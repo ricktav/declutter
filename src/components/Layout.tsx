@@ -32,6 +32,7 @@ import {
   ChevronRight,
   Pencil,
   Loader2,
+  Images,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
@@ -130,6 +131,7 @@ const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/items", label: "All Items", icon: Search },
+  { to: "/photos", label: "Photos", icon: Images },
   { to: "/map", label: "Map", icon: MapPin },
   { to: "/ideas", label: "Ideas", icon: Lightbulb },
   { to: "/tasks", label: "Tasks", icon: ListChecks },

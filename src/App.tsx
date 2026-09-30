@@ -12,6 +12,7 @@ import WikiPage from "@/pages/Wiki";
 import ActivityPage from "@/pages/Activity";
 import AnnotatePage from "@/pages/Annotate";
 import MapPage from "@/pages/Map";
+import PhotosPage from "@/pages/Photos";
 import SettingsPage from "@/pages/Settings";
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/areas/:slug" element={<AreaView />} />
           <Route path="/items" element={<AllItems />} />
           <Route path="/items/:id" element={<ItemDetail />} />
+          <Route path="/photos" element={<PhotosPage />} />
           <Route path="/annotate/:attachmentId" element={<AnnotatePage />} />
           <Route path="/map" element={<MapPage />} />
           <Route path="/ideas" element={<IdeasPage />} />
