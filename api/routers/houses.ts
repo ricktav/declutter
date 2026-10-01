@@ -68,7 +68,11 @@ export const housesRouter = createRouter({
           bagId: input.bagId ?? null,
           parcelId: input.parcelId ?? null,
           parcelAreaM2: input.parcelAreaM2 ?? null,
-          floors: input.floors?.length ? input.floors : null,
+          // an explicit empty array (vs. the field being omitted) means "this
+          // building has no floors" - distinct from "not customized yet",
+          // which falls back to the generic default list - so don't coerce
+          // [] to null here
+          floors: input.floors !== undefined ? input.floors : null,
         })
         .$returningId();
       await logEvent({

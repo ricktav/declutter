@@ -272,7 +272,7 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
   const [addr, setAddr] = useState<ResolvedAddress>(EMPTY_ADDRESS);
   // most houses have at least a ground floor, so start with it pre-added
   // instead of making every new house re-click the same first pill
-  const [floors, setFloors] = useState<string[]>(["ground"]);
+  const [floors, setFloors] = useState<string[] | null>(["ground"]);
   const utils = trpc.useUtils();
   const create = trpc.houses.create.useMutation({
     onSuccess: (house) => {
@@ -339,7 +339,7 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
                   bagId: addr.bagId ?? undefined,
                   parcelId: addr.parcel?.parcelId || undefined,
                   parcelAreaM2: addr.parcel?.parcelAreaM2 ?? undefined,
-                  floors: floors.length > 0 ? floors : undefined,
+                  floors: floors ?? undefined,
                 })
               }
             >
@@ -382,7 +382,7 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(house.name);
   const [addr, setAddr] = useState<ResolvedAddress>(() => houseToResolvedAddress(house));
-  const [floors, setFloors] = useState<string[]>(house.floors ?? []);
+  const [floors, setFloors] = useState<string[] | null>(house.floors ?? null);
   const utils = trpc.useUtils();
   const update = trpc.houses.update.useMutation({
     onSuccess: () => {
@@ -399,7 +399,7 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
         if (v) {
           setName(house.name);
           setAddr(houseToResolvedAddress(house));
-          setFloors(house.floors ?? []);
+          setFloors(house.floors ?? null);
         }
       }}
     >
@@ -450,7 +450,7 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
                   bagId: addr.bagId,
                   parcelId: addr.parcel?.parcelId ?? undefined,
                   parcelAreaM2: addr.parcel?.parcelAreaM2 ?? undefined,
-                  floors: floors.length > 0 ? floors : null,
+                  floors,
                 })
               }
             >

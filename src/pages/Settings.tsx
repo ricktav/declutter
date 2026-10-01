@@ -510,7 +510,7 @@ function HouseRow({ house }: { house: HouseRowData }) {
   const [parcel, setParcel] = useState<{ parcelId: string; parcelAreaM2: number | null } | null>(
     house.parcelId ? { parcelId: house.parcelId, parcelAreaM2: house.parcelAreaM2 ?? null } : null,
   );
-  const [floors, setFloors] = useState<string[]>(house.floors ?? []);
+  const [floors, setFloors] = useState<string[] | null>(house.floors);
 
   const update = trpc.houses.update.useMutation({
     onSuccess: () => {
@@ -576,7 +576,7 @@ function HouseRow({ house }: { house: HouseRowData }) {
                 address: address.trim() || null,
                 lat: lat.trim() ? Number(lat) : null,
                 lng: lng.trim() ? Number(lng) : null,
-                floors: floors.length > 0 ? floors : null,
+                floors,
                 bagId: bagId || undefined,
                 parcelId: parcel?.parcelId || undefined,
                 parcelAreaM2: parcel?.parcelAreaM2 ?? undefined,
@@ -621,7 +621,9 @@ function HouseRow({ house }: { house: HouseRowData }) {
           </a>
         )}
         <div className="font-data text-[11px] text-muted-foreground mt-0.5">
-          floors: {(house.floors ?? DEFAULT_FLOORS).join(", ")}
+          {house.floors && house.floors.length === 0
+            ? "no floors"
+            : `floors: ${(house.floors ?? DEFAULT_FLOORS).join(", ")}`}
         </div>
       </div>
       <button

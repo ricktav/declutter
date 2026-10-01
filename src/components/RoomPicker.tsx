@@ -47,13 +47,22 @@ export function RoomPicker({
     return (q ? names.filter((n) => n.toLowerCase().includes(q)) : names).slice(0, 8);
   }, [roomOptions.data, value.floor, roomText]);
 
-  // the selected house's own floor list, if it has customized one, else a
-  // generic default (see Settings > Houses to edit a house's floors)
+  // the selected house's own floor list: null means "not customized yet"
+  // (generic default list applies), a non-empty array is a custom list, and
+  // an explicit empty array means "this building has no floors" - hide the
+  // field entirely rather than make every item pick a meaningless floor
   const selectedHouse = houses.data?.find((h) => h.id === value.houseId);
-  const FLOORS = selectedHouse?.floors?.length ? selectedHouse.floors : DEFAULT_FLOORS;
+  const houseFloors = selectedHouse?.floors;
+  const hasNoFloors = Array.isArray(houseFloors) && houseFloors.length === 0;
+  const FLOORS = houseFloors && houseFloors.length > 0 ? houseFloors : DEFAULT_FLOORS;
+
+  useEffect(() => {
+    if (hasNoFloors && value.floor !== "") onChange({ ...value, floor: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasNoFloors]);
 
   return (
-    <div className="grid grid-cols-3 gap-1.5" ref={wrapRef}>
+    <div className={hasNoFloors ? "grid grid-cols-2 gap-1.5" : "grid grid-cols-3 gap-1.5"} ref={wrapRef}>
       <select
         className="rounded border border-input bg-white px-1.5 py-1 text-[11px]"
         value={value.houseId ?? ""}
@@ -66,16 +75,18 @@ export function RoomPicker({
           <option key={h.id} value={h.id}>{h.name}</option>
         ))}
       </select>
-      <select
-        className="rounded border border-input bg-white px-1.5 py-1 text-[11px]"
-        value={value.floor}
-        onChange={(e) => onChange({ ...value, floor: e.target.value })}
-      >
-        <option value="">floor…</option>
-        {FLOORS.map((f) => (
-          <option key={f} value={f}>{f}</option>
-        ))}
-      </select>
+      {!hasNoFloors && (
+        <select
+          className="rounded border border-input bg-white px-1.5 py-1 text-[11px]"
+          value={value.floor}
+          onChange={(e) => onChange({ ...value, floor: e.target.value })}
+        >
+          <option value="">floor…</option>
+          {FLOORS.map((f) => (
+            <option key={f} value={f}>{f}</option>
+          ))}
+        </select>
+      )}
       <div className="relative">
         <input
           className="w-full rounded border border-input bg-white px-1.5 py-1 text-[11px]"
