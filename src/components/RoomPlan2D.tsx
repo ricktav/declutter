@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { ItemPos, RoomGeometry } from "@db/schema";
 
 export type PlanItem = {
@@ -63,6 +63,8 @@ export function RoomPlan2D({
   onSelect,
   onPosChange,
   rotationDeg = 0,
+  cutMode = false,
+  onCutRect,
 }: {
   widthM: number;
   depthM: number;
@@ -78,6 +80,11 @@ export function RoomPlan2D({
    * original unrotated frame; getScreenCTM() already accounts for this CSS
    * transform when converting pointer positions back to that frame. */
   rotationDeg?: 0 | 90 | 180 | 270;
+  /** When true, dragging on the floor draws a selection rectangle instead
+   * of moving items (item pointerdown is ignored) - used to carve a named
+   * sub-room out of a whole-floor geometry blob. */
+  cutMode?: boolean;
+  onCutRect?: (bounds: { xM: number; yM: number; wM: number; dM: number }) => void;
 }) {
   const S = 70; // px per meter
   const PAD = 36;
@@ -88,6 +95,8 @@ export function RoomPlan2D({
 
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const cutStartRef = useRef<{ xM: number; yM: number } | null>(null);
+  const [cutRect, setCutRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   const xTicks = Array.from({ length: Math.floor(widthM) + 1 }, (_, i) => i);
   const yTicks = Array.from({ length: Math.floor(depthM) + 1 }, (_, i) => i);
@@ -136,7 +145,23 @@ export function RoomPlan2D({
     e.stopPropagation();
   };
 
+  const startCut = (e: React.PointerEvent) => {
+    if (!cutMode) return;
+    const loc = toLocal(e.clientX, e.clientY);
+    const xM = clamp((loc.x - PAD) / S, 0, widthM), yM = clamp((loc.y - PAD) / S, 0, depthM);
+    cutStartRef.current = { xM, yM };
+    setCutRect({ x0: xM, y0: yM, x1: xM, y1: yM });
+    (e.target as Element).setPointerCapture(e.pointerId);
+    e.stopPropagation();
+  };
+
   const onDragMove = (e: React.PointerEvent) => {
+    if (cutStartRef.current) {
+      const loc = toLocal(e.clientX, e.clientY);
+      const xM = clamp((loc.x - PAD) / S, 0, widthM), yM = clamp((loc.y - PAD) / S, 0, depthM);
+      setCutRect({ x0: cutStartRef.current.xM, y0: cutStartRef.current.yM, x1: xM, y1: yM });
+      return;
+    }
     const drag = dragRef.current;
     if (!drag) return;
     const loc = toLocal(e.clientX, e.clientY);
@@ -162,6 +187,16 @@ export function RoomPlan2D({
   };
 
   const onDragEnd = () => {
+    if (cutStartRef.current) {
+      const rect = cutRect;
+      cutStartRef.current = null;
+      setCutRect(null);
+      if (!rect) return;
+      const xM = round2(Math.min(rect.x0, rect.x1)), yM = round2(Math.min(rect.y0, rect.y1));
+      const wM = round2(Math.abs(rect.x1 - rect.x0)), dM = round2(Math.abs(rect.y1 - rect.y0));
+      if (wM > 0.2 && dM > 0.2) onCutRect?.({ xM, yM, wM, dM });
+      return;
+    }
     const drag = dragRef.current as (DragState & { pending?: ItemPos }) | null;
     dragRef.current = null;
     if (!drag?.pending) return;
@@ -206,7 +241,15 @@ export function RoomPlan2D({
         </text>
       ))}
 
-      <rect x={PAD} y={PAD} width={widthM * S} height={depthM * S} className="fill-muted/20 stroke-border" strokeWidth={1} />
+      <rect
+        x={PAD}
+        y={PAD}
+        width={widthM * S}
+        height={depthM * S}
+        className={`fill-muted/20 stroke-border ${cutMode ? "cursor-crosshair" : ""}`}
+        strokeWidth={1}
+        onPointerDown={startCut}
+      />
 
       {(walls ?? []).map((wall, i) => {
         const kind = wall.kind ?? "wall";
@@ -249,8 +292,12 @@ export function RoomPlan2D({
             key={it.id}
             data-item-id={it.id}
             transform={`rotate(${-p.rotDeg} ${x + w / 2} ${y + d / 2})`}
-            onPointerDown={(e) => (editable ? startDrag("move", it.id, e) : onSelect?.(it.id))}
-            className={editable ? "cursor-move" : "cursor-pointer"}
+            onPointerDown={(e) => {
+              if (cutMode) return;
+              if (editable) startDrag("move", it.id, e);
+              else onSelect?.(it.id);
+            }}
+            className={cutMode ? "" : editable ? "cursor-move" : "cursor-pointer"}
           >
             <rect
               x={x}
@@ -274,6 +321,18 @@ export function RoomPlan2D({
           </g>
         );
       })}
+
+      {cutRect && (
+        <rect
+          x={px(Math.min(cutRect.x0, cutRect.x1))}
+          y={py(Math.min(cutRect.y0, cutRect.y1))}
+          width={Math.abs(cutRect.x1 - cutRect.x0) * S}
+          height={Math.abs(cutRect.y1 - cutRect.y0) * S}
+          className="fill-emerald-500/10 stroke-emerald-600"
+          strokeWidth={2}
+          strokeDasharray="6 4"
+        />
+      )}
 
       {editable && selected && (
         <>

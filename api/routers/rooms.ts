@@ -1,12 +1,17 @@
 import { z } from "zod";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, and, isNull } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { rooms, items, type RoomGeometry } from "@db/schema";
+import { rooms, items, type RoomGeometry, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
 
 const geometryInput = z.object({
-  walls: z.array(z.object({ points: z.array(z.tuple([z.number(), z.number()])) })),
+  walls: z.array(
+    z.object({
+      points: z.array(z.tuple([z.number(), z.number()])),
+      kind: z.enum(["wall", "door", "window"]).optional(),
+    }),
+  ),
   openings: z.array(
     z.object({
       edge: z.string(),
@@ -133,4 +138,107 @@ export const roomsRouter = createRouter({
     });
     return { ok: true };
   }),
+
+  /**
+   * Existing floor/room text labels (the plain location field used all over
+   * the app, independent of any geometry) that don't have a matching rooms
+   * row yet for this house - the pick list for naming a room cut out of a
+   * whole-floor scan, so cut rooms reuse the vocabulary already in use
+   * instead of inventing new names.
+   */
+  unlinkedLocations: publicQuery.input(z.object({ houseId: z.number() })).query(async ({ input }) => {
+    const db = getDb();
+    const itemRows = await db.select({ room: items.room }).from(items).where(eq(items.houseId, input.houseId));
+    const existing = new Set(
+      (await db.select({ name: rooms.name }).from(rooms).where(eq(rooms.houseId, input.houseId))).map((r) => r.name),
+    );
+    const names = new Set<string>();
+    for (const r of itemRows) {
+      const name = r.room?.trim();
+      if (name && !existing.has(name)) names.add(name);
+    }
+    return [...names].sort();
+  }),
+
+  /**
+   * Carve a named sub-room out of a whole-floor geometry blob: wall/door/
+   * window segments fully inside the given rectangle move to a new room
+   * (rebased to a local origin), as do placed items whose footprint center
+   * falls inside it. The source room's own geometry is never touched -
+   * sacred raw scan, same principle lidarventory's docs state explicitly.
+   * Items already using this location name (string match) but not yet
+   * linked to any room get linked too, landing "unplaced" (pos stays null)
+   * until someone drags them onto the new plan.
+   */
+  cutFromRoom: publicQuery
+    .input(
+      z.object({
+        sourceRoomId: z.number(),
+        name: z.string().min(1),
+        bounds: z.object({ xM: z.number(), yM: z.number(), wM: z.number(), dM: z.number() }),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const source = await db.query.rooms.findFirst({ where: eq(rooms.id, input.sourceRoomId) });
+      if (!source) throw new Error("Source room not found");
+
+      const { xM: bx, yM: by, wM: bw, dM: bd } = input.bounds;
+      const EPS = 0.05;
+      const within = ([x, y]: [number, number]) => x >= bx - EPS && x <= bx + bw + EPS && y >= by - EPS && y <= by + bd + EPS;
+      const sourceWalls = (source.walls ?? []) as RoomGeometry["walls"];
+      const cutWalls = sourceWalls
+        .filter((w) => w.points.every(within))
+        .map((w) => ({
+          kind: w.kind,
+          points: w.points.map(([x, y]) => [+(x - bx).toFixed(3), +(y - by).toFixed(3)] as [number, number]),
+        }));
+
+      const [{ id: newRoomId }] = await db
+        .insert(rooms)
+        .values({
+          houseId: source.houseId,
+          name: input.name,
+          source: "manual",
+          scanDate: new Date(),
+          widthM: bw,
+          depthM: bd,
+          wallHeightM: source.wallHeightM,
+          walls: cutWalls,
+          openings: [],
+        })
+        .$returningId();
+
+      const sourceItems = await db.select().from(items).where(eq(items.roomId, input.sourceRoomId));
+      let moved = 0;
+      for (const it of sourceItems) {
+        if (!it.pos) continue;
+        const p = it.pos as ItemPos;
+        const cx = p.xM + p.wM / 2, cy = p.yM + p.dM / 2;
+        if (cx < bx || cx > bx + bw || cy < by || cy > by + bd) continue;
+        await db
+          .update(items)
+          .set({
+            roomId: newRoomId,
+            room: input.name,
+            pos: { ...p, xM: +(p.xM - bx).toFixed(2), yM: +(p.yM - by).toFixed(2) },
+          })
+          .where(eq(items.id, it.id));
+        moved++;
+      }
+
+      await db
+        .update(items)
+        .set({ roomId: newRoomId })
+        .where(and(eq(items.houseId, source.houseId), eq(items.room, input.name), isNull(items.roomId)));
+
+      await logEvent({
+        entityType: "room",
+        entityId: newRoomId,
+        action: "cut",
+        summary: `Room "${input.name}" cut from room #${input.sourceRoomId} (${moved} placed item${moved === 1 ? "" : "s"})`,
+      });
+
+      return { id: newRoomId, itemsMoved: moved };
+    }),
 });

@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw } from "lucide-react";
+import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors } from "lucide-react";
 import type { ItemPos } from "@db/schema";
 
 /**
@@ -15,6 +15,7 @@ import type { ItemPos } from "@db/schema";
 export default function RoomPlanPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const id = Number(roomId);
+  const navigate = useNavigate();
   const room = trpc.rooms.get.useQuery({ id }, { enabled: Number.isFinite(id) });
   const utils = trpc.useUtils();
   const updatePos = trpc.items.update.useMutation({
@@ -31,7 +32,24 @@ export default function RoomPlanPage() {
   });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
+  const [cutMode, setCutMode] = useState(false);
+  const [pendingCut, setPendingCut] = useState<{ xM: number; yM: number; wM: number; dM: number } | null>(null);
+  const [cutName, setCutName] = useState("");
   const selectedItem = room.data?.items.find((it) => it.id === selectedId) ?? null;
+
+  const unlinkedLocations = trpc.rooms.unlinkedLocations.useQuery(
+    { houseId: room.data?.houseId ?? 0 },
+    { enabled: room.data?.houseId != null && pendingCut != null },
+  );
+  const cutFromRoom = trpc.rooms.cutFromRoom.useMutation({
+    onSuccess: ({ id: newRoomId }) => {
+      setPendingCut(null);
+      setCutMode(false);
+      setCutName("");
+      utils.rooms.get.invalidate({ id });
+      navigate(`/rooms/${newRoomId}`);
+    },
+  });
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
@@ -56,26 +74,45 @@ export default function RoomPlanPage() {
 
           <div className="mt-6 flex gap-6 items-start">
             <div className="flex-1 min-w-0 max-w-2xl">
-              <div className="flex items-center justify-end gap-1 mb-1.5">
+              <div className="flex items-center justify-between gap-1 mb-1.5">
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="h-7 w-7 p-0"
-                  title="Rotate view -90°"
-                  onClick={() => setRotation((r) => ((r + 270) % 360) as typeof rotation)}
+                  variant={cutMode ? "default" : "outline"}
+                  className="h-7 text-[12px]"
+                  onClick={() => {
+                    setCutMode((v) => !v);
+                    setPendingCut(null);
+                    setSelectedId(null);
+                  }}
                 >
-                  <RotateCcw className="h-3.5 w-3.5" />
+                  <Scissors className="h-3.5 w-3.5 mr-1" /> {cutMode ? "Cutting…" : "Cut out room"}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 w-7 p-0"
-                  title="Rotate view +90°"
-                  onClick={() => setRotation((r) => ((r + 90) % 360) as typeof rotation)}
-                >
-                  <RotateCw className="h-3.5 w-3.5" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 w-7 p-0"
+                    title="Rotate view -90°"
+                    onClick={() => setRotation((r) => ((r + 270) % 360) as typeof rotation)}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 w-7 p-0"
+                    title="Rotate view +90°"
+                    onClick={() => setRotation((r) => ((r + 90) % 360) as typeof rotation)}
+                  >
+                    <RotateCw className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               </div>
+              {cutMode && (
+                <p className="mb-1.5 text-[11px] text-amber-700">
+                  Drag a rectangle over the area to cut into its own room.
+                </p>
+              )}
               <RoomPlan2D
                 widthM={room.data.widthM ?? 0}
                 depthM={room.data.depthM ?? 0}
@@ -87,6 +124,11 @@ export default function RoomPlanPage() {
                 onSelect={setSelectedId}
                 onPosChange={(itemId, pos: ItemPos) => updatePos.mutate({ id: itemId, pos })}
                 rotationDeg={rotation}
+                cutMode={cutMode}
+                onCutRect={(bounds) => {
+                  setPendingCut(bounds);
+                  setCutName("");
+                }}
               />
               <p className="mt-2 text-[11px] text-muted-foreground">
                 Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize.
@@ -100,8 +142,57 @@ export default function RoomPlanPage() {
             </div>
 
             <aside className="w-64 shrink-0 rounded-lg border border-border bg-white p-4">
-              {!selectedItem ? (
-                <p className="text-[13px] text-muted-foreground">Select an item on the plan to review it.</p>
+              {pendingCut ? (
+                <>
+                  <p className="font-medium text-[14px]">Name this room</p>
+                  <p className="text-[12px] text-muted-foreground mt-1">
+                    {pendingCut.wM.toFixed(2)}×{pendingCut.dM.toFixed(2)} m
+                  </p>
+
+                  {unlinkedLocations.data && unlinkedLocations.data.length > 0 && (
+                    <select
+                      className="mt-3 w-full h-8 rounded-md border border-border bg-white px-2 text-[13px]"
+                      value={unlinkedLocations.data.includes(cutName) ? cutName : ""}
+                      onChange={(e) => setCutName(e.target.value)}
+                    >
+                      <option value="" disabled>
+                        Pick an existing location…
+                      </option>
+                      {unlinkedLocations.data.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <input
+                    type="text"
+                    placeholder="Or type a new name"
+                    className="mt-2 w-full h-8 rounded-md border border-border bg-white px-2 text-[13px]"
+                    value={cutName}
+                    onChange={(e) => setCutName(e.target.value)}
+                  />
+
+                  <div className="mt-3 flex gap-1.5">
+                    <Button
+                      size="sm"
+                      className="h-7 text-[12px]"
+                      disabled={!cutName.trim() || cutFromRoom.isPending}
+                      onClick={() => cutFromRoom.mutate({ sourceRoomId: id, name: cutName.trim(), bounds: pendingCut })}
+                    >
+                      {cutFromRoom.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                      Create room
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => setPendingCut(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </>
+              ) : !selectedItem ? (
+                <p className="text-[13px] text-muted-foreground">
+                  {cutMode ? "Drag a rectangle on the plan to mark the room's area." : "Select an item on the plan to review it."}
+                </p>
               ) : (
                 <>
                   <Link to={`/items/${selectedItem.id}`} className="font-medium text-[14px] hover:underline">
