@@ -120,8 +120,10 @@ export function RoomPlan2D({
     g.querySelector("rect")?.setAttribute("y", String(y));
     g.querySelector("rect")?.setAttribute("width", String(w));
     g.querySelector("rect")?.setAttribute("height", String(d));
-    g.querySelector("text")?.setAttribute("x", String(x + w / 2));
-    g.querySelector("text")?.setAttribute("y", String(y + d / 2 + 4));
+    const text = g.querySelector("text");
+    text?.setAttribute("x", String(x + w / 2));
+    text?.setAttribute("y", String(y + d / 2 + 4));
+    text?.setAttribute("transform", `rotate(${p.rotDeg - rotationDeg} ${x + w / 2} ${y + d / 2 + 4})`);
   };
 
   const startDrag = (kind: DragKind, id: number, e: React.PointerEvent) => {
@@ -180,12 +182,26 @@ export function RoomPlan2D({
         onPointerUp={onDragEnd}
       >
       {xTicks.map((x) => (
-        <text key={`x${x}`} x={px(x)} y={PAD - 10} textAnchor="middle" className="fill-muted-foreground text-[9px]">
+        <text
+          key={`x${x}`}
+          x={px(x)}
+          y={PAD - 10}
+          transform={`rotate(${-rotationDeg} ${px(x)} ${PAD - 10})`}
+          textAnchor="middle"
+          className="fill-muted-foreground text-[9px]"
+        >
           {x}m
         </text>
       ))}
       {yTicks.map((y) => (
-        <text key={`y${y}`} x={PAD - 8} y={py(y) + 3} textAnchor="end" className="fill-muted-foreground text-[9px]">
+        <text
+          key={`y${y}`}
+          x={PAD - 8}
+          y={py(y) + 3}
+          transform={`rotate(${-rotationDeg} ${PAD - 8} ${py(y) + 3})`}
+          textAnchor="end"
+          className="fill-muted-foreground text-[9px]"
+        >
           {y}m
         </text>
       ))}
@@ -213,6 +229,7 @@ export function RoomPlan2D({
             <text
               x={(x1 + x2) / 2}
               y={Math.max(y1, y2) + (o.edge === "bottom" ? 14 : -6)}
+              transform={`rotate(${-rotationDeg} ${(x1 + x2) / 2} ${Math.max(y1, y2) + (o.edge === "bottom" ? 14 : -6)})`}
               textAnchor="middle"
               fill="#d9a13b"
               className="text-[9px]"
@@ -244,7 +261,13 @@ export function RoomPlan2D({
               className={isSel ? "fill-primary/25 stroke-primary" : "fill-primary/15 stroke-primary/70"}
               strokeWidth={isSel ? 2 : 1.5}
             />
-            <text x={x + w / 2} y={y + d / 2 + 4} textAnchor="middle" className="text-[10px] fill-foreground">
+            <text
+              x={x + w / 2}
+              y={y + d / 2 + 4}
+              transform={`rotate(${p.rotDeg - rotationDeg} ${x + w / 2} ${y + d / 2 + 4})`}
+              textAnchor="middle"
+              className="text-[10px] fill-foreground"
+            >
               {it.name}
               {p.baseM ? " ↑" : ""}
             </text>
