@@ -58,7 +58,7 @@ function EditAreaDialog({ area }: { area: Area }) {
       </DialogTrigger>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Edit area</DialogTitle>
+          <DialogTitle>Edit topic</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <input
@@ -290,7 +290,7 @@ export default function AreaView() {
   );
 
   if (area.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
-  if (!area.data) return <div className="p-8 text-sm">Area not found.</div>;
+  if (!area.data) return <div className="p-8 text-sm">Topic not found.</div>;
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
@@ -317,10 +317,10 @@ export default function AreaView() {
                 <Trash2 className="h-4 w-4" />
               </Button>
             }
-            title={`Delete area "${area.data.name}"?`}
-            description={`Permanently deletes this area and ALL ${itemsList.data?.length ?? 0} item(s) in it — attachments, tasks, relations, everything. This cannot be undone.`}
+            title={`Delete topic "${area.data.name}"?`}
+            description={`Permanently deletes this topic and ALL ${itemsList.data?.length ?? 0} item(s) in it — attachments, tasks, relations, everything. This cannot be undone.`}
             confirmText={area.data.name}
-            confirmLabel="Delete area"
+            confirmLabel="Delete topic"
             pending={removeArea.isPending}
             onConfirm={() => removeArea.mutate({ id: area.data!.id })}
           />

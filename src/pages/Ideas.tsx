@@ -125,7 +125,7 @@ export default function IdeasPage() {
     <div className="max-w-6xl mx-auto px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Ideas</h1>
       <p className="text-sm text-muted-foreground mt-1">
-        Collect topics and questions per area. When one is ripe, let AI break it into tasks.
+        Collect ideas and questions, organized by topic. When one is ripe, let AI break it into tasks.
       </p>
 
       {/* new idea */}
@@ -147,7 +147,7 @@ export default function IdeasPage() {
           value={areaId}
           onChange={(e) => setAreaId(e.target.value ? Number(e.target.value) : "")}
         >
-          <option value="">no area</option>
+          <option value="">no topic</option>
           {(areas.data ?? []).map((a) => (
             <option key={a.id} value={a.id}>{a.name}</option>
           ))}

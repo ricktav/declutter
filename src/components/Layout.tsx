@@ -204,7 +204,7 @@ export default function Layout() {
       </nav>
 
       <div className="flex-1 overflow-y-auto">
-        <SidebarSectionTitle label="Areas" collapsed={areasCollapsed} onToggle={toggleAreas} />
+        <SidebarSectionTitle label="Topics" collapsed={areasCollapsed} onToggle={toggleAreas} />
         {!areasCollapsed && (
           <nav className="px-2 space-y-0.5">
             {(areas.data ?? []).map((a) => {

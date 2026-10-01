@@ -4,6 +4,8 @@ import { trpc } from "@/providers/trpc";
 import { timeAgo } from "@/lib/format";
 
 const ENTITY_TYPES = ["all", "item", "area", "task", "idea", "capture", "attachment", "relation", "wiki", "chat"];
+// display only - the underlying entityType stored on events is still "area"
+const ENTITY_LABELS: Record<string, string> = { area: "topic" };
 
 export default function ActivityPage() {
   const [filter, setFilter] = useState("all");
@@ -28,7 +30,7 @@ export default function ActivityPage() {
               filter === t ? "bg-primary text-primary-foreground" : "bg-white border border-border hover:bg-accent"
             }`}
           >
-            {t}
+            {ENTITY_LABELS[t] ?? t}
           </button>
         ))}
       </div>

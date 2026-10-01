@@ -457,7 +457,7 @@ function TriageCard({
           {s.note && <p className="text-[12px] text-violet-900 mb-2">{s.note}</p>}
           <div className="grid sm:grid-cols-3 gap-2">
             <label className="block">
-              <span className="micro-label text-muted-foreground">Area</span>
+              <span className="micro-label text-muted-foreground">Topic</span>
               <div className="mt-0.5">
                 <AreaPicker value={effAreaId ?? null} onChange={setAreaId} />
               </div>
@@ -578,7 +578,7 @@ function CompareModal({
                 ) : side.suggestion ? (
                   <>
                     <div>
-                      <div className="micro-label text-muted-foreground">Area</div>
+                      <div className="micro-label text-muted-foreground">Topic</div>
                       <div className="text-[13px] font-medium">{side.suggestion.areaSlug}</div>
                     </div>
                     <div>

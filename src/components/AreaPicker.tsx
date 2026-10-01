@@ -6,7 +6,7 @@ import { Check, Plus } from "lucide-react";
 export function AreaPicker({
   value,
   onChange,
-  placeholder = "pick an area or type a new one…",
+  placeholder = "pick a topic or type a new one…",
 }: {
   value: number | null;
   onChange: (id: number) => void;
@@ -107,7 +107,7 @@ export function AreaPicker({
             </button>
           ))}
           {matches.length === 0 && !q && (
-            <div className="px-2.5 py-1.5 text-[12px] text-muted-foreground">No areas yet.</div>
+            <div className="px-2.5 py-1.5 text-[12px] text-muted-foreground">No topics yet.</div>
           )}
           {q && !exact && (
             <button
@@ -117,7 +117,7 @@ export function AreaPicker({
               disabled={createArea.isPending}
             >
               <Plus className="h-3.5 w-3.5" />
-              {createArea.isPending ? "Creating…" : `Create area “${text.trim()}”`}
+              {createArea.isPending ? "Creating…" : `Create topic “${text.trim()}”`}
             </button>
           )}
         </div>

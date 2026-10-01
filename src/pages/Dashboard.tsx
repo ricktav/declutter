@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
-import { ArrowRight, Inbox, Lightbulb, ListChecks, Package, Plus } from "lucide-react";
+import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
+import { ArrowRight, Inbox, Lightbulb, ListChecks, MapPin, Package, Plus } from "lucide-react";
 import {
   Laptop,
   Wrench,
@@ -68,12 +69,12 @@ function AddAreaDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline" className="h-7 text-[12px]">
-          <Plus className="h-3.5 w-3.5 mr-1" /> New area
+          <Plus className="h-3.5 w-3.5 mr-1" /> New topic
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>New area</DialogTitle>
+          <DialogTitle>New topic</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <label className="block">
@@ -158,12 +159,153 @@ function AddAreaDialog() {
                 })
               }
             >
-              {create.isPending ? "Creating…" : "Create area"}
+              {create.isPending ? "Creating…" : "Create topic"}
             </Button>
           </div>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const utils = trpc.useUtils();
+  const create = trpc.houses.create.useMutation({
+    onSuccess: (house) => {
+      utils.houses.list.invalidate();
+      setOpen(false);
+      setName("");
+      if (house) onCreated(house.id);
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="h-7 text-[12px]">
+          <Plus className="h-3.5 w-3.5 mr-1" /> New house
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>New house</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <input
+            className="w-full rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
+            placeholder="e.g. Home, Office"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
+          <p className="text-[12px] text-muted-foreground">Add an address or customize floors later, in Settings → Houses.</p>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              className="h-8 text-[12px]"
+              disabled={!name.trim() || create.isPending}
+              onClick={() => create.mutate({ name: name.trim() })}
+            >
+              {create.isPending ? "Creating…" : "Create house"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Which house you're currently working in - a lightweight context switcher,
+ * not the full house editor (that's Settings → Houses). Defaults to the last
+ * house confirmed anywhere in the app (shared with Inbox's pin-location
+ * flow), since that's the best signal for "where am I right now". */
+function HouseSection() {
+  const houses = trpc.houses.list.useQuery();
+  const [houseId, setHouseId] = useState<number | null>(() => getLastLocation().houseId);
+
+  useEffect(() => {
+    if (houseId == null && houses.data && houses.data.length > 0) {
+      setHouseId(houses.data[0].id);
+    }
+  }, [houses.data, houseId]);
+
+  const selectHouse = (id: number | null) => {
+    setHouseId(id);
+    setLastLocation({ ...getLastLocation(), houseId: id });
+  };
+
+  const current = houses.data?.find((h) => h.id === houseId);
+
+  return (
+    <div className="rounded-lg border border-border bg-white px-4 py-3 flex items-center gap-3 flex-wrap">
+      <Home className="h-4 w-4 text-muted-foreground shrink-0" />
+      <span className="micro-label text-muted-foreground shrink-0">Working in</span>
+      <select
+        className="rounded-md border border-input bg-white px-2 py-1.5 text-[13px] min-w-[10rem]"
+        value={houseId ?? ""}
+        onChange={(e) => selectHouse(e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="">No house selected</option>
+        {(houses.data ?? []).map((h) => (
+          <option key={h.id} value={h.id}>
+            {h.name}
+          </option>
+        ))}
+      </select>
+      {current && (
+        <span className="font-data text-[12px] text-muted-foreground">
+          {current.itemCount} item{current.itemCount === 1 ? "" : "s"}
+          {current.address ? ` · ${current.address}` : ""}
+        </span>
+      )}
+      <div className="ml-auto">
+        <AddHouseDialog onCreated={(id) => selectHouse(id)} />
+      </div>
+    </div>
+  );
+}
+
+function LocationsSection() {
+  const locations = trpc.map.listLocations.useQuery();
+
+  return (
+    <section>
+      <div className="flex items-center mb-2">
+        <h2 className="micro-label text-muted-foreground">Locations</h2>
+        <Link to="/map" className="ml-auto text-[12px] text-primary hover:underline">
+          Map view →
+        </Link>
+      </div>
+      <div className="rounded-lg border border-border bg-white divide-y divide-border">
+        {(locations.data ?? []).length === 0 && (
+          <div className="px-4 py-5 text-[13px] text-muted-foreground">
+            No locations yet — set a room on an item, or confirm one while pinning from the Inbox.
+          </div>
+        )}
+        {(locations.data ?? []).slice(0, 8).map((l) => {
+          const key = `${l.houseId ?? "none"}|${l.floor ?? "none"}|${l.room}`;
+          const to = `/items?houseId=${l.houseId ?? "none"}&floor=${encodeURIComponent(l.floor ?? "none")}&room=${encodeURIComponent(l.room)}`;
+          return (
+            <Link key={key} to={to} className="flex items-center gap-3 px-4 py-2.5 hover:bg-accent/40 transition-colors">
+              <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-[13px] font-medium flex-1 truncate">
+                {l.room}
+                {(l.houseName || l.floor) && (
+                  <span className="text-muted-foreground font-normal">
+                    {" "}
+                    · {[l.houseName, l.floor].filter(Boolean).join(" · ")}
+                  </span>
+                )}
+              </span>
+              <span className="font-data text-[12px] text-muted-foreground">{l.count}</span>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+            </Link>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -214,16 +356,20 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6 mt-8">
+      <div className="mt-6">
+        <HouseSection />
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6 mt-6">
         <section>
           <div className="flex items-center mb-2">
-            <h2 className="micro-label text-muted-foreground">Areas</h2>
+            <h2 className="micro-label text-muted-foreground">Topics</h2>
             <div className="ml-auto"><AddAreaDialog /></div>
           </div>
           <div className="rounded-lg border border-border bg-white divide-y divide-border">
             {(areas.data ?? []).length === 0 && (
               <div className="px-4 py-5 text-[13px] text-muted-foreground space-y-1">
-                <p>No areas yet — create one with the button above.</p>
+                <p>No topics yet — create one with the button above.</p>
                 <p className="text-[12px]">
                   Want a head start? Run <code className="font-data rounded bg-accent px-1">npx tsx db/seed.ts</code> to load the starter set
                   (computers, garage, house, kitchen, garden, work, schedule).
@@ -245,6 +391,10 @@ export default function Dashboard() {
           </div>
         </section>
 
+        <LocationsSection />
+      </div>
+
+      <div className="mt-6">
         <section>
           <h2 className="micro-label text-muted-foreground mb-2">Recent activity</h2>
           <div className="rounded-lg border border-border bg-white divide-y divide-border">

@@ -62,7 +62,7 @@ export default function AllItems() {
 
   // group key + label depending on sort mode
   const groupOf = (i: (typeof filtered)[number]) => {
-    if (sortBy === "area") return i.areaName ?? "(no area)";
+    if (sortBy === "area") return i.areaName ?? "(no topic)";
     if (sortBy === "location") {
       const loc = [i.floor, i.room].filter(Boolean).join(" · ");
       return loc || "(no location)";
@@ -111,7 +111,7 @@ export default function AllItems() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <input
             className="w-full rounded-md border border-input bg-white pl-8 pr-3 py-1.5 text-[13px]"
-            placeholder="Search name, room, floor, area…"
+            placeholder="Search name, room, floor, topic…"
             value={q}
             disabled={locationFilterActive}
             onChange={(e) => setQ(e.target.value)}
@@ -124,7 +124,7 @@ export default function AllItems() {
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as SortBy)}
           >
-            <option value="area">Area (topic)</option>
+            <option value="area">Topic</option>
             <option value="location">Location (floor · room)</option>
             <option value="updated">Recently updated</option>
           </select>
@@ -179,7 +179,7 @@ export default function AllItems() {
                     <tr>
                       <th className="w-12" />
                       <th>Name</th>
-                      {sortBy !== "area" && <th>Area</th>}
+                      {sortBy !== "area" && <th>Topic</th>}
                       {sortBy !== "location" && <th>Location</th>}
                       <th>Updated</th>
                     </tr>

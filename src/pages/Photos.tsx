@@ -105,7 +105,7 @@ export default function PhotosPage() {
   }, [photos.data, q, showObjects]);
 
   const groupOf = (p: (typeof filtered)[number]) => {
-    if (sortBy === "area") return p.areaName ?? "(no area)";
+    if (sortBy === "area") return p.areaName ?? "(no topic)";
     if (sortBy === "location") return [p.floor, p.room].filter(Boolean).join(" · ") || "(no location)";
     return "All photos";
   };
@@ -143,7 +143,7 @@ export default function PhotosPage() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <input
             className="w-full rounded-md border border-input bg-white pl-8 pr-3 py-1.5 text-[13px]"
-            placeholder="Search item, room, floor, area…"
+            placeholder="Search item, room, floor, topic…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -156,7 +156,7 @@ export default function PhotosPage() {
             onChange={(e) => setSortBy(e.target.value as SortBy)}
           >
             <option value="location">Location (floor · room)</option>
-            <option value="area">Area (topic)</option>
+            <option value="area">Topic</option>
             <option value="recent">Recently added</option>
           </select>
         </div>
