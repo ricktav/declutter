@@ -2,16 +2,17 @@ import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
+import { RoomPlan3D } from "@/components/RoomPlan3D";
 import { Button } from "@/components/ui/button";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
-import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2, MapPin } from "lucide-react";
+import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2, MapPin, Box } from "lucide-react";
 import type { ItemPos } from "@db/schema";
 
 /**
- * 2D floor plan for a scanned room. Select/drag/rotate/resize placed items
- * (3D twin lands in a later phase - see docs/spatial-twin-full-rewrite-
- * estimate.md for the plan this follows: porting lidarventory's vanilla SVG
- * engine, not rewriting it).
+ * Floor plan for a scanned room - 2D (drag/rotate/resize/stacking/cut) and
+ * 3D (orbit, same pinning) views of the same underlying room/item data, so
+ * pinning a new item or confirming one works the same regardless of which
+ * tab is open.
  */
 export default function RoomPlanPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -32,6 +33,7 @@ export default function RoomPlanPage() {
     },
   });
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [view, setView] = useState<"2d" | "3d">("2d");
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
   const [cutMode, setCutMode] = useState(false);
   const [pendingCut, setPendingCut] = useState<{ xM: number; yM: number; wM: number; dM: number } | null>(null);
@@ -41,6 +43,13 @@ export default function RoomPlanPage() {
   const [pinName, setPinName] = useState("");
   const [pinAreaId, setPinAreaId] = useState<number | null>(null);
   const selectedItem = room.data?.items.find((it) => it.id === selectedId) ?? null;
+  const planItems =
+    room.data?.items.map((it) => ({
+      id: it.id,
+      name: it.name,
+      pos: it.pos,
+      editable: it.ownerRoomId === id,
+    })) ?? [];
   const areasList = trpc.areas.list.useQuery(undefined, { enabled: pendingPin != null });
 
   const unlinkedLocations = trpc.rooms.unlinkedLocations.useQuery(
@@ -115,6 +124,26 @@ export default function RoomPlanPage() {
 
           <div className="mt-6 flex gap-6 items-start">
             <div className="flex-1 min-w-0 max-w-2xl">
+              <div className="flex items-center gap-1 mb-2 rounded-md bg-muted/50 p-0.5 w-fit">
+                <button
+                  type="button"
+                  onClick={() => setView("2d")}
+                  className={`px-3 py-1 rounded text-[12px] font-medium ${view === "2d" ? "bg-white shadow-sm" : "text-muted-foreground"}`}
+                >
+                  2D Plan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("3d");
+                    setCutMode(false);
+                    setPendingCut(null);
+                  }}
+                  className={`px-3 py-1 rounded text-[12px] font-medium flex items-center gap-1 ${view === "3d" ? "bg-white shadow-sm" : "text-muted-foreground"}`}
+                >
+                  <Box className="h-3 w-3" /> 3D Twin
+                </button>
+              </div>
               <div className="flex items-center justify-between gap-1 mb-1.5">
                 <div className="flex items-center gap-1">
                   <Button
@@ -131,40 +160,46 @@ export default function RoomPlanPage() {
                   >
                     <MapPin className="h-3.5 w-3.5 mr-1" /> {pinMode ? "Pinning…" : "Pin new item"}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant={cutMode ? "default" : "outline"}
-                    className="h-7 text-[12px]"
-                    onClick={() => {
-                      setCutMode((v) => !v);
-                      setPendingCut(null);
-                      setPinMode(false);
-                      setPendingPin(null);
-                      setSelectedId(null);
-                    }}
-                  >
-                    <Scissors className="h-3.5 w-3.5 mr-1" /> {cutMode ? "Cutting…" : "Cut out room"}
-                  </Button>
+                  {view === "2d" && (
+                    <Button
+                      size="sm"
+                      variant={cutMode ? "default" : "outline"}
+                      className="h-7 text-[12px]"
+                      onClick={() => {
+                        setCutMode((v) => !v);
+                        setPendingCut(null);
+                        setPinMode(false);
+                        setPendingPin(null);
+                        setSelectedId(null);
+                      }}
+                    >
+                      <Scissors className="h-3.5 w-3.5 mr-1" /> {cutMode ? "Cutting…" : "Cut out room"}
+                    </Button>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 w-7 p-0"
-                    title="Rotate view -90°"
-                    onClick={() => setRotation((r) => ((r + 270) % 360) as typeof rotation)}
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 w-7 p-0"
-                    title="Rotate view +90°"
-                    onClick={() => setRotation((r) => ((r + 90) % 360) as typeof rotation)}
-                  >
-                    <RotateCw className="h-3.5 w-3.5" />
-                  </Button>
+                  {view === "2d" && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 w-7 p-0"
+                        title="Rotate view -90°"
+                        onClick={() => setRotation((r) => ((r + 270) % 360) as typeof rotation)}
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 w-7 p-0"
+                        title="Rotate view +90°"
+                        onClick={() => setRotation((r) => ((r + 90) % 360) as typeof rotation)}
+                      >
+                        <RotateCw className="h-3.5 w-3.5" />
+                      </Button>
+                    </>
+                  )}
                   <ConfirmDelete
                     trigger={
                       <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-destructive hover:text-destructive">
@@ -192,37 +227,58 @@ export default function RoomPlanPage() {
               {pinMode && (
                 <p className="mb-1.5 text-[11px] text-amber-700">Click anywhere on the floor to pin a new item there.</p>
               )}
-              <RoomPlan2D
-                widthM={room.data.widthM ?? 0}
-                depthM={room.data.depthM ?? 0}
-                walls={room.data.walls}
-                openings={room.data.openings}
-                items={room.data.items.map((it) => ({
-                  id: it.id,
-                  name: it.name,
-                  pos: it.pos,
-                  editable: it.ownerRoomId === id,
-                }))}
-                editable
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                onPosChange={(itemId, pos: ItemPos) => updatePos.mutate({ id: itemId, pos })}
-                rotationDeg={rotation}
-                cutMode={cutMode}
-                onCutRect={(bounds) => {
-                  setPendingCut(bounds);
-                  setCutName("");
-                }}
-                pinMode={pinMode}
-                onPinPlace={(pos) => {
-                  setPendingPin(pos);
-                  setPinName("");
-                  setPinAreaId(null);
-                }}
-              />
+              {/* Both views stay mounted - toggling via `hidden` instead of
+                  conditional JSX - so switching tabs doesn't tear down and
+                  recreate the 3D view's WebGL context every time (React
+                  StrictMode double-invokes effects, so repeated mount/unmount
+                  cycles can exhaust the browser's WebGL context limit). */}
+              <div hidden={view !== "2d"}>
+                <RoomPlan2D
+                  widthM={room.data.widthM ?? 0}
+                  depthM={room.data.depthM ?? 0}
+                  walls={room.data.walls}
+                  openings={room.data.openings}
+                  items={planItems}
+                  editable
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  onPosChange={(itemId, pos: ItemPos) => updatePos.mutate({ id: itemId, pos })}
+                  rotationDeg={rotation}
+                  cutMode={cutMode}
+                  onCutRect={(bounds) => {
+                    setPendingCut(bounds);
+                    setCutName("");
+                  }}
+                  pinMode={pinMode}
+                  onPinPlace={(pos) => {
+                    setPendingPin(pos);
+                    setPinName("");
+                    setPinAreaId(null);
+                  }}
+                />
+              </div>
+              <div hidden={view !== "3d"}>
+                <RoomPlan3D
+                  widthM={room.data.widthM ?? 0}
+                  depthM={room.data.depthM ?? 0}
+                  wallHeightM={room.data.wallHeightM}
+                  walls={room.data.walls}
+                  items={planItems}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  active={view === "3d"}
+                  pinMode={pinMode}
+                  onPinPlace={(pos) => {
+                    setPendingPin(pos);
+                    setPinName("");
+                    setPinAreaId(null);
+                  }}
+                />
+              </div>
               <p className="mt-2 text-[11px] text-muted-foreground">
-                Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize.
-                The ⟲/⟳ buttons above only rotate the view, not the data.
+                {view === "2d"
+                  ? "Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize. The ⟲/⟳ buttons above only rotate the view, not the data."
+                  : "Drag to orbit · scroll to zoom · click an item to select it."}
               </p>
               {room.data.items.filter((it) => !it.pos).length > 0 && (
                 <p className="mt-3 text-[12px] text-muted-foreground">
