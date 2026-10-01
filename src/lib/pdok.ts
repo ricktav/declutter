@@ -24,10 +24,10 @@ function parsePoint(wkt: string | undefined): { lat: number; lng: number } | nul
   return { lng: Number(m[1]), lat: Number(m[2]) };
 }
 
-export async function searchAddress(query: string): Promise<AddressSuggestion[]> {
+export async function searchAddress(query: string, rows = 10): Promise<AddressSuggestion[]> {
   if (!query.trim()) return [];
   const url =
-    "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free?rows=8&q=" + encodeURIComponent(query);
+    `https://api.pdok.nl/bzk/locatieserver/search/v3_1/free?rows=${rows}&q=` + encodeURIComponent(query);
   const res = await fetch(url);
   if (!res.ok) return [];
   const data = await res.json();
