@@ -14,12 +14,12 @@ export default function PhotosPage() {
   const photos = trpc.attachments.listAllImages.useQuery();
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("location");
-  const [onlyUnpinned, setOnlyUnpinned] = useState(false);
+  const [showObjects, setShowObjects] = useState(true);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     return (photos.data ?? []).filter((p) => {
-      if (onlyUnpinned && p.itemId != null) return false;
+      if (!showObjects && p.itemId != null) return false;
       return (
         !query ||
         (p.itemName ?? "").toLowerCase().includes(query) ||
@@ -28,7 +28,7 @@ export default function PhotosPage() {
         (p.areaName ?? "").toLowerCase().includes(query)
       );
     });
-  }, [photos.data, q, onlyUnpinned]);
+  }, [photos.data, q, showObjects]);
 
   const groupOf = (p: (typeof filtered)[number]) => {
     if (sortBy === "area") return p.areaName ?? "(no area)";
@@ -86,16 +86,16 @@ export default function PhotosPage() {
             <option value="recent">Recently added</option>
           </select>
         </div>
-        <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none">
+        <label
+          className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
+          title="Toggle off to hide item cutout photos, showing only full location photos"
+        >
           <input
             type="checkbox"
-            checked={onlyUnpinned}
-            onChange={(e) => setOnlyUnpinned(e.target.checked)}
+            checked={showObjects}
+            onChange={(e) => setShowObjects(e.target.checked)}
           />
-          only location photos not pinned to an item yet
-          <span className="font-data text-[11px] opacity-60">
-            ({(photos.data ?? []).filter((p) => p.itemId == null).length})
-          </span>
+          Objects
         </label>
       </div>
 

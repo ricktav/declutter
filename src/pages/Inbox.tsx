@@ -71,15 +71,36 @@ function PinCaptureButton({
   captureId,
   houseId = null,
   className = "shrink-0",
+  iconOnly = false,
 }: {
   captureId: number;
   houseId?: number | null;
   className?: string;
+  iconOnly?: boolean;
 }) {
   const navigate = useNavigate();
   const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
     onSuccess: (res) => navigate(`/annotate/${res.attachmentId}`),
   });
+  if (iconOnly) {
+    return (
+      <button
+        className="absolute bottom-1.5 right-1.5 h-6 w-6 rounded-full bg-white/90 shadow flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-50"
+        title="Pin objects on this photo"
+        disabled={ensure.isPending}
+        onClick={(e) => {
+          e.stopPropagation();
+          ensure.mutate({ captureId, houseId });
+        }}
+      >
+        {ensure.isPending ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <MapPin className="h-3.5 w-3.5" />
+        )}
+      </button>
+    );
+  }
   return (
     <Button
       size="sm"
@@ -632,25 +653,26 @@ export default function InboxPage() {
       {done.length > 0 && (
         <>
           <h2 className="micro-label text-muted-foreground mt-8 mb-2">Processed</h2>
-          <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {done.slice(0, 24).map((c) => (
               <div key={c.id} className="rounded-lg border border-border bg-white p-1.5">
-                {c.kind === "image" && c.storageKey ? (
-                  <button
-                    className="cursor-zoom-in block w-full"
-                    title="Click to view full size"
-                    onClick={() => setLightboxKey(c.storageKey)}
-                  >
+                <div className="relative">
+                  {c.kind === "image" && c.storageKey ? (
+                    <button
+                      className="cursor-zoom-in block w-full"
+                      title="Click to view full size"
+                      onClick={() => setLightboxKey(c.storageKey)}
+                    >
+                      <ProcessedThumb storageKey={c.storageKey} kind={c.kind} />
+                    </button>
+                  ) : (
                     <ProcessedThumb storageKey={c.storageKey} kind={c.kind} />
-                  </button>
-                ) : (
-                  <ProcessedThumb storageKey={c.storageKey} kind={c.kind} />
-                )}
-                <div className="mt-1 flex items-center justify-between gap-1 text-muted-foreground">
-                  <span className="micro-label truncate">{c.status}</span>
-                  <span className="font-data text-[10px] shrink-0">{timeAgo(c.createdAt)}</span>
+                  )}
+                  {c.kind === "image" && c.storageKey && <PinCaptureButton captureId={c.id} iconOnly />}
                 </div>
-                {c.kind === "image" && c.storageKey && <PinCaptureButton captureId={c.id} className="w-full mt-1" />}
+                <div className="mt-1 text-[10px] text-muted-foreground truncate">
+                  {c.status} · {timeAgo(c.createdAt)}
+                </div>
               </div>
             ))}
           </div>
