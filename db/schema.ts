@@ -116,10 +116,19 @@ export const rooms = mysqlTable(
     openings: json("openings").$type<RoomGeometry["openings"]>(),
     lat: double("lat"), // override for a room scanned as its own structure (shed, garage)
     lng: double("lng"),
+    // Set only on a room cut out of another (cutFromRoom) - the source room's
+    // own geometry is never touched, so rolling the cut's items back up into
+    // the parent's overview is purely additive: add this offset to a child
+    // item's local pos to show it in the parent's frame, subtract it to
+    // write back. parentRoomId null = a root scan (LiDAR/MappedIn import),
+    // where deleting the room has nowhere to send its items back to.
+    parentRoomId: bigint("parentRoomId", { mode: "number", unsigned: true }),
+    offsetXM: double("offsetXM"),
+    offsetYM: double("offsetYM"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
   },
-  (t) => [index("rooms_house_idx").on(t.houseId)],
+  (t) => [index("rooms_house_idx").on(t.houseId), index("rooms_parent_idx").on(t.parentRoomId)],
 );
 
 export interface RoomGeometry {

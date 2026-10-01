@@ -3,7 +3,8 @@ import { useParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors } from "lucide-react";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
+import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2 } from "lucide-react";
 import type { ItemPos } from "@db/schema";
 
 /**
@@ -48,6 +49,12 @@ export default function RoomPlanPage() {
       setCutName("");
       utils.rooms.get.invalidate({ id });
       navigate(`/rooms/${newRoomId}`);
+    },
+  });
+  const removeRoom = trpc.rooms.remove.useMutation({
+    onSuccess: () => {
+      if (room.data?.parentRoomId != null) navigate(`/rooms/${room.data.parentRoomId}`);
+      else navigate("/rooms");
     },
   });
 
@@ -106,6 +113,23 @@ export default function RoomPlanPage() {
                   >
                     <RotateCw className="h-3.5 w-3.5" />
                   </Button>
+                  <ConfirmDelete
+                    trigger={
+                      <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-destructive hover:text-destructive">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    }
+                    title={`Delete "${room.data.name}"?`}
+                    description={
+                      room.data.parentRoomId != null
+                        ? "Its placed items move back to the parent floor plan, re-positioned in that plan's frame. The parent's own geometry is untouched."
+                        : "This is the only floor plan for this space - there's no parent to fall back on. Its items will be unlinked from any room geometry (not deleted, just un-placed). This cannot be undone."
+                    }
+                    confirmText={room.data.parentRoomId == null ? room.data.name : undefined}
+                    confirmLabel="Delete room"
+                    pending={removeRoom.isPending}
+                    onConfirm={() => removeRoom.mutate({ id })}
+                  />
                 </div>
               </div>
               {cutMode && (
@@ -118,7 +142,12 @@ export default function RoomPlanPage() {
                 depthM={room.data.depthM ?? 0}
                 walls={room.data.walls}
                 openings={room.data.openings}
-                items={room.data.items.map((it) => ({ id: it.id, name: it.name, pos: it.pos }))}
+                items={room.data.items.map((it) => ({
+                  id: it.id,
+                  name: it.name,
+                  pos: it.pos,
+                  editable: it.ownerRoomId === id,
+                }))}
                 editable
                 selectedId={selectedId}
                 onSelect={setSelectedId}
@@ -203,6 +232,14 @@ export default function RoomPlanPage() {
                       ? `${selectedItem.pos.wM}×${selectedItem.pos.dM} m${selectedItem.pos.baseM ? ` · on top of something (${selectedItem.pos.baseM} m)` : ""}`
                       : "Not placed on the plan"}
                   </p>
+                  {selectedItem.ownerRoomId !== room.data.id && (
+                    <Link
+                      to={`/rooms/${selectedItem.ownerRoomId}`}
+                      className="mt-1 inline-block text-[12px] text-primary hover:underline"
+                    >
+                      Edit position in {selectedItem.ownerRoomName} →
+                    </Link>
+                  )}
 
                   {selectedItem.verificationStatus === "detected" ? (
                     <div className="mt-3 flex gap-1.5">

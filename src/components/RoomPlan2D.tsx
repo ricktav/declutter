@@ -5,6 +5,11 @@ export type PlanItem = {
   id: number;
   name: string;
   pos: ItemPos | null;
+  /** false for an item rolled up from a cut sub-room into this overview -
+   * selectable (confirm/reject work fine, they don't touch position) but
+   * not draggable here, since a position edit would need to write back
+   * through that sub-room's offset rather than this room's own frame. */
+  editable?: boolean;
 };
 
 type Opening = RoomGeometry["openings"][number];
@@ -138,7 +143,7 @@ export function RoomPlan2D({
   const startDrag = (kind: DragKind, id: number, e: React.PointerEvent) => {
     if (!editable) return;
     const it = placed.find((p) => p.id === id);
-    if (!it) return;
+    if (!it || it.editable === false) return;
     onSelect?.(id);
     dragRef.current = { kind, id, startLoc: toLocal(e.clientX, e.clientY), startPos: { ...it.pos } };
     (e.target as Element).setPointerCapture(e.pointerId);
@@ -294,10 +299,10 @@ export function RoomPlan2D({
             transform={`rotate(${-p.rotDeg} ${x + w / 2} ${y + d / 2})`}
             onPointerDown={(e) => {
               if (cutMode) return;
-              if (editable) startDrag("move", it.id, e);
+              if (editable && it.editable !== false) startDrag("move", it.id, e);
               else onSelect?.(it.id);
             }}
-            className={cutMode ? "" : editable ? "cursor-move" : "cursor-pointer"}
+            className={cutMode ? "" : editable && it.editable !== false ? "cursor-move" : "cursor-pointer"}
           >
             <rect
               x={x}
@@ -307,6 +312,7 @@ export function RoomPlan2D({
               rx={4}
               className={isSel ? "fill-primary/25 stroke-primary" : "fill-primary/15 stroke-primary/70"}
               strokeWidth={isSel ? 2 : 1.5}
+              strokeDasharray={it.editable === false ? "4 2" : undefined}
             />
             <text
               x={x + w / 2}
@@ -334,7 +340,7 @@ export function RoomPlan2D({
         />
       )}
 
-      {editable && selected && (
+      {editable && selected && selected.editable !== false && (
         <>
           {(() => {
             const p = selected.pos;
