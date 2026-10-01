@@ -10,7 +10,7 @@ import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { putFile, readFileBytes, deleteStoredFile } from "../lib/filestore";
-import { cropPercent, toThumbnail } from "../lib/crop";
+import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 
 const detectObjectsSchema = z.object({
@@ -45,14 +45,22 @@ function nameScore(a: string, b: string): number {
   return shared / Math.min(A.size, B.size);
 }
 
-const triageSchema = z.object({
-  areaSlug: z.string().describe("slug of the best-matching area"),
-  itemName: z.string().describe("short name for the item this capture is about"),
-  matchedItemId: z.number().nullable().describe("id of an existing item this belongs to, or null if new"),
+const triageItemSchema = z.object({
+  itemName: z.string().describe("short, specific name for this spotted object"),
+  areaSlug: z.string().describe("slug of the best-matching area/topic for this object"),
+  matchedItemId: z.number().nullable().describe("id of an existing item this is, or null if it's not already in the inventory"),
   isNewItem: z.boolean(),
-  attributes: z.record(z.string(), z.string()).describe("extracted attribute key/values"),
-  note: z.string().describe("one-line summary of what this capture is"),
+  attributes: z.record(z.string(), z.string()).describe("extracted attribute key/values, empty object if none obvious"),
   confidence: z.enum(["high", "medium", "low"]),
+});
+
+const triageSchema = z.object({
+  note: z.string().describe("one-line overview of the scene as a whole, not any single object"),
+  floor: z.string().nullable().describe("floor this was likely taken on, if inferable from context (e.g. an existing matched item's known floor), otherwise null"),
+  room: z.string().nullable().describe("room this was likely taken in, if inferable, otherwise null"),
+  items: z
+    .array(triageItemSchema)
+    .describe("every distinct physical object worth inventorying that's visible - not just the most prominent one. A close-up of one thing still gets a one-item list; a cluttered scene should list everything significant."),
 });
 
 type CaptureRow = typeof captures.$inferSelect;
@@ -72,14 +80,14 @@ async function buildTriageContent(cap: CaptureRow): Promise<
     ...allItems.slice(0, 200).map((i) => `- ${i.id} — ${i.name}`),
   ].join("\n");
 
-  let textPrompt = `You are triaging a capture into a home inventory system.\n\n${context}\n\nCAPTURE (kind: ${cap.kind}):\n${cap.rawText ?? ""}\n${cap.url ? `URL: ${cap.url}` : ""}\n\nDecide: which area does this belong to? Is it about an existing item (give its id) or a new item? Extract obvious attributes (e.g. for computers: cpu, ram, storage, os, role).`;
+  let textPrompt = `You are triaging a capture into a home inventory system.\n\n${context}\n\nCAPTURE (kind: ${cap.kind}):\n${cap.rawText ?? ""}\n${cap.url ? `URL: ${cap.url}` : ""}\n\nList every distinct physical object worth inventorying that's visible - not just the single most prominent one. For each: which area/topic does it belong to? Is it an existing item (give its id) or new? Extract obvious attributes (e.g. for computers: cpu, ram, storage, os, role). Also suggest the floor/room this was likely taken in if you can tell (e.g. from an existing matched item's known location, or visible context), otherwise leave them null - don't guess at a location with nothing to go on.`;
 
   const parts: Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }> = [
     { type: "text", text: textPrompt },
   ];
   if (cap.kind === "image" && cap.storageKey) {
     try {
-      const bytes = await readFileBytes(cap.storageKey);
+      const bytes = await normalizeOrientation(await readFileBytes(cap.storageKey));
       parts.push({ type: "image", image: bytes });
     } catch {
       textPrompt += "\n(image bytes unavailable — triage from text only)";
@@ -89,15 +97,39 @@ async function buildTriageContent(cap: CaptureRow): Promise<
   return parts;
 }
 
-function toSuggestion(object: z.infer<typeof triageSchema>): TriageSuggestion {
+/** Resolve matchedItemId -> matchedItemName and suggest a floor/room from any
+ * matched item's own location when the model didn't already (everything in
+ * one photo is almost certainly the same room, same logic as Detect
+ * Objects uses for its location default). */
+async function resolveSuggestion(object: z.infer<typeof triageSchema>): Promise<TriageSuggestion> {
+  const db = getDb();
+  const ids = [...new Set(object.items.map((i) => i.matchedItemId).filter((id): id is number => id != null))];
+  const matched = ids.length ? await db.select().from(items).where(inArray(items.id, ids)) : [];
+  const byId = new Map(matched.map((i) => [i.id, i]));
+
+  let floor = object.floor;
+  let room = object.room;
+  if (!room) {
+    const withLocation = matched.find((i) => i.room);
+    if (withLocation) {
+      floor = withLocation.floor ?? floor;
+      room = withLocation.room ?? room;
+    }
+  }
+
   return {
-    areaSlug: object.areaSlug,
-    itemName: object.itemName,
-    matchedItemId: object.matchedItemId ?? undefined,
-    isNewItem: object.isNewItem,
-    attributes: object.attributes,
     note: object.note,
-    confidence: object.confidence,
+    floor,
+    room,
+    items: object.items.map((it) => ({
+      itemName: it.itemName,
+      areaSlug: it.areaSlug,
+      matchedItemId: it.matchedItemId,
+      matchedItemName: it.matchedItemId != null ? (byId.get(it.matchedItemId)?.name ?? null) : null,
+      isNewItem: it.isNewItem,
+      attributes: it.attributes,
+      confidence: it.confidence,
+    })),
   };
 }
 
@@ -107,17 +139,17 @@ async function runTriage(model: Awaited<ReturnType<typeof getModel>>, content: T
     schema: triageSchema,
     messages: [{ role: "user", content }],
   });
-  return toSuggestion(object);
+  return resolveSuggestion(object);
 }
 
 const TRIAGE_JSON_SHAPE = `{
-  "areaSlug": string,
-  "itemName": string,
-  "matchedItemId": number or null,
-  "isNewItem": boolean,
-  "attributes": { "key": "value", ... },
   "note": string,
-  "confidence": "high" | "medium" | "low"
+  "floor": string or null,
+  "room": string or null,
+  "items": [
+    { "itemName": string, "areaSlug": string, "matchedItemId": number or null, "isNewItem": boolean, "attributes": { "key": "value", ... }, "confidence": "high" | "medium" | "low" },
+    ...
+  ]
 }`;
 
 /** Dev-mode: same triage prompt, routed through `claude -p` instead of the
@@ -131,7 +163,7 @@ async function runTriageViaClaudeCli(content: TriageContent) {
     schema: triageSchema,
     jsonShape: TRIAGE_JSON_SHAPE,
   });
-  return toSuggestion(object);
+  return resolveSuggestion(object);
 }
 
 type TriageContent = Awaited<ReturnType<typeof buildTriageContent>>;
@@ -201,9 +233,9 @@ export const inboxRouter = createRouter({
         entityType: "capture",
         entityId: input.id,
         action: "triaged",
-        summary: `AI triage${isClaudeCliDevMode() ? " (claude -p dev mode)" : ""}: "${suggestion.itemName}" → ${suggestion.areaSlug} (${suggestion.confidence} confidence)`,
+        summary: `AI triage${isClaudeCliDevMode() ? " (claude -p dev mode)" : ""}: spotted ${suggestion.items.length} item${suggestion.items.length === 1 ? "" : "s"} (${suggestion.items.filter((i) => i.isNewItem).length} new)`,
         actor: "ai",
-        payload: suggestion as Record<string, unknown>,
+        payload: suggestion as unknown as Record<string, unknown>,
       });
       return { ok: true as const, suggestion };
     } catch (err) {
@@ -291,7 +323,10 @@ export const inboxRouter = createRouter({
       return { ok: false as const, error: "This capture has no stored image." };
     }
     try {
-      const bytes = await readFileBytes(cap.storageKey);
+      // normalized: the model's xPct/yPct/wPct/hPct must be computed
+      // against the same upright frame the browser displays, or every
+      // returned box ends up offset/rotated relative to the real objects
+      const bytes = await normalizeOrientation(await readFileBytes(cap.storageKey));
       const allItems = await db
         .select()
         .from(items)
@@ -552,6 +587,95 @@ export const inboxRouter = createRouter({
         summary: `Capture accepted → item "${input.itemName}" (#${itemId})`,
       });
       return { ok: true, itemId };
+    }),
+
+  /** File several spotted items from one triage pass in a single pass - a
+   * new item for each one not already matched, sharing one location (it's
+   * all the same photo, almost certainly the same room). An existing match
+   * is just acknowledged, not re-photographed - the whole-scene photo isn't
+   * a useful addition to an item that's already catalogued. */
+  acceptMany: publicQuery
+    .input(
+      z.object({
+        id: z.number(),
+        houseId: z.number().nullable().optional(),
+        floor: z.string().optional(),
+        room: z.string().optional(),
+        items: z
+          .array(
+            z.object({
+              areaId: z.number(),
+              itemId: z.number().nullable(),
+              itemName: z.string().min(1),
+              attributes: z.record(z.string(), z.string()).optional(),
+            }),
+          )
+          .min(1),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
+      if (!cap) throw new Error("capture not found");
+
+      let created = 0;
+      for (const it of input.items) {
+        let itemId = it.itemId;
+        if (!itemId) {
+          const [{ id: newId }] = await db
+            .insert(items)
+            .values({
+              areaId: it.areaId,
+              name: it.itemName,
+              description: cap.rawText?.slice(0, 500) ?? null,
+              attributes: it.attributes ?? null,
+              houseId: input.houseId ?? null,
+              floor: input.floor || null,
+              room: input.room || null,
+            })
+            .$returningId();
+          itemId = newId;
+          created++;
+          await logEvent({
+            entityType: "item",
+            entityId: itemId,
+            action: "created",
+            summary: `Item "${it.itemName}" created from inbox capture`,
+          });
+
+          if (cap.rawText || cap.url || cap.storageKey) {
+            await db.insert(attachments).values({
+              itemId,
+              areaId: it.areaId,
+              kind:
+                cap.kind === "link"
+                  ? "link"
+                  : cap.kind === "image" || cap.kind === "file"
+                    ? cap.kind
+                    : cap.storageKey
+                      ? "file"
+                      : "note",
+              title: cap.url ?? it.itemName,
+              content: cap.rawText ?? null,
+              url: cap.url ?? null,
+              storageKey: cap.storageKey,
+            });
+          }
+        } else if (it.attributes && Object.keys(it.attributes).length) {
+          const existing = await db.query.items.findFirst({ where: eq(items.id, itemId) });
+          const merged = { ...(existing?.attributes ?? {}), ...it.attributes };
+          await db.update(items).set({ attributes: merged }).where(eq(items.id, itemId));
+        }
+      }
+
+      await db.update(captures).set({ status: "triaged" }).where(eq(captures.id, input.id));
+      await logEvent({
+        entityType: "capture",
+        entityId: input.id,
+        action: "accepted",
+        summary: `Capture accepted → ${input.items.length} item(s) filed (${created} new)`,
+      });
+      return { ok: true, created };
     }),
 
   dismiss: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {

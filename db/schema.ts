@@ -216,14 +216,22 @@ export const captures = mysqlTable(
   (t) => [index("captures_hash_idx").on(t.contentHash)],
 );
 
-export interface TriageSuggestion {
-  areaSlug?: string;
-  itemName?: string;
-  matchedItemId?: number;
-  isNewItem?: boolean;
+export interface TriageSpottedItem {
+  itemName: string;
+  areaSlug: string;
+  matchedItemId?: number | null;
+  matchedItemName?: string | null;
+  isNewItem: boolean;
   attributes?: Record<string, string>;
+  confidence: "high" | "medium" | "low";
+}
+
+export interface TriageSuggestion {
+  /** one-line overview of the scene, not tied to any single spotted item */
   note?: string;
-  confidence?: "high" | "medium" | "low";
+  floor?: string | null;
+  room?: string | null;
+  items: TriageSpottedItem[];
 }
 
 // ---------------------------------------------------------------------------

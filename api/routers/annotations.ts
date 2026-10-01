@@ -5,7 +5,7 @@ import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { photoAnnotations, attachments, items, areas } from "@db/schema";
 import { readFileBytes } from "../lib/filestore";
-import { toThumbnail, cropPercent } from "../lib/crop";
+import { toThumbnail, cropPercent, normalizeOrientation } from "../lib/crop";
 import { getVisionModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
@@ -229,7 +229,10 @@ export const annotationsRouter = createRouter({
       }
 
       try {
-        const bytes = await readFileBytes(att.storageKey);
+        // normalized: the model's xPct/yPct/wPct/hPct must be computed
+        // against the same upright frame the browser displays, or every
+        // returned box ends up offset/rotated relative to the real objects
+        const bytes = await normalizeOrientation(await readFileBytes(att.storageKey));
         const allItems = await db
           .select()
           .from(items)

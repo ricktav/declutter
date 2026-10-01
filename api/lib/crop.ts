@@ -1,6 +1,21 @@
 import sharp from "sharp";
 
 /**
+ * Bake EXIF orientation into the pixels and strip the tag. Any image sent
+ * whole to a vision model for COORDINATE output (bounding boxes) must go
+ * through this first: if the raw bytes carry a rotation tag, the model may
+ * (or may not) honor it when deciding pixel coordinates, but the browser
+ * always rotates for display - any mismatch between those two puts the
+ * returned xPct/yPct/wPct/hPct in a different frame than what's on screen,
+ * and every box ends up shifted/rotated relative to the real objects.
+ * Normalizing first removes the ambiguity: everyone works from the same,
+ * already-upright image.
+ */
+export async function normalizeOrientation(input: Uint8Array): Promise<Buffer> {
+  return sharp(Buffer.from(input)).rotate().toBuffer();
+}
+
+/**
  * Cut a region out of an image. Box is expressed in percentages of the
  * ORIGINAL image (xPct/yPct = center, wPct/hPct = size), so a snap and its
  * cutouts stay in sync however the image is displayed.
@@ -18,7 +33,7 @@ export async function cropPercent(
   // the wrong region of the differently-shaped raw buffer. Bake the
   // rotation in first so every later step works in the same coordinate
   // space the box was drawn in.
-  const normalized = await sharp(Buffer.from(input)).rotate().toBuffer();
+  const normalized = await normalizeOrientation(input);
   const meta = await sharp(normalized).metadata();
   const W = meta.width ?? 1;
   const H = meta.height ?? 1;

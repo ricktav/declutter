@@ -5,6 +5,7 @@ import { CaptureBar } from "@/components/CaptureBar";
 import { fileToBase64 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { AreaPicker } from "@/components/AreaPicker";
+import { ItemPicker } from "@/components/ItemPicker";
 import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
 import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
 import { AiProgressBar } from "@/components/AiProgressBar";
@@ -36,7 +37,7 @@ import {
   Camera,
   Copy,
 } from "lucide-react";
-import type { Capture } from "@db/schema";
+import type { Capture, TriageSuggestion } from "@db/schema";
 
 const KIND_ICONS = {
   note: StickyNote,
@@ -265,6 +266,81 @@ function PinPendingButton({ captureId }: { captureId: number }) {
   );
 }
 
+type TriageRow = {
+  itemName: string;
+  matchedId: number | null;
+  matchedName: string | null;
+  areaId: number | null;
+  attributes?: Record<string, string>;
+};
+
+function buildTriageRows(s: TriageSuggestion, areasData: { id: number; slug: string }[] | undefined): TriageRow[] {
+  // older captures triaged before this became a list still have the old
+  // single-item shape persisted (no items array) - treat that as "nothing
+  // usable yet" rather than crash; re-running AI triage replaces it anyway
+  if (!Array.isArray(s.items)) return [];
+  return s.items.map((it) => ({
+    itemName: it.itemName,
+    matchedId: it.matchedItemId ?? null,
+    matchedName: it.matchedItemName ?? null,
+    areaId: areasData?.find((a) => a.slug === it.areaSlug)?.id ?? areasData?.[0]?.id ?? null,
+    attributes: it.attributes,
+  }));
+}
+
+/** One spotted object - search/pick an existing item or type a new name
+ * (same ItemPicker everywhere else in the app uses), topic only matters
+ * once it's heading toward becoming a new item. */
+function TriageSpottedRow({
+  row,
+  onChange,
+  onRemove,
+}: {
+  row: TriageRow;
+  onChange: (next: Partial<TriageRow>) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-white p-2 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <div className="flex-1 min-w-0">
+          <ItemPicker
+            placeholder="Search or name this object…"
+            value={row.itemName}
+            onQueryChange={(v) => onChange({ itemName: v, matchedId: null, matchedName: null })}
+            onSelect={(item) => onChange({ itemName: item.name, matchedId: item.id, matchedName: item.name })}
+            allowCreate
+            onCreateNew={(name) => onChange({ itemName: name, matchedId: null, matchedName: null })}
+          />
+        </div>
+        <button
+          className="text-muted-foreground hover:text-destructive shrink-0"
+          title="Remove from list"
+          onClick={onRemove}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      {row.matchedId ? (
+        <div className="flex items-center gap-1 text-[11px] text-emerald-700">
+          <Check className="h-3 w-3 shrink-0" /> already have this{row.matchedName ? ` — ${row.matchedName}` : ""}
+        </div>
+      ) : (
+        <AreaPicker value={row.areaId} onChange={(id) => onChange({ areaId: id })} />
+      )}
+      {row.attributes && Object.keys(row.attributes).length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {Object.entries(row.attributes).map(([k, v]) => (
+            <span key={k} className="font-data text-[10px] rounded bg-muted px-1 py-0.5">
+              {k}: {v}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TriageCard({
   capture,
   onZoom,
@@ -274,24 +350,33 @@ function TriageCard({
 }) {
   const utils = trpc.useUtils();
   const s = capture.suggestion;
+  // older captures triaged before suggestions became a list still have the
+  // old single-item shape persisted - treat that the same as "not triaged
+  // yet" rather than show a broken, permanently-empty panel for it
+  const hasSuggestion = !!s && Array.isArray(s.items);
   const areas = trpc.areas.list.useQuery();
 
-  const [areaId, setAreaId] = useState<number | null>(null);
-  const [itemName, setItemName] = useState<string | null>(null);
-  const [matchMode, setMatchMode] = useState<"new" | "existing" | null>(null);
-  const [matchedId, setMatchedId] = useState<number | null>(null);
+  const [rows, setRows] = useState<TriageRow[]>(() => (s ? buildTriageRows(s, areas.data) : []));
+  const [loc, setLoc] = useState<RoomValue>(() =>
+    s?.room ? { houseId: getLastLocation().houseId, floor: s.floor ?? "", room: s.room } : getLastLocation(),
+  );
   const [aiError, setAiError] = useState<string | null>(null);
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [detectOpen, setDetectOpen] = useState(false);
 
   const triage = trpc.inbox.triage.useMutation({
     onSuccess: (res) => {
-      if (res.ok) utils.inbox.list.invalidate();
-      else setAiError(res.error);
+      if (res.ok) {
+        utils.inbox.list.invalidate();
+        setRows(buildTriageRows(res.suggestion, areas.data));
+        setLoc((prev) =>
+          res.suggestion.room ? { ...prev, floor: res.suggestion.floor ?? "", room: res.suggestion.room } : prev,
+        );
+      } else setAiError(res.error);
     },
     onError: (e) => setAiError(e.message),
   });
-  const accept = trpc.inbox.accept.useMutation({
+  const acceptMany = trpc.inbox.acceptMany.useMutation({
     onSuccess: () => {
       utils.inbox.list.invalidate();
       utils.items.listByArea.invalidate();
@@ -311,16 +396,13 @@ function TriageCard({
     onError: (e) => setAiError(e.message),
   });
 
-  // resolve effective selections (user override beats suggestion)
-  const suggestedArea = areas.data?.find((a) => a.slug === s?.areaSlug);
-  const effAreaId = areaId ?? suggestedArea?.id ?? areas.data?.[0]?.id;
-  const effItemName = itemName ?? s?.itemName ?? "";
-  const effMode = matchMode ?? (s?.matchedItemId ? "existing" : "new");
-  const itemsInArea = trpc.items.listByArea.useQuery(
-    { areaId: effAreaId ?? 0, includeArchived: false },
-    { enabled: !!effAreaId },
-  );
-  const effMatchedId = matchedId ?? s?.matchedItemId ?? null;
+  const updateRow = (i: number, patch: Partial<TriageRow>) =>
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const removeRow = (i: number) => setRows((prev) => prev.filter((_, idx) => idx !== i));
+
+  const canFile =
+    rows.length > 0 && rows.every((r) => r.matchedId != null || (r.areaId != null && r.itemName.trim()));
+  const newCount = rows.filter((r) => r.matchedId == null).length;
 
   const KindIcon = KIND_ICONS[capture.kind];
 
@@ -382,7 +464,7 @@ function TriageCard({
             )}
             A/B
           </Button>
-          {!s && (
+          {!hasSuggestion && (
             <Button
               size="sm"
               variant="outline"
@@ -434,95 +516,69 @@ function TriageCard({
         onClose={() => setCompareResult(null)}
         onUse={(side) => {
           if (!side.suggestion) return;
-          const sg = side.suggestion;
-          const area = areas.data?.find((a) => a.slug === sg.areaSlug);
-          if (area) setAreaId(area.id);
-          setItemName(sg.itemName ?? null);
-          if (sg.matchedItemId) {
-            setMatchMode("existing");
-            setMatchedId(sg.matchedItemId);
-          } else {
-            setMatchMode("new");
-            setMatchedId(null);
+          setRows(buildTriageRows(side.suggestion, areas.data));
+          if (side.suggestion.room) {
+            setLoc((prev) => ({ ...prev, floor: side.suggestion!.floor ?? "", room: side.suggestion!.room! }));
           }
           setCompareResult(null);
         }}
       />
 
-      {s && (
+      {hasSuggestion && (
         <div className="mt-3 rounded-md border border-violet-200 bg-violet-50/60 p-3">
           <div className="micro-label text-violet-700 mb-2">
-            AI suggestion · {s.confidence ?? "?"} confidence
+            AI suggestion · {rows.length} item{rows.length === 1 ? "" : "s"} spotted
           </div>
           {s.note && <p className="text-[12px] text-violet-900 mb-2">{s.note}</p>}
-          <div className="grid sm:grid-cols-3 gap-2">
-            <label className="block">
-              <span className="micro-label text-muted-foreground">Topic</span>
-              <div className="mt-0.5">
-                <AreaPicker value={effAreaId ?? null} onChange={setAreaId} />
-              </div>
-            </label>
-            <label className="block sm:col-span-2">
-              <span className="micro-label text-muted-foreground">Item</span>
-              <div className="mt-0.5 flex gap-2">
-                <select
-                  className="rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
-                  value={effMode}
-                  onChange={(e) => setMatchMode(e.target.value as "new" | "existing")}
-                >
-                  <option value="new">new item</option>
-                  <option value="existing">existing item</option>
-                </select>
-                {effMode === "new" ? (
-                  <input
-                    className="flex-1 rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
-                    value={effItemName}
-                    onChange={(e) => setItemName(e.target.value)}
-                  />
-                ) : (
-                  <select
-                    className="flex-1 rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
-                    value={effMatchedId ?? ""}
-                    onChange={(e) => setMatchedId(Number(e.target.value))}
-                  >
-                    <option value="" disabled>
-                      pick item…
-                    </option>
-                    {(itemsInArea.data ?? []).map((i) => (
-                      <option key={i.id} value={i.id}>
-                        {i.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            </label>
+
+          <div className="space-y-1.5">
+            {rows.map((row, i) => (
+              <TriageSpottedRow
+                key={i}
+                row={row}
+                onChange={(patch) => updateRow(i, patch)}
+                onRemove={() => removeRow(i)}
+              />
+            ))}
+            {rows.length === 0 && (
+              <div className="text-[12px] text-muted-foreground">Nothing left to file.</div>
+            )}
           </div>
-          {s.attributes && Object.keys(s.attributes).length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {Object.entries(s.attributes).map(([k, v]) => (
-                <span key={k} className="font-data text-[11px] rounded bg-white border border-border px-1.5 py-0.5">
-                  {k}: {v}
-                </span>
-              ))}
+
+          <label className="block mt-2">
+            <span className="micro-label text-muted-foreground">Location (applies to every new item above)</span>
+            <div className="mt-0.5">
+              <RoomPicker value={loc} onChange={setLoc} />
             </div>
-          )}
+          </label>
+
           <div className="mt-3 flex justify-end">
             <Button
               size="sm"
               className="h-7 text-[12px]"
-              disabled={accept.isPending || !effAreaId || (effMode === "new" ? !effItemName : !effMatchedId)}
-              onClick={() =>
-                accept.mutate({
+              disabled={acceptMany.isPending || !canFile}
+              onClick={() => {
+                setLastLocation(loc);
+                acceptMany.mutate({
                   id: capture.id,
-                  areaId: effAreaId!,
-                  itemId: effMode === "existing" ? effMatchedId : null,
-                  itemName: effItemName || "Untitled",
-                  attributes: s.attributes,
-                })
-              }
+                  houseId: loc.houseId,
+                  floor: loc.floor || undefined,
+                  room: loc.room || undefined,
+                  items: rows.map((r) => ({
+                    areaId: r.areaId ?? 0,
+                    itemId: r.matchedId,
+                    itemName: r.itemName || "Untitled",
+                    attributes: r.attributes,
+                  })),
+                });
+              }}
             >
-              <Check className="h-3.5 w-3.5 mr-1" /> Accept
+              <Check className="h-3.5 w-3.5 mr-1" />
+              {acceptMany.isPending
+                ? "Filing…"
+                : newCount > 0
+                  ? `File ${newCount} new item${newCount === 1 ? "" : "s"}`
+                  : "Confirm"}
             </Button>
           </div>
         </div>
@@ -556,16 +612,8 @@ function CompareModal({
                 <div className="flex items-center gap-2">
                   <span className="micro-label text-muted-foreground">{side.label}</span>
                   {side.suggestion && (
-                    <span
-                      className={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                        side.suggestion.confidence === "high"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : side.suggestion.confidence === "medium"
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-red-100 text-red-800"
-                      }`}
-                    >
-                      {side.suggestion.confidence}
+                    <span className="ml-auto font-data text-[10px] text-muted-foreground">
+                      {side.suggestion.items.length} item{side.suggestion.items.length === 1 ? "" : "s"}
                     </span>
                   )}
                 </div>
@@ -577,37 +625,27 @@ function CompareModal({
                   </div>
                 ) : side.suggestion ? (
                   <>
-                    <div>
-                      <div className="micro-label text-muted-foreground">Topic</div>
-                      <div className="text-[13px] font-medium">{side.suggestion.areaSlug}</div>
-                    </div>
-                    <div>
-                      <div className="micro-label text-muted-foreground">Item</div>
-                      <div className="text-[13px] font-medium">
-                        {side.suggestion.itemName}
-                        {side.suggestion.matchedItemId && (
-                          <span className="ml-1 text-[11px] text-muted-foreground font-data">
-                            (existing #{side.suggestion.matchedItemId})
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="micro-label text-muted-foreground">Note</div>
-                      <div className="text-[12px]">{side.suggestion.note}</div>
-                    </div>
-                    {Object.keys(side.suggestion.attributes ?? {}).length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(side.suggestion.attributes ?? {}).map(([k, v]) => (
-                          <span
-                            key={k}
-                            className="font-data text-[11px] rounded bg-accent px-1.5 py-0.5"
-                          >
-                            {k}: {v}
-                          </span>
-                        ))}
+                    {side.suggestion.note && <div className="text-[12px] text-muted-foreground">{side.suggestion.note}</div>}
+                    {(side.suggestion.floor || side.suggestion.room) && (
+                      <div className="font-data text-[11px] text-muted-foreground">
+                        location: {[side.suggestion.floor, side.suggestion.room].filter(Boolean).join(" · ")}
                       </div>
                     )}
+                    <div className="space-y-1">
+                      {side.suggestion.items.map((it, i) => (
+                        <div key={i} className="rounded border border-border bg-muted/30 px-2 py-1 text-[12px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium">{it.itemName}</span>
+                            <span className="ml-auto micro-label text-muted-foreground">{it.areaSlug}</span>
+                          </div>
+                          {it.matchedItemId ? (
+                            <div className="text-[11px] text-emerald-700">existing — {it.matchedItemName ?? `#${it.matchedItemId}`}</div>
+                          ) : (
+                            <div className="text-[11px] text-muted-foreground">new</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                     <Button
                       size="sm"
                       className="h-7 text-[12px] w-full"
