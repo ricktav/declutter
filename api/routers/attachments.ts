@@ -240,6 +240,17 @@ export const attachmentsRouter = createRouter({
     const itemById = new Map(allItems.map((i) => [i.id, i]));
     const allAreas = await db.select().from(areas);
     const areaById = new Map(allAreas.map((a) => [a.id, a]));
+
+    // which attachment id is "the" photo each item shows elsewhere (All
+    // Items' thumbnail, items.listAll's imgMap) - lowest id per item, same
+    // tie-break that query uses. The Photos catalog's "Items" toggle only
+    // needs to hide THAT one per item, not every photo an item happens to
+    // have - an item with two photos still has a second one worth browsing.
+    const coverAttachmentId = new Map<number, number>();
+    for (const a of [...atts].sort((x, y) => x.id - y.id)) {
+      if (a.itemId != null && !coverAttachmentId.has(a.itemId)) coverAttachmentId.set(a.itemId, a.id);
+    }
+
     const attachmentRows = atts.map((a) => {
       const it = a.itemId != null ? itemById.get(a.itemId) : undefined;
       return {
@@ -256,6 +267,7 @@ export const attachmentsRouter = createRouter({
         floor: it?.floor ?? a.floor ?? null,
         room: it?.room ?? a.room ?? null,
         areaName: it ? (areaById.get(it.areaId)?.name ?? null) : null,
+        isItemCover: a.itemId != null && coverAttachmentId.get(a.itemId) === a.id,
       };
     });
 
@@ -294,6 +306,7 @@ export const attachmentsRouter = createRouter({
         floor: null,
         room: null,
         areaName: null,
+        isItemCover: false,
       }));
 
     return [...attachmentRows, ...captureRows].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));

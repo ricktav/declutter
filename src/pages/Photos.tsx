@@ -21,6 +21,7 @@ type Photo = {
   floor: string | null;
   room: string | null;
   areaName: string | null;
+  isItemCover: boolean;
 };
 
 /** One tile - an item's photo and a location photo both just link straight
@@ -94,7 +95,7 @@ export default function PhotosPage() {
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     return (photos.data ?? []).filter((p) => {
-      if (!showObjects && p.itemId != null) return false;
+      if (!showObjects && p.isItemCover) return false;
       return (
         !query ||
         (p.itemName ?? "").toLowerCase().includes(query) ||
@@ -163,7 +164,7 @@ export default function PhotosPage() {
         </div>
         <label
           className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
-          title="Toggle off to hide photos already pinned to an item, showing only location photos and raw inbox captures"
+          title="Toggle off to hide each item's cover photo (the one shown on All Items) - everything else, including extra photos of the same item, stays visible"
         >
           <input
             type="checkbox"
