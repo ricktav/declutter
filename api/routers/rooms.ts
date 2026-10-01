@@ -22,6 +22,49 @@ const geometryInput = z.object({
   ),
 });
 
+/**
+ * Liang-Barsky segment-vs-axis-aligned-box clip. A wall spanning a whole
+ * floor only has its endpoints at the floor's own corners, not at every
+ * internal cut boundary - clipping (not all-or-nothing filtering) is what
+ * keeps a cut room's walls complete when a real wall crosses the cut edge.
+ */
+function clipSegmentToBox(
+  [x0, y0]: [number, number],
+  [x1, y1]: [number, number],
+  xmin: number,
+  xmax: number,
+  ymin: number,
+  ymax: number,
+): [[number, number], [number, number]] | null {
+  let t0 = 0, t1 = 1;
+  const dx = x1 - x0, dy = y1 - y0;
+  const checks: [number, number][] = [
+    [-dx, x0 - xmin],
+    [dx, xmax - x0],
+    [-dy, y0 - ymin],
+    [dy, ymax - y0],
+  ];
+  for (const [p, q] of checks) {
+    if (p === 0) {
+      if (q < 0) return null;
+      continue;
+    }
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return null;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return null;
+      if (r < t1) t1 = r;
+    }
+  }
+  if (t0 >= t1) return null;
+  return [
+    [x0 + t0 * dx, y0 + t0 * dy],
+    [x0 + t1 * dx, y0 + t1 * dy],
+  ];
+}
+
 export const roomsRouter = createRouter({
   listByHouse: publicQuery
     .input(z.object({ houseId: z.number() }))
@@ -184,15 +227,20 @@ export const roomsRouter = createRouter({
       if (!source) throw new Error("Source room not found");
 
       const { xM: bx, yM: by, wM: bw, dM: bd } = input.bounds;
-      const EPS = 0.05;
-      const within = ([x, y]: [number, number]) => x >= bx - EPS && x <= bx + bw + EPS && y >= by - EPS && y <= by + bd + EPS;
       const sourceWalls = (source.walls ?? []) as RoomGeometry["walls"];
-      const cutWalls = sourceWalls
-        .filter((w) => w.points.every(within))
-        .map((w) => ({
-          kind: w.kind,
-          points: w.points.map(([x, y]) => [+(x - bx).toFixed(3), +(y - by).toFixed(3)] as [number, number]),
-        }));
+      const cutWalls: RoomGeometry["walls"] = [];
+      for (const w of sourceWalls) {
+        for (let i = 0; i < w.points.length - 1; i++) {
+          const clipped = clipSegmentToBox(w.points[i], w.points[i + 1], bx, bx + bw, by, by + bd);
+          if (!clipped) continue; // wall segment is a full-length piece of the whole-floor wall;
+          // only the part inside the cut rectangle belongs to the new room - the rest
+          // stays implicit in the untouched source geometry.
+          cutWalls.push({
+            kind: w.kind,
+            points: clipped.map(([x, y]) => [+(x - bx).toFixed(3), +(y - by).toFixed(3)] as [number, number]),
+          });
+        }
+      }
 
       const [{ id: newRoomId }] = await db
         .insert(rooms)
