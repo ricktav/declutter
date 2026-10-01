@@ -62,6 +62,7 @@ export function RoomPlan2D({
   selectedId = null,
   onSelect,
   onPosChange,
+  rotationDeg = 0,
 }: {
   widthM: number;
   depthM: number;
@@ -72,6 +73,11 @@ export function RoomPlan2D({
   selectedId?: number | null;
   onSelect?: (id: number) => void;
   onPosChange?: (id: number, pos: ItemPos) => void;
+  /** Display-only orientation (0/90/180/270) - a viewing preference, not a
+   * data change. Coordinate math (px/py, drag/rotate/resize) stays in the
+   * original unrotated frame; getScreenCTM() already accounts for this CSS
+   * transform when converting pointer positions back to that frame. */
+  rotationDeg?: 0 | 90 | 180 | 270;
 }) {
   const S = 70; // px per meter
   const PAD = 36;
@@ -162,13 +168,17 @@ export function RoomPlan2D({
   };
 
   return (
-    <svg
-      ref={svgRef}
-      viewBox={`0 0 ${svgW} ${svgH}`}
-      className="w-full h-auto bg-white rounded-lg border border-border touch-none"
-      onPointerMove={onDragMove}
-      onPointerUp={onDragEnd}
-    >
+    <div className="w-full flex items-center justify-center overflow-hidden rounded-lg border border-border bg-white" style={{ aspectRatio: "1 / 1" }}>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${svgW} ${svgH}`}
+        width={svgW}
+        height={svgH}
+        style={{ maxWidth: "100%", maxHeight: "100%", transform: `rotate(${rotationDeg}deg)`, transformOrigin: "center" }}
+        className="touch-none"
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+      >
       {xTicks.map((x) => (
         <text key={`x${x}`} x={px(x)} y={PAD - 10} textAnchor="middle" className="fill-muted-foreground text-[9px]">
           {x}m
@@ -272,6 +282,7 @@ export function RoomPlan2D({
           })()}
         </>
       )}
-    </svg>
+      </svg>
+    </div>
   );
 }

@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Loader2, Check, X } from "lucide-react";
+import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw } from "lucide-react";
 import type { ItemPos } from "@db/schema";
 
 /**
@@ -30,6 +30,7 @@ export default function RoomPlanPage() {
     },
   });
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
   const selectedItem = room.data?.items.find((it) => it.id === selectedId) ?? null;
 
   return (
@@ -55,6 +56,26 @@ export default function RoomPlanPage() {
 
           <div className="mt-6 flex gap-6 items-start">
             <div className="flex-1 min-w-0 max-w-2xl">
+              <div className="flex items-center justify-end gap-1 mb-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 w-7 p-0"
+                  title="Rotate view -90°"
+                  onClick={() => setRotation((r) => ((r + 270) % 360) as typeof rotation)}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 w-7 p-0"
+                  title="Rotate view +90°"
+                  onClick={() => setRotation((r) => ((r + 90) % 360) as typeof rotation)}
+                >
+                  <RotateCw className="h-3.5 w-3.5" />
+                </Button>
+              </div>
               <RoomPlan2D
                 widthM={room.data.widthM ?? 0}
                 depthM={room.data.depthM ?? 0}
@@ -65,9 +86,11 @@ export default function RoomPlanPage() {
                 selectedId={selectedId}
                 onSelect={setSelectedId}
                 onPosChange={(itemId, pos: ItemPos) => updatePos.mutate({ id: itemId, pos })}
+                rotationDeg={rotation}
               />
               <p className="mt-2 text-[11px] text-muted-foreground">
                 Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize.
+                The ⟲/⟳ buttons above only rotate the view, not the data.
               </p>
               {room.data.items.filter((it) => !it.pos).length > 0 && (
                 <p className="mt-3 text-[12px] text-muted-foreground">
