@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { AreaPicker } from "@/components/AreaPicker";
 import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
 import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
+import { AiProgressBar } from "@/components/AiProgressBar";
 import { DetectObjectsModal } from "@/components/DetectObjects";
 import {
   Dialog,
@@ -33,6 +34,7 @@ import {
   Mic,
   MapPin,
   Camera,
+  Copy,
 } from "lucide-react";
 import type { Capture } from "@db/schema";
 
@@ -360,6 +362,7 @@ function TriageCard({
             {capture.kind} · {timeAgo(capture.createdAt)}
           </div>
         </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
         <div className="flex gap-1.5 shrink-0">
           <Button
             size="sm"
@@ -407,6 +410,9 @@ function TriageCard({
           >
             <X className="h-3.5 w-3.5" />
           </Button>
+        </div>
+          <AiProgressBar active={compare.isPending} action="inbox.compare" />
+          <AiProgressBar active={triage.isPending} action="inbox.triage" />
         </div>
       </div>
 
@@ -622,6 +628,53 @@ function CompareModal({
   );
 }
 
+/** One group of byte-identical captures - oldest (the original) is kept by
+ * default, everything else in the group gets dismissed in one click. */
+function DuplicateGroupRow({
+  group,
+  onChanged,
+}: {
+  group: { captures: { id: number; storageKey: string | null; status: string; createdAt: Date }[] };
+  onChanged: () => void;
+}) {
+  const dismiss = trpc.inbox.dismiss.useMutation();
+  const [, ...rest] = group.captures;
+  const stillDismissable = rest.filter((c) => c.status !== "dismissed");
+
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border bg-white p-2">
+      <div className="flex gap-1.5 flex-1 overflow-x-auto">
+        {group.captures.map((c, idx) => (
+          <div key={c.id} className="relative shrink-0 w-16">
+            {c.storageKey && <ProcessedThumb storageKey={c.storageKey} kind="image" />}
+            <span
+              className={cn(
+                "absolute -top-1 -left-1 h-4 w-4 rounded-full text-[9px] font-bold flex items-center justify-center",
+                idx === 0 ? "bg-emerald-500 text-white" : c.status === "dismissed" ? "bg-muted text-muted-foreground" : "bg-amber-400 text-amber-950",
+              )}
+              title={idx === 0 ? "Kept (oldest)" : c.status === "dismissed" ? "Already dismissed" : "Duplicate"}
+            >
+              {idx === 0 ? "✓" : "×"}
+            </span>
+          </div>
+        ))}
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-6 text-[11px] shrink-0"
+        disabled={stillDismissable.length === 0 || dismiss.isPending}
+        onClick={async () => {
+          for (const c of stillDismissable) await dismiss.mutateAsync({ id: c.id });
+          onChanged();
+        }}
+      >
+        {stillDismissable.length === 0 ? "Dismissed" : `Dismiss other ${stillDismissable.length}`}
+      </Button>
+    </div>
+  );
+}
+
 export default function InboxPage() {
   const captures = trpc.inbox.list.useQuery();
   const pending = (captures.data ?? []).filter((c) => c.status === "pending");
@@ -635,6 +688,14 @@ export default function InboxPage() {
   );
   const openLightbox = (storageKey: string, captureId: number, isPending: boolean) =>
     setLightbox({ storageKey, captureId, isPending });
+
+  const utils = trpc.useUtils();
+  const [showDupes, setShowDupes] = useState(false);
+  const duplicates = trpc.inbox.findDuplicates.useQuery(undefined, { enabled: showDupes });
+  const refreshDupes = () => {
+    utils.inbox.list.invalidate();
+    utils.inbox.findDuplicates.invalidate();
+  };
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
@@ -664,7 +725,44 @@ export default function InboxPage() {
 
       {done.length > 0 && (
         <>
-          <h2 className="micro-label text-muted-foreground mt-8 mb-2">Processed</h2>
+          <div className="flex items-center justify-between mt-8 mb-2">
+            <h2 className="micro-label text-muted-foreground">Processed</h2>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 text-[11px]"
+              disabled={duplicates.isFetching}
+              onClick={() => {
+                setShowDupes(true);
+                if (showDupes) duplicates.refetch();
+              }}
+            >
+              {duplicates.isFetching ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : (
+                <Copy className="h-3 w-3 mr-1" />
+              )}
+              Find duplicates
+            </Button>
+          </div>
+
+          {showDupes && duplicates.data && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="micro-label text-amber-800">
+                  {duplicates.data.groups.length === 0
+                    ? "No duplicates found"
+                    : `${duplicates.data.groups.length} duplicate group(s) - oldest kept, dismiss the rest`}
+                </div>
+                <button className="text-amber-700 hover:text-amber-900" onClick={() => setShowDupes(false)}>
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {duplicates.data.groups.map((g) => (
+                <DuplicateGroupRow key={g.captures[0].id} group={g} onChanged={refreshDupes} />
+              ))}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {done.slice(0, 24).map((c) => (
               <div key={c.id} className="rounded-lg border border-border bg-white p-1.5">
@@ -694,7 +792,8 @@ export default function InboxPage() {
       <Dialog open={!!lightbox} onOpenChange={(o) => !o && setLightbox(null)}>
         <DialogContent className="max-w-4xl p-2 bg-black/95 border-none">
           {lightbox && (
-            <div className="flex justify-end">
+            // top-left, well clear of the dialog's own close X at top-4 right-4
+            <div className="absolute top-3 left-3 z-10">
               {lightbox.isPending ? (
                 <PinPendingButton captureId={lightbox.captureId} />
               ) : (

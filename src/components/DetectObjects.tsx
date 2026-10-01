@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { AreaPicker } from "@/components/AreaPicker";
 import { RoomPicker } from "@/components/RoomPicker";
+import { AiProgressBar } from "@/components/AiProgressBar";
 import { Check, Loader2, ScanSearch, AlertTriangle } from "lucide-react";
 
 type Suggestion = {
@@ -247,6 +248,7 @@ export function DetectObjectsModal({
               )}
               Detect objects
             </Button>
+            <AiProgressBar active={detect.isPending} action="inbox.detectObjects" />
             {aiError && (
               <div className="flex gap-2 items-start rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
                 <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> {aiError}

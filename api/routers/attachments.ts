@@ -240,20 +240,62 @@ export const attachmentsRouter = createRouter({
     const itemById = new Map(allItems.map((i) => [i.id, i]));
     const allAreas = await db.select().from(areas);
     const areaById = new Map(allAreas.map((a) => [a.id, a]));
-    return atts.map((a) => {
+    const attachmentRows = atts.map((a) => {
       const it = a.itemId != null ? itemById.get(a.itemId) : undefined;
       return {
+        source: "attachment" as const,
         id: a.id,
+        captureId: null as number | null,
         storageKey: a.storageKey,
         createdAt: a.createdAt,
         itemId: a.itemId ?? null,
         itemName: it?.name ?? null,
         itemStatus: it?.status ?? null,
+        captureStatus: null as string | null,
         houseId: it?.houseId ?? a.houseId ?? null,
         floor: it?.floor ?? a.floor ?? null,
         room: it?.room ?? a.room ?? null,
         areaName: it ? (areaById.get(it.areaId)?.name ?? null) : null,
       };
     });
+
+    // every other inbox photo - pending, triaged, dismissed, whatever -
+    // that's never been pinned to a location or item at all, so it has no
+    // attachment of its own yet. Without this the catalog only ever showed
+    // the minority of photos someone had already acted on.
+    const attachedCaptureIds = new Set(
+      (
+        await db
+          .select({ captureId: attachments.sourceCaptureId })
+          .from(attachments)
+          .where(isNotNull(attachments.sourceCaptureId))
+      )
+        .map((r) => r.captureId)
+        .filter((id): id is number => id != null),
+    );
+    const allCaptures = await db
+      .select()
+      .from(captures)
+      .where(eq(captures.kind, "image"))
+      .orderBy(desc(captures.createdAt));
+    const captureRows = allCaptures
+      .filter((c) => !attachedCaptureIds.has(c.id))
+      .map((c) => ({
+        source: "capture" as const,
+        id: c.id,
+        captureId: c.id,
+        storageKey: c.storageKey,
+        createdAt: c.createdAt,
+        itemId: null,
+        itemName: null,
+        itemStatus: null,
+        captureStatus: c.status,
+        houseId: null,
+        floor: null,
+        room: null,
+        areaName: null,
+      }));
+
+    return [...attachmentRows, ...captureRows].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }),
 });

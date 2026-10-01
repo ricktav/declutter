@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { eq, desc } from "drizzle-orm";
+import { createHash } from "crypto";
+import { eq, desc, isNull, and } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -562,5 +563,47 @@ export const inboxRouter = createRouter({
       summary: `Capture #${input.id} dismissed`,
     });
     return { ok: true };
+  }),
+
+  /** Find byte-identical captures already sitting in the inbox from before
+   * content-hash dedup existed on create - backfills a hash for any image
+   * capture that doesn't have one yet, then groups by hash. */
+  findDuplicates: publicQuery.query(async () => {
+    const db = getDb();
+    const unhashed = await db
+      .select()
+      .from(captures)
+      .where(and(eq(captures.kind, "image"), isNull(captures.contentHash)));
+    for (const c of unhashed) {
+      if (!c.storageKey) continue;
+      try {
+        const bytes = await readFileBytes(c.storageKey);
+        const hash = createHash("sha256").update(bytes).digest("hex");
+        await db.update(captures).set({ contentHash: hash }).where(eq(captures.id, c.id));
+      } catch {
+        // file missing on disk - leave unhashed, not fatal
+      }
+    }
+
+    const all = await db
+      .select()
+      .from(captures)
+      .where(eq(captures.kind, "image"))
+      .orderBy(desc(captures.createdAt));
+    const byHash = new Map<string, typeof all>();
+    for (const c of all) {
+      if (!c.contentHash) continue;
+      if (!byHash.has(c.contentHash)) byHash.set(c.contentHash, []);
+      byHash.get(c.contentHash)!.push(c);
+    }
+    const groups = [...byHash.values()]
+      .filter((g) => g.length > 1)
+      .map((g) => ({
+        captures: g
+          .map((c) => ({ id: c.id, storageKey: c.storageKey, status: c.status, createdAt: c.createdAt }))
+          // oldest first - that's the one kept by default (it's the original)
+          .sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt)),
+      }));
+    return { groups };
   }),
 });

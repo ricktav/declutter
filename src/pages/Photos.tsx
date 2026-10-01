@@ -1,11 +1,85 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { timeAgo } from "@/lib/format";
-import { Search } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
 
 type SortBy = "location" | "recent" | "area";
+type Photo = {
+  source: "attachment" | "capture";
+  id: number;
+  captureId: number | null;
+  storageKey: string | null;
+  createdAt: Date;
+  itemId: number | null;
+  itemName: string | null;
+  itemStatus: "active" | "archived" | null;
+  captureStatus: string | null;
+  houseId: number | null;
+  floor: string | null;
+  room: string | null;
+  areaName: string | null;
+};
+
+/** One tile - an item's photo and a location photo both just link straight
+ * to where they belong, but a raw inbox capture has no attachment yet, so
+ * clicking it has to materialize one first (same step Inbox's own Pin
+ * button does) before there's anywhere to navigate to. */
+function PhotoTile({ photo }: { photo: Photo }) {
+  const navigate = useNavigate();
+  const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
+    onSuccess: (res) => navigate(`/annotate/${res.attachmentId}`),
+  });
+
+  const caption =
+    photo.source === "capture"
+      ? photo.captureStatus
+      : (photo.itemName ?? (photo.itemId ? "untitled" : "not pinned yet"));
+
+  const inner = (
+    <>
+      <Thumb storageKey={photo.storageKey} size="lg" />
+      <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{caption}</div>
+      <div className="font-data text-[10px] text-muted-foreground">{timeAgo(photo.createdAt)}</div>
+      {photo.itemStatus === "archived" && (
+        <span className="inline-block text-[10px] font-medium text-muted-foreground bg-muted rounded px-1.5">
+          archived
+        </span>
+      )}
+    </>
+  );
+
+  if (photo.source === "capture") {
+    return (
+      <button
+        className="group rounded-lg border border-border bg-white p-2 text-left hover:border-primary/50 disabled:opacity-60"
+        disabled={ensure.isPending}
+        onClick={() => ensure.mutate({ captureId: photo.captureId!, houseId: null })}
+        title="Pin objects on this photo"
+      >
+        {ensure.isPending ? (
+          <div className="aspect-square w-full flex items-center justify-center rounded-md border border-border bg-muted/40">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <Thumb storageKey={photo.storageKey} size="lg" />
+        )}
+        <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{caption}</div>
+        <div className="font-data text-[10px] text-muted-foreground">{timeAgo(photo.createdAt)}</div>
+      </button>
+    );
+  }
+
+  return (
+    <Link
+      to={photo.itemId ? `/items/${photo.itemId}` : `/annotate/${photo.id}`}
+      className="group rounded-lg border border-border bg-white p-2 hover:border-primary/50"
+    >
+      {inner}
+    </Link>
+  );
+}
 
 /** Every photo attached to an item, in one catalog - grouped/filtered by
  * location by default, since that's usually how you'd go looking for "the
@@ -61,7 +135,7 @@ export default function PhotosPage() {
         </span>
       </div>
       <p className="text-sm text-muted-foreground mt-1">
-        Every photo attached to an item, in one place.
+        Every photo in the system — pinned to an item, confirmed to a location, or still sitting in the inbox.
       </p>
 
       <div className="flex flex-wrap items-center gap-3 mt-5">
@@ -88,7 +162,7 @@ export default function PhotosPage() {
         </div>
         <label
           className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
-          title="Toggle off to hide item cutout photos, showing only full location photos"
+          title="Toggle off to hide item cutout photos, showing only location photos and raw inbox captures"
         >
           <input
             type="checkbox"
@@ -108,22 +182,7 @@ export default function PhotosPage() {
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
               {g.rows.map((p) => (
-                <Link
-                  key={p.id}
-                  to={p.itemId ? `/items/${p.itemId}` : `/annotate/${p.id}`}
-                  className="group rounded-lg border border-border bg-white p-2 hover:border-primary/50"
-                >
-                  <Thumb storageKey={p.storageKey} size="lg" />
-                  <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">
-                    {p.itemName ?? (p.itemId ? "untitled" : "not pinned yet")}
-                  </div>
-                  <div className="font-data text-[10px] text-muted-foreground">{timeAgo(p.createdAt)}</div>
-                  {p.itemStatus === "archived" && (
-                    <span className="inline-block text-[10px] font-medium text-muted-foreground bg-muted rounded px-1.5">
-                      archived
-                    </span>
-                  )}
-                </Link>
+                <PhotoTile key={`${p.source}-${p.id}`} photo={p} />
               ))}
             </div>
           </div>
