@@ -81,6 +81,7 @@ export const housesRouter = createRouter({
         lat: z.number().min(-90).max(90).nullable().optional(),
         lng: z.number().min(-180).max(180).nullable().optional(),
         notes: z.string().nullable().optional(),
+        floors: z.array(z.string()).nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {

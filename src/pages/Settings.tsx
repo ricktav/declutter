@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
-import { Plug, CheckCircle2, XCircle, Loader2, Trash2, Columns2, MessageSquare, Home, Plus } from "lucide-react";
+import { DEFAULT_FLOORS } from "@/components/RoomPicker";
+import { Plug, CheckCircle2, XCircle, Loader2, Trash2, Columns2, MessageSquare, Home, Plus, Pencil, Check, X } from "lucide-react";
 
 const PRESETS = [
   { label: "xAI Grok", baseUrl: "https://api.x.ai/v1" },
@@ -483,6 +484,141 @@ export default function SettingsPage() {
   );
 }
 
+type HouseRowData = {
+  id: number;
+  name: string;
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
+  floors: string[] | null;
+  itemCount: number;
+};
+
+function HouseRow({ house }: { house: HouseRowData }) {
+  const utils = trpc.useUtils();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(house.name);
+  const [address, setAddress] = useState(house.address ?? "");
+  const [lat, setLat] = useState(house.lat != null ? String(house.lat) : "");
+  const [lng, setLng] = useState(house.lng != null ? String(house.lng) : "");
+  const [floorsText, setFloorsText] = useState((house.floors ?? DEFAULT_FLOORS).join(", "));
+
+  const update = trpc.houses.update.useMutation({
+    onSuccess: () => {
+      utils.houses.list.invalidate();
+      setEditing(false);
+    },
+  });
+  const remove = trpc.houses.remove.useMutation({ onSuccess: () => utils.houses.list.invalidate() });
+
+  if (editing) {
+    return (
+      <div className="rounded-md border border-primary px-3 py-2.5 space-y-2">
+        <div className="grid sm:grid-cols-2 gap-2">
+          <input
+            className="rounded-md border border-input px-2 py-1.5 text-[13px]"
+            placeholder="House name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <input
+            className="rounded-md border border-input px-2 py-1.5 text-[13px]"
+            placeholder="Address"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+          />
+          <input
+            className="rounded-md border border-input px-2 py-1.5 text-[13px] font-data"
+            placeholder="Latitude"
+            value={lat}
+            onChange={(e) => setLat(e.target.value)}
+          />
+          <input
+            className="rounded-md border border-input px-2 py-1.5 text-[13px] font-data"
+            placeholder="Longitude"
+            value={lng}
+            onChange={(e) => setLng(e.target.value)}
+          />
+        </div>
+        <label className="block">
+          <span className="micro-label text-muted-foreground">Floors (comma-separated, in order)</span>
+          <input
+            className="mt-0.5 w-full rounded-md border border-input px-2 py-1.5 text-[13px] font-data"
+            placeholder="basement, ground, 1, 2, attic"
+            value={floorsText}
+            onChange={(e) => setFloorsText(e.target.value)}
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setEditing(false)}>
+            <X className="h-3.5 w-3.5 mr-1" /> Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="h-7 text-[12px]"
+            disabled={!name.trim() || update.isPending}
+            onClick={() =>
+              update.mutate({
+                id: house.id,
+                name: name.trim(),
+                address: address.trim() || null,
+                lat: lat.trim() ? Number(lat) : null,
+                lng: lng.trim() ? Number(lng) : null,
+                floors: floorsText
+                  .split(",")
+                  .map((f) => f.trim())
+                  .filter(Boolean),
+              })
+            }
+          >
+            {update.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Check className="h-3.5 w-3.5 mr-1" />}
+            Save
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-3 rounded-md border border-border px-3 py-2">
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-medium">
+          {house.name}
+          <span className="ml-2 font-data text-[11px] text-muted-foreground">{house.itemCount} items</span>
+        </div>
+        {house.address && <div className="text-[12px] text-muted-foreground">{house.address}</div>}
+        {house.lat != null && house.lng != null && (
+          <a
+            className="text-[11px] text-primary hover:underline font-data"
+            href={`https://www.openstreetmap.org/?mlat=${house.lat}&mlon=${house.lng}#map=19/${house.lat}/${house.lng}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {house.lat.toFixed(5)}, {house.lng.toFixed(5)} — map ↗
+          </a>
+        )}
+        <div className="font-data text-[11px] text-muted-foreground mt-0.5">
+          floors: {(house.floors ?? DEFAULT_FLOORS).join(", ")}
+        </div>
+      </div>
+      <button
+        className="text-muted-foreground hover:text-primary mt-0.5"
+        title="Edit house"
+        onClick={() => setEditing(true)}
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </button>
+      <button
+        className="text-muted-foreground hover:text-destructive mt-0.5"
+        title="Delete house (items are unassigned, not deleted)"
+        onClick={() => remove.mutate({ id: house.id })}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 function HousesSection() {
   const utils = trpc.useUtils();
   const houses = trpc.houses.list.useQuery();
@@ -496,37 +632,11 @@ function HousesSection() {
       setName(""); setAddress(""); setLat(""); setLng("");
     },
   });
-  const remove = trpc.houses.remove.useMutation({ onSuccess: () => utils.houses.list.invalidate() });
 
   return (
     <>
       {(houses.data ?? []).map((h) => (
-        <div key={h.id} className="flex items-start gap-3 rounded-md border border-border px-3 py-2">
-          <div className="flex-1 min-w-0">
-            <div className="text-[13px] font-medium">
-              {h.name}
-              <span className="ml-2 font-data text-[11px] text-muted-foreground">{h.itemCount} items</span>
-            </div>
-            {h.address && <div className="text-[12px] text-muted-foreground">{h.address}</div>}
-            {h.lat != null && h.lng != null && (
-              <a
-                className="text-[11px] text-primary hover:underline font-data"
-                href={`https://www.openstreetmap.org/?mlat=${h.lat}&mlon=${h.lng}#map=19/${h.lat}/${h.lng}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {h.lat.toFixed(5)}, {h.lng.toFixed(5)} — map ↗
-              </a>
-            )}
-          </div>
-          <button
-            className="text-muted-foreground hover:text-destructive mt-0.5"
-            title="Delete house (items are unassigned, not deleted)"
-            onClick={() => remove.mutate({ id: h.id })}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        <HouseRow key={h.id} house={h} />
       ))}
       <div className="grid sm:grid-cols-2 gap-2">
         <input

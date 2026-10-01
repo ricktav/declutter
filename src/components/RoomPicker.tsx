@@ -4,6 +4,8 @@ import { Check, Plus } from "lucide-react";
 
 export type RoomValue = { houseId: number | null; floor: string; room: string };
 
+export const DEFAULT_FLOORS = ["basement", "ground", "1", "2", "3", "attic"];
+
 /**
  * House → floor → room picker. Rooms are discovered from existing items,
  * so they grow as you file things; typing a new room offers to create it.
@@ -45,7 +47,10 @@ export function RoomPicker({
     return (q ? names.filter((n) => n.toLowerCase().includes(q)) : names).slice(0, 8);
   }, [roomOptions.data, value.floor, roomText]);
 
-  const FLOORS = ["basement", "ground", "1", "2", "3", "attic"];
+  // the selected house's own floor list, if it has customized one, else a
+  // generic default (see Settings > Houses to edit a house's floors)
+  const selectedHouse = houses.data?.find((h) => h.id === value.houseId);
+  const FLOORS = selectedHouse?.floors?.length ? selectedHouse.floors : DEFAULT_FLOORS;
 
   return (
     <div className="grid grid-cols-3 gap-1.5" ref={wrapRef}>

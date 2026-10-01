@@ -44,6 +44,9 @@ export const houses = mysqlTable("houses", {
   lat: double("lat"),
   lng: double("lng"),
   notes: text("notes"),
+  // this house's own floor labels (ordered) - RoomPicker falls back to a
+  // generic default list when a house hasn't customized this
+  floors: json("floors").$type<string[] | null>(),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
