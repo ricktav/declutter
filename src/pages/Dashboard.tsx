@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { timeAgo } from "@/lib/format";
 import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { FloorsEditor } from "@/components/FloorsEditor";
+import { HousesMap } from "@/components/HousesMap";
 import { aerialThumbUrl, fetchParcelInfo, kadastraleKaartUrl, reverseGeocode, type AddressSuggestion, type ParcelInfo } from "@/lib/pdok";
 import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Plus } from "lucide-react";
 import {
@@ -520,12 +521,15 @@ function EditHouseDialog({
 function HouseSection({
   houseId,
   onSelectHouse,
+  onToggleMap,
 }: {
   houseId: number | null;
   onSelectHouse: (id: number | null) => void;
+  onToggleMap: () => void;
 }) {
   const houses = trpc.houses.list.useQuery();
   const [dialog, setDialog] = useState<"none" | "edit" | "add">("none");
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (houseId == null && houses.data && houses.data.length > 0) {
@@ -534,14 +538,35 @@ function HouseSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [houses.data, houseId]);
 
+  useEffect(() => {
+    return () => {
+      if (clickTimer.current) clearTimeout(clickTimer.current);
+    };
+  }, []);
+
   const current = houses.data?.find((h) => h.id === houseId);
 
   return (
     <>
       <button
         type="button"
-        className="rounded-lg border border-border bg-white px-3 py-2 flex items-center gap-2.5 hover:border-primary/50 transition-colors text-left"
-        onClick={() => setDialog(current ? "edit" : "add")}
+        title="Click to edit, double-click to show the map"
+        className="rounded-lg border border-border bg-white px-4 py-3 flex items-center gap-2.5 hover:bg-accent/40 transition-colors text-left"
+        onClick={() => {
+          // wait a beat to see if a second click turns this into a double-click
+          if (clickTimer.current) clearTimeout(clickTimer.current);
+          clickTimer.current = setTimeout(() => {
+            setDialog(current ? "edit" : "add");
+          }, 220);
+        }}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          if (clickTimer.current) {
+            clearTimeout(clickTimer.current);
+            clickTimer.current = null;
+          }
+          onToggleMap();
+        }}
       >
         {current?.lat != null && current.lng != null ? (
           <img
@@ -633,6 +658,7 @@ function LocationsSection({ houseId }: { houseId: number | null }) {
 
 export default function Dashboard() {
   const [houseId, setHouseId] = useState<number | null>(() => getLastLocation().houseId);
+  const [showMap, setShowMap] = useState(false);
   const selectHouse = (id: number | null) => {
     setHouseId(id);
     setLastLocation({ ...getLastLocation(), houseId: id });
@@ -653,12 +679,14 @@ export default function Dashboard() {
   const totalItems = (areas.data ?? []).reduce((s, a) => s + a.itemCount, 0);
   const firstArea = (areas.data ?? []).find((a) => a.itemCount > 0) ?? areas.data?.[0];
 
+  // ideas/tasks are only worth a tile once there's something to act on -
+  // an empty "0" card is just noise once the inventory is past its first day
   const stats = [
     { label: "Items", value: totalItems, icon: Package, to: firstArea ? `/areas/${firstArea.slug}` : "/settings" },
     { label: "Inbox pending", value: pending, icon: Inbox, to: "/inbox" },
-    { label: "New ideas", value: newIdeas, icon: Lightbulb, to: "/ideas" },
-    { label: "Open tasks", value: openTasks, icon: ListChecks, to: "/tasks" },
-  ];
+    { label: "New ideas", value: newIdeas, icon: Lightbulb, to: "/ideas", hideWhenZero: true },
+    { label: "Open tasks", value: openTasks, icon: ListChecks, to: "/tasks", hideWhenZero: true },
+  ].filter((s) => !s.hideWhenZero || s.value > 0);
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
@@ -672,6 +700,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
+        <HouseSection houseId={houseId} onSelectHouse={selectHouse} onToggleMap={() => setShowMap((v) => !v)} />
         {stats.map((s) => (
           <Link
             key={s.label}
@@ -687,9 +716,11 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="mt-6">
-        <HouseSection houseId={houseId} onSelectHouse={selectHouse} />
-      </div>
+      {showMap && (
+        <div className="mt-4">
+          <HousesMap />
+        </div>
+      )}
 
       <div className="grid md:grid-cols-2 gap-6 mt-6">
         <section>
