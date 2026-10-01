@@ -61,7 +61,7 @@ export function CaptureBar({ compact = false }: { compact?: boolean }) {
       <div className="flex gap-2 items-center">
         <StickyNote className="h-4 w-4 text-muted-foreground shrink-0" />
         <input
-          className="flex-1 bg-transparent outline-none text-[13px] py-1"
+          className="flex-1 min-w-0 bg-transparent outline-none text-[13px] py-1"
           placeholder="Quick capture: a note, a https:// link, or drop a photo / file here…"
           value={text}
           onChange={(e) => setText(e.target.value)}

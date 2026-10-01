@@ -14,6 +14,7 @@ import AnnotatePage from "@/pages/Annotate";
 import MapPage from "@/pages/Map";
 import PhotosPage from "@/pages/Photos";
 import SettingsPage from "@/pages/Settings";
+import SessieOverzicht from "@/pages/SessieOverzicht";
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/wiki" element={<WikiPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/sessie-overzicht" element={<SessieOverzicht />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

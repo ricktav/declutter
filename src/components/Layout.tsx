@@ -33,6 +33,7 @@ import {
   Pencil,
   Loader2,
   Images,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
@@ -137,6 +138,7 @@ const NAV = [
   { to: "/tasks", label: "Tasks", icon: ListChecks },
   { to: "/wiki", label: "Wiki", icon: BookOpen },
   { to: "/activity", label: "Activity", icon: History },
+  { to: "/sessie-overzicht", label: "Overview", icon: Workflow },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
