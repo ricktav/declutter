@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { Check, Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export type RoomValue = { houseId: number | null; floor: string; room: string };
 
@@ -20,6 +21,7 @@ export function RoomPicker({
   const houses = trpc.houses.list.useQuery();
   const [roomText, setRoomText] = useState(value.room);
   const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setRoomText(value.room), [value.room]);
@@ -46,6 +48,22 @@ export function RoomPicker({
     const q = roomText.trim().toLowerCase();
     return (q ? names.filter((n) => n.toLowerCase().includes(q)) : names).slice(0, 8);
   }, [roomOptions.data, value.floor, roomText]);
+
+  const showCreateRow = roomText.trim().length > 0 && !suggestions.includes(roomText.trim());
+  const rowCount = suggestions.length + (showCreateRow ? 1 : 0);
+
+  useEffect(() => setHighlight(0), [roomText, suggestions.length]);
+
+  const commitRoom = (r: string) => {
+    setRoomText(r);
+    onChange({ ...value, room: r });
+    setOpen(false);
+  };
+
+  const selectAt = (i: number) => {
+    if (i < suggestions.length) commitRoom(suggestions[i]);
+    else if (showCreateRow) commitRoom(roomText.trim());
+  };
 
   // the selected house's own floor list: null means "not customized yet"
   // (generic default list applies), a non-empty array is a custom list, and
@@ -99,13 +117,19 @@ export function RoomPicker({
             setOpen(true);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              const t = roomText.trim();
-              if (t) {
-                setRoomText(t);
-                onChange({ ...value, room: t });
-              }
-              setOpen(false);
+            if (!open || rowCount === 0) {
+              if (e.key === "Escape") setOpen(false);
+              return;
+            }
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setHighlight((h) => (h + 1) % rowCount);
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setHighlight((h) => (h - 1 + rowCount) % rowCount);
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              selectAt(highlight);
             } else if (e.key === "Escape") {
               setOpen(false);
             }
@@ -117,40 +141,44 @@ export function RoomPicker({
         {!open && roomText.trim() && (
           <Check className="absolute right-1 top-1/2 -translate-y-1/2 h-3 w-3 text-emerald-600" />
         )}
-        {open && suggestions.length > 0 && (
+        {open && rowCount > 0 && (
           <div className="absolute z-20 mt-1 w-full rounded-md border border-border bg-white shadow-lg max-h-40 overflow-auto">
-            {suggestions.map((r) => (
+            {suggestions.map((r, i) => (
               <button
                 key={r}
                 type="button"
-                className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12px] hover:bg-accent"
+                className={cn(
+                  "flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12px]",
+                  i === highlight ? "bg-accent" : "hover:bg-accent",
+                )}
+                onMouseEnter={() => setHighlight(i)}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  setRoomText(r);
-                  onChange({ ...value, room: r });
-                  setOpen(false);
+                  selectAt(i);
                 }}
               >
                 <span className="flex-1 truncate">{r}</span>
                 {r === value.room && <Check className="h-3 w-3 text-primary" />}
               </button>
             ))}
+            {showCreateRow && (
+              <button
+                type="button"
+                className={cn(
+                  "flex w-full items-center gap-1.5 border-t border-border px-2 py-1 text-left text-[11px] text-primary",
+                  highlight === suggestions.length ? "bg-primary/10" : "bg-primary/5 hover:bg-primary/10",
+                )}
+                onMouseEnter={() => setHighlight(suggestions.length)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  selectAt(suggestions.length);
+                }}
+              >
+                <Plus className="h-3 w-3 shrink-0" />
+                <span className="truncate">create room "{roomText.trim()}" (Enter)</span>
+              </button>
+            )}
           </div>
-        )}
-        {open && roomText.trim() && !suggestions.includes(roomText.trim()) && (
-          <button
-            type="button"
-            className="absolute z-20 mt-1 w-full flex items-center gap-1.5 rounded-md border border-primary bg-primary/5 px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              const t = roomText.trim();
-              setRoomText(t);
-              onChange({ ...value, room: t });
-              setOpen(false);
-            }}
-          >
-            <Plus className="h-3 w-3" /> create room “{roomText.trim()}” (Enter)
-          </button>
         )}
       </div>
     </div>
