@@ -21,6 +21,7 @@ import {
   Plus,
   ArrowLeft,
   Flag,
+  Crop,
 } from "lucide-react";
 
 type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
@@ -65,10 +66,50 @@ function LinkedItemChip({
   );
 }
 
+/** Live preview of what the cutout actually looks like, drawn from the
+ * frame's own box - not just the source photo with a rectangle on it. Pure
+ * display, drawn client-side; the real crop still happens server-side from
+ * the original bytes when saved. */
+function CutoutPreview({ photoUrl, box }: { photoUrl: string; box: CropBox }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+
+  const draw = () => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !img || !ctx) return;
+    const sw = (box.wPct / 100) * img.naturalWidth;
+    const sh = (box.hPct / 100) * img.naturalHeight;
+    const sx = (box.xPct / 100) * img.naturalWidth - sw / 2;
+    const sy = (box.yPct / 100) * img.naturalHeight - sh / 2;
+    canvas.width = 320;
+    canvas.height = Math.max(1, Math.round(320 * (sh / sw)));
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  };
+
+  useEffect(() => {
+    const img = new Image();
+    img.src = photoUrl;
+    img.onload = () => {
+      imgRef.current = img;
+      draw();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoUrl]);
+
+  useEffect(draw, [box]);
+
+  return <canvas ref={canvasRef} className="rounded border border-border max-w-full" />;
+}
+
 /** After creating a brand-new item while pinning, give it a first photo:
  * crop out of the same source photo the pin was placed on, with the pin's
- * own box as a starting point the user can drag/resize/zoom to fine-tune
- * before it's saved. */
+ * own box as a starting point. Opens straight to a preview of the actual
+ * cutout (not the whole photo with a rectangle on it) so accept/reject is a
+ * one-look decision; the frame icon drops into the drag/resize view only
+ * when the default framing needs adjusting. */
 function NewItemPhotoDialog({
   photoUrl,
   itemName,
@@ -85,6 +126,7 @@ function NewItemPhotoDialog({
   onClose: () => void;
 }) {
   const [box, setBox] = useState<CropBox>(initialBox);
+  const [mode, setMode] = useState<"preview" | "frame">("preview");
   const utils = trpc.useUtils();
   const create = trpc.attachments.createCutoutFromAttachment.useMutation({
     onSuccess: () => {
@@ -102,34 +144,57 @@ function NewItemPhotoDialog({
         <DialogHeader>
           <DialogTitle>Photo for "{itemName}"</DialogTitle>
         </DialogHeader>
-        <div className="flex flex-col gap-3 items-center">
-          <p className="text-[12px] text-muted-foreground -mt-2">
-            Drag to move, drag the corner to resize — this crops from the original photo.
-          </p>
-          <div className="relative select-none mx-auto max-w-full">
-            <img
-              src={photoUrl}
-              alt="source"
-              className="max-h-[calc(100dvh-11rem)] w-auto rounded touch-none"
-              draggable={false}
-            />
-            <Box box={box} color="#2d4a22" onChange={setBox} />
+        {mode === "preview" ? (
+          <div className="flex flex-col gap-3 items-center">
+            <p className="text-[12px] text-muted-foreground -mt-2">This is what gets saved as the item's photo.</p>
+            <CutoutPreview photoUrl={photoUrl} box={box} />
+            <div className="flex gap-2">
+              <button
+                className="h-9 w-9 flex items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-accent"
+                title="Adjust the frame"
+                onClick={() => setMode("frame")}
+                disabled={create.isPending}
+              >
+                <Crop className="h-4 w-4" />
+              </button>
+              <button
+                className="h-9 w-9 flex items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                title="Skip - don't save a photo"
+                onClick={onClose}
+                disabled={create.isPending}
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <button
+                className="h-9 w-9 flex items-center justify-center rounded-full border border-emerald-300 text-emerald-700 hover:bg-emerald-100"
+                title="Save this photo"
+                onClick={() => create.mutate({ itemId, sourceAttachmentId, box })}
+                disabled={create.isPending}
+              >
+                {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              </button>
+            </div>
+            {create.isError && <div className="text-[12px] text-destructive">{create.error.message}</div>}
           </div>
-          <div className="flex gap-2">
-            <Button size="sm" variant="ghost" onClick={onClose} disabled={create.isPending}>
-              Skip
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => create.mutate({ itemId, sourceAttachmentId, box })}
-              disabled={create.isPending}
-            >
-              {create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
-              Save photo
+        ) : (
+          <div className="flex flex-col gap-3 items-center">
+            <p className="text-[12px] text-muted-foreground -mt-2">
+              Drag to move, drag the corner to resize — this crops from the original photo.
+            </p>
+            <div className="relative select-none mx-auto max-w-full">
+              <img
+                src={photoUrl}
+                alt="source"
+                className="max-h-[calc(100dvh-11rem)] w-auto rounded touch-none"
+                draggable={false}
+              />
+              <Box box={box} color="#2d4a22" onChange={setBox} />
+            </div>
+            <Button size="sm" onClick={() => setMode("preview")}>
+              <Check className="h-3.5 w-3.5 mr-1" /> Done
             </Button>
           </div>
-          {create.isError && <div className="text-[12px] text-destructive">{create.error.message}</div>}
-        </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -532,7 +597,7 @@ export default function AnnotatePage() {
       if (res.ok) {
         setAiError(null);
         setPendingLabel(res.label);
-        setPendingItem(res.itemId && res.itemName ? { id: res.itemId, name: res.itemName } : null);
+        setPendingItem(null);
       } else {
         setAiError(res.error);
       }

@@ -11,7 +11,8 @@ import {
 import { AreaPicker } from "@/components/AreaPicker";
 import { RoomPicker } from "@/components/RoomPicker";
 import { AiProgressBar } from "@/components/AiProgressBar";
-import { Check, Loader2, ScanSearch, AlertTriangle } from "lucide-react";
+import { getLastLocation } from "@/lib/lastLocation";
+import { Check, Loader2, ScanSearch, AlertTriangle, RefreshCw } from "lucide-react";
 
 type Suggestion = {
   key: string;
@@ -138,12 +139,16 @@ export function DetectObjectsModal({
       setAiError(null);
       setMode("existing");
       setNewName("");
-      setLoc({ houseId: null, floor: "", room: "" });
+      // best available default while detection runs - a specific location
+      // from an already-recognized item in this same photo wins once
+      // detection comes back (see detect.onSuccess below)
+      const last = getLastLocation();
+      setLoc({ houseId: last.houseId, floor: last.floor, room: "" });
     }
   }, [open]);
 
   const detect = trpc.inbox.detectObjects.useMutation({
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       if (!res.ok) {
         setAiError(res.error);
         return;
@@ -157,9 +162,32 @@ export function DetectObjectsModal({
         })),
       );
       setSelected(res.suggestions[0] ? `0-${res.suggestions[0].label}` : null);
+
+      // everything in one photo is almost certainly in the same room - if
+      // any object was recognized as an item we already know the location
+      // of, default the whole batch to that instead of the generic last-
+      // used-anywhere context
+      const matched = res.suggestions.find((s) => s.matchedItemId != null);
+      if (matched?.matchedItemId) {
+        const item = await utils.items.get.fetch({ id: matched.matchedItemId });
+        if (item?.houseId || item?.room) {
+          setLoc({ houseId: item.houseId ?? null, floor: item.floor ?? "", room: item.room ?? "" });
+        }
+      }
     },
     onError: (e) => setAiError(e.message),
   });
+
+  // run detection the moment the modal has something to detect on, instead
+  // of making "detect objects" from the Inbox require a second click here
+  const autoDetectRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!open || !captureId || !capture?.storageKey) return;
+    if (autoDetectRef.current === captureId) return;
+    autoDetectRef.current = captureId;
+    detect.mutate({ id: captureId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, captureId, capture?.storageKey]);
   const fileObject = trpc.inbox.fileObject.useMutation({
     onSuccess: () => {
       setSuggestions((prev) =>
@@ -199,11 +227,14 @@ export function DetectObjectsModal({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="w-screen h-[100dvh] max-w-none sm:max-w-none rounded-none p-4 overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Detect objects in snap — drag boxes on the original, file each as a cutout</DialogTitle>
+          <DialogTitle>Detect objects in snap</DialogTitle>
+          <p className="text-[12px] text-muted-foreground">
+            Boxes are the cutouts — drag to move, corner handle to resize.
+          </p>
         </DialogHeader>
 
         <div className="flex gap-4 items-start h-[calc(100dvh-7rem)]">
-          <div className="flex-1 min-w-0 rounded-lg border border-border bg-white p-2 overflow-auto h-full flex items-start">
+          <div className="flex-1 min-w-0 rounded-lg border border-border bg-white p-2 overflow-auto h-full flex items-center justify-center">
             {imgUrl.isError ? (
               <div className="py-16 text-center text-[13px]">
                 <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 inline-block">
@@ -228,25 +259,24 @@ export function DetectObjectsModal({
             ) : (
               <div className="py-16 text-center text-[13px] text-muted-foreground">Loading photo…</div>
             )}
-            <div className="mt-2 text-[11px] text-muted-foreground">
-              Full-size view. Boxes are the cutouts — drag to move, corner handle to resize. Each confirmed object
-              gets its own cropped image linked to the item (more snaps = more angles).
-            </div>
           </div>
 
           <aside className="w-80 shrink-0 space-y-3 overflow-y-auto h-full pb-4">
             <Button
               size="sm"
+              variant={suggestions.length > 0 ? "outline" : "default"}
               className="w-full h-8 text-[12px]"
               disabled={detect.isPending || !capture?.storageKey}
               onClick={() => captureId && detect.mutate({ id: captureId })}
             >
               {detect.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+              ) : suggestions.length > 0 ? (
+                <RefreshCw className="h-3.5 w-3.5 mr-1" />
               ) : (
                 <ScanSearch className="h-3.5 w-3.5 mr-1" />
               )}
-              Detect objects
+              {suggestions.length > 0 ? "Re-detect" : "Detect objects"}
             </Button>
             <AiProgressBar active={detect.isPending} action="inbox.detectObjects" />
             {aiError && (

@@ -38,6 +38,10 @@ export function RecropDialog({
     onSuccess: () => {
       utils.attachments.listForItem.invalidate();
       utils.attachments.urlForAttachment.invalidate();
+      // ItemDetail reads its attachment list (and thumbnails) through
+      // items.get, not attachments.listForItem - without this the new
+      // storageKey never reaches the page and the old thumbnail lingers
+      utils.items.get.invalidate();
       onClose();
     },
   });

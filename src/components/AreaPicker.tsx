@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { Check, Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 /** Combobox for picking an area or typing a brand-new one inline. */
 export function AreaPicker({
@@ -17,6 +18,7 @@ export function AreaPicker({
   const wrapRef = useRef<HTMLDivElement>(null);
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
 
   const createArea = trpc.areas.create.useMutation({
     onSuccess: (area) => {
@@ -47,6 +49,10 @@ export function AreaPicker({
   const q = text.trim().toLowerCase();
   const matches = (q ? all.filter((a) => a.name.toLowerCase().includes(q)) : all).slice(0, 8);
   const exact = q.length > 0 && all.some((a) => a.name.toLowerCase() === q);
+  const showCreateRow = q.length > 0 && !exact;
+  const rowCount = matches.length + (showCreateRow ? 1 : 0);
+
+  useEffect(() => setHighlight(0), [q, matches.length]);
 
   const create = () => {
     const name = text.trim();
@@ -57,6 +63,16 @@ export function AreaPicker({
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "") || `area-${Date.now()}`;
     createArea.mutate({ name, slug, icon: "box", color: "#5b8c5a" });
+  };
+
+  const selectAt = (i: number) => {
+    if (i < matches.length) {
+      onChange(matches[i].id);
+      setText(matches[i].name);
+      setOpen(false);
+    } else if (showCreateRow) {
+      create();
+    }
   };
 
   return (
@@ -71,35 +87,36 @@ export function AreaPicker({
           setOpen(true);
         }}
         onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            if (matches.length > 0 && q) {
-              // if the typed text exactly matches nothing, Enter creates; otherwise pick first match
-              if (!exact && matches[0].name.toLowerCase() !== q) {
-                create();
-              } else {
-                onChange(matches[0].id);
-                setOpen(false);
-              }
-            } else if (q) {
-              create();
-            }
+          if (!open || rowCount === 0) {
+            if (e.key === "Escape") setOpen(false);
+            return;
           }
-          if (e.key === "Escape") setOpen(false);
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setHighlight((h) => (h + 1) % rowCount);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHighlight((h) => (h - 1 + rowCount) % rowCount);
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            selectAt(highlight);
+          } else if (e.key === "Escape") {
+            setOpen(false);
+          }
         }}
       />
       {open && (
         <div className="absolute z-20 mt-1 w-full rounded-md border border-border bg-white shadow-lg max-h-64 overflow-auto">
-          {matches.map((a) => (
+          {matches.map((a, i) => (
             <button
               key={a.id}
               type="button"
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[13px] hover:bg-accent"
-              onClick={() => {
-                onChange(a.id);
-                setText(a.name);
-                setOpen(false);
-              }}
+              className={cn(
+                "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[13px]",
+                i === highlight ? "bg-accent" : "hover:bg-accent",
+              )}
+              onMouseEnter={() => setHighlight(i)}
+              onClick={() => selectAt(i)}
             >
               <span className="h-2 w-2 rounded-sm shrink-0" style={{ background: a.color }} />
               <span className="flex-1 truncate">{a.name}</span>
@@ -109,15 +126,19 @@ export function AreaPicker({
           {matches.length === 0 && !q && (
             <div className="px-2.5 py-1.5 text-[12px] text-muted-foreground">No topics yet.</div>
           )}
-          {q && !exact && (
+          {showCreateRow && (
             <button
               type="button"
-              className="flex w-full items-center gap-2 border-t border-border px-2.5 py-1.5 text-left text-[13px] font-medium text-primary hover:bg-accent"
-              onClick={create}
+              className={cn(
+                "flex w-full items-center gap-2 border-t border-border px-2.5 py-1.5 text-left text-[13px] font-medium text-primary",
+                highlight === matches.length ? "bg-accent" : "hover:bg-accent",
+              )}
+              onMouseEnter={() => setHighlight(matches.length)}
+              onClick={() => selectAt(matches.length)}
               disabled={createArea.isPending}
             >
               <Plus className="h-3.5 w-3.5" />
-              {createArea.isPending ? "Creating…" : `Create topic “${text.trim()}”`}
+              {createArea.isPending ? "Creating…" : `Create topic “${text.trim()}” (Enter)`}
             </button>
           )}
         </div>

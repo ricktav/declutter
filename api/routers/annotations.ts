@@ -44,12 +44,6 @@ const MAX_REFERENCE_PHOTOS = 20;
 
 const suggestSchema = z.object({
   label: z.string().describe("short, specific name of the object in the cropped photo"),
-  matchedItemId: z
-    .number()
-    .nullable()
-    .describe(
-      "if this is the same physical object as one of the reference photos shown above (not just the same category), its exact item ID. Otherwise null - do not guess from the name alone.",
-    ),
 });
 
 type RefContentPart = { type: "text"; text: string } | { type: "image"; image: Uint8Array };
@@ -333,60 +327,32 @@ export const annotationsRouter = createRouter({
       try {
         const bytes = await readFileBytes(att.storageKey);
         const cropped = await cropPercent(bytes, input);
-        const allItems = await db
-          .select()
-          .from(items)
-          .where(eq(items.status, "active"))
-          .orderBy(desc(items.updatedAt));
 
-        const itemListText = `The user's full existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`;
-        const devMode = isClaudeCliDevMode();
-        // dev mode skips reference photos - the CLI helper takes one image -
-        // so visual re-matching doesn't apply there, name-based matching still does
-        const refContent = devMode ? [] : await buildReferenceContent(db, allItems, 10);
+        // just the cutout, nothing else - this is purely "what is this
+        // object", not an identity match against the inventory (that's
+        // what typing into the item picker right below it is for), so no
+        // reference photos or item list to confuse the answer
+        const prompt =
+          "Name the single object in this PHOTO (a hand-picked crop, already framed on it - describe what's in it, not the background around it). Be short and specific (brand + model if visible, e.g. \"Mac mini M4\", not just \"computer\").";
 
-        const object = devMode
+        const object = isClaudeCliDevMode()
           ? await claudeCliObject({
-              textPrompt: `Name the single object in the PHOTO (a hand-picked crop, already framed on it - describe what's in it, not the background around it).\n\n${itemListText}`,
+              textPrompt: prompt,
               imageBytes: cropped,
               schema: suggestSchema,
-              jsonShape: `{ "label": string, "matchedItemId": number or null }`,
+              jsonShape: `{ "label": string }`,
             })
           : (
               await generateObject({
                 model: await getVisionModel(),
                 schema: suggestSchema,
                 messages: [
-                  {
-                    role: "user",
-                    content: [
-                      ...refContent,
-                      {
-                        type: "text",
-                        text: `Name the single object in the PHOTO BELOW (a hand-picked crop, already framed on it — describe what's in it, not the background around it).\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If this is the SAME PHYSICAL OBJECT as one of those, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}${itemListText}\n\nPHOTO TO ANALYZE:`,
-                      },
-                      { type: "image", image: cropped },
-                    ],
-                  },
+                  { role: "user", content: [{ type: "text", text: prompt }, { type: "image", image: cropped }] },
                 ],
               })
             ).object;
 
-        const itemById = new Map(allItems.map((it) => [it.id, it]));
-        let itemId: number | null =
-          object.matchedItemId != null && itemById.has(object.matchedItemId) ? object.matchedItemId : null;
-        if (!itemId) {
-          let best = 0;
-          for (const it of allItems) {
-            const s = nameScore(object.label, it.name);
-            if (s > best) {
-              best = s;
-              itemId = it.id;
-            }
-          }
-          if (best < 0.5) itemId = null;
-        }
-        return { ok: true as const, label: object.label, itemId, itemName: itemId ? (itemById.get(itemId)?.name ?? null) : null };
+        return { ok: true as const, label: object.label };
       } catch (err) {
         const classified = classifyAiError(err);
         return { ok: false as const, error: classified.message };
