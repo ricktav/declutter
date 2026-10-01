@@ -13,6 +13,7 @@ import {
 import { timeAgo } from "@/lib/format";
 import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
+import { FloorsEditor } from "@/components/FloorsEditor";
 import { aerialThumbUrl, fetchParcelInfo, kadastraleKaartUrl, reverseGeocode, type AddressSuggestion, type ParcelInfo } from "@/lib/pdok";
 import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Pencil, Plus } from "lucide-react";
 import {
@@ -269,6 +270,7 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [addr, setAddr] = useState<ResolvedAddress>(EMPTY_ADDRESS);
+  const [floors, setFloors] = useState<string[]>([]);
   const utils = trpc.useUtils();
   const create = trpc.houses.create.useMutation({
     onSuccess: (house) => {
@@ -276,6 +278,7 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
       setOpen(false);
       setName("");
       setAddr(EMPTY_ADDRESS);
+      setFloors([]);
       if (house) onCreated(house.id);
     },
   });
@@ -314,6 +317,12 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
               />
             </div>
           </label>
+          <label className="block">
+            <span className="micro-label text-muted-foreground">Floors (optional)</span>
+            <div className="mt-0.5">
+              <FloorsEditor value={floors} onChange={setFloors} />
+            </div>
+          </label>
           <div className="flex justify-end">
             <Button
               size="sm"
@@ -328,6 +337,7 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
                   bagId: addr.bagId ?? undefined,
                   parcelId: addr.parcel?.parcelId || undefined,
                   parcelAreaM2: addr.parcel?.parcelAreaM2 ?? undefined,
+                  floors: floors.length > 0 ? floors : undefined,
                 })
               }
             >
@@ -353,6 +363,7 @@ interface EditableHouse {
   bagId?: string | null;
   parcelId?: string | null;
   parcelAreaM2?: number | null;
+  floors?: string[] | null;
 }
 
 function houseToResolvedAddress(h: EditableHouse): ResolvedAddress {
@@ -369,6 +380,7 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(house.name);
   const [addr, setAddr] = useState<ResolvedAddress>(() => houseToResolvedAddress(house));
+  const [floors, setFloors] = useState<string[]>(house.floors ?? []);
   const utils = trpc.useUtils();
   const update = trpc.houses.update.useMutation({
     onSuccess: () => {
@@ -385,6 +397,7 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
         if (v) {
           setName(house.name);
           setAddr(houseToResolvedAddress(house));
+          setFloors(house.floors ?? []);
         }
       }}
     >
@@ -413,7 +426,13 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
               <AddressWithParcelPicker value={addr} onResolve={setAddr} />
             </div>
           </label>
-          <p className="text-[11px] text-muted-foreground">Floors and notes can be edited in Settings → Houses.</p>
+          <label className="block">
+            <span className="micro-label text-muted-foreground">Floors</span>
+            <div className="mt-0.5">
+              <FloorsEditor value={floors} onChange={setFloors} />
+            </div>
+          </label>
+          <p className="text-[11px] text-muted-foreground">Notes can be edited in Settings → Houses.</p>
           <div className="flex justify-end">
             <Button
               size="sm"
@@ -429,6 +448,7 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
                   bagId: addr.bagId,
                   parcelId: addr.parcel?.parcelId ?? undefined,
                   parcelAreaM2: addr.parcel?.parcelAreaM2 ?? undefined,
+                  floors: floors.length > 0 ? floors : null,
                 })
               }
             >
@@ -517,7 +537,7 @@ function LocationsSection() {
 
   return (
     <section>
-      <div className="flex items-center mb-2">
+      <div className="flex items-center h-7 mb-2">
         <h2 className="micro-label text-muted-foreground">Locations</h2>
         <Link to="/map" className="ml-auto text-[12px] text-primary hover:underline">
           Map view →
@@ -607,7 +627,7 @@ export default function Dashboard() {
 
       <div className="grid md:grid-cols-2 gap-6 mt-6">
         <section>
-          <div className="flex items-center mb-2">
+          <div className="flex items-center h-7 mb-2">
             <h2 className="micro-label text-muted-foreground">Topics</h2>
             <div className="ml-auto"><AddAreaDialog /></div>
           </div>

@@ -8,3 +8,4 @@ dist/
 .musepool/
 uploads/
 settings.json
+.certs/

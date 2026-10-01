@@ -52,6 +52,7 @@ export const housesRouter = createRouter({
         bagId: z.string().optional(),
         parcelId: z.string().optional(),
         parcelAreaM2: z.number().optional(),
+        floors: z.array(z.string()).optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -67,6 +68,7 @@ export const housesRouter = createRouter({
           bagId: input.bagId ?? null,
           parcelId: input.parcelId ?? null,
           parcelAreaM2: input.parcelAreaM2 ?? null,
+          floors: input.floors?.length ? input.floors : null,
         })
         .$returningId();
       await logEvent({

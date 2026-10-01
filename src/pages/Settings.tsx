@@ -3,6 +3,7 @@ import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { DEFAULT_FLOORS } from "@/components/RoomPicker";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
+import { FloorsEditor } from "@/components/FloorsEditor";
 import { fetchParcelInfo, kadastraleKaartUrl } from "@/lib/pdok";
 import { Plug, CheckCircle2, XCircle, Loader2, Trash2, Columns2, MessageSquare, Home, Plus, Pencil, Check, X } from "lucide-react";
 
@@ -509,7 +510,7 @@ function HouseRow({ house }: { house: HouseRowData }) {
   const [parcel, setParcel] = useState<{ parcelId: string; parcelAreaM2: number | null } | null>(
     house.parcelId ? { parcelId: house.parcelId, parcelAreaM2: house.parcelAreaM2 ?? null } : null,
   );
-  const [floorsText, setFloorsText] = useState((house.floors ?? DEFAULT_FLOORS).join(", "));
+  const [floors, setFloors] = useState<string[]>(house.floors ?? []);
 
   const update = trpc.houses.update.useMutation({
     onSuccess: () => {
@@ -555,13 +556,10 @@ function HouseRow({ house }: { house: HouseRowData }) {
           />
         </div>
         <label className="block">
-          <span className="micro-label text-muted-foreground">Floors (comma-separated, in order)</span>
-          <input
-            className="mt-0.5 w-full rounded-md border border-input px-2 py-1.5 text-[13px] font-data"
-            placeholder="basement, ground, 1, 2, attic"
-            value={floorsText}
-            onChange={(e) => setFloorsText(e.target.value)}
-          />
+          <span className="micro-label text-muted-foreground">Floors</span>
+          <div className="mt-0.5">
+            <FloorsEditor value={floors} onChange={setFloors} />
+          </div>
         </label>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setEditing(false)}>
@@ -578,10 +576,7 @@ function HouseRow({ house }: { house: HouseRowData }) {
                 address: address.trim() || null,
                 lat: lat.trim() ? Number(lat) : null,
                 lng: lng.trim() ? Number(lng) : null,
-                floors: floorsText
-                  .split(",")
-                  .map((f) => f.trim())
-                  .filter(Boolean),
+                floors: floors.length > 0 ? floors : null,
                 bagId: bagId || undefined,
                 parcelId: parcel?.parcelId || undefined,
                 parcelAreaM2: parcel?.parcelAreaM2 ?? undefined,

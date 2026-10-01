@@ -20,11 +20,15 @@ export function AddressAutocomplete({
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [focused, setFocused] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (value.trim().length < 3) {
+    // only search while the field is actually focused - otherwise a
+    // pre-filled value (editing an existing house) would pop the suggestion
+    // list open on mount, before the user touched anything
+    if (!focused || value.trim().length < 3) {
       setSuggestions([]);
       return;
     }
@@ -41,7 +45,7 @@ export function AddressAutocomplete({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [value]);
+  }, [value, focused]);
 
   return (
     <div className="relative">
@@ -51,8 +55,14 @@ export function AddressAutocomplete({
         value={value}
         autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
-        onFocus={() => suggestions.length > 0 && setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onFocus={() => {
+          setFocused(true);
+          if (suggestions.length > 0) setOpen(true);
+        }}
+        onBlur={() => {
+          setFocused(false);
+          setTimeout(() => setOpen(false), 150);
+        }}
       />
       {open && (loading || suggestions.length > 0) && (
         <div className="absolute z-10 mt-1 w-full rounded-md border border-border bg-white shadow-md max-h-56 overflow-y-auto">

@@ -622,6 +622,12 @@ export const inboxRouter = createRouter({
       const [, ...rest] = sorted; // keep oldest
       for (const c of rest) {
         if (pinned.has(c.id)) {
+          // can't delete the row - its storageKey may be the exact file an
+          // attachment still points to - but it's still a duplicate, so hide
+          // it from Processed the same way dismissing anything else does
+          if (c.status !== "dismissed") {
+            await db.update(captures).set({ status: "dismissed" }).where(eq(captures.id, c.id));
+          }
           skipped++;
           continue;
         }
@@ -630,11 +636,11 @@ export const inboxRouter = createRouter({
         merged++;
       }
     }
-    if (merged > 0) {
+    if (merged > 0 || skipped > 0) {
       await logEvent({
         entityType: "capture",
         action: "merged",
-        summary: `Merged ${merged} duplicate capture(s)${skipped ? ` (${skipped} skipped - already pinned)` : ""}`,
+        summary: `Merged ${merged} duplicate capture(s)${skipped ? `, dismissed ${skipped} more (already pinned elsewhere)` : ""}`,
       });
     }
     return { merged, skipped };

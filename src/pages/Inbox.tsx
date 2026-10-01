@@ -631,7 +631,10 @@ function CompareModal({
 export default function InboxPage() {
   const captures = trpc.inbox.list.useQuery();
   const pending = (captures.data ?? []).filter((c) => c.status === "pending");
-  const done = (captures.data ?? []).filter((c) => c.status !== "pending");
+  // dismissed means gone - showing it anyway (just greyed out) defeats the
+  // point of dismissing something, so Processed only shows statuses someone
+  // might still want to look back on
+  const done = (captures.data ?? []).filter((c) => c.status !== "pending" && c.status !== "dismissed");
   const [lightbox, setLightbox] = useState<{ storageKey: string; captureId: number; isPending: boolean } | null>(
     null,
   );
@@ -648,9 +651,14 @@ export default function InboxPage() {
     onSuccess: (res) => {
       utils.inbox.list.invalidate();
       setMergeResult(
-        res.merged === 0
+        res.merged === 0 && res.skipped === 0
           ? "No duplicates found"
-          : `Merged ${res.merged} duplicate${res.merged === 1 ? "" : "s"}${res.skipped ? ` (${res.skipped} already pinned, left as-is)` : ""}`,
+          : [
+              res.merged > 0 ? `Merged ${res.merged} duplicate${res.merged === 1 ? "" : "s"}` : null,
+              res.skipped > 0 ? `dismissed ${res.skipped} more already pinned elsewhere` : null,
+            ]
+              .filter(Boolean)
+              .join(", "),
       );
     },
   });
