@@ -36,6 +36,7 @@ import {
   MapPin,
   Camera,
   Copy,
+  Pencil,
 } from "lucide-react";
 import type { Capture, TriageSuggestion } from "@db/schema";
 
@@ -201,6 +202,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [loc, setLoc] = useState<RoomValue>(() => getLastLocation());
+  const hasDefaultLocation = loc.houseId != null && loc.room.trim() !== "";
   const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
     onSuccess: (res) => {
       setLastLocation(loc);
@@ -212,20 +214,46 @@ function PinPendingButton({ captureId }: { captureId: number }) {
       navigate(`/annotate/${res.attachmentId}?${params.toString()}`);
     },
   });
+  const pinWithLocation = (l: RoomValue) =>
+    ensure.mutate({ captureId, houseId: l.houseId, floor: l.floor.trim() || null, room: l.room.trim() || null });
 
   return (
     <>
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-6 text-[11px]"
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen(true);
-        }}
-      >
-        <MapPin className="h-3 w-3 mr-1" /> Pin
-      </Button>
+      <div className="flex gap-1">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 text-[11px]"
+          disabled={ensure.isPending}
+          onClick={(e) => {
+            e.stopPropagation();
+            // already have a working default (set here before, or anywhere
+            // else that's confirmed one) - pinning again shouldn't re-ask
+            // the same question every single time
+            if (hasDefaultLocation) pinWithLocation(loc);
+            else setOpen(true);
+          }}
+        >
+          {ensure.isPending ? (
+            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+          ) : (
+            <MapPin className="h-3 w-3 mr-1" />
+          )}
+          Pin
+        </Button>
+        {hasDefaultLocation && (
+          <button
+            className="text-muted-foreground hover:text-foreground"
+            title={`Change location (currently ${[loc.room, loc.floor].filter(Boolean).join(" · ") || "unset"})`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(true);
+            }}
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+        )}
+      </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -268,6 +296,11 @@ function PinPendingButton({ captureId }: { captureId: number }) {
 
 type TriageRow = {
   itemName: string;
+  /** the AI's own visual description, kept around so a matched row still
+   * shows what it actually saw - handy for judging whether a match is
+   * really right ("Black board... screw terminals" matched to "ITHO RF
+   * ESPHome" is a very different thing from a Volumio Pi, say) */
+  aiDescription: string;
   matchedId: number | null;
   matchedName: string | null;
   areaId: number | null;
@@ -280,7 +313,8 @@ function buildTriageRows(s: TriageSuggestion, areasData: { id: number; slug: str
   // usable yet" rather than crash; re-running AI triage replaces it anyway
   if (!Array.isArray(s.items)) return [];
   return s.items.map((it) => ({
-    itemName: it.itemName,
+    itemName: it.matchedItemName ?? it.itemName,
+    aiDescription: it.itemName,
     matchedId: it.matchedItemId ?? null,
     matchedName: it.matchedItemName ?? null,
     areaId: areasData?.find((a) => a.slug === it.areaSlug)?.id ?? areasData?.[0]?.id ?? null,
@@ -322,9 +356,21 @@ function TriageSpottedRow({
         </button>
       </div>
       {row.matchedId ? (
-        <div className="flex items-center gap-1 text-[11px] text-emerald-700">
-          <Check className="h-3 w-3 shrink-0" /> already have this{row.matchedName ? ` — ${row.matchedName}` : ""}
-        </div>
+        <>
+          <div className="flex items-center gap-1 text-[11px] text-emerald-700">
+            <Check className="h-3 w-3 shrink-0" /> already have this{row.matchedName ? ` — ${row.matchedName}` : ""}
+            <button
+              className="ml-1 text-emerald-700/70 hover:text-destructive"
+              title="Not the same object - unlink and search again or create new"
+              onClick={() => onChange({ itemName: row.aiDescription, matchedId: null, matchedName: null })}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+          {row.aiDescription !== row.matchedName && (
+            <div className="text-[11px] text-muted-foreground">AI saw: {row.aiDescription}</div>
+          )}
+        </>
       ) : (
         <AreaPicker value={row.areaId} onChange={(id) => onChange({ areaId: id })} />
       )}

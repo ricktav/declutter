@@ -5,12 +5,6 @@ import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { AreaPicker } from "@/components/AreaPicker";
 import { Box } from "@/components/DetectObjects";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   Sparkles,
@@ -18,10 +12,8 @@ import {
   AlertTriangle,
   Check,
   X,
-  Plus,
   ArrowLeft,
   Flag,
-  Crop,
 } from "lucide-react";
 
 type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
@@ -104,102 +96,6 @@ function CutoutPreview({ photoUrl, box }: { photoUrl: string; box: CropBox }) {
   return <canvas ref={canvasRef} className="rounded border border-border max-w-full" />;
 }
 
-/** After creating a brand-new item while pinning, give it a first photo:
- * crop out of the same source photo the pin was placed on, with the pin's
- * own box as a starting point. Opens straight to a preview of the actual
- * cutout (not the whole photo with a rectangle on it) so accept/reject is a
- * one-look decision; the frame icon drops into the drag/resize view only
- * when the default framing needs adjusting. */
-function NewItemPhotoDialog({
-  photoUrl,
-  itemName,
-  sourceAttachmentId,
-  itemId,
-  initialBox,
-  onClose,
-}: {
-  photoUrl: string;
-  itemName: string;
-  sourceAttachmentId: number;
-  itemId: number;
-  initialBox: CropBox;
-  onClose: () => void;
-}) {
-  const [box, setBox] = useState<CropBox>(initialBox);
-  const [mode, setMode] = useState<"preview" | "frame">("preview");
-  const utils = trpc.useUtils();
-  const create = trpc.attachments.createCutoutFromAttachment.useMutation({
-    onSuccess: () => {
-      utils.attachments.listForItem.invalidate({ itemId });
-      utils.items.get.invalidate({ id: itemId });
-      utils.items.listAll.invalidate();
-      utils.items.listByArea.invalidate();
-      onClose();
-    },
-  });
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="w-screen h-[100dvh] max-w-none sm:max-w-none rounded-none p-4 overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Photo for "{itemName}"</DialogTitle>
-        </DialogHeader>
-        {mode === "preview" ? (
-          <div className="flex flex-col gap-3 items-center">
-            <p className="text-[12px] text-muted-foreground -mt-2">This is what gets saved as the item's photo.</p>
-            <CutoutPreview photoUrl={photoUrl} box={box} />
-            <div className="flex gap-2">
-              <button
-                className="h-9 w-9 flex items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-accent"
-                title="Adjust the frame"
-                onClick={() => setMode("frame")}
-                disabled={create.isPending}
-              >
-                <Crop className="h-4 w-4" />
-              </button>
-              <button
-                className="h-9 w-9 flex items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                title="Skip - don't save a photo"
-                onClick={onClose}
-                disabled={create.isPending}
-              >
-                <X className="h-4 w-4" />
-              </button>
-              <button
-                className="h-9 w-9 flex items-center justify-center rounded-full border border-emerald-300 text-emerald-700 hover:bg-emerald-100"
-                title="Save this photo"
-                onClick={() => create.mutate({ itemId, sourceAttachmentId, box })}
-                disabled={create.isPending}
-              >
-                {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              </button>
-            </div>
-            {create.isError && <div className="text-[12px] text-destructive">{create.error.message}</div>}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3 items-center">
-            <p className="text-[12px] text-muted-foreground -mt-2">
-              Drag to move, drag the corner to resize — this crops from the original photo.
-            </p>
-            <div className="relative select-none mx-auto max-w-full">
-              <img
-                src={photoUrl}
-                alt="source"
-                className="max-h-[calc(100dvh-11rem)] w-auto rounded touch-none"
-                draggable={false}
-              />
-              <Box box={box} color="#2d4a22" onChange={setBox} />
-            </div>
-            <Button size="sm" onClick={() => setMode("preview")}>
-              <Check className="h-3.5 w-3.5 mr-1" /> Done
-            </Button>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // A suggestion this close to (or overlapping) an already-confirmed pin with
 // the same-ish label is almost certainly the same physical object re-detected
 // - hide it rather than let it become a duplicate tag on re-run.
@@ -266,11 +162,6 @@ export default function AnnotatePage() {
   const drawStart = useRef<{ xPct: number; yPct: number } | null>(null);
   const [pendingLabel, setPendingLabel] = useState("");
   const [pendingItem, setPendingItem] = useState<{ id: number; name: string } | null>(null);
-  const [newItemPhotoPrompt, setNewItemPhotoPrompt] = useState<{
-    itemId: number;
-    itemName: string;
-    box: CropBox;
-  } | null>(null);
   const [newItemArea, setNewItemArea] = useState<number | "">("");
   const [aiError, setAiError] = useState<string | null>(null);
   const [detectInfo, setDetectInfo] = useState<string | null>(null);
@@ -571,10 +462,10 @@ export default function AnnotatePage() {
       utils.items.listAll.invalidate();
       utils.areas.list.invalidate();
       utils.map.listLocations.invalidate();
-      // a brand-new item needs a photo too - offer one cropped from right
-      // here, defaulting to the pin's own box if one was drawn
-      setNewItemPhotoPrompt({ itemId: res.id, itemName: pendingLabel.trim(), box });
-    } else if (itemId) {
+    }
+    // whether brand-new or existing, the drawn/adjusted box is already the
+    // confirmed photo - no separate "now pick a crop" step
+    if (itemId) {
       ensureItemPhoto(itemId, box);
     }
     // once linked, the item's own name is the label - not the free-text
@@ -888,25 +779,24 @@ export default function AnnotatePage() {
               )}
               {pending && (
                 <>
-                  {pending.wPct != null && pending.hPct != null && (
-                    <div
-                      className="absolute border-2 border-dashed border-primary bg-primary/10 pointer-events-none"
-                      style={{
-                        left: `${pending.xPct - pending.wPct / 2}%`,
-                        top: `${pending.yPct - pending.hPct / 2}%`,
-                        width: `${pending.wPct}%`,
-                        height: `${pending.hPct}%`,
-                      }}
+                  {pending.wPct != null && pending.hPct != null ? (
+                    // draggable/resizable in place - no separate "redraw" step
+                    // needed to fix a frame that's slightly off
+                    <Box
+                      box={{ xPct: pending.xPct, yPct: pending.yPct, wPct: pending.wPct, hPct: pending.hPct }}
+                      color="#2d4a22"
+                      onChange={(b) => setPending((prev) => (prev ? { ...prev, ...b } : prev))}
                     />
-                  )}
-                  <div
-                    className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none"
-                    style={{ left: `${pending.xPct}%`, top: `${pending.yPct}%` }}
-                  >
-                    <div className="flex items-center justify-center h-6 w-6 rounded-full border-2 border-primary bg-primary text-primary-foreground text-[10px] font-data shadow animate-pulse">
-                      {pins.length + 1}
+                  ) : (
+                    <div
+                      className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{ left: `${pending.xPct}%`, top: `${pending.yPct}%` }}
+                    >
+                      <div className="flex items-center justify-center h-6 w-6 rounded-full border-2 border-primary bg-primary text-primary-foreground text-[10px] font-data shadow animate-pulse">
+                        {pins.length + 1}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </>
               )}
             </div>
@@ -1060,14 +950,34 @@ export default function AnnotatePage() {
                   />
                 </div>
               )}
+              {pending.wPct != null && pending.hPct != null && urlQuery.data?.url && (
+                <div>
+                  <div className="micro-label text-muted-foreground mb-1">Photo (drag the frame above to adjust)</div>
+                  <CutoutPreview
+                    photoUrl={urlQuery.data.url}
+                    box={{ xPct: pending.xPct, yPct: pending.yPct, wPct: pending.wPct, hPct: pending.hPct }}
+                  />
+                </div>
+              )}
               <div className="flex gap-2 justify-end">
-                <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setPending(null)}>
-                  Cancel
-                </Button>
-                <Button size="sm" className="h-7 text-[12px]" onClick={() => savePending()}
+                <button
+                  className="h-7 w-7 flex items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  title="Cancel - don't add this pin"
+                  onClick={() => setPending(null)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  className="h-7 w-7 flex items-center justify-center rounded-full border border-emerald-300 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                  title="Add this pin"
+                  onClick={() => savePending()}
                   disabled={addPin.isPending || createItem.isPending}>
-                  <Plus className="h-3.5 w-3.5 mr-1" /> Add pin
-                </Button>
+                  {addPin.isPending || createItem.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                </button>
               </div>
             </div>
           )}
@@ -1135,16 +1045,6 @@ export default function AnnotatePage() {
         </aside>
       </div>
 
-      {newItemPhotoPrompt && urlQuery.data?.url && (
-        <NewItemPhotoDialog
-          photoUrl={urlQuery.data.url}
-          itemName={newItemPhotoPrompt.itemName}
-          itemId={newItemPhotoPrompt.itemId}
-          sourceAttachmentId={attId}
-          initialBox={newItemPhotoPrompt.box}
-          onClose={() => setNewItemPhotoPrompt(null)}
-        />
-      )}
     </div>
   );
 }
