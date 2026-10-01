@@ -86,6 +86,35 @@ export const attachmentsRouter = createRouter({
     return { ok: true };
   }),
 
+  /** Un-pin a photo from an item without deleting it - the file and any
+   * location context it has stay put, it just goes back into the general
+   * Photos pool instead of being removed outright. The house/floor/room it
+   * belonged to (via its item) are copied onto the attachment itself first,
+   * since those currently only exist through the item link we're about to
+   * drop - otherwise the photo would lose its location when unlinked. */
+  unlink: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    const db = getDb();
+    const att = await db.query.attachments.findFirst({ where: eq(attachments.id, input.id) });
+    if (!att) throw new Error("attachment not found");
+    const item = att.itemId ? await db.query.items.findFirst({ where: eq(items.id, att.itemId) }) : null;
+    await db
+      .update(attachments)
+      .set({
+        itemId: null,
+        houseId: att.houseId ?? item?.houseId ?? null,
+        floor: att.floor ?? item?.floor ?? null,
+        room: att.room ?? item?.room ?? null,
+      })
+      .where(eq(attachments.id, input.id));
+    await logEvent({
+      entityType: "attachment",
+      entityId: input.id,
+      action: "unlinked",
+      summary: `Photo "${att.title ?? input.id}" unlinked from item #${att.itemId} - back in the photo pool`,
+    });
+    return { ok: true };
+  }),
+
   url: publicQuery.input(z.object({ key: z.string() })).query(async ({ input }) => {
     return { url: await urlForKey(input.key) };
   }),

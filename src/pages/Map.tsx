@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Home, MapPin, ChevronRight, Loader2 } from "lucide-react";
@@ -11,6 +11,12 @@ type Location = {
   count: number;
 };
 
+const locationKey = (l: Pick<Location, "houseId" | "floor" | "room">) => `${l.houseId ?? 0}|${l.floor ?? ""}|${l.room}`;
+
+// sessionStorage, not localStorage - "keep last used during the session"
+// means forgetting it again once the tab/browser closes, not forever
+const SESSION_KEY = "declutter.map.lastLocation";
+
 /**
  * Location-first entry point onto the same SSOT the item workbench uses.
  * Pick a place, not a thing: see the photo(s) for that room, pin objects
@@ -20,6 +26,22 @@ type Location = {
 export default function MapPage() {
   const locations = trpc.map.listLocations.useQuery();
   const [selected, setSelected] = useState<Location | null>(null);
+
+  useEffect(() => {
+    if (selected || !locations.data || locations.data.length === 0) return;
+    const lastKey = sessionStorage.getItem(SESSION_KEY);
+    const match = lastKey ? locations.data.find((l) => locationKey(l) === lastKey) : null;
+    setSelected(match ?? locations.data[0]);
+  }, [locations.data, selected]);
+
+  const selectLocation = (l: Location) => {
+    setSelected(l);
+    try {
+      sessionStorage.setItem(SESSION_KEY, locationKey(l));
+    } catch {
+      // storage unavailable - selection still works for this render
+    }
+  };
 
   const photos = trpc.map.photosForLocation.useQuery(
     { houseId: selected?.houseId ?? null, floor: selected?.floor ?? null, room: selected?.room ?? "" },
@@ -43,12 +65,12 @@ export default function MapPage() {
             </div>
           )}
           {locations.data?.map((l) => {
-            const key = `${l.houseId ?? 0}|${l.floor ?? ""}|${l.room}`;
-            const isSelected = selected && `${selected.houseId ?? 0}|${selected.floor ?? ""}|${selected.room}` === key;
+            const key = locationKey(l);
+            const isSelected = selected && locationKey(selected) === key;
             return (
               <button
                 key={key}
-                onClick={() => setSelected(l)}
+                onClick={() => selectLocation(l)}
                 className={`w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-[13px] ${
                   isSelected ? "bg-muted" : "hover:bg-muted/50"
                 }`}

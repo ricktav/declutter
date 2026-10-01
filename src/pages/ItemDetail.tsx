@@ -200,6 +200,7 @@ export default function ItemDetail() {
     onError: (e) => setUploadError(e.message),
   });
   const removeAttachment = trpc.attachments.remove.useMutation({ onSuccess: invalidate });
+  const unlinkAttachment = trpc.attachments.unlink.useMutation({ onSuccess: invalidate });
   const addRelation = trpc.items.addRelation.useMutation({ onSuccess: invalidate });
   const resolveRelation = trpc.items.resolveRelation.useMutation({
     onSuccess: () => {
@@ -288,11 +289,16 @@ export default function ItemDetail() {
       {/* header */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-[12px] text-muted-foreground">
+          <div className="text-[12px] text-muted-foreground flex items-center gap-2">
             <Link to={`/areas/${it.area?.slug}`} className="hover:underline">
               {it.area?.name}
             </Link>{" "}
             / item #{it.id}
+            {it.status === "archived" && (
+              <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                <Archive className="h-3 w-3" /> Archived
+              </span>
+            )}
           </div>
           <input
             className="text-2xl font-semibold tracking-tight bg-transparent outline-none border-b border-transparent focus:border-input w-full mt-0.5"
@@ -723,18 +729,29 @@ export default function ItemDetail() {
                       </button>
                     </>
                   )}
-                  <ConfirmDelete
-                    trigger={
-                      <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    }
-                    title={`Delete ${a.kind === "note" ? "note" : a.kind === "link" ? "link" : "attachment"}?`}
-                    description="The file (and any AI pins on it) will be permanently removed."
-                    confirmLabel="Delete"
-                    pending={removeAttachment.isPending}
-                    onConfirm={() => removeAttachment.mutate({ id: a.id })}
-                  />
+                  {a.kind === "image" ? (
+                    <button
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive disabled:opacity-100"
+                      title="Unlink this photo from the item - it stays in the Photos pool"
+                      disabled={unlinkAttachment.isPending}
+                      onClick={() => unlinkAttachment.mutate({ id: a.id })}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : (
+                    <ConfirmDelete
+                      trigger={
+                        <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      }
+                      title={`Delete ${a.kind === "note" ? "note" : "link"}?`}
+                      description="This will be permanently removed."
+                      confirmLabel="Delete"
+                      pending={removeAttachment.isPending}
+                      onConfirm={() => removeAttachment.mutate({ id: a.id })}
+                    />
+                  )}
                 </div>
               ))}
             </div>
