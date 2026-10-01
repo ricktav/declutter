@@ -26,14 +26,18 @@ const pinIcon = L.icon({
   shadowSize: [41, 41],
 });
 
-/** Every house with a known address, pinned on an actual map - clicking a
- * pin makes that house the Dashboard's "Working in" context, since that's
- * the most useful thing to do with "where is this house" at a glance. */
-export function HousesMap() {
+/** Every house with a known address, pinned on an actual map. A single click
+ * just opens the popup (name/address/count) - double-clicking a pin, or
+ * clicking the button inside its popup, switches the Dashboard's "Working
+ * in" context to that house, since that's the most useful thing to do with
+ * "where is this house" once you've confirmed which one it is. */
+export function HousesMap({ onSelectHouse }: { onSelectHouse?: (houseId: number) => void } = {}) {
   const houses = trpc.houses.list.useQuery();
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const onSelectHouseRef = useRef(onSelectHouse);
+  onSelectHouseRef.current = onSelectHouse;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -52,15 +56,35 @@ export function HousesMap() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !houses.data) return;
+
+    const switchTo = (houseId: number) => {
+      setLastLocation({ ...getLastLocation(), houseId });
+      if (onSelectHouseRef.current) {
+        onSelectHouseRef.current(houseId);
+      } else {
+        navigate("/");
+      }
+    };
+
     const located = houses.data.filter((h) => h.lat != null && h.lng != null);
     const markers: L.Marker[] = located.map((h) => {
       const marker = L.marker([h.lat!, h.lng!], { icon: pinIcon }).addTo(map);
+      const escapedName = h.name.replace(/"/g, "&quot;");
       marker.bindPopup(
-        `<b>${h.name}</b>${h.address ? `<br>${h.address}` : ""}<br>${h.itemCount} item${h.itemCount === 1 ? "" : "s"}`,
+        `<b>${h.name}</b>${h.address ? `<br>${h.address}` : ""}<br>${h.itemCount} item${h.itemCount === 1 ? "" : "s"}` +
+          `<br><button type="button" class="houses-map-switch-btn" aria-label="Switch to ${escapedName}" ` +
+          `style="margin-top:4px;font-size:12px;padding:3px 8px;border-radius:6px;border:1px solid #d6d3c9;background:#f4f1ea;cursor:pointer;">Switch to this house</button>`,
       );
-      marker.on("click", () => {
-        setLastLocation({ ...getLastLocation(), houseId: h.id });
-        navigate("/");
+      marker.on("popupopen", (e) => {
+        const btn = e.popup.getElement()?.querySelector<HTMLButtonElement>(".houses-map-switch-btn");
+        btn?.addEventListener("click", () => {
+          marker.closePopup();
+          switchTo(h.id);
+        });
+      });
+      marker.on("dblclick", (e) => {
+        L.DomEvent.stopPropagation(e);
+        switchTo(h.id);
       });
       return marker;
     });

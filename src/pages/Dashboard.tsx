@@ -718,7 +718,7 @@ export default function Dashboard() {
 
       {showMap && (
         <div className="mt-4">
-          <HousesMap />
+          <HousesMap onSelectHouse={selectHouse} />
         </div>
       )}
 
