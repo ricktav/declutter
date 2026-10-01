@@ -94,6 +94,7 @@ export interface ItemPos {
   dM: number;
   rotDeg: number;
   baseM?: number; // height of the surface it's stacked on; 0 = floor
+  hM?: number; // the item's own height - used for 3D and as a stacking host's donor height
 }
 
 // ---------------------------------------------------------------------------

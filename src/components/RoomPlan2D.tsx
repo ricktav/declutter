@@ -14,6 +14,31 @@ type DragState = { kind: DragKind; id: number; startLoc: { x: number; y: number 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 const round2 = (v: number) => +v.toFixed(2);
 
+/** Whatever contains this footprint's center and is bigger than it (a desk,
+ * a table) is its stacking host - ported from lidarventory's findHost(). */
+function findHost(id: number, pos: ItemPos, items: PlanItem[]): (PlanItem & { pos: ItemPos }) | null {
+  const cx = pos.xM + pos.wM / 2, cy = pos.yM + pos.dM / 2;
+  const area = pos.wM * pos.dM;
+  for (const h of items) {
+    if (h.id === id || !h.pos) continue;
+    const hp = h.pos;
+    if (cx < hp.xM || cx > hp.xM + hp.wM || cy < hp.yM || cy > hp.yM + hp.dM) continue;
+    if (hp.wM * hp.dM <= area) continue;
+    return h as PlanItem & { pos: ItemPos };
+  }
+  return null;
+}
+
+/** Sets/clears pos.baseM to the host's top height, or back to the floor. */
+function applyStacking(id: number, pos: ItemPos, items: PlanItem[]): ItemPos {
+  const host = findHost(id, pos, items);
+  if (!host) {
+    const { baseM: _drop, ...rest } = pos;
+    return rest;
+  }
+  return { ...pos, baseM: round2((host.pos.baseM ?? 0) + (host.pos.hM ?? 0.8)) };
+}
+
 /**
  * 2D floor plan, to scale in meters - read-only render plus drag/rotate/
  * resize on placed items. Ported from lidarventory's render2D() (meter→
@@ -131,7 +156,9 @@ export function RoomPlan2D({
   const onDragEnd = () => {
     const drag = dragRef.current as (DragState & { pending?: ItemPos }) | null;
     dragRef.current = null;
-    if (drag?.pending) onPosChange?.(drag.id, drag.pending);
+    if (!drag?.pending) return;
+    const pos = drag.kind === "move" ? applyStacking(drag.id, drag.pending, placed) : drag.pending;
+    onPosChange?.(drag.id, pos);
   };
 
   return (
