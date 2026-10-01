@@ -4,7 +4,7 @@ import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
 import { Button } from "@/components/ui/button";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
-import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2 } from "lucide-react";
+import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2, MapPin } from "lucide-react";
 import type { ItemPos } from "@db/schema";
 
 /**
@@ -36,7 +36,12 @@ export default function RoomPlanPage() {
   const [cutMode, setCutMode] = useState(false);
   const [pendingCut, setPendingCut] = useState<{ xM: number; yM: number; wM: number; dM: number } | null>(null);
   const [cutName, setCutName] = useState("");
+  const [pinMode, setPinMode] = useState(false);
+  const [pendingPin, setPendingPin] = useState<{ xM: number; yM: number } | null>(null);
+  const [pinName, setPinName] = useState("");
+  const [pinAreaId, setPinAreaId] = useState<number | null>(null);
   const selectedItem = room.data?.items.find((it) => it.id === selectedId) ?? null;
+  const areasList = trpc.areas.list.useQuery(undefined, { enabled: pendingPin != null });
 
   const unlinkedLocations = trpc.rooms.unlinkedLocations.useQuery(
     { houseId: room.data?.houseId ?? 0 },
@@ -57,6 +62,35 @@ export default function RoomPlanPage() {
       else navigate("/rooms");
     },
   });
+  const createItem = trpc.items.create.useMutation();
+  const [pinning, setPinning] = useState(false);
+
+  /** Shared by both the 2D plan and the 3D twin - pinning a point creates a
+   * real item at that footprint, status "confirmed" (a human just placed it
+   * by hand, there's nothing to verify), default 0.5x0.5m (resize after). */
+  const confirmPin = async () => {
+    if (!pendingPin || !pinName.trim() || pinAreaId == null || !room.data) return;
+    setPinning(true);
+    try {
+      const { id: newItemId } = await createItem.mutateAsync({
+        areaId: pinAreaId,
+        name: pinName.trim(),
+        houseId: room.data.houseId,
+        roomId: id,
+        room: room.data.name,
+      });
+      await updatePos.mutateAsync({
+        id: newItemId,
+        pos: { xM: pendingPin.xM, yM: pendingPin.yM, wM: 0.5, dM: 0.5, rotDeg: 0 },
+      });
+      setPendingPin(null);
+      setPinName("");
+      setPinMode(false);
+      setSelectedId(newItemId);
+    } finally {
+      setPinning(false);
+    }
+  };
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
@@ -82,18 +116,36 @@ export default function RoomPlanPage() {
           <div className="mt-6 flex gap-6 items-start">
             <div className="flex-1 min-w-0 max-w-2xl">
               <div className="flex items-center justify-between gap-1 mb-1.5">
-                <Button
-                  size="sm"
-                  variant={cutMode ? "default" : "outline"}
-                  className="h-7 text-[12px]"
-                  onClick={() => {
-                    setCutMode((v) => !v);
-                    setPendingCut(null);
-                    setSelectedId(null);
-                  }}
-                >
-                  <Scissors className="h-3.5 w-3.5 mr-1" /> {cutMode ? "Cutting…" : "Cut out room"}
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant={pinMode ? "default" : "outline"}
+                    className="h-7 text-[12px]"
+                    onClick={() => {
+                      setPinMode((v) => !v);
+                      setPendingPin(null);
+                      setCutMode(false);
+                      setPendingCut(null);
+                      setSelectedId(null);
+                    }}
+                  >
+                    <MapPin className="h-3.5 w-3.5 mr-1" /> {pinMode ? "Pinning…" : "Pin new item"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={cutMode ? "default" : "outline"}
+                    className="h-7 text-[12px]"
+                    onClick={() => {
+                      setCutMode((v) => !v);
+                      setPendingCut(null);
+                      setPinMode(false);
+                      setPendingPin(null);
+                      setSelectedId(null);
+                    }}
+                  >
+                    <Scissors className="h-3.5 w-3.5 mr-1" /> {cutMode ? "Cutting…" : "Cut out room"}
+                  </Button>
+                </div>
                 <div className="flex items-center gap-1">
                   <Button
                     size="sm"
@@ -137,6 +189,9 @@ export default function RoomPlanPage() {
                   Drag a rectangle over the area to cut into its own room.
                 </p>
               )}
+              {pinMode && (
+                <p className="mb-1.5 text-[11px] text-amber-700">Click anywhere on the floor to pin a new item there.</p>
+              )}
               <RoomPlan2D
                 widthM={room.data.widthM ?? 0}
                 depthM={room.data.depthM ?? 0}
@@ -158,6 +213,12 @@ export default function RoomPlanPage() {
                   setPendingCut(bounds);
                   setCutName("");
                 }}
+                pinMode={pinMode}
+                onPinPlace={(pos) => {
+                  setPendingPin(pos);
+                  setPinName("");
+                  setPinAreaId(null);
+                }}
               />
               <p className="mt-2 text-[11px] text-muted-foreground">
                 Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize.
@@ -171,7 +232,53 @@ export default function RoomPlanPage() {
             </div>
 
             <aside className="w-64 shrink-0 rounded-lg border border-border bg-white p-4">
-              {pendingCut ? (
+              {pendingPin ? (
+                <>
+                  <p className="font-medium text-[14px]">Name this item</p>
+                  <p className="text-[12px] text-muted-foreground mt-1">
+                    at {pendingPin.xM.toFixed(2)}, {pendingPin.yM.toFixed(2)} m
+                  </p>
+
+                  <input
+                    type="text"
+                    placeholder="Item name"
+                    className="mt-3 w-full h-8 rounded-md border border-border bg-white px-2 text-[13px]"
+                    value={pinName}
+                    onChange={(e) => setPinName(e.target.value)}
+                    autoFocus
+                  />
+
+                  <select
+                    className="mt-2 w-full h-8 rounded-md border border-border bg-white px-2 text-[13px]"
+                    value={pinAreaId ?? ""}
+                    onChange={(e) => setPinAreaId(e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="" disabled>
+                      Pick a topic…
+                    </option>
+                    {areasList.data?.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="mt-3 flex gap-1.5">
+                    <Button
+                      size="sm"
+                      className="h-7 text-[12px]"
+                      disabled={!pinName.trim() || pinAreaId == null || pinning}
+                      onClick={confirmPin}
+                    >
+                      {pinning ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                      Create item
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => setPendingPin(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </>
+              ) : pendingCut ? (
                 <>
                   <p className="font-medium text-[14px]">Name this room</p>
                   <p className="text-[12px] text-muted-foreground mt-1">
@@ -220,7 +327,11 @@ export default function RoomPlanPage() {
                 </>
               ) : !selectedItem ? (
                 <p className="text-[13px] text-muted-foreground">
-                  {cutMode ? "Drag a rectangle on the plan to mark the room's area." : "Select an item on the plan to review it."}
+                  {cutMode
+                    ? "Drag a rectangle on the plan to mark the room's area."
+                    : pinMode
+                      ? "Click the plan to pin a new item there."
+                      : "Select an item on the plan to review it."}
                 </p>
               ) : (
                 <>

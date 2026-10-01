@@ -70,6 +70,8 @@ export function RoomPlan2D({
   rotationDeg = 0,
   cutMode = false,
   onCutRect,
+  pinMode = false,
+  onPinPlace,
 }: {
   widthM: number;
   depthM: number;
@@ -90,6 +92,11 @@ export function RoomPlan2D({
    * sub-room out of a whole-floor geometry blob. */
   cutMode?: boolean;
   onCutRect?: (bounds: { xM: number; yM: number; wM: number; dM: number }) => void;
+  /** When true, clicking empty floor "pins" a new item there instead of
+   * doing nothing - the click just reports the meter position, the caller
+   * (RoomPlan page) owns naming/creating it. */
+  pinMode?: boolean;
+  onPinPlace?: (pos: { xM: number; yM: number }) => void;
 }) {
   const S = 70; // px per meter
   const PAD = 36;
@@ -251,9 +258,17 @@ export function RoomPlan2D({
         y={PAD}
         width={widthM * S}
         height={depthM * S}
-        className={`fill-muted/20 stroke-border ${cutMode ? "cursor-crosshair" : ""}`}
+        className={`fill-muted/20 stroke-border ${cutMode || pinMode ? "cursor-crosshair" : ""}`}
         strokeWidth={1}
         onPointerDown={startCut}
+        onClick={(e) => {
+          if (!pinMode) return;
+          const loc = toLocal(e.clientX, e.clientY);
+          onPinPlace?.({
+            xM: round2(clamp((loc.x - PAD) / S, 0, widthM)),
+            yM: round2(clamp((loc.y - PAD) / S, 0, depthM)),
+          });
+        }}
       />
 
       {(walls ?? []).map((wall, i) => {
@@ -298,11 +313,11 @@ export function RoomPlan2D({
             data-item-id={it.id}
             transform={`rotate(${-p.rotDeg} ${x + w / 2} ${y + d / 2})`}
             onPointerDown={(e) => {
-              if (cutMode) return;
+              if (cutMode || pinMode) return;
               if (editable && it.editable !== false) startDrag("move", it.id, e);
               else onSelect?.(it.id);
             }}
-            className={cutMode ? "" : editable && it.editable !== false ? "cursor-move" : "cursor-pointer"}
+            className={cutMode || pinMode ? "" : editable && it.editable !== false ? "cursor-move" : "cursor-pointer"}
           >
             <rect
               x={x}
