@@ -270,7 +270,9 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [addr, setAddr] = useState<ResolvedAddress>(EMPTY_ADDRESS);
-  const [floors, setFloors] = useState<string[]>([]);
+  // most houses have at least a ground floor, so start with it pre-added
+  // instead of making every new house re-click the same first pill
+  const [floors, setFloors] = useState<string[]>(["ground"]);
   const utils = trpc.useUtils();
   const create = trpc.houses.create.useMutation({
     onSuccess: (house) => {
@@ -278,7 +280,7 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
       setOpen(false);
       setName("");
       setAddr(EMPTY_ADDRESS);
-      setFloors([]);
+      setFloors(["ground"]);
       if (house) onCreated(house.id);
     },
   });
