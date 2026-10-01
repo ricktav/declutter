@@ -6,6 +6,7 @@ import { fileToBase64 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { AreaPicker } from "@/components/AreaPicker";
 import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
+import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
 import { DetectObjectsModal } from "@/components/DetectObjects";
 import {
   Dialog,
@@ -196,9 +197,10 @@ function CaptureImage({ storageKey }: { storageKey: string }) {
 function PinPendingButton({ captureId }: { captureId: number }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const [loc, setLoc] = useState<RoomValue>({ houseId: null, floor: "", room: "" });
+  const [loc, setLoc] = useState<RoomValue>(() => getLastLocation());
   const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
     onSuccess: (res) => {
+      setLastLocation(loc);
       const params = new URLSearchParams({
         houseId: loc.houseId != null ? String(loc.houseId) : "none",
         floor: loc.floor.trim() || "none",
@@ -261,7 +263,13 @@ function PinPendingButton({ captureId }: { captureId: number }) {
   );
 }
 
-function TriageCard({ capture, onZoom }: { capture: Capture; onZoom: (storageKey: string) => void }) {
+function TriageCard({
+  capture,
+  onZoom,
+}: {
+  capture: Capture;
+  onZoom: (storageKey: string, captureId: number, isPending: boolean) => void;
+}) {
   const utils = trpc.useUtils();
   const s = capture.suggestion;
   const areas = trpc.areas.list.useQuery();
@@ -332,7 +340,7 @@ function TriageCard({ capture, onZoom }: { capture: Capture; onZoom: (storageKey
           )}
           {capture.storageKey && capture.kind === "image" && (
             <div className="mt-2 flex items-start gap-3">
-              <button title="Click to view full size" className="cursor-zoom-in" onClick={() => onZoom(capture.storageKey!)}>
+              <button title="Click to view full size" className="cursor-zoom-in" onClick={() => onZoom(capture.storageKey!, capture.id, true)}>
                 <CaptureImage storageKey={capture.storageKey} />
               </button>
               <div className="flex flex-col gap-1.5 pt-1">
@@ -618,11 +626,15 @@ export default function InboxPage() {
   const captures = trpc.inbox.list.useQuery();
   const pending = (captures.data ?? []).filter((c) => c.status === "pending");
   const done = (captures.data ?? []).filter((c) => c.status !== "pending");
-  const [lightboxKey, setLightboxKey] = useState<string | null>(null);
-  const lightboxUrl = trpc.attachments.url.useQuery(
-    { key: lightboxKey ?? "" },
-    { enabled: !!lightboxKey },
+  const [lightbox, setLightbox] = useState<{ storageKey: string; captureId: number; isPending: boolean } | null>(
+    null,
   );
+  const lightboxUrl = trpc.attachments.url.useQuery(
+    { key: lightbox?.storageKey ?? "" },
+    { enabled: !!lightbox },
+  );
+  const openLightbox = (storageKey: string, captureId: number, isPending: boolean) =>
+    setLightbox({ storageKey, captureId, isPending });
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
@@ -646,7 +658,7 @@ export default function InboxPage() {
           </div>
         )}
         {pending.map((c) => (
-          <TriageCard key={c.id} capture={c} onZoom={setLightboxKey} />
+          <TriageCard key={c.id} capture={c} onZoom={openLightbox} />
         ))}
       </div>
 
@@ -661,7 +673,7 @@ export default function InboxPage() {
                     <button
                       className="cursor-zoom-in block w-full"
                       title="Click to view full size"
-                      onClick={() => setLightboxKey(c.storageKey)}
+                      onClick={() => openLightbox(c.storageKey!, c.id, false)}
                     >
                       <ProcessedThumb storageKey={c.storageKey} kind={c.kind} />
                     </button>
@@ -679,8 +691,17 @@ export default function InboxPage() {
         </>
       )}
 
-      <Dialog open={!!lightboxKey} onOpenChange={(o) => !o && setLightboxKey(null)}>
+      <Dialog open={!!lightbox} onOpenChange={(o) => !o && setLightbox(null)}>
         <DialogContent className="max-w-4xl p-2 bg-black/95 border-none">
+          {lightbox && (
+            <div className="flex justify-end">
+              {lightbox.isPending ? (
+                <PinPendingButton captureId={lightbox.captureId} />
+              ) : (
+                <PinCaptureButton captureId={lightbox.captureId} />
+              )}
+            </div>
+          )}
           {lightboxUrl.data?.url && (
             <img src={lightboxUrl.data.url} alt="" className="w-full h-auto max-h-[85vh] object-contain rounded" />
           )}
