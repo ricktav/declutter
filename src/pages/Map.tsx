@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
+import { HousesMap } from "@/components/HousesMap";
 import { Home, MapPin, ChevronRight, Loader2 } from "lucide-react";
 
 type Location = {
@@ -54,6 +55,10 @@ export default function MapPage() {
       <p className="text-sm text-muted-foreground mt-1">
         Pick a place to see what's pinned there — a spatial index on top of the same items, not a separate inventory.
       </p>
+
+      <div className="mt-5">
+        <HousesMap />
+      </div>
 
       <div className="flex gap-6 mt-6 items-start">
         <aside className="w-64 shrink-0 rounded-lg border border-border bg-white p-2 space-y-0.5">

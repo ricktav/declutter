@@ -15,7 +15,7 @@ import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { FloorsEditor } from "@/components/FloorsEditor";
 import { aerialThumbUrl, fetchParcelInfo, kadastraleKaartUrl, reverseGeocode, type AddressSuggestion, type ParcelInfo } from "@/lib/pdok";
-import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Pencil, Plus } from "lucide-react";
+import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Plus } from "lucide-react";
 import {
   Laptop,
   Wrench,
@@ -266,8 +266,15 @@ function AddressWithParcelPicker({
 
 const EMPTY_ADDRESS: ResolvedAddress = { address: "", lat: null, lng: null, bagId: null, parcel: null };
 
-function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
-  const [open, setOpen] = useState(false);
+function AddHouseDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onCreated: (id: number) => void;
+}) {
   const [name, setName] = useState("");
   const [addr, setAddr] = useState<ResolvedAddress>(EMPTY_ADDRESS);
   // most houses have at least a ground floor, so start with it pre-added
@@ -277,7 +284,7 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
   const create = trpc.houses.create.useMutation({
     onSuccess: (house) => {
       utils.houses.list.invalidate();
-      setOpen(false);
+      onOpenChange(false);
       setName("");
       setAddr(EMPTY_ADDRESS);
       setFloors(["ground"]);
@@ -286,12 +293,17 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
   });
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 text-[12px]">
-          <Plus className="h-3.5 w-3.5 mr-1" /> New house
-        </Button>
-      </DialogTrigger>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        onOpenChange(v);
+        if (v) {
+          setName("");
+          setAddr(EMPTY_ADDRESS);
+          setFloors(["ground"]);
+        }
+      }}
+    >
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>New house</DialogTitle>
@@ -378,8 +390,21 @@ function houseToResolvedAddress(h: EditableHouse): ResolvedAddress {
   };
 }
 
-function EditHouseDialog({ house }: { house: EditableHouse }) {
-  const [open, setOpen] = useState(false);
+function EditHouseDialog({
+  house,
+  open,
+  onOpenChange,
+  allHouses,
+  onSwitchHouse,
+  onRequestNew,
+}: {
+  house: EditableHouse;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  allHouses: { id: number; name: string }[];
+  onSwitchHouse: (id: number) => void;
+  onRequestNew: () => void;
+}) {
   const [name, setName] = useState(house.name);
   const [addr, setAddr] = useState<ResolvedAddress>(() => houseToResolvedAddress(house));
   const [floors, setFloors] = useState<string[] | null>(house.floors ?? null);
@@ -387,7 +412,7 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
   const update = trpc.houses.update.useMutation({
     onSuccess: () => {
       utils.houses.list.invalidate();
-      setOpen(false);
+      onOpenChange(false);
     },
   });
 
@@ -395,7 +420,7 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        setOpen(v);
+        onOpenChange(v);
         if (v) {
           setName(house.name);
           setAddr(houseToResolvedAddress(house));
@@ -403,16 +428,29 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
         }
       }}
     >
-      <DialogTrigger asChild>
-        <button className="text-muted-foreground hover:text-primary" title="Edit house">
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
-      </DialogTrigger>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Edit house</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          {allHouses.length > 0 && (
+            <label className="block">
+              <span className="micro-label text-muted-foreground">Switch house</span>
+              <select
+                className="mt-0.5 w-full rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
+                value={house.id}
+                onChange={(e) => {
+                  if (e.target.value === "__new__") onRequestNew();
+                  else onSwitchHouse(Number(e.target.value));
+                }}
+              >
+                {allHouses.map((h) => (
+                  <option key={h.id} value={h.id}>{h.name}</option>
+                ))}
+                <option value="__new__">+ New house…</option>
+              </select>
+            </label>
+          )}
           <label className="block">
             <span className="micro-label text-muted-foreground">Name</span>
             <input
@@ -427,6 +465,16 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
             <div className="mt-0.5">
               <AddressWithParcelPicker value={addr} onResolve={setAddr} />
             </div>
+            {addr.address && (
+              <a
+                href={kadastraleKaartUrl(addr.address)}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+              >
+                View parcel <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
           </label>
           <label className="block">
             <span className="micro-label text-muted-foreground">Floors</span>
@@ -463,79 +511,86 @@ function EditHouseDialog({ house }: { house: EditableHouse }) {
   );
 }
 
-/** Which house you're currently working in - a lightweight context switcher,
- * not the full house editor (that's Settings → Houses). Defaults to the last
- * house confirmed anywhere in the app (shared with Inbox's pin-location
- * flow), since that's the best signal for "where am I right now". */
-function HouseSection() {
+/** Which house you're currently working in - collapsed to a small chip most
+ * of the time, since switching house is occasional, not something that
+ * deserves permanent dashboard real estate. Clicking it is the one entry
+ * point for switching, editing, or adding a house - the dialog that opens
+ * handles all three. Defaults to the last house confirmed anywhere in the
+ * app (shared with Inbox's pin-location flow). */
+function HouseSection({
+  houseId,
+  onSelectHouse,
+}: {
+  houseId: number | null;
+  onSelectHouse: (id: number | null) => void;
+}) {
   const houses = trpc.houses.list.useQuery();
-  const [houseId, setHouseId] = useState<number | null>(() => getLastLocation().houseId);
+  const [dialog, setDialog] = useState<"none" | "edit" | "add">("none");
 
   useEffect(() => {
     if (houseId == null && houses.data && houses.data.length > 0) {
-      setHouseId(houses.data[0].id);
+      onSelectHouse(houses.data[0].id);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [houses.data, houseId]);
-
-  const selectHouse = (id: number | null) => {
-    setHouseId(id);
-    setLastLocation({ ...getLastLocation(), houseId: id });
-  };
 
   const current = houses.data?.find((h) => h.id === houseId);
 
   return (
-    <div className="rounded-lg border border-border bg-white px-4 py-3 flex items-center gap-3 flex-wrap">
-      {current?.lat != null && current.lng != null ? (
-        <img
-          src={aerialThumbUrl(current.lat, current.lng)}
-          alt=""
-          className="h-9 w-9 rounded-md object-cover border border-border shrink-0"
-        />
-      ) : (
-        <Home className="h-4 w-4 text-muted-foreground shrink-0" />
-      )}
-      <span className="micro-label text-muted-foreground shrink-0">Working in</span>
-      <select
-        className="rounded-md border border-input bg-white px-2 py-1.5 text-[13px] min-w-[10rem]"
-        value={houseId ?? ""}
-        onChange={(e) => selectHouse(e.target.value ? Number(e.target.value) : null)}
+    <>
+      <button
+        type="button"
+        className="rounded-lg border border-border bg-white px-3 py-2 flex items-center gap-2.5 hover:border-primary/50 transition-colors text-left"
+        onClick={() => setDialog(current ? "edit" : "add")}
       >
-        <option value="">No house selected</option>
-        {(houses.data ?? []).map((h) => (
-          <option key={h.id} value={h.id}>
-            {h.name}
-          </option>
-        ))}
-      </select>
+        {current?.lat != null && current.lng != null ? (
+          <img
+            src={aerialThumbUrl(current.lat, current.lng)}
+            alt=""
+            className="h-8 w-8 rounded-md object-cover border border-border shrink-0"
+          />
+        ) : (
+          <div className="h-8 w-8 rounded-md bg-accent flex items-center justify-center shrink-0">
+            <Home className="h-4 w-4 text-muted-foreground" />
+          </div>
+        )}
+        <div className="min-w-0">
+          <div className="text-[13px] font-semibold truncate">{current?.name ?? "Add a house"}</div>
+          {current && (
+            <div className="font-data text-[11px] text-muted-foreground truncate">
+              {current.itemCount} item{current.itemCount === 1 ? "" : "s"}
+              {current.address ? ` · ${current.address}` : ""}
+            </div>
+          )}
+        </div>
+      </button>
+
       {current && (
-        <span className="font-data text-[12px] text-muted-foreground">
-          {current.itemCount} item{current.itemCount === 1 ? "" : "s"}
-          {current.address ? ` · ${current.address}` : ""}
-          {current.parcelAreaM2 != null ? ` · ${current.parcelAreaM2}m²` : ""}
-        </span>
+        <EditHouseDialog
+          key={current.id}
+          house={current}
+          open={dialog === "edit"}
+          onOpenChange={(v) => setDialog(v ? "edit" : "none")}
+          allHouses={houses.data ?? []}
+          onSwitchHouse={(id) => onSelectHouse(id)}
+          onRequestNew={() => setDialog("add")}
+        />
       )}
-      {current?.address && (
-        <a
-          href={kadastraleKaartUrl(current.address)}
-          target="_blank"
-          rel="noreferrer"
-          className="text-[12px] text-primary hover:underline flex items-center gap-1"
-          title="View parcel on kadastrale-kaart"
-        >
-          Parcel <ExternalLink className="h-3 w-3" />
-        </a>
-      )}
-      {current && <EditHouseDialog house={current} />}
-      <div className="ml-auto">
-        <AddHouseDialog onCreated={(id) => selectHouse(id)} />
-      </div>
-    </div>
+      <AddHouseDialog
+        open={dialog === "add"}
+        onOpenChange={(v) => setDialog(v ? "add" : "none")}
+        onCreated={(id) => {
+          onSelectHouse(id);
+          setDialog("none");
+        }}
+      />
+    </>
   );
 }
 
-function LocationsSection() {
+function LocationsSection({ houseId }: { houseId: number | null }) {
   const locations = trpc.map.listLocations.useQuery();
+  const scoped = (locations.data ?? []).filter((l) => houseId == null || l.houseId === houseId);
 
   return (
     <section>
@@ -546,12 +601,12 @@ function LocationsSection() {
         </Link>
       </div>
       <div className="rounded-lg border border-border bg-white divide-y divide-border">
-        {(locations.data ?? []).length === 0 && (
+        {scoped.length === 0 && (
           <div className="px-4 py-5 text-[13px] text-muted-foreground">
             No locations yet — set a room on an item, or confirm one while pinning from the Inbox.
           </div>
         )}
-        {(locations.data ?? []).slice(0, 8).map((l) => {
+        {scoped.slice(0, 8).map((l) => {
           const key = `${l.houseId ?? "none"}|${l.floor ?? "none"}|${l.room}`;
           const to = `/items?houseId=${l.houseId ?? "none"}&floor=${encodeURIComponent(l.floor ?? "none")}&room=${encodeURIComponent(l.room)}`;
           return (
@@ -577,7 +632,16 @@ function LocationsSection() {
 }
 
 export default function Dashboard() {
-  const areas = trpc.areas.list.useQuery();
+  const [houseId, setHouseId] = useState<number | null>(() => getLastLocation().houseId);
+  const selectHouse = (id: number | null) => {
+    setHouseId(id);
+    setLastLocation({ ...getLastLocation(), houseId: id });
+  };
+
+  // Topics (and the Items stat, derived from them) are scoped to whichever
+  // house is "working in" - the whole dashboard reflects that context, not
+  // just the house chip itself
+  const areas = trpc.areas.list.useQuery({ houseId });
   const inboxList = trpc.inbox.list.useQuery();
   const tasks = trpc.tasks.list.useQuery();
   const ideas = trpc.ideas.list.useQuery();
@@ -624,7 +688,7 @@ export default function Dashboard() {
       </div>
 
       <div className="mt-6">
-        <HouseSection />
+        <HouseSection houseId={houseId} onSelectHouse={selectHouse} />
       </div>
 
       <div className="grid md:grid-cols-2 gap-6 mt-6">
@@ -658,7 +722,7 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <LocationsSection />
+        <LocationsSection houseId={houseId} />
       </div>
 
       <div className="mt-6">

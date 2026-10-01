@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { areas, items } from "@db/schema";
@@ -14,17 +14,26 @@ const attributeDefSchema = z.object({
 });
 
 export const areasRouter = createRouter({
-  list: publicQuery.query(async () => {
-    const db = getDb();
-    const all = await db.select().from(areas).orderBy(areas.sortOrder, areas.id);
-    const counts = await db
-      .select({ areaId: items.areaId, count: sql<number>`count(*)` })
-      .from(items)
-      .where(eq(items.status, "active"))
-      .groupBy(items.areaId);
-    const countMap = new Map(counts.map((c) => [c.areaId, Number(c.count)]));
-    return all.map((a) => ({ ...a, itemCount: countMap.get(a.id) ?? 0 }));
-  }),
+  // optional houseId scopes the item counts to just that house - the
+  // Dashboard uses this so "working in" a house also means its topic
+  // breakdown reflects that house instead of the whole inventory
+  list: publicQuery
+    .input(z.object({ houseId: z.number().nullable().optional() }).optional())
+    .query(async ({ input }) => {
+      const db = getDb();
+      const all = await db.select().from(areas).orderBy(areas.sortOrder, areas.id);
+      const counts = await db
+        .select({ areaId: items.areaId, count: sql<number>`count(*)` })
+        .from(items)
+        .where(
+          input?.houseId != null
+            ? and(eq(items.status, "active"), eq(items.houseId, input.houseId))
+            : eq(items.status, "active"),
+        )
+        .groupBy(items.areaId);
+      const countMap = new Map(counts.map((c) => [c.areaId, Number(c.count)]));
+      return all.map((a) => ({ ...a, itemCount: countMap.get(a.id) ?? 0 }));
+    }),
 
   get: publicQuery.input(z.object({ slug: z.string() })).query(async ({ input }) => {
     return getDb().query.areas.findFirst({ where: eq(areas.slug, input.slug) });
