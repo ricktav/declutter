@@ -26,10 +26,13 @@ for (const f of geojson.features) {
   if (f.geometry.type === "Polygon") for (const ring of f.geometry.coordinates) allCoords.push(...ring);
 }
 const lon0 = Math.min(...allCoords.map((c) => c[0]));
-const lat0 = Math.min(...allCoords.map((c) => c[1]));
+// North (higher latitude) must land at smaller Y (top of a top-down plan,
+// matching the "up = north" convention) - project against the MAX latitude,
+// not the min, or the whole floor renders mirrored across a horizontal axis.
+const latMax = Math.max(...allCoords.map((c) => c[1]));
 const metersPerLat = 111320;
-const metersPerLon = 111320 * Math.cos((lat0 * Math.PI) / 180);
-const project = ([lon, lat]) => [+((lon - lon0) * metersPerLon).toFixed(3), +((lat - lat0) * metersPerLat).toFixed(3)];
+const metersPerLon = 111320 * Math.cos((latMax * Math.PI) / 180);
+const project = ([lon, lat]) => [+((lon - lon0) * metersPerLon).toFixed(3), +((latMax - lat) * metersPerLat).toFixed(3)];
 
 const walls = [];
 const furniturePolys = [];
