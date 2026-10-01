@@ -14,18 +14,21 @@ export default function PhotosPage() {
   const photos = trpc.attachments.listAllImages.useQuery();
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("location");
+  const [onlyUnpinned, setOnlyUnpinned] = useState(false);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
-    return (photos.data ?? []).filter(
-      (p) =>
+    return (photos.data ?? []).filter((p) => {
+      if (onlyUnpinned && p.itemId != null) return false;
+      return (
         !query ||
         (p.itemName ?? "").toLowerCase().includes(query) ||
         (p.room ?? "").toLowerCase().includes(query) ||
         (p.floor ?? "").toLowerCase().includes(query) ||
-        (p.areaName ?? "").toLowerCase().includes(query),
-    );
-  }, [photos.data, q]);
+        (p.areaName ?? "").toLowerCase().includes(query)
+      );
+    });
+  }, [photos.data, q, onlyUnpinned]);
 
   const groupOf = (p: (typeof filtered)[number]) => {
     if (sortBy === "area") return p.areaName ?? "(no area)";
@@ -83,6 +86,17 @@ export default function PhotosPage() {
             <option value="recent">Recently added</option>
           </select>
         </div>
+        <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={onlyUnpinned}
+            onChange={(e) => setOnlyUnpinned(e.target.checked)}
+          />
+          only location photos not pinned to an item yet
+          <span className="font-data text-[11px] opacity-60">
+            ({(photos.data ?? []).filter((p) => p.itemId == null).length})
+          </span>
+        </label>
       </div>
 
       <div className="mt-5 space-y-7">

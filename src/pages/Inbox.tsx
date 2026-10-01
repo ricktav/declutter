@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { fileToBase64 } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { AreaPicker } from "@/components/AreaPicker";
 import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
 import { DetectObjectsModal } from "@/components/DetectObjects";
@@ -43,20 +44,20 @@ const KIND_ICONS = {
   voice: Mic,
 };
 
-/** Thumbnail for a processed capture; falls back to its kind icon. Sized to
- * actually be recognizable in the list, not just a 32px placeholder. */
+/** Thumbnail for a processed capture; falls back to its kind icon. Fills its
+ * grid cell (catalog style) rather than being a fixed small square. */
 function ProcessedThumb({ storageKey, kind }: { storageKey: string | null; kind: keyof typeof KIND_ICONS }) {
   const Icon = KIND_ICONS[kind];
   const url = trpc.attachments.url.useQuery({ key: storageKey ?? "" }, { enabled: !!storageKey && kind === "image" });
   if (kind === "image" && url.data?.url) {
     return (
-      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted/40">
+      <div className="aspect-square w-full overflow-hidden rounded-md border border-border bg-muted/40">
         <img src={url.data.url} alt="" className="h-full w-full object-cover" />
       </div>
     );
   }
   return (
-    <div className="h-16 w-16 shrink-0 flex items-center justify-center rounded-lg border border-border bg-muted/40 text-muted-foreground">
+    <div className="aspect-square w-full flex items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground">
       <Icon className="h-5 w-5" />
     </div>
   );
@@ -66,7 +67,15 @@ function ProcessedThumb({ storageKey, kind }: { storageKey: string | null; kind:
  * find-or-create-attachment step the Map view uses, just entered from here.
  * A labeled button, not just an icon - an icon-only version of this was easy
  * to miss next to the rest of a processed row's clutter. */
-function PinCaptureButton({ captureId, houseId = null }: { captureId: number; houseId?: number | null }) {
+function PinCaptureButton({
+  captureId,
+  houseId = null,
+  className = "shrink-0",
+}: {
+  captureId: number;
+  houseId?: number | null;
+  className?: string;
+}) {
   const navigate = useNavigate();
   const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
     onSuccess: (res) => navigate(`/annotate/${res.attachmentId}`),
@@ -75,7 +84,7 @@ function PinCaptureButton({ captureId, houseId = null }: { captureId: number; ho
     <Button
       size="sm"
       variant="outline"
-      className="h-6 text-[11px] shrink-0"
+      className={cn("h-6 text-[11px]", className)}
       title="Pin objects on this photo"
       disabled={ensure.isPending}
       onClick={(e) => {
@@ -154,7 +163,7 @@ function CaptureImage({ storageKey }: { storageKey: string }) {
     <img
       src={url.data.url}
       alt=""
-      className="h-44 w-44 object-cover rounded-lg border border-border"
+      className="h-56 w-56 object-cover rounded-lg border border-border"
     />
   );
 }
@@ -289,15 +298,17 @@ function TriageCard({ capture, onZoom }: { capture: Capture; onZoom: (storageKey
       <div className="flex items-start gap-3">
         <KindIcon className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] whitespace-pre-wrap break-words">
-            {capture.url ? (
-              <a href={capture.url} target="_blank" rel="noreferrer" className="text-primary underline">
-                {capture.url}
-              </a>
-            ) : (
-              capture.rawText || "(file)"
-            )}
-          </div>
+          {(capture.url || capture.rawText || capture.kind !== "image") && (
+            <div className="text-[13px] whitespace-pre-wrap break-words">
+              {capture.url ? (
+                <a href={capture.url} target="_blank" rel="noreferrer" className="text-primary underline">
+                  {capture.url}
+                </a>
+              ) : (
+                capture.rawText || "(file)"
+              )}
+            </div>
+          )}
           {capture.storageKey && capture.kind === "image" && (
             <div className="mt-2 flex items-start gap-3">
               <button title="Click to view full size" className="cursor-zoom-in" onClick={() => onZoom(capture.storageKey!)}>
@@ -621,12 +632,12 @@ export default function InboxPage() {
       {done.length > 0 && (
         <>
           <h2 className="micro-label text-muted-foreground mt-8 mb-2">Processed</h2>
-          <div className="rounded-lg border border-border bg-white divide-y divide-border">
-            {done.slice(0, 20).map((c) => (
-              <div key={c.id} className="flex items-center gap-3 px-4 py-2.5 text-[13px] text-muted-foreground">
+          <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+            {done.slice(0, 24).map((c) => (
+              <div key={c.id} className="rounded-lg border border-border bg-white p-1.5">
                 {c.kind === "image" && c.storageKey ? (
                   <button
-                    className="cursor-zoom-in shrink-0"
+                    className="cursor-zoom-in block w-full"
                     title="Click to view full size"
                     onClick={() => setLightboxKey(c.storageKey)}
                   >
@@ -635,10 +646,11 @@ export default function InboxPage() {
                 ) : (
                   <ProcessedThumb storageKey={c.storageKey} kind={c.kind} />
                 )}
-                <span className="flex-1 truncate">{c.rawText ?? c.url ?? "(file)"}</span>
-                <span className="micro-label">{c.status}</span>
-                <span className="font-data text-[11px]">{timeAgo(c.createdAt)}</span>
-                {c.kind === "image" && c.storageKey && <PinCaptureButton captureId={c.id} />}
+                <div className="mt-1 flex items-center justify-between gap-1 text-muted-foreground">
+                  <span className="micro-label truncate">{c.status}</span>
+                  <span className="font-data text-[10px] shrink-0">{timeAgo(c.createdAt)}</span>
+                </div>
+                {c.kind === "image" && c.storageKey && <PinCaptureButton captureId={c.id} className="w-full mt-1" />}
               </div>
             ))}
           </div>
