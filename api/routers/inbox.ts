@@ -6,6 +6,7 @@ import { getDb } from "../queries/connection";
 import { captures, areas, items, attachments, type TriageSuggestion } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
+import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { putFile, readFileBytes } from "../lib/filestore";
 import { cropPercent, toThumbnail } from "../lib/crop";
@@ -108,6 +109,30 @@ async function runTriage(model: Awaited<ReturnType<typeof getModel>>, content: T
   return toSuggestion(object);
 }
 
+const TRIAGE_JSON_SHAPE = `{
+  "areaSlug": string,
+  "itemName": string,
+  "matchedItemId": number or null,
+  "isNewItem": boolean,
+  "attributes": { "key": "value", ... },
+  "note": string,
+  "confidence": "high" | "medium" | "low"
+}`;
+
+/** Dev-mode: same triage prompt, routed through `claude -p` instead of the
+ * configured API provider - see claudeCli.ts for why/how. */
+async function runTriageViaClaudeCli(content: TriageContent) {
+  const textPrompt = content.find((p) => p.type === "text")?.text ?? "";
+  const imagePart = content.find((p) => p.type === "image") as { type: "image"; image: Uint8Array } | undefined;
+  const object = await claudeCliObject({
+    textPrompt,
+    imageBytes: imagePart?.image,
+    schema: triageSchema,
+    jsonShape: TRIAGE_JSON_SHAPE,
+  });
+  return toSuggestion(object);
+}
+
 type TriageContent = Awaited<ReturnType<typeof buildTriageContent>>;
 
 /** pull the provider's own error message out of an AI SDK error (best effort) */
@@ -165,16 +190,17 @@ export const inboxRouter = createRouter({
     if (!cap) throw new Error("capture not found");
 
     try {
-      const model = await getModel();
       const content = await buildTriageContent(cap);
-      const suggestion = await runTriage(model, content);
+      const suggestion = isClaudeCliDevMode()
+        ? await runTriageViaClaudeCli(content)
+        : await runTriage(await getModel(), content);
 
       await db.update(captures).set({ suggestion }).where(eq(captures.id, input.id));
       await logEvent({
         entityType: "capture",
         entityId: input.id,
         action: "triaged",
-        summary: `AI triage: "${suggestion.itemName}" → ${suggestion.areaSlug} (${suggestion.confidence} confidence)`,
+        summary: `AI triage${isClaudeCliDevMode() ? " (claude -p dev mode)" : ""}: "${suggestion.itemName}" → ${suggestion.areaSlug} (${suggestion.confidence} confidence)`,
         actor: "ai",
         payload: suggestion as Record<string, unknown>,
       });
@@ -294,24 +320,38 @@ export const inboxRouter = createRouter({
         }
       }
 
-      const model = await getVisionModel();
-      const { object } = await generateObject({
-        model,
-        schema: detectObjectsSchema,
-        messages: [
-          {
-            role: "user",
-            content: [
-              ...refContent,
-              {
-                type: "text",
-                text: `Identify the distinct physical objects worth inventorying in the PHOTO BELOW (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. For each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height. Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — a name-only guess is not enough, only match if you actually recognize it visually.\n\n" : ""}The user's full existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}\n\nPHOTO TO ANALYZE:`,
-              },
-              { type: "image", image: bytes },
-            ],
-          },
-        ],
-      });
+      const detectPrompt = `Identify the distinct physical objects worth inventorying in the PHOTO (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. For each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height. Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\nThe user's full existing inventory, for name-based matching only - set matchedItemId when an object is clearly the same item by name, otherwise null:\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`;
+
+      const object = isClaudeCliDevMode()
+        ? await claudeCliObject({
+            // dev mode keeps it to the main photo only (no reference photos -
+            // the CLI helper takes a single image), so visual re-matching
+            // against existing item photos doesn't apply here, name-based
+            // matching still does
+            textPrompt: detectPrompt,
+            imageBytes: bytes,
+            schema: detectObjectsSchema,
+            jsonShape: `{ "objects": [ { "label": string, "xPct": number, "yPct": number, "wPct": number, "hPct": number, "matchedItemId": number or null }, ... ] }`,
+          })
+        : (
+            await generateObject({
+              model: await getVisionModel(),
+              schema: detectObjectsSchema,
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    ...refContent,
+                    {
+                      type: "text",
+                      text: `${detectPrompt}${refContent.length ? "\n\nSome existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — a name-only guess is not enough, only match if you actually recognize it visually." : ""}\n\nPHOTO TO ANALYZE:`,
+                    },
+                    { type: "image", image: bytes },
+                  ],
+                },
+              ],
+            })
+          ).object;
       const itemById = new Map(allItems.map((it) => [it.id, it]));
       const suggestions = object.objects.slice(0, 15).map((o) => {
         // trust the model's own visual match (it saw the reference photo) over
@@ -341,7 +381,7 @@ export const inboxRouter = createRouter({
         entityType: "capture",
         entityId: input.id,
         action: "objects-detected",
-        summary: `AI detected ${suggestions.length} object(s) in inbox capture #${input.id}`,
+        summary: `AI detected${isClaudeCliDevMode() ? " (claude -p dev mode)" : ""} ${suggestions.length} object(s) in inbox capture #${input.id}`,
         actor: "ai",
         payload: { count: suggestions.length },
       });
