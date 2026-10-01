@@ -2,7 +2,7 @@ import { z } from "zod";
 import { eq, asc, isNotNull, and } from "drizzle-orm";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { houses, items } from "@db/schema";
+import { houses, items, attachments } from "@db/schema";
 import { logEvent } from "../lib/events";
 
 export const housesRouter = createRouter({
@@ -105,6 +105,42 @@ export const housesRouter = createRouter({
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
       await getDb().update(houses).set(patch).where(eq(houses.id, id));
       return { ok: true };
+    }),
+
+  /** What moving everything out of a house would touch - shown before the
+   * actual move, so the impact (how many items/photos) is visible up front
+   * rather than discovered after the fact. */
+  impact: publicQuery.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    const db = getDb();
+    const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.houseId, input.id));
+    const photoRows = await db.select({ id: attachments.id }).from(attachments).where(eq(attachments.houseId, input.id));
+    return { itemCount: itemRows.length, photoCount: photoRows.length };
+  }),
+
+  /** Move every item and location-linked photo from one house to another -
+   * the "replace a building" flow: re-point everything at the new address,
+   * then the old (now-empty) house can be deleted with nothing lost. Floor/
+   * room text is left as-is; it's freeform, so it still displays fine even
+   * if the target house has a different floor list. */
+  reassign: publicQuery
+    .input(z.object({ fromId: z.number(), toId: z.number() }))
+    .mutation(async ({ input }) => {
+      if (input.fromId === input.toId) throw new Error("Pick a different house to move into");
+      const db = getDb();
+      const fromHouse = await db.query.houses.findFirst({ where: eq(houses.id, input.fromId) });
+      const toHouse = await db.query.houses.findFirst({ where: eq(houses.id, input.toId) });
+      if (!fromHouse || !toHouse) throw new Error("House not found");
+      const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.houseId, input.fromId));
+      const photoRows = await db.select({ id: attachments.id }).from(attachments).where(eq(attachments.houseId, input.fromId));
+      await db.update(items).set({ houseId: input.toId }).where(eq(items.houseId, input.fromId));
+      await db.update(attachments).set({ houseId: input.toId }).where(eq(attachments.houseId, input.fromId));
+      await logEvent({
+        entityType: "house",
+        entityId: input.toId,
+        action: "merged",
+        summary: `Moved ${itemRows.length} item(s) and ${photoRows.length} photo(s) from "${fromHouse.name}" to "${toHouse.name}"`,
+      });
+      return { itemCount: itemRows.length, photoCount: photoRows.length };
     }),
 
   remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {

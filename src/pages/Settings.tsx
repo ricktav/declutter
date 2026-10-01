@@ -4,8 +4,31 @@ import { Button } from "@/components/ui/button";
 import { DEFAULT_FLOORS } from "@/components/RoomPicker";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { FloorsEditor } from "@/components/FloorsEditor";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { fetchParcelInfo, kadastraleKaartUrl } from "@/lib/pdok";
-import { Plug, CheckCircle2, XCircle, Loader2, Trash2, Columns2, MessageSquare, Home, Plus, Pencil, Check, X } from "lucide-react";
+import {
+  Plug,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Trash2,
+  Columns2,
+  MessageSquare,
+  Home,
+  Plus,
+  Pencil,
+  Check,
+  X,
+  ArrowRightLeft,
+  AlertTriangle,
+} from "lucide-react";
 
 const PRESETS = [
   { label: "xAI Grok", baseUrl: "https://api.x.ai/v1" },
@@ -499,7 +522,129 @@ type HouseRowData = {
   parcelAreaM2?: number | null;
 };
 
-function HouseRow({ house }: { house: HouseRowData }) {
+/** Move every item and location photo from one house to another in one go -
+ * the "replace a building" flow: see the full impact before anything
+ * moves, then confirm twice (once to load the preview, once to actually
+ * commit) since this touches potentially dozens of items at once. */
+function MoveHouseDialog({
+  house,
+  allHouses,
+}: {
+  house: HouseRowData;
+  allHouses: { id: number; name: string }[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [targetId, setTargetId] = useState<number | "">("");
+  const [acknowledged, setAcknowledged] = useState(false);
+  const utils = trpc.useUtils();
+
+  const impact = trpc.houses.impact.useQuery({ id: house.id }, { enabled: open && targetId !== "" });
+  const reassign = trpc.houses.reassign.useMutation({
+    onSuccess: () => {
+      utils.houses.list.invalidate();
+      utils.items.listAll.invalidate();
+      setOpen(false);
+      setTargetId("");
+      setAcknowledged(false);
+    },
+  });
+
+  const otherHouses = allHouses.filter((h) => h.id !== house.id);
+  const target = otherHouses.find((h) => h.id === targetId);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) {
+          setTargetId("");
+          setAcknowledged(false);
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <button className="text-muted-foreground hover:text-primary mt-0.5" title="Move everything to another house">
+          <ArrowRightLeft className="h-3.5 w-3.5" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Move "{house.name}" into another house</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <label className="block">
+            <span className="micro-label text-muted-foreground">Move everything into</span>
+            <select
+              className="mt-0.5 w-full rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
+              value={targetId}
+              onChange={(e) => {
+                setTargetId(e.target.value ? Number(e.target.value) : "");
+                setAcknowledged(false);
+              }}
+            >
+              <option value="">Pick a house…</option>
+              {otherHouses.map((h) => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
+            </select>
+          </label>
+
+          {targetId !== "" && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2">
+              {impact.isLoading ? (
+                <div className="flex items-center gap-1.5 text-[12px] text-amber-900">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking impact…
+                </div>
+              ) : impact.data ? (
+                <>
+                  <div className="flex items-start gap-1.5 text-[13px] text-amber-900">
+                    <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                    <span>
+                      This moves <b>{impact.data.itemCount} item{impact.data.itemCount === 1 ? "" : "s"}</b> and{" "}
+                      <b>{impact.data.photoCount} photo{impact.data.photoCount === 1 ? "" : "s"}</b> from{" "}
+                      <b>{house.name}</b> to <b>{target?.name}</b>. Floor/room stay as-is.
+                    </span>
+                  </div>
+                  <label className="flex items-start gap-1.5 text-[12px] text-amber-900 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={acknowledged}
+                      onChange={(e) => setAcknowledged(e.target.checked)}
+                    />
+                    I understand — {house.name} will then have nothing left in it, and can be deleted.
+                  </label>
+                </>
+              ) : null}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 text-[12px]"
+              disabled={targetId === "" || !acknowledged || !impact.data || reassign.isPending}
+              onClick={() => targetId !== "" && reassign.mutate({ fromId: house.id, toId: targetId })}
+            >
+              {reassign.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              ) : (
+                <ArrowRightLeft className="h-3.5 w-3.5 mr-1" />
+              )}
+              Move {impact.data ? `${impact.data.itemCount + impact.data.photoCount} ` : ""}items
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function HouseRow({ house, allHouses }: { house: HouseRowData; allHouses: { id: number; name: string }[] }) {
   const utils = trpc.useUtils();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(house.name);
@@ -511,6 +656,7 @@ function HouseRow({ house }: { house: HouseRowData }) {
     house.parcelId ? { parcelId: house.parcelId, parcelAreaM2: house.parcelAreaM2 ?? null } : null,
   );
   const [floors, setFloors] = useState<string[] | null>(house.floors);
+  const otherHousesCount = allHouses.filter((h) => h.id !== house.id).length;
 
   const update = trpc.houses.update.useMutation({
     onSuccess: () => {
@@ -633,13 +779,23 @@ function HouseRow({ house }: { house: HouseRowData }) {
       >
         <Pencil className="h-3.5 w-3.5" />
       </button>
-      <button
-        className="text-muted-foreground hover:text-destructive mt-0.5"
-        title="Delete house (items are unassigned, not deleted)"
-        onClick={() => remove.mutate({ id: house.id })}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </button>
+      {otherHousesCount > 0 && <MoveHouseDialog house={house} allHouses={allHouses} />}
+      <ConfirmDelete
+        trigger={
+          <button className="text-muted-foreground hover:text-destructive mt-0.5" title="Delete house">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        }
+        title={`Delete "${house.name}"?`}
+        description={
+          house.itemCount > 0
+            ? `${house.itemCount} item${house.itemCount === 1 ? "" : "s"} will be unassigned from any house (not deleted) - move them to another house first if you'd rather keep that link.`
+            : "This house has no items. The house record itself will be removed."
+        }
+        confirmLabel="Delete house"
+        pending={remove.isPending}
+        onConfirm={() => remove.mutate({ id: house.id })}
+      />
     </div>
   );
 }
@@ -661,7 +817,7 @@ function HousesSection() {
   return (
     <>
       {(houses.data ?? []).map((h) => (
-        <HouseRow key={h.id} house={h} />
+        <HouseRow key={h.id} house={h} allHouses={houses.data ?? []} />
       ))}
       <div className="grid sm:grid-cols-2 gap-2">
         <input
