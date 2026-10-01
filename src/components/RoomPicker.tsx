@@ -89,7 +89,7 @@ export function RoomPicker({
       )}
       <div className="relative">
         <input
-          className="w-full rounded border border-input bg-white px-1.5 py-1 text-[11px]"
+          className="w-full rounded border border-input bg-white px-1.5 py-1 pr-5 text-[11px]"
           placeholder="room…"
           value={roomText}
           onFocus={() => setOpen(true)}
@@ -99,9 +99,24 @@ export function RoomPicker({
             setOpen(true);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Escape") setOpen(false);
+            if (e.key === "Enter") {
+              const t = roomText.trim();
+              if (t) {
+                setRoomText(t);
+                onChange({ ...value, room: t });
+              }
+              setOpen(false);
+            } else if (e.key === "Escape") {
+              setOpen(false);
+            }
           }}
         />
+        {/* persistent confirmation that a room is actually set, once the
+            dropdown isn't covering it up - typing alone gives no feedback
+            that anything "took" */}
+        {!open && roomText.trim() && (
+          <Check className="absolute right-1 top-1/2 -translate-y-1/2 h-3 w-3 text-emerald-600" />
+        )}
         {open && suggestions.length > 0 && (
           <div className="absolute z-20 mt-1 w-full rounded-md border border-border bg-white shadow-lg max-h-40 overflow-auto">
             {suggestions.map((r) => (
@@ -109,7 +124,8 @@ export function RoomPicker({
                 key={r}
                 type="button"
                 className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12px] hover:bg-accent"
-                onClick={() => {
+                onMouseDown={(e) => {
+                  e.preventDefault();
                   setRoomText(r);
                   onChange({ ...value, room: r });
                   setOpen(false);
@@ -122,9 +138,19 @@ export function RoomPicker({
           </div>
         )}
         {open && roomText.trim() && !suggestions.includes(roomText.trim()) && (
-          <div className="absolute z-20 mt-1 w-full flex items-center gap-1.5 rounded-md border border-primary bg-primary/5 px-2 py-1 text-[11px] text-primary">
-            <Plus className="h-3 w-3" /> new room “{roomText.trim()}”
-          </div>
+          <button
+            type="button"
+            className="absolute z-20 mt-1 w-full flex items-center gap-1.5 rounded-md border border-primary bg-primary/5 px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const t = roomText.trim();
+              setRoomText(t);
+              onChange({ ...value, room: t });
+              setOpen(false);
+            }}
+          >
+            <Plus className="h-3 w-3" /> create room “{roomText.trim()}” (Enter)
+          </button>
         )}
       </div>
     </div>

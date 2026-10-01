@@ -9,6 +9,7 @@ import { toThumbnail, cropPercent } from "../lib/crop";
 import { getVisionModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
+import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 
 function nameScore(a: string, b: string): number {
   const tok = (s: string) =>
@@ -337,26 +338,39 @@ export const annotationsRouter = createRouter({
           .from(items)
           .where(eq(items.status, "active"))
           .orderBy(desc(items.updatedAt));
-        const refContent = await buildReferenceContent(db, allItems, 10);
 
-        const model = await getVisionModel();
-        const { object } = await generateObject({
-          model,
-          schema: suggestSchema,
-          messages: [
-            {
-              role: "user",
-              content: [
-                ...refContent,
-                {
-                  type: "text",
-                  text: `Name the single object in the PHOTO BELOW (a hand-picked crop, already framed on it — describe what's in it, not the background around it).\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If this is the SAME PHYSICAL OBJECT as one of those, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}The user's full existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}\n\nPHOTO TO ANALYZE:`,
-                },
-                { type: "image", image: cropped },
-              ],
-            },
-          ],
-        });
+        const itemListText = `The user's full existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`;
+        const devMode = isClaudeCliDevMode();
+        // dev mode skips reference photos - the CLI helper takes one image -
+        // so visual re-matching doesn't apply there, name-based matching still does
+        const refContent = devMode ? [] : await buildReferenceContent(db, allItems, 10);
+
+        const object = devMode
+          ? await claudeCliObject({
+              textPrompt: `Name the single object in the PHOTO (a hand-picked crop, already framed on it - describe what's in it, not the background around it).\n\n${itemListText}`,
+              imageBytes: cropped,
+              schema: suggestSchema,
+              jsonShape: `{ "label": string, "matchedItemId": number or null }`,
+            })
+          : (
+              await generateObject({
+                model: await getVisionModel(),
+                schema: suggestSchema,
+                messages: [
+                  {
+                    role: "user",
+                    content: [
+                      ...refContent,
+                      {
+                        type: "text",
+                        text: `Name the single object in the PHOTO BELOW (a hand-picked crop, already framed on it — describe what's in it, not the background around it).\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If this is the SAME PHYSICAL OBJECT as one of those, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}${itemListText}\n\nPHOTO TO ANALYZE:`,
+                      },
+                      { type: "image", image: cropped },
+                    ],
+                  },
+                ],
+              })
+            ).object;
 
         const itemById = new Map(allItems.map((it) => [it.id, it]));
         let itemId: number | null =
