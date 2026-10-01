@@ -48,7 +48,8 @@ export default function RoomPlanPage() {
         <>
           <h1 className="text-2xl font-semibold tracking-tight mt-2">{room.data.name}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {room.data.widthM}×{room.data.depthM} m · wall height {room.data.wallHeightM} m · source: {room.data.source}
+            {room.data.widthM}×{room.data.depthM} m
+            {room.data.wallHeightM != null ? ` · wall height ${room.data.wallHeightM} m` : ""} · source: {room.data.source}
             {room.data.scanDate ? ` · scanned ${new Date(room.data.scanDate).toLocaleDateString()}` : ""}
           </p>
 

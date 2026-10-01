@@ -182,15 +182,17 @@ export function RoomPlan2D({
 
       <rect x={PAD} y={PAD} width={widthM * S} height={depthM * S} className="fill-muted/20 stroke-border" strokeWidth={1} />
 
-      {(walls ?? []).map((wall, i) => (
-        <polyline
-          key={i}
-          points={wall.points.map(([x, y]) => `${px(x)},${py(y)}`).join(" ")}
-          className="stroke-foreground/60"
-          strokeWidth={3}
-          fill="none"
-        />
-      ))}
+      {(walls ?? []).map((wall, i) => {
+        const kind = wall.kind ?? "wall";
+        const points = wall.points.map(([x, y]) => `${px(x)},${py(y)}`).join(" ");
+        if (kind === "door") {
+          return <polyline key={i} points={points} stroke="#d9a13b" strokeWidth={2} strokeDasharray="6 4" fill="none" />;
+        }
+        if (kind === "window") {
+          return <polyline key={i} points={points} stroke="#4da3ff" strokeWidth={3} fill="none" />;
+        }
+        return <polyline key={i} points={points} className="stroke-foreground/60" strokeWidth={3} fill="none" />;
+      })}
 
       {(openings ?? []).map((o, i) => {
         const { x1, y1, x2, y2 } = openingLine(o);

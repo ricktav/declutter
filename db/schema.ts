@@ -123,7 +123,11 @@ export const rooms = mysqlTable(
 );
 
 export interface RoomGeometry {
-  walls: Array<{ points: [number, number][] }>;
+  // kind defaults to "wall" when absent (the original single-room seed data
+  // predates this field) - door/window segments can land anywhere on a real
+  // multi-room floor plan, which the edge-based `openings` below can't
+  // express, so they're carried as kinded wall segments instead.
+  walls: Array<{ points: [number, number][]; kind?: "wall" | "door" | "window" }>;
   openings: Array<{ edge: string; offsetM: number; widthM: number; connectsTo?: number }>;
 }
 
