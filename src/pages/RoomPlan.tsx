@@ -1,5 +1,6 @@
 import { useParams, Link } from "react-router";
 import { trpc } from "@/providers/trpc";
+import { RoomPlan2D } from "@/components/RoomPlan2D";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
 /**
@@ -33,9 +34,20 @@ export default function RoomPlanPage() {
             {room.data.scanDate ? ` · scanned ${new Date(room.data.scanDate).toLocaleDateString()}` : ""}
           </p>
 
-          <div className="mt-6 rounded-lg border border-dashed border-border px-4 py-16 text-center text-[13px] text-muted-foreground">
-            2D plan renders here next — {room.data.items.length} item{room.data.items.length === 1 ? "" : "s"} placed so far.
+          <div className="mt-6 max-w-2xl">
+            <RoomPlan2D
+              widthM={room.data.widthM ?? 0}
+              depthM={room.data.depthM ?? 0}
+              walls={room.data.walls}
+              openings={room.data.openings}
+              items={room.data.items.map((it) => ({ id: it.id, name: it.name, pos: it.pos }))}
+            />
           </div>
+          {room.data.items.filter((it) => !it.pos).length > 0 && (
+            <p className="mt-3 text-[12px] text-muted-foreground">
+              Unplaced: {room.data.items.filter((it) => !it.pos).map((it) => it.name).join(", ")}
+            </p>
+          )}
         </>
       )}
     </div>
