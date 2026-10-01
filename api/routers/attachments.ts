@@ -254,13 +254,19 @@ export const attachmentsRouter = createRouter({
    * attributes. */
   listAllImages: publicQuery.query(async () => {
     const db = getDb();
-    // an item's own photo, or a photo whose location was confirmed before
-    // any item existed yet (Inbox's pending-item "Pin" flow) - either way
-    // it belongs in the catalog, grouped by whatever location it has
+    // every image attachment, whatever state it's in: an item's own photo, a
+    // photo whose location was confirmed before any item existed (Inbox's
+    // pending-item "Pin" flow), or a bare one materialized just to make a
+    // capture pinnable (Map/Photos' "pin objects on this photo") that has
+    // neither an item nor a location yet. Filtering on itemId/room here used
+    // to silently drop that last case the moment it was created - it has an
+    // attachment now, so the raw-capture branch below stops surfacing it,
+    // but this filter also refused to show it as an attachment, so the
+    // photo just vanished from the catalog.
     const atts = await db
       .select()
       .from(attachments)
-      .where(and(eq(attachments.kind, "image"), or(isNotNull(attachments.itemId), isNotNull(attachments.room))))
+      .where(eq(attachments.kind, "image"))
       .orderBy(desc(attachments.createdAt));
     const itemIds = [...new Set(atts.map((a) => a.itemId).filter((id): id is number => id != null))];
     const allItems = itemIds.length
