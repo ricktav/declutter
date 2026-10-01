@@ -12,6 +12,8 @@ import WikiPage from "@/pages/Wiki";
 import ActivityPage from "@/pages/Activity";
 import AnnotatePage from "@/pages/Annotate";
 import MapPage from "@/pages/Map";
+import RoomsPage from "@/pages/Rooms";
+import RoomPlanPage from "@/pages/RoomPlan";
 import PhotosPage from "@/pages/Photos";
 import SettingsPage from "@/pages/Settings";
 import SessieOverzicht from "@/pages/SessieOverzicht";
@@ -30,6 +32,8 @@ export default function App() {
           <Route path="/photos" element={<PhotosPage />} />
           <Route path="/annotate/:attachmentId" element={<AnnotatePage />} />
           <Route path="/map" element={<MapPage />} />
+          <Route path="/rooms" element={<RoomsPage />} />
+          <Route path="/rooms/:roomId" element={<RoomPlanPage />} />
           <Route path="/ideas" element={<IdeasPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/wiki" element={<WikiPage />} />

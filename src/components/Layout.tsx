@@ -134,6 +134,7 @@ const NAV = [
   { to: "/items", label: "All Items", icon: Search },
   { to: "/photos", label: "Photos", icon: Images },
   { to: "/map", label: "Map", icon: MapPin },
+  { to: "/rooms", label: "Rooms", icon: Box },
   { to: "/ideas", label: "Ideas", icon: Lightbulb },
   { to: "/tasks", label: "Tasks", icon: ListChecks },
   { to: "/wiki", label: "Wiki", icon: BookOpen },
