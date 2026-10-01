@@ -163,14 +163,14 @@ export default function PhotosPage() {
         </div>
         <label
           className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
-          title="Toggle off to hide item cutout photos, showing only location photos and raw inbox captures"
+          title="Toggle off to hide photos already pinned to an item, showing only location photos and raw inbox captures"
         >
           <input
             type="checkbox"
             checked={showObjects}
             onChange={(e) => setShowObjects(e.target.checked)}
           />
-          Objects
+          Items
         </label>
       </div>
 
