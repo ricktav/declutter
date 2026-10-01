@@ -12,7 +12,9 @@ import {
 } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
 import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
-import { ArrowRight, Inbox, Lightbulb, ListChecks, MapPin, Package, Plus } from "lucide-react";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
+import { aerialThumbUrl, fetchParcelInfo, kadastraleKaartUrl, reverseGeocode, type AddressSuggestion, type ParcelInfo } from "@/lib/pdok";
+import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Pencil, Plus } from "lucide-react";
 import {
   Laptop,
   Wrench,
@@ -168,15 +170,112 @@ function AddAreaDialog() {
   );
 }
 
+interface ResolvedAddress {
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  bagId: string | null;
+  parcel: ParcelInfo | null;
+}
+
+/** Address field shared by the new-house and edit-house dialogs: PDOK
+ * autocomplete, plus a "use my location" button that reverse-geocodes the
+ * browser's geolocation to the nearest Dutch address. */
+function AddressWithParcelPicker({
+  value,
+  onResolve,
+}: {
+  value: ResolvedAddress;
+  onResolve: (next: ResolvedAddress) => void;
+}) {
+  const [lookingUpParcel, setLookingUpParcel] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [locateError, setLocateError] = useState<string | null>(null);
+
+  const resolveFrom = async (s: AddressSuggestion) => {
+    onResolve({ address: s.label, lat: s.lat, lng: s.lng, bagId: s.bagId, parcel: null });
+    setLookingUpParcel(true);
+    const info = await fetchParcelInfo(s).catch(() => null);
+    setLookingUpParcel(false);
+    onResolve({ address: s.label, lat: s.lat, lng: s.lng, bagId: s.bagId, parcel: info });
+  };
+
+  const useMyLocation = () => {
+    setLocateError(null);
+    if (!navigator.geolocation) {
+      setLocateError("Geolocation not available in this browser");
+      return;
+    }
+    if (!window.isSecureContext) {
+      setLocateError("Browser location needs HTTPS (or localhost) - not available over plain http:// on the LAN");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const hit = await reverseGeocode(pos.coords.latitude, pos.coords.longitude).catch(() => null);
+        setLocating(false);
+        if (!hit) {
+          setLocateError("Couldn't match that location to an address");
+          return;
+        }
+        await resolveFrom(hit);
+      },
+      () => {
+        setLocating(false);
+        setLocateError("Location permission denied");
+      },
+      { timeout: 10_000 },
+    );
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <div className="flex-1">
+          <AddressAutocomplete
+            value={value.address}
+            onChange={(v) => onResolve({ address: v, lat: null, lng: null, bagId: null, parcel: null })}
+            onSelect={resolveFrom}
+          />
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 text-[12px] shrink-0"
+          disabled={locating}
+          onClick={useMyLocation}
+          title="Use my current location"
+        >
+          {locating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LocateFixed className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+      {lookingUpParcel && <p className="text-[11px] text-muted-foreground mt-1">Looking up parcel…</p>}
+      {locateError && <p className="text-[11px] text-destructive mt-1">{locateError}</p>}
+      {value.lat != null && !lookingUpParcel && (
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Matched · {value.lat.toFixed(5)}, {value.lng!.toFixed(5)}
+          {value.parcel ? ` · ${value.parcel.parcelId}` : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const EMPTY_ADDRESS: ResolvedAddress = { address: "", lat: null, lng: null, bagId: null, parcel: null };
+
 function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [addr, setAddr] = useState<ResolvedAddress>(EMPTY_ADDRESS);
   const utils = trpc.useUtils();
   const create = trpc.houses.create.useMutation({
     onSuccess: (house) => {
       utils.houses.list.invalidate();
       setOpen(false);
       setName("");
+      setAddr(EMPTY_ADDRESS);
       if (house) onCreated(house.id);
     },
   });
@@ -193,22 +292,147 @@ function AddHouseDialog({ onCreated }: { onCreated: (id: number) => void }) {
           <DialogTitle>New house</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <input
-            className="w-full rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
-            placeholder="e.g. Home, Office"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-          />
-          <p className="text-[12px] text-muted-foreground">Add an address or customize floors later, in Settings → Houses.</p>
+          <label className="block">
+            <span className="micro-label text-muted-foreground">Name</span>
+            <input
+              className="mt-0.5 w-full rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
+              placeholder="e.g. Home, Office"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
+          </label>
+          <label className="block">
+            <span className="micro-label text-muted-foreground">Address (optional)</span>
+            <div className="mt-0.5">
+              <AddressWithParcelPicker
+                value={addr}
+                onResolve={(next) => {
+                  setAddr(next);
+                  if (!name.trim() && next.address) setName(next.address.split(",")[0] ?? next.address);
+                }}
+              />
+            </div>
+          </label>
           <div className="flex justify-end">
             <Button
               size="sm"
               className="h-8 text-[12px]"
               disabled={!name.trim() || create.isPending}
-              onClick={() => create.mutate({ name: name.trim() })}
+              onClick={() =>
+                create.mutate({
+                  name: name.trim(),
+                  address: addr.address.trim() || undefined,
+                  lat: addr.lat ?? undefined,
+                  lng: addr.lng ?? undefined,
+                  bagId: addr.bagId ?? undefined,
+                  parcelId: addr.parcel?.parcelId || undefined,
+                  parcelAreaM2: addr.parcel?.parcelAreaM2 ?? undefined,
+                })
+              }
             >
               {create.isPending ? "Creating…" : "Create house"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Edit an existing house's name/address/parcel from the Dashboard - the
+ * same fields Settings → Houses offers, surfaced where you're already
+ * looking (the "Working in" bar) so switching house and fixing it up don't
+ * require two different screens. */
+interface EditableHouse {
+  id: number;
+  name: string;
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
+  bagId?: string | null;
+  parcelId?: string | null;
+  parcelAreaM2?: number | null;
+}
+
+function houseToResolvedAddress(h: EditableHouse): ResolvedAddress {
+  return {
+    address: h.address ?? "",
+    lat: h.lat,
+    lng: h.lng,
+    bagId: h.bagId ?? null,
+    parcel: h.parcelId ? { parcelId: h.parcelId, parcelAreaM2: h.parcelAreaM2 ?? null } : null,
+  };
+}
+
+function EditHouseDialog({ house }: { house: EditableHouse }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(house.name);
+  const [addr, setAddr] = useState<ResolvedAddress>(() => houseToResolvedAddress(house));
+  const utils = trpc.useUtils();
+  const update = trpc.houses.update.useMutation({
+    onSuccess: () => {
+      utils.houses.list.invalidate();
+      setOpen(false);
+    },
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (v) {
+          setName(house.name);
+          setAddr(houseToResolvedAddress(house));
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <button className="text-muted-foreground hover:text-primary" title="Edit house">
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit house</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <label className="block">
+            <span className="micro-label text-muted-foreground">Name</span>
+            <input
+              className="mt-0.5 w-full rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
+          </label>
+          <label className="block">
+            <span className="micro-label text-muted-foreground">Address</span>
+            <div className="mt-0.5">
+              <AddressWithParcelPicker value={addr} onResolve={setAddr} />
+            </div>
+          </label>
+          <p className="text-[11px] text-muted-foreground">Floors and notes can be edited in Settings → Houses.</p>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              className="h-8 text-[12px]"
+              disabled={!name.trim() || update.isPending}
+              onClick={() =>
+                update.mutate({
+                  id: house.id,
+                  name: name.trim(),
+                  address: addr.address.trim() || null,
+                  lat: addr.lat,
+                  lng: addr.lng,
+                  bagId: addr.bagId,
+                  parcelId: addr.parcel?.parcelId ?? undefined,
+                  parcelAreaM2: addr.parcel?.parcelAreaM2 ?? undefined,
+                })
+              }
+            >
+              {update.isPending ? "Saving…" : "Save"}
             </Button>
           </div>
         </div>
@@ -240,7 +464,15 @@ function HouseSection() {
 
   return (
     <div className="rounded-lg border border-border bg-white px-4 py-3 flex items-center gap-3 flex-wrap">
-      <Home className="h-4 w-4 text-muted-foreground shrink-0" />
+      {current?.lat != null && current.lng != null ? (
+        <img
+          src={aerialThumbUrl(current.lat, current.lng)}
+          alt=""
+          className="h-9 w-9 rounded-md object-cover border border-border shrink-0"
+        />
+      ) : (
+        <Home className="h-4 w-4 text-muted-foreground shrink-0" />
+      )}
       <span className="micro-label text-muted-foreground shrink-0">Working in</span>
       <select
         className="rounded-md border border-input bg-white px-2 py-1.5 text-[13px] min-w-[10rem]"
@@ -258,8 +490,21 @@ function HouseSection() {
         <span className="font-data text-[12px] text-muted-foreground">
           {current.itemCount} item{current.itemCount === 1 ? "" : "s"}
           {current.address ? ` · ${current.address}` : ""}
+          {current.parcelAreaM2 != null ? ` · ${current.parcelAreaM2}m²` : ""}
         </span>
       )}
+      {current?.address && (
+        <a
+          href={kadastraleKaartUrl(current.address)}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[12px] text-primary hover:underline flex items-center gap-1"
+          title="View parcel on kadastrale-kaart"
+        >
+          Parcel <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
+      {current && <EditHouseDialog house={current} />}
       <div className="ml-auto">
         <AddHouseDialog onCreated={(id) => selectHouse(id)} />
       </div>

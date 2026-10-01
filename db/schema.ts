@@ -47,6 +47,12 @@ export const houses = mysqlTable("houses", {
   // this house's own floor labels (ordered) - RoomPicker falls back to a
   // generic default list when a house hasn't customized this
   floors: json("floors").$type<string[] | null>(),
+  // from PDOK BAG/BRK lookup when the address was picked via the PDOK
+  // autocomplete, used to link out to the kadastrale-kaart viewer and show
+  // parcel size
+  bagId: varchar("bagId", { length: 32 }),
+  parcelId: varchar("parcelId", { length: 64 }),
+  parcelAreaM2: double("parcelAreaM2"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 

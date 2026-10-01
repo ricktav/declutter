@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createHash } from "crypto";
-import { eq, desc, isNull, and } from "drizzle-orm";
+import { eq, desc, isNull, and, inArray } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -9,7 +9,7 @@ import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
-import { putFile, readFileBytes } from "../lib/filestore";
+import { putFile, readFileBytes, deleteStoredFile } from "../lib/filestore";
 import { cropPercent, toThumbnail } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 
@@ -565,10 +565,14 @@ export const inboxRouter = createRouter({
     return { ok: true };
   }),
 
-  /** Find byte-identical captures already sitting in the inbox from before
-   * content-hash dedup existed on create - backfills a hash for any image
-   * capture that doesn't have one yet, then groups by hash. */
-  findDuplicates: publicQuery.query(async () => {
+  /** Byte-identical captures sitting in the inbox (dev-phase feature: just
+   * hard-deletes duplicates outright, keeping the oldest, rather than
+   * leaving a "dismissed" row that would still clutter Processed).
+   * Backfills a hash for any image capture that doesn't have one yet
+   * (pre-dates content-hash dedup on create), then merges by hash. Skips
+   * any duplicate that's already been turned into an attachment (pinned),
+   * since deleting that capture would break the pin. */
+  mergeDuplicates: publicQuery.mutation(async () => {
     const db = getDb();
     const unhashed = await db
       .select()
@@ -596,14 +600,43 @@ export const inboxRouter = createRouter({
       if (!byHash.has(c.contentHash)) byHash.set(c.contentHash, []);
       byHash.get(c.contentHash)!.push(c);
     }
-    const groups = [...byHash.values()]
-      .filter((g) => g.length > 1)
-      .map((g) => ({
-        captures: g
-          .map((c) => ({ id: c.id, storageKey: c.storageKey, status: c.status, createdAt: c.createdAt }))
-          // oldest first - that's the one kept by default (it's the original)
-          .sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt)),
-      }));
-    return { groups };
+    const dupeGroups = [...byHash.values()].filter((g) => g.length > 1);
+    if (dupeGroups.length === 0) return { merged: 0, skipped: 0 };
+
+    const allDupeIds = dupeGroups.flatMap((g) => g.map((c) => c.id));
+    const pinned = new Set(
+      (
+        await db
+          .select({ sourceCaptureId: attachments.sourceCaptureId })
+          .from(attachments)
+          .where(inArray(attachments.sourceCaptureId, allDupeIds))
+      )
+        .map((a) => a.sourceCaptureId)
+        .filter((id): id is number => id != null),
+    );
+
+    let merged = 0;
+    let skipped = 0;
+    for (const group of dupeGroups) {
+      const sorted = [...group].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt));
+      const [, ...rest] = sorted; // keep oldest
+      for (const c of rest) {
+        if (pinned.has(c.id)) {
+          skipped++;
+          continue;
+        }
+        if (c.storageKey) await deleteStoredFile(c.storageKey).catch(() => {});
+        await db.delete(captures).where(eq(captures.id, c.id));
+        merged++;
+      }
+    }
+    if (merged > 0) {
+      await logEvent({
+        entityType: "capture",
+        action: "merged",
+        summary: `Merged ${merged} duplicate capture(s)${skipped ? ` (${skipped} skipped - already pinned)` : ""}`,
+      });
+    }
+    return { merged, skipped };
   }),
 });

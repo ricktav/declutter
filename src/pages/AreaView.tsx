@@ -13,6 +13,7 @@ import {
 import { timeAgo } from "@/lib/format";
 import { Plus, Sparkles, Archive, Trash2, Pencil, LayoutGrid, List as ListIcon } from "lucide-react";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
+import { usePersistedState } from "@/hooks/use-persisted-state";
 import { Thumb } from "@/components/Thumb";
 import { useNavigate } from "react-router";
 import type { AttributeDef } from "@db/schema";
@@ -248,7 +249,7 @@ export default function AreaView() {
   const { openAsk } = useAsk();
   const [q, setQ] = useState("");
   const [showArchived, setShowArchived] = useState(false);
-  const [view, setView] = useState<"list" | "gallery">("list");
+  const [view, setView] = usePersistedState<"list" | "gallery">("areaView.view", "list");
   const navigate = useNavigate();
 
   const area = trpc.areas.get.useQuery({ slug: slug! }, { enabled: !!slug });

@@ -49,6 +49,9 @@ export const housesRouter = createRouter({
         lat: z.number().min(-90).max(90).optional(),
         lng: z.number().min(-180).max(180).optional(),
         notes: z.string().optional(),
+        bagId: z.string().optional(),
+        parcelId: z.string().optional(),
+        parcelAreaM2: z.number().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -61,6 +64,9 @@ export const housesRouter = createRouter({
           lat: input.lat ?? null,
           lng: input.lng ?? null,
           notes: input.notes ?? null,
+          bagId: input.bagId ?? null,
+          parcelId: input.parcelId ?? null,
+          parcelAreaM2: input.parcelAreaM2 ?? null,
         })
         .$returningId();
       await logEvent({
@@ -82,6 +88,9 @@ export const housesRouter = createRouter({
         lng: z.number().min(-180).max(180).nullable().optional(),
         notes: z.string().nullable().optional(),
         floors: z.array(z.string()).nullable().optional(),
+        bagId: z.string().nullable().optional(),
+        parcelId: z.string().nullable().optional(),
+        parcelAreaM2: z.number().nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {

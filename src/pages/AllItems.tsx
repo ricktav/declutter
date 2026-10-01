@@ -5,6 +5,7 @@ import { Thumb } from "@/components/Thumb";
 import { timeAgo } from "@/lib/format";
 import { Archive, LayoutGrid, List as ListIcon, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePersistedState } from "@/hooks/use-persisted-state";
 
 type SortBy = "area" | "location" | "updated";
 
@@ -20,8 +21,8 @@ function paramMatches(value: string | null, itemValue: string | number | null): 
 export default function AllItems() {
   const items = trpc.items.listAll.useQuery({ includeArchived: false });
   const [q, setQ] = useState("");
-  const [sortBy, setSortBy] = useState<SortBy>("area");
-  const [view, setView] = useState<"list" | "gallery">("list");
+  const [sortBy, setSortBy] = usePersistedState<SortBy>("allItems.sortBy", "area");
+  const [view, setView] = usePersistedState<"list" | "gallery">("allItems.view", "list");
   const [searchParams, setSearchParams] = useSearchParams();
 
   const locHouseId = searchParams.get("houseId");

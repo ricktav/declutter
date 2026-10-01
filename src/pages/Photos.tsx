@@ -4,6 +4,7 @@ import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { timeAgo } from "@/lib/format";
 import { Search, Loader2 } from "lucide-react";
+import { usePersistedState } from "@/hooks/use-persisted-state";
 
 type SortBy = "location" | "recent" | "area";
 type Photo = {
@@ -87,8 +88,8 @@ function PhotoTile({ photo }: { photo: Photo }) {
 export default function PhotosPage() {
   const photos = trpc.attachments.listAllImages.useQuery();
   const [q, setQ] = useState("");
-  const [sortBy, setSortBy] = useState<SortBy>("location");
-  const [showObjects, setShowObjects] = useState(true);
+  const [sortBy, setSortBy] = usePersistedState<SortBy>("photos.sortBy", "location");
+  const [showObjects, setShowObjects] = usePersistedState("photos.showObjects", true);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();

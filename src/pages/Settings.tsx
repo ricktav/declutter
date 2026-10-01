@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { DEFAULT_FLOORS } from "@/components/RoomPicker";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
+import { fetchParcelInfo, kadastraleKaartUrl } from "@/lib/pdok";
 import { Plug, CheckCircle2, XCircle, Loader2, Trash2, Columns2, MessageSquare, Home, Plus, Pencil, Check, X } from "lucide-react";
 
 const PRESETS = [
@@ -492,6 +494,8 @@ type HouseRowData = {
   lng: number | null;
   floors: string[] | null;
   itemCount: number;
+  parcelId?: string | null;
+  parcelAreaM2?: number | null;
 };
 
 function HouseRow({ house }: { house: HouseRowData }) {
@@ -501,6 +505,10 @@ function HouseRow({ house }: { house: HouseRowData }) {
   const [address, setAddress] = useState(house.address ?? "");
   const [lat, setLat] = useState(house.lat != null ? String(house.lat) : "");
   const [lng, setLng] = useState(house.lng != null ? String(house.lng) : "");
+  const [bagId, setBagId] = useState<string | null>(null);
+  const [parcel, setParcel] = useState<{ parcelId: string; parcelAreaM2: number | null } | null>(
+    house.parcelId ? { parcelId: house.parcelId, parcelAreaM2: house.parcelAreaM2 ?? null } : null,
+  );
   const [floorsText, setFloorsText] = useState((house.floors ?? DEFAULT_FLOORS).join(", "));
 
   const update = trpc.houses.update.useMutation({
@@ -521,11 +529,17 @@ function HouseRow({ house }: { house: HouseRowData }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          <input
-            className="rounded-md border border-input px-2 py-1.5 text-[13px]"
-            placeholder="Address"
+          <AddressAutocomplete
             value={address}
-            onChange={(e) => setAddress(e.target.value)}
+            onChange={setAddress}
+            onSelect={async (s) => {
+              setAddress(s.label);
+              if (s.lat != null) setLat(String(s.lat));
+              if (s.lng != null) setLng(String(s.lng));
+              setBagId(s.bagId);
+              const info = await fetchParcelInfo(s).catch(() => null);
+              setParcel(info);
+            }}
           />
           <input
             className="rounded-md border border-input px-2 py-1.5 text-[13px] font-data"
@@ -568,6 +582,9 @@ function HouseRow({ house }: { house: HouseRowData }) {
                   .split(",")
                   .map((f) => f.trim())
                   .filter(Boolean),
+                bagId: bagId || undefined,
+                parcelId: parcel?.parcelId || undefined,
+                parcelAreaM2: parcel?.parcelAreaM2 ?? undefined,
               })
             }
           >
@@ -595,6 +612,17 @@ function HouseRow({ house }: { house: HouseRowData }) {
             rel="noreferrer"
           >
             {house.lat.toFixed(5)}, {house.lng.toFixed(5)} — map ↗
+          </a>
+        )}
+        {house.parcelId && (
+          <a
+            className="text-[11px] text-primary hover:underline font-data"
+            href={kadastraleKaartUrl(house.address ?? house.parcelId)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {house.parcelId}
+            {house.parcelAreaM2 != null ? ` · ${house.parcelAreaM2}m²` : ""} — parcel ↗
           </a>
         )}
         <div className="font-data text-[11px] text-muted-foreground mt-0.5">
