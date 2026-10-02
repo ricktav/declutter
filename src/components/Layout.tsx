@@ -147,15 +147,16 @@ const NAV = [
 export default function Layout() {
   const areas = trpc.areas.list.useQuery();
   const roomList = trpc.rooms.list.useQuery(); // context house
+  const roomData = roomList.data;
   const byFloor = useMemo(() => {
-    const groups = new Map<string, NonNullable<typeof roomList.data>>();
-    for (const r of roomList.data ?? []) {
+    const groups = new Map<string, NonNullable<typeof roomData>>();
+    for (const r of roomData ?? []) {
       const k = r.floor ?? "";
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k)!.push(r);
     }
     return [...groups.entries()];
-  }, [roomList.data]);
+  }, [roomData]);
   const inbox = trpc.inbox.list.useQuery();
   const { openAsk } = useAsk();
   const navigate = useNavigate();
@@ -166,17 +167,19 @@ export default function Layout() {
 
   const [editingRoom, setEditingRoom] = useState<{ id: number; name: string; floor: string | null } | null>(null);
   const [renameTo, setRenameTo] = useState("");
+  const [floorTo, setFloorTo] = useState("");
   const [mergeInto, setMergeInto] = useState<number | null>(null);
   const utils = trpc.useUtils();
   const refreshRooms = () => {
     utils.rooms.list.invalidate();
     utils.items.listAll.invalidate();
     utils.items.get.invalidate();
+    utils.rooms.get.invalidate();
   };
   const updateRoom = trpc.rooms.update.useMutation({
-    onSuccess: (_d, vars) => {
+    onSuccess: () => {
       refreshRooms();
-      if (vars.name !== undefined) setEditingRoom(null);
+      setEditingRoom(null);
     },
   });
   const mergeRoom = trpc.rooms.merge.useMutation({
@@ -185,6 +188,10 @@ export default function Layout() {
       setEditingRoom(null);
     },
   });
+
+  const busy = updateRoom.isPending || mergeRoom.isPending;
+  const nameChanged = !!editingRoom && renameTo.trim() !== editingRoom.name;
+  const floorChanged = !!editingRoom && (floorTo.trim() || null) !== (editingRoom.floor ?? null);
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     cn(
@@ -263,7 +270,7 @@ export default function Layout() {
                     <span className="flex-1 min-w-0 truncate">{r.name}</span>
                     <span className="font-data text-[11px] opacity-60">{r.itemCount}</span>
                     <button className="shrink-0 opacity-0 group-hover:opacity-100 hover:text-[#f4f4ed]" title="Rename or merge this room"
-                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingRoom(r); setRenameTo(r.name); setMergeInto(null); }}>
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingRoom(r); setRenameTo(r.name); setFloorTo(r.floor ?? ""); setMergeInto(null); updateRoom.reset(); mergeRoom.reset(); }}>
                       <Pencil className="h-3 w-3" />
                     </button>
                   </NavLink>
@@ -328,7 +335,7 @@ export default function Layout() {
                 <input id="room-rename" className="mt-1 w-full rounded border border-input px-2 py-1 text-[13px]" value={renameTo} onChange={(e) => setRenameTo(e.target.value)} />
               </label>
               <label className="block text-[12px]">Floor
-                <input id="room-floor" className="mt-1 w-full rounded border border-input px-2 py-1 text-[13px]" defaultValue={editingRoom.floor ?? ""} placeholder="e.g. ground, 1, attic" onBlur={(e) => updateRoom.mutate({ id: editingRoom.id, floor: e.target.value.trim() || null })} />
+                <input id="room-floor" className="mt-1 w-full rounded border border-input px-2 py-1 text-[13px]" value={floorTo} onChange={(e) => setFloorTo(e.target.value)} placeholder="e.g. ground, 1, attic" />
               </label>
               <div className="text-[12px]">Or merge into another room
                 <RoomPicker value={mergeInto} onChange={setMergeInto} allowCreate={false} allowNone />
@@ -336,12 +343,13 @@ export default function Layout() {
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setEditingRoom(null)}>Cancel</Button>
                 {mergeInto != null && mergeInto !== editingRoom.id ? (
-                  <Button size="sm" onClick={() => mergeRoom.mutate({ fromId: editingRoom.id, toId: mergeInto })}>Merge</Button>
+                  <Button size="sm" disabled={busy} onClick={() => mergeRoom.mutate({ fromId: editingRoom.id, toId: mergeInto })}>Merge</Button>
                 ) : (
-                  <Button size="sm" disabled={!renameTo.trim()} onClick={() => updateRoom.mutate({ id: editingRoom.id, name: renameTo.trim() })}>Save</Button>
+                  <Button size="sm" disabled={busy || !renameTo.trim() || !nameChanged && !floorChanged}
+                    onClick={() => updateRoom.mutate({ id: editingRoom.id, ...(nameChanged ? { name: renameTo.trim() } : {}), ...(floorChanged ? { floor: floorTo.trim() || null } : {}) })}>Save</Button>
                 )}
               </div>
-              {(updateRoom.isError || mergeRoom.isError) && <div className="text-[12px] text-destructive">{updateRoom.error?.message ?? mergeRoom.error?.message}</div>}
+              {(updateRoom.isError || mergeRoom.isError) && <div className="text-[12px] text-destructive">{(mergeRoom.error ?? updateRoom.error)?.message}</div>}
             </div>
           )}
         </DialogContent>

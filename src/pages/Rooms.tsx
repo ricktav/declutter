@@ -9,15 +9,16 @@ import { Box, ChevronRight, MapPin } from "lucide-react";
 export default function RoomsPage() {
   const { houseId } = useHouse();
   const rooms = trpc.rooms.list.useQuery(undefined, { enabled: houseId != null });
+  const data = rooms.data;
   const byFloor = useMemo(() => {
-    const groups = new Map<string, NonNullable<typeof rooms.data>>();
-    for (const r of rooms.data ?? []) {
+    const groups = new Map<string, NonNullable<typeof data>>();
+    for (const r of data ?? []) {
       const k = r.floor ?? "";
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k)!.push(r);
     }
     return [...groups.entries()];
-  }, [rooms.data]);
+  }, [data]);
 
   if (houseId == null) return <p className="px-6 py-8 text-sm text-muted-foreground">Add a house to get started.</p>;
 

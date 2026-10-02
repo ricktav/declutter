@@ -14,7 +14,7 @@ export default function AllItems() {
   const roomIdParam = searchParams.get("roomId");
   const roomFilter = roomIdParam && roomIdParam !== "none" && Number.isFinite(Number(roomIdParam)) ? Number(roomIdParam) : null;
   const clearRoom = () => { const next = new URLSearchParams(searchParams); next.delete("roomId"); setSearchParams(next, { replace: true }); };
-  const items = trpc.items.listAll.useQuery({ includeArchived: false, roomId: roomFilter ?? undefined });
+  const items = trpc.items.listAll.useQuery({ includeArchived: false, roomId: roomFilter ?? undefined, ...(roomFilter != null ? { houseId: null } : {}) });
   const roomsQuery = trpc.rooms.list.useQuery({ houseId: null }, { enabled: roomFilter != null });
   const filterRoom = roomFilter != null ? roomsQuery.data?.find((r) => r.id === roomFilter) : undefined;
   const [q, setQ] = useState("");
