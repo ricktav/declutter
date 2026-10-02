@@ -18,9 +18,13 @@ Read this before you change code. These rules apply to every agent (Kimi, Claude
 
 Do not remove or rename these. Do not change their inputs or outputs in a way that breaks a caller. You can add optional fields.
 
-- tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany`, `inbox.dismiss`, `items.listAll`, `items.update`, `items.setVerification`, `items.setArchived`, `items.setDecision`, `items.patchAttributes`, `items.addRelation`, `items.removeRelation`, `items.listRelations`, `houses.list`, `areas.list`, `map.listLocations`, `attachments.url`, `rooms.get`.
+- tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany`, `inbox.dismiss`, `items.listAll`, `items.get`, `items.create` (`roomId`, `houseId`), `items.update`, `items.setVerification`, `items.setArchived`, `items.setDecision`, `items.patchAttributes`, `items.addRelation`, `items.removeRelation`, `items.listRelations`, `houses.list`, `areas.list`, `rooms.list`, `rooms.ensure`, `attachments.url`, `rooms.get`.
 - HTTP: `POST /api/upload` (multipart, fields `file` and `scope`).
-- Shared code: `src/providers/trpc.tsx`, `src/components/AuthGate.tsx`, `src/components/ItemRoomPreview.tsx`, `src/components/GeojsonThumb.tsx`, `src/components/RoomPicker.tsx` (`DEFAULT_FLOORS`, `RoomValue`), `src/lib/upload.ts`, `src/lib/lastLocation.ts`, `src/lib/auth.ts`.
+- Shared code: `src/providers/trpc.tsx`, `src/components/AuthGate.tsx`, `src/components/ItemRoomPreview.tsx`, `src/components/GeojsonThumb.tsx`, `src/components/RoomPicker.tsx` (`DEFAULT_FLOORS` only), `src/components/HouseSwitcher.tsx`, `src/context/house.tsx` (`useHouse`, `HOUSE_STORAGE_KEY`), `src/lib/upload.ts`, `src/lib/lastRoom.ts`, `src/hooks/use-last-room.ts`, `src/lib/auth.ts`.
+- Computer Lab adapter client: tRPC `items.listAll`, `items.get`, `items.create`, `items.update`, `items.setArchived`, `items.setDecision`, `items.setParent`, `items.addRelation`, `items.removeRelation`, `items.patchAttributes`, `items.listRelations`, `rooms.list`, `rooms.ensure`, `attachments.add`, `attachments.remove`, `attachments.listAllImages`, `attachments.listForItem`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany`, `inbox.dismiss`, `areas.list`, `houses.list`, `ping`; HTTP `POST /api/upload`, `GET /uploads/:name`.
+- Location:
+  - A place is a room: Flow's `Place = { roomId }`. Items, captures and photos locate by `roomId`; the room carries its house and floor.
+  - The `x-house-id` header is the session house. Without the header (null), lists cover all houses; `rooms.ensure` and `rooms.create` require a house.
 - Data meaning:
   - `items.decision` is `keep`, `sell`, `donate`, `toss` or `later`. `items.decidedAt` is the time of the decision.
   - "Gone" is `items.status = "archived"` on an item with a decision. Do not add a second status for this.
@@ -28,7 +32,7 @@ Do not remove or rename these. Do not change their inputs or outputs in a way th
   - `items.attributes` has two kinds of keys. Plain keys describe the thing: `role`, `brand`, `model`, `serial`, `os`, `cpu`, `ram_gb`, `storage_gb`, `hostname`, `ip`, `mac`. Prefixed keys hold workflow state: `sell.ask_price`, `sell.channel`, `sell.listed_at`, `sell.sold_price`, `sell.sold_at`, `donate.to`, `lab.exclude`, `lab.backup`, `lab.data_copied_at`, `lab.wiped_at`. Do not rename these keys. Dates are `YYYY-MM-DD`; prices are whole euros.
   - A relation of type `backs-up` means `fromItemId` (a NAS, drive or server) holds the backup of `toItemId` (the device).
 
-NOTE: The rooms consolidation plan (`docs/superpowers/plans/2026-10-02-rooms-consolidation.md`) changes `map.listLocations`, `items.floor` and `items.room`. Rick sets the order. The API change lands first. Flow then adapts in its own branch.
+NOTE: The rooms consolidation landed on `main` on 2026-10-02; `items.floor`/`items.room`, `attachments.houseId`/`floor`/`room` and `houses.floors` no longer exist.
 
 ## 3. Database
 
