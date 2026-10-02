@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:adopt": "node db/adopt-migrations.mjs"
+    "db:adopt": "node db/adopt-migrations.mjs",
+    "db:copy-photos": "node scripts/copy-attachments-to-photos.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "2.0.78",
