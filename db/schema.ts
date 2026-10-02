@@ -9,6 +9,7 @@ import {
   index,
   double,
   boolean,
+  uniqueIndex,
 } from "drizzle-orm/mysql-core";
 
 // ---------------------------------------------------------------------------
@@ -114,6 +115,9 @@ export const rooms = mysqlTable(
     id: serial("id").primaryKey(),
     houseId: bigint("houseId", { mode: "number", unsigned: true }).notNull(),
     name: varchar("name", { length: 128 }).notNull(),
+    // the room's floor. A property of the room, set once; views filter or
+    // group by it, pickers never ask for it as a step (product rule 1)
+    floor: varchar("floor", { length: 32 }),
     source: varchar("source", { length: 64 }).$type<"mappedin" | "roomplan" | "manual">().notNull(),
     scanDate: timestamp("scanDate"),
     widthM: double("widthM"),
@@ -135,7 +139,13 @@ export const rooms = mysqlTable(
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
   },
-  (t) => [index("rooms_house_idx").on(t.houseId), index("rooms_parent_idx").on(t.parentRoomId)],
+  (t) => [
+    index("rooms_house_idx").on(t.houseId),
+    index("rooms_parent_idx").on(t.parentRoomId),
+    // one room per name per house; MySQL's default utf8mb4 collation is
+    // case-insensitive, so "Keuken" and "keuken" collide, as intended
+    uniqueIndex("rooms_house_name_uq").on(t.houseId, t.name),
+  ],
 );
 
 export interface RoomGeometry {

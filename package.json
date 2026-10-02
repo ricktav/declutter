@@ -14,7 +14,8 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "db:adopt": "node db/adopt-migrations.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "2.0.78",
