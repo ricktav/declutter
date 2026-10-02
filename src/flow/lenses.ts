@@ -111,6 +111,9 @@ export const backupsOf = (it: FlowItem, backups: Rel[]) => backups.filter((r) =>
 
 export function backupState(it: FlowItem, backups: Rel[]): "covered" | "none-needed" | "missing" | "n/a" {
   if (!holdsData(it)) return "n/a";
+  // a drive inside a computer is covered by that computer's backup; once
+  // detached (no parent) it is asked about on its own
+  if (it.parentId != null) return "n/a";
   if (backupsOf(it, backups).length > 0) return "covered";
   if (attr(it, LAB_KEYS.backup) === "none-needed") return "none-needed";
   return "missing";
@@ -124,7 +127,7 @@ export function safetyChecks(it: FlowItem, backups: Rel[]) {
   if (!holdsData(it)) return null;
   const state = backupState(it, backups);
   return [
-    { key: LAB_KEYS.backup, label: "Backed up", done: state === "covered" || state === "none-needed" },
+    { key: LAB_KEYS.backup, label: it.parentId != null ? "Backed up (with its computer)" : "Backed up", done: state !== "missing" },
     { key: LAB_KEYS.dataCopied, label: "Data copied off", done: !!attr(it, LAB_KEYS.dataCopied) },
     { key: LAB_KEYS.wiped, label: "Wiped or reset", done: !!attr(it, LAB_KEYS.wiped) },
   ];

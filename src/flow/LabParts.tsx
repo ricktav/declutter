@@ -242,6 +242,7 @@ export function SafetyChecklist({ item }: { item: FlowItem }) {
 
   const detail = (key: string) => {
     if (key === LAB_KEYS.backup) {
+      if (item.parentId != null) return items.find((t) => t.id === item.parentId)?.name ?? "";
       if (mine.length) return mine.map((r) => items.find((t) => t.id === r.fromItemId)?.name).join(", ");
       return item.attributes?.[LAB_KEYS.backup] === "none-needed" ? "not needed" : "pick where";
     }
@@ -250,6 +251,7 @@ export function SafetyChecklist({ item }: { item: FlowItem }) {
   const tap = (key: string, done: boolean) => {
     setError(null);
     if (key !== LAB_KEYS.backup) return patch.mutate({ id: item.id, set: { [key]: done ? null : today() } });
+    if (item.parentId != null) return; // covered by the computer it sits in
     if (!mine.length && done) return patch.mutate({ id: item.id, set: { [LAB_KEYS.backup]: null } });
     setPicking((p) => !p);
   };
