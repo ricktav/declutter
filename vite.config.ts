@@ -39,5 +39,12 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, "dist/public"),
     emptyOutDir: true,
+    // two front ends on one API: the Workbench (/) and the phone-first Flow (/flow/)
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        flow: path.resolve(__dirname, "flow/index.html"),
+      },
+    },
   },
 });

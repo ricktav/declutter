@@ -75,6 +75,10 @@ export const items = mysqlTable(
     pos: json("pos").$type<ItemPos>(),
     floor: varchar("floor", { length: 32 }),
     room: varchar("room", { length: 128 }),
+    // what happens to the thing - null until someone decides; "later"
+    // parks it for another pass instead of forcing an answer now
+    decision: varchar("decision", { length: 16 }).$type<ItemDecision>(),
+    decidedAt: timestamp("decidedAt"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
     archivedAt: timestamp("archivedAt"),
@@ -85,6 +89,9 @@ export const items = mysqlTable(
     index("items_room_idx").on(t.roomId),
   ],
 );
+
+export const ITEM_DECISIONS = ["keep", "sell", "donate", "toss", "later"] as const;
+export type ItemDecision = (typeof ITEM_DECISIONS)[number];
 
 // Footprint on a room's 2D/3D plan — absent until the item is placed.
 export interface ItemPos {

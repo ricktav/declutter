@@ -34,6 +34,7 @@ import {
   Loader2,
   Images,
   Network,
+  Smartphone,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
@@ -204,6 +205,12 @@ export default function Layout() {
             )}
           </NavLink>
         ))}
+        {/* separate front end (own page), so a plain link rather than a NavLink */}
+        <a href="/flow/" className={navLinkClass({ isActive: false })}>
+          <Smartphone className="h-4 w-4" />
+          <span className="flex-1">Flow</span>
+          <span className="text-[11px] opacity-60">↗</span>
+        </a>
       </nav>
 
       <div className="flex-1 overflow-y-auto">

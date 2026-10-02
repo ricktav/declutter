@@ -3,7 +3,7 @@ import { eq, desc, or, and, asc } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, attachments, relations, tasks, ideaItems, ideas, events, houses, type ItemPos } from "@db/schema";
+import { areas, items, attachments, relations, tasks, ideaItems, ideas, events, houses, ITEM_DECISIONS, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { getModel } from "../lib/ai";
@@ -393,6 +393,28 @@ export const itemsRouter = createRouter({
         entityId: input.id,
         action: input.archived ? "archived" : "restored",
         summary: `Item #${input.id} ${input.archived ? "archived" : "restored"}`,
+      });
+      return { ok: true };
+    }),
+
+  /** Keep / sell / donate / toss / later - or null to undo the decision. */
+  setDecision: procedure
+    .input(z.object({ id: z.number(), decision: z.enum(ITEM_DECISIONS).nullable() }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
+      if (!item) throw new Error("Item not found.");
+      await db
+        .update(items)
+        .set({ decision: input.decision, decidedAt: input.decision ? new Date() : null })
+        .where(eq(items.id, input.id));
+      await logEvent({
+        entityType: "item",
+        entityId: input.id,
+        action: input.decision ? `decision:${input.decision}` : "decision:cleared",
+        summary: input.decision
+          ? `Item "${item.name}" marked ${input.decision}`
+          : `Item "${item.name}" decision cleared (was ${item.decision ?? "none"})`,
       });
       return { ok: true };
     }),

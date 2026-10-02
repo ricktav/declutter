@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { Link } from "react-router";
+import { Link, useInRouterContext } from "react-router";
 import { Box } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
@@ -12,6 +12,8 @@ const RoomPlan3D = lazy(() => import("@/components/RoomPlan3D").then((m) => ({ d
  */
 export function ItemRoomPreview({ roomId, itemId }: { roomId: number; itemId: number }) {
   const room = trpc.rooms.get.useQuery({ id: roomId });
+  // the Flow front end has no router - there the room name is a plain link into the Workbench
+  const inRouter = useInRouterContext();
   const [view, setView] = useState<"2d" | "3d">("2d");
   // three.js (and its WebGL context) is only loaded once the 3D tab is opened
   const [opened3d, setOpened3d] = useState(false);
@@ -22,9 +24,15 @@ export function ItemRoomPreview({ roomId, itemId }: { roomId: number; itemId: nu
   return (
     <div className="rounded-lg border border-border bg-white p-3">
       <div className="flex items-center justify-between mb-2">
-        <Link to={`/rooms/${roomId}`} className="micro-label text-muted-foreground hover:text-foreground">
-          {room.data.name}
-        </Link>
+        {inRouter ? (
+          <Link to={`/rooms/${roomId}`} className="micro-label text-muted-foreground hover:text-foreground">
+            {room.data.name}
+          </Link>
+        ) : (
+          <a href={`/rooms/${roomId}`} className="micro-label text-muted-foreground hover:text-foreground">
+            {room.data.name}
+          </a>
+        )}
         <div className="flex items-center gap-0.5 rounded-md bg-muted/50 p-0.5">
           <button
             type="button"

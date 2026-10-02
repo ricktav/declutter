@@ -17,7 +17,9 @@ export function serveStaticFiles(app: App) {
     if (!accept.includes("text/html")) {
       return c.json({ error: "Not Found" }, 404);
     }
-    const indexPath = path.resolve(distPath, "index.html");
+    // /flow is a second front end with its own entry page, not a Workbench route
+    const isFlow = c.req.path === "/flow" || c.req.path.startsWith("/flow/");
+    const indexPath = path.resolve(distPath, isFlow ? "flow/index.html" : "index.html");
     const content = fs.readFileSync(indexPath, "utf-8");
     return c.html(content);
   });
