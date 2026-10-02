@@ -127,7 +127,7 @@ function AttrInput({
 }
 
 function ListRow({ item, decision }: { item: FlowItem; decision: ItemDecision }) {
-  const { houses, backups, refresh } = useFlow();
+  const { locations, backups, refresh } = useFlow();
   const [soldOpen, setSoldOpen] = useState(false);
   const [soldPrice, setSoldPrice] = useState(String(item.attributes?.[SELL_KEYS.askPrice] ?? ""));
   const [error, setError] = useState<string | null>(null);
@@ -171,7 +171,7 @@ function ListRow({ item, decision }: { item: FlowItem; decision: ItemDecision })
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14px] font-medium">{item.name}</p>
           <p className="truncate text-[11px] text-muted-foreground">
-            {[role(item) && roleLabel(role(item)), placeLabel(item, houses) || "no place"].filter(Boolean).join(" · ")}
+            {[role(item) && roleLabel(role(item)), placeLabel(item.roomId, locations) || "no place"].filter(Boolean).join(" · ")}
           </p>
           <button onClick={() => clear.mutate({ id: item.id, decision: null })} className="text-[11px] text-muted-foreground underline">
             undo decision

@@ -9,13 +9,12 @@ import { DecisionList } from "./Lists";
 import { DECISIONS, LIST_TITLE, isDecided, isReal, needsCheck, needsDecision, placeLabel, type FlowItem } from "./data";
 import { inLab, role, roleLabel } from "./lenses";
 
-const NO_ROOM = "__none__";
+const NO_ROOM = -1;
 
 /** Decide what happens to each thing - later, in short sprints, when you are ready. */
 export function ActTab() {
-  const { items, houses, here, lens, ready, refresh } = useFlow();
-  const [houseId, setHouseId] = useState<number | "all">(here.houseId ?? "all");
-  const [room, setRoom] = useState<string | null>(null);
+  const { items, locations, lens, ready, refresh } = useFlow();
+  const [room, setRoom] = useState<number | null>(null);
   const [skipped, setSkipped] = useState<number[]>([]);
   const [last, setLast] = useState<{ id: number; prev: ItemDecision | null; name: string } | null>(null);
   const [listOpen, setListOpen] = useState<ItemDecision | null>(null);
@@ -23,22 +22,20 @@ export function ActTab() {
 
   const setDecision = trpc.items.setDecision.useMutation({ onSuccess: refresh, onError: (e) => setError(e.message) });
 
-  // everything that counts for this house: real, checked things - including
-  // the ones already gone, so the ring keeps their progress
+  // everything that counts for this house (the header scopes the query):
+  // real, checked things - including the ones already gone, so the ring
+  // keeps their progress
   const inHouse = useMemo(
-    () =>
-      items.filter(
-        (it) => isReal(it) && !needsCheck(it) && (houseId === "all" || it.houseId === houseId) && (lens !== "lab" || inLab(it)),
-      ),
-    [items, houseId, lens],
+    () => items.filter((it) => isReal(it) && !needsCheck(it) && (lens !== "lab" || inLab(it))),
+    [items, lens],
   );
   const rooms = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const it of inHouse) if (it.status === "active") m.set(it.room || NO_ROOM, (m.get(it.room || NO_ROOM) ?? 0) + 1);
+    const m = new Map<number, number>();
+    for (const it of inHouse) if (it.status === "active") m.set(it.roomId ?? NO_ROOM, (m.get(it.roomId ?? NO_ROOM) ?? 0) + 1);
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [inHouse]);
 
-  const scope = inHouse.filter((it) => room == null || (it.room || NO_ROOM) === room);
+  const scope = inHouse.filter((it) => room == null || (it.roomId ?? NO_ROOM) === room);
   const total = scope.filter((it) => it.status === "active" || isDecided(it)).length;
   const done = scope.filter(isDecided).length;
   const queue = scope.filter(needsDecision);
@@ -65,24 +62,6 @@ export function ActTab() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden -mx-1 px-1">
-        {[{ id: "all" as const, name: "All houses" }, ...houses].map((h) => (
-          <button
-            key={h.id}
-            onClick={() => {
-              setHouseId(h.id);
-              setRoom(null);
-            }}
-            className={cn(
-              "shrink-0 rounded-full border px-3 py-1.5 text-[13px]",
-              houseId === h.id ? "border-transparent bg-[#282c20] text-[#f4f4ed]" : "border-border bg-white",
-            )}
-          >
-            {h.name}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden -mx-1 px-1">
         <button
           onClick={() => setRoom(null)}
           className={cn("shrink-0 rounded-full border px-3 py-1 text-[12px]", room == null ? "border-[#3C5D41] bg-[#3C5D41]/10" : "border-border bg-white")}
@@ -95,7 +74,7 @@ export function ActTab() {
             onClick={() => setRoom(r)}
             className={cn("shrink-0 rounded-full border px-3 py-1 text-[12px]", room === r ? "border-[#3C5D41] bg-[#3C5D41]/10" : "border-border bg-white")}
           >
-            {r === NO_ROOM ? "No room" : r} <span className="font-data opacity-60">{n}</span>
+            {r === NO_ROOM ? "Unplaced" : (locations.find((l) => l.id === r)?.name ?? "Room")} <span className="font-data opacity-60">{n}</span>
           </button>
         ))}
       </div>
@@ -146,7 +125,7 @@ export function ActTab() {
           <div>
             <p className="text-[17px] font-semibold leading-tight">{current.name}</p>
             <p className="text-[12px] text-muted-foreground">
-              {[role(current) ? roleLabel(role(current)) : current.areaName, current.attributes?.model, placeLabel(current, houses) || "no place yet"]
+              {[role(current) ? roleLabel(role(current)) : current.areaName, current.attributes?.model, placeLabel(current.roomId, locations) || "no place yet"]
                 .filter(Boolean)
                 .join(" · ")}
               {current.decision === "later" && " · was Later"}

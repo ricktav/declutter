@@ -1,15 +1,13 @@
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
 import type { ItemDecision, TriageSuggestion } from "@db/schema";
-import type { RoomValue } from "@/components/RoomPicker";
 
 type Out = inferRouterOutputs<AppRouter>;
 export type FlowItem = Out["items"]["listAll"][number];
 export type FlowCapture = Out["inbox"]["list"][number];
-export type FlowHouse = Out["houses"]["list"][number];
 export type FlowArea = Out["areas"]["list"][number];
-export type FlowLocation = Out["map"]["listLocations"][number];
-export type Place = RoomValue;
+export type FlowLocation = Out["rooms"]["list"][number];
+export type Place = { roomId: number | null };
 
 export const DECISIONS: { key: ItemDecision; label: string; color: string }[] = [
   { key: "keep", label: "Keep", color: "#2F7A45" },
@@ -27,7 +25,7 @@ const LATER_DAYS = 7;
 export const isReal = (it: FlowItem) => it.verificationStatus !== "rejected";
 export const needsCheck = (it: FlowItem) => it.status === "active" && it.verificationStatus === "detected";
 export const isUnplaced = (it: FlowItem) =>
-  it.status === "active" && isReal(it) && !needsCheck(it) && !it.room && it.roomId == null;
+  it.status === "active" && isReal(it) && !needsCheck(it) && it.roomId == null;
 export const needsDecision = (it: FlowItem) => {
   if (it.status !== "active" || !isReal(it) || needsCheck(it)) return false;
   if (it.decision == null) return true;
@@ -56,9 +54,11 @@ export const num = (v: string | number | undefined | null) => {
   return Number.isFinite(n) ? n : null;
 };
 
-export function placeLabel(p: { houseId: number | null; floor?: string | null; room?: string | null }, houses: FlowHouse[] | undefined) {
-  const house = p.houseId != null ? houses?.find((h) => h.id === p.houseId)?.name : null;
-  return [house, p.floor, p.room].filter(Boolean).join(" › ");
+/** Header-pill style label: "Keuken · ground". Empty when there is no such room. */
+export function placeLabel(roomId: number | null, rooms: FlowLocation[] | undefined): string {
+  const r = roomId != null ? rooms?.find((x) => x.id === roomId) : undefined;
+  if (!r) return "";
+  return r.floor ? `${r.name} · ${r.floor}` : r.name;
 }
 
 export function usableSuggestion(c: FlowCapture): TriageSuggestion | null {
@@ -76,7 +76,9 @@ const SNAP_PLACE_KEY = "flow.snapPlace";
 export function getSnapPlace(captureId: number): Place | null {
   try {
     const all = JSON.parse(localStorage.getItem(SNAP_PLACE_KEY) ?? "{}") as Record<string, Place>;
-    return all[String(captureId)] ?? null;
+    const p = all[String(captureId)];
+    // entries saved before rooms had ids carry text, not a room id - ignore them
+    return p && typeof p.roomId === "number" ? { roomId: p.roomId } : null;
   } catch {
     return null;
   }

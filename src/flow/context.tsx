@@ -1,14 +1,14 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { trpc } from "@/providers/trpc";
-import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
-import type { FlowArea, FlowCapture, FlowHouse, FlowItem, FlowLocation, Place } from "./data";
+import { setLastRoomId } from "@/lib/lastRoom";
+import { useLastRoomId } from "@/hooks/use-last-room";
+import type { FlowArea, FlowCapture, FlowItem, FlowLocation, Place } from "./data";
 import { BACKS_UP, getLens, storeLens, type LensKey, type Rel } from "./lenses";
 
 type FlowState = {
   ready: boolean;
   items: FlowItem[];
   captures: FlowCapture[];
-  houses: FlowHouse[];
   areas: FlowArea[];
   locations: FlowLocation[];
   /** confirmed "backs-up" links whose backup target is still in the house */
@@ -28,12 +28,16 @@ export function FlowProvider({ children }: { children: ReactNode }) {
   // includeArchived: things marked gone stay counted in a sprint's progress
   const items = trpc.items.listAll.useQuery({ includeArchived: true });
   const captures = trpc.inbox.list.useQuery();
-  const houses = trpc.houses.list.useQuery();
   const areas = trpc.areas.list.useQuery();
-  const locations = trpc.map.listLocations.useQuery();
+  const locations = trpc.rooms.list.useQuery();
   // loaded in every mode: the data-safety check before "Gone" needs it
   const rels = trpc.items.listRelations.useQuery({ type: BACKS_UP });
-  const [here, setHereState] = useState<Place>(() => getLastLocation());
+  // start from the last-used room once it is known to exist in this house,
+  // unless the user has already chosen (or cleared) a place
+  const lastRoomId = useLastRoomId();
+  const [here, setHereState] = useState<Place>({ roomId: null });
+  const [touched, setTouched] = useState(false);
+  if (!touched && here.roomId == null && lastRoomId != null) setHereState({ roomId: lastRoomId });
   const [lens, setLensState] = useState<LensKey | null>(() => getLens());
 
   const backups = useMemo(() => {
@@ -42,17 +46,17 @@ export function FlowProvider({ children }: { children: ReactNode }) {
   }, [items.data, rels.data]);
 
   const value: FlowState = {
-    ready: !!(items.data && captures.data && houses.data && areas.data),
+    ready: !!(items.data && captures.data && areas.data),
     items: items.data ?? [],
     captures: captures.data ?? [],
-    houses: houses.data ?? [],
     areas: areas.data ?? [],
     locations: locations.data ?? [],
     backups,
     here,
     setHere: (p) => {
+      setTouched(true);
       setHereState(p);
-      setLastLocation(p);
+      setLastRoomId(p.roomId);
     },
     lens,
     setLens: (l) => {
@@ -63,7 +67,7 @@ export function FlowProvider({ children }: { children: ReactNode }) {
       utils.items.listAll.invalidate();
       utils.items.listRelations.invalidate();
       utils.inbox.list.invalidate();
-      utils.map.listLocations.invalidate();
+      utils.rooms.list.invalidate();
     },
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

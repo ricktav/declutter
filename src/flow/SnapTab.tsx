@@ -8,7 +8,7 @@ import { ErrorLine, Photo } from "./ui";
 
 /** Put things in, as fast as possible. No questions here - Sort asks them later. */
 export function SnapTab({ onChangeHere, onGoSort }: { onChangeHere: () => void; onGoSort: () => void }) {
-  const { here, houses, captures, refresh } = useFlow();
+  const { here, locations, captures, refresh } = useFlow();
   const camRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(0);
@@ -19,7 +19,7 @@ export function SnapTab({ onChangeHere, onGoSort }: { onChangeHere: () => void; 
 
   const pending = captures.filter((c) => c.status === "pending");
   const recent = pending.filter((c) => c.kind === "image" && c.storageKey).slice(0, 8);
-  const hereLabel = placeLabel(here, houses);
+  const hereLabel = placeLabel(here.roomId, locations);
 
   async function addFiles(files: FileList | null) {
     if (!files?.length) return;
@@ -34,7 +34,7 @@ export function SnapTab({ onChangeHere, onGoSort }: { onChangeHere: () => void; 
           fileName: up.fileName,
           mimeType: up.mimeType,
         });
-        if (here.room) setSnapPlace(row.id, here);
+        if (here.roomId != null) setSnapPlace(row.id, here);
         setSavedCount((n) => n + 1);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Upload failed.");
@@ -52,7 +52,7 @@ export function SnapTab({ onChangeHere, onGoSort }: { onChangeHere: () => void; 
     try {
       const isUrl = /^https?:\/\//i.test(t);
       const row = await create.mutateAsync(isUrl ? { kind: "link", url: t } : { kind: "note", rawText: t });
-      if (here.room) setSnapPlace(row.id, here);
+      if (here.roomId != null) setSnapPlace(row.id, here);
       setNote("");
       setSavedCount((n) => n + 1);
       refresh();
@@ -68,7 +68,7 @@ export function SnapTab({ onChangeHere, onGoSort }: { onChangeHere: () => void; 
         className="flex items-center gap-2 self-start rounded-full border border-border bg-white px-3 py-1.5 text-[13px]"
       >
         <MapPin className="h-3.5 w-3.5 text-[#3C5D41]" />
-        {here.room ? (
+        {here.roomId != null ? (
           <span>
             Snaps go to <b>{hereLabel}</b>
           </span>

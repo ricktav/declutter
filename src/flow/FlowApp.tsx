@@ -40,7 +40,7 @@ export function FlowApp() {
  * donate / toss when you are ready; Find answers "where is it?".
  */
 function Shell() {
-  const { here, setHere, houses, lens, setLens } = useFlow();
+  const { here, setHere, locations, lens, setLens } = useFlow();
   const [tab, setTab] = useState<Tab>(tabFromHash);
   const [hereOpen, setHereOpen] = useState(false);
 
@@ -78,7 +78,7 @@ function Shell() {
             className="flex min-w-0 flex-1 items-center gap-1.5 rounded-full bg-[#3a3f2e] px-3 py-1 text-left text-[12px]"
           >
             <MapPin className="h-3.5 w-3.5 shrink-0 text-[#d2ff00]" />
-            <span className="truncate">{here.room ? placeLabel(here, houses) : "Where are you?"}</span>
+            <span className="truncate">{here.roomId != null ? placeLabel(here.roomId, locations) : "Where are you?"}</span>
           </button>
           <HouseSwitcher />
           <a href="/" aria-label="Workbench" title="Workbench" className="shrink-0 text-[12px] text-[#b4b8a5] hover:text-[#f4f4ed]">

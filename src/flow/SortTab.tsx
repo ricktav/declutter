@@ -92,7 +92,7 @@ function CardShell({ question, children, onSkip }: { question: string; children:
 type Row = { name: string; areaId: number | null; checked: boolean; attributes?: Record<string, string> };
 
 function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => void }) {
-  const { areas, here, houses, lens, refresh } = useFlow();
+  const { areas, here, locations, lens, refresh } = useFlow();
   const suggestion = usableSuggestion(capture);
   const defaultAreaId = (lens === "lab" ? areas.find((a) => a.slug === LAB.defaultAreaSlug)?.id : undefined) ?? areas[0]?.id ?? null;
   const matched = suggestion?.items.filter((s) => !s.isNewItem && s.matchedItemName) ?? [];
@@ -111,7 +111,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
   const [place, setPlace] = useState<Place>(() => {
     const snapped = getSnapPlace(capture.id);
     if (snapped) return snapped;
-    if (suggestion?.room) return { houseId: here.houseId, floor: suggestion.floor ?? "", room: suggestion.room };
+    if (suggestion?.roomId != null) return { roomId: suggestion.roomId };
     return here;
   });
   const [placeOpen, setPlaceOpen] = useState(false);
@@ -251,7 +251,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
 
           <button onClick={() => setPlaceOpen(true)} className="flex items-center gap-2 rounded-xl bg-muted/60 px-3 py-2.5 text-left text-[13px]">
             <MapPin className="h-4 w-4 shrink-0 text-[#3C5D41]" />
-            <span className="flex-1 truncate">{place.room ? placeLabel(place, houses) : "No place yet"}</span>
+            <span className="flex-1 truncate">{placeLabel(place.roomId, locations) || "No place yet"}</span>
             <span className="text-[12px] text-muted-foreground underline">change</span>
           </button>
 
@@ -263,9 +263,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
               onClick={() =>
                 accept.mutate({
                   id: capture.id,
-                  houseId: place.houseId,
-                  floor: place.floor || undefined,
-                  room: place.room || undefined,
+                  roomId: place.roomId,
                   items: chosen.map((r) => ({ areaId: r.areaId!, itemId: null, itemName: r.name.trim(), attributes: r.attributes })),
                 })
               }
@@ -290,7 +288,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
 }
 
 function CheckCard({ item, onSkip }: { item: FlowItem; onSkip: () => void }) {
-  const { houses, refresh } = useFlow();
+  const { locations, refresh } = useFlow();
   const setVerification = trpc.items.setVerification.useMutation({ onSuccess: refresh });
   return (
     <CardShell question="Is this right?" onSkip={onSkip}>
@@ -302,7 +300,7 @@ function CheckCard({ item, onSkip }: { item: FlowItem; onSkip: () => void }) {
       <div>
         <p className="text-[17px] font-semibold leading-tight">{item.name}</p>
         <p className="text-[12px] text-muted-foreground">
-          {[item.areaName, placeLabel(item, houses)].filter(Boolean).join(" · ")}
+          {[item.areaName, placeLabel(item.roomId, locations)].filter(Boolean).join(" · ")}
         </p>
         {item.description && <p className="mt-1 text-[12px] text-muted-foreground line-clamp-2">{item.description}</p>}
       </div>
@@ -330,10 +328,10 @@ function CheckCard({ item, onSkip }: { item: FlowItem; onSkip: () => void }) {
 }
 
 function PlaceCard({ item, onSkip }: { item: FlowItem; onSkip: () => void }) {
-  const { here, houses, refresh } = useFlow();
+  const { here, locations, refresh } = useFlow();
   const [open, setOpen] = useState(false);
   const update = trpc.items.update.useMutation({ onSuccess: refresh });
-  const put = (p: Place) => update.mutate({ id: item.id, houseId: p.houseId, floor: p.floor || null, room: p.room || null });
+  const put = (p: Place) => update.mutate({ id: item.id, roomId: p.roomId });
 
   return (
     <CardShell question="Where is it?" onSkip={onSkip}>
@@ -342,18 +340,18 @@ function PlaceCard({ item, onSkip }: { item: FlowItem; onSkip: () => void }) {
         <p className="text-[17px] font-semibold leading-tight">{item.name}</p>
         {item.areaName && <p className="text-[12px] text-muted-foreground">{item.areaName}</p>}
       </div>
-      {here.room && (
+      {here.roomId != null && (
         <button
           disabled={update.isPending}
           onClick={() => put(here)}
           className="flex flex-col items-center rounded-xl bg-[#282c20] py-3 text-[#f4f4ed] disabled:opacity-40"
         >
           <span className="font-data text-[14px] font-semibold">Here</span>
-          <span className="text-[12px] opacity-75">{placeLabel(here, houses)}</span>
+          <span className="text-[12px] opacity-75">{placeLabel(here.roomId, locations)}</span>
         </button>
       )}
       <button onClick={() => setOpen(true)} className="rounded-xl border border-border py-3 text-[14px]">
-        {here.room ? "Another place…" : "Pick a place…"}
+        {here.roomId != null ? "Another place…" : "Pick a place…"}
       </button>
       {open && <LocationSheet title="Where is it?" value={here} onPick={put} onClose={() => setOpen(false)} />}
     </CardShell>
@@ -361,14 +359,14 @@ function PlaceCard({ item, onSkip }: { item: FlowItem; onSkip: () => void }) {
 }
 
 function LabItemHeader({ item }: { item: FlowItem }) {
-  const { houses } = useFlow();
+  const { locations } = useFlow();
   return (
     <div className="flex items-center gap-3">
       <Photo storageKey={item.imageKey} className="h-20 w-20 shrink-0" />
       <div className="min-w-0">
         <p className="text-[16px] font-semibold leading-tight">{item.name}</p>
         <p className="text-[12px] text-muted-foreground">
-          {[role(item) ? roleLabel(role(item)) : item.areaName, placeLabel(item, houses)].filter(Boolean).join(" · ")}
+          {[role(item) ? roleLabel(role(item)) : item.areaName, placeLabel(item.roomId, locations)].filter(Boolean).join(" · ")}
         </p>
       </div>
     </div>

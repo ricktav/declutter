@@ -10,7 +10,7 @@ import { holdsData, inLab, role, roleLabel } from "./lenses";
 
 /** "Where is it?" - type a word, see the place and a photo. */
 export function FindTab() {
-  const { items, houses, lens, ready } = useFlow();
+  const { items, locations, lens, ready } = useFlow();
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<number | null>(null);
 
@@ -24,10 +24,9 @@ export function FindTab() {
         const hay = [
           it.name,
           it.description,
-          it.room,
-          it.floor,
+          it.room?.name,
+          it.room?.floor,
           it.areaName,
-          houses.find((h) => h.id === it.houseId)?.name,
           ...Object.values(it.attributes ?? {}),
           role(it) && roleLabel(role(it)),
         ]
@@ -37,7 +36,7 @@ export function FindTab() {
         return terms.every((t) => hay.includes(t));
       })
       .slice(0, 60);
-  }, [items, houses, q, lens]);
+  }, [items, q, lens]);
   const open = items.find((it) => it.id === openId) ?? null;
 
   if (!ready) return <p className="py-10 text-center text-[13px] text-muted-foreground">Loading…</p>;
@@ -71,7 +70,7 @@ export function FindTab() {
                     <DecisionBadge decision={it.decision} />
                   </span>
                   <span className="block truncate text-[12px] text-muted-foreground">
-                    {[role(it) && roleLabel(role(it)), it.attributes?.model, placeLabel(it, houses) || "no place yet"].filter(Boolean).join(" · ")}
+                    {[role(it) && roleLabel(role(it)), it.attributes?.model, placeLabel(it.roomId, locations) || "no place yet"].filter(Boolean).join(" · ")}
                   </span>
                 </span>
               </button>
@@ -86,7 +85,7 @@ export function FindTab() {
 }
 
 function ThingSheet({ item, onClose }: { item: FlowItem; onClose: () => void }) {
-  const { houses, lens, refresh } = useFlow();
+  const { locations, lens, refresh } = useFlow();
   const setDecision = trpc.items.setDecision.useMutation({ onSuccess: refresh });
   return (
     <Sheet title={item.name} onClose={onClose}>
@@ -94,7 +93,7 @@ function ThingSheet({ item, onClose }: { item: FlowItem; onClose: () => void }) 
         {item.imageKey && <Photo storageKey={item.imageKey} className="aspect-[4/3] w-full" />}
         <div className="rounded-xl bg-white border border-border p-3">
           <span className="micro-label text-muted-foreground">Where</span>
-          <p className="text-[15px] font-medium">{placeLabel(item, houses) || "No place yet"}</p>
+          <p className="text-[15px] font-medium">{placeLabel(item.roomId, locations) || "No place yet"}</p>
           {item.areaName && <p className="text-[12px] text-muted-foreground">{item.areaName}</p>}
         </div>
         {item.roomId != null && item.pos && <ItemRoomPreview roomId={item.roomId} itemId={item.id} />}
