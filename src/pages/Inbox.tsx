@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils";
 import { AreaPicker } from "@/components/AreaPicker";
 import { ItemPicker } from "@/components/ItemPicker";
 import { RoomPicker } from "@/components/RoomPicker";
-import { getLastRoomId, setLastRoomId } from "@/lib/lastRoom";
+import { setLastRoomId } from "@/lib/lastRoom";
+import { useLastRoomId } from "@/hooks/use-last-room";
 import { AiProgressBar } from "@/components/AiProgressBar";
 import { DetectObjectsModal } from "@/components/DetectObjects";
 import { GeojsonThumb } from "@/components/GeojsonThumb";
@@ -212,7 +213,14 @@ function CaptureImage({ storageKey }: { storageKey: string }) {
 function PinPendingButton({ captureId }: { captureId: number }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const [roomId, setRoomId] = useState<number | null>(() => getLastRoomId());
+  const lastRoomId = useLastRoomId();
+  const [roomId, setRoomIdRaw] = useState<number | null>(null);
+  const [touched, setTouched] = useState(false);
+  if (!touched && roomId == null && lastRoomId != null) setRoomIdRaw(lastRoomId);
+  const setRoomId = (id: number | null) => {
+    setTouched(true);
+    setRoomIdRaw(id);
+  };
   const rooms = trpc.rooms.list.useQuery();
   const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "unset";
   const hasDefaultLocation = roomId != null;
@@ -402,7 +410,14 @@ function TriageCard({
   const areas = trpc.areas.list.useQuery();
 
   const [rows, setRows] = useState<TriageRow[]>(() => (s ? buildTriageRows(s, areas.data) : []));
-  const [roomId, setRoomId] = useState<number | null>(() => s?.roomId ?? getLastRoomId());
+  const lastRoomId = useLastRoomId();
+  const [roomId, setRoomIdRaw] = useState<number | null>(() => s?.roomId ?? null);
+  const [roomTouched, setRoomTouched] = useState(false);
+  if (!roomTouched && roomId == null && lastRoomId != null) setRoomIdRaw(lastRoomId);
+  const setRoomId = (id: number | null) => {
+    setRoomTouched(true);
+    setRoomIdRaw(id);
+  };
   const [aiError, setAiError] = useState<string | null>(null);
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [detectOpen, setDetectOpen] = useState(false);
@@ -649,8 +664,13 @@ function TriageCard({
                 : newCount > 0
                   ? `File ${newCount} new item${newCount === 1 ? "" : "s"}`
                   : "Confirm"}
-            </Button>
-          </div>
+            </Button>          </div>
+          {acceptMany.error && (
+            <div className="mt-2 flex gap-2 items-start rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              {acceptMany.error.message}
+            </div>
+          )}
         </div>
       )}
     </div>

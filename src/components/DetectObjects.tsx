@@ -11,7 +11,8 @@ import {
 import { AreaPicker } from "@/components/AreaPicker";
 import { RoomPicker } from "@/components/RoomPicker";
 import { AiProgressBar } from "@/components/AiProgressBar";
-import { getLastRoomId, setLastRoomId } from "@/lib/lastRoom";
+import { setLastRoomId } from "@/lib/lastRoom";
+import { useLastRoomId } from "@/hooks/use-last-room";
 import { Check, Loader2, ScanSearch, AlertTriangle, RefreshCw } from "lucide-react";
 
 type Suggestion = {
@@ -113,7 +114,14 @@ export function DetectObjectsModal({
   const [mode, setMode] = useState<"existing" | "new">("existing");
   const [newName, setNewName] = useState("");
   const [newArea, setNewArea] = useState<number | null>(null);
-  const [roomId, setRoomId] = useState<number | null>(null);
+  const lastRoomId = useLastRoomId();
+  const [roomId, setRoomIdRaw] = useState<number | null>(null);
+  const [roomTouched, setRoomTouched] = useState(false);
+  if (!roomTouched && roomId == null && lastRoomId != null) setRoomIdRaw(lastRoomId);
+  const setRoomId = (id: number | null) => {
+    setRoomTouched(true);
+    setRoomIdRaw(id);
+  };
   const areas = trpc.areas.list.useQuery();
 
   const captureQuery = trpc.inbox.list.useQuery(undefined, { enabled: open });
@@ -138,7 +146,8 @@ export function DetectObjectsModal({
       // best available default while detection runs - a specific location
       // from an already-recognized item in this same photo wins once
       // detection comes back (see detect.onSuccess below)
-      setRoomId(getLastRoomId());
+      setRoomIdRaw(null);
+      setRoomTouched(false);
     }
   }, [open]);
 

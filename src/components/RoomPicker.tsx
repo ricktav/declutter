@@ -51,12 +51,34 @@ export function RoomPicker({
     setSyncedName(selected?.name ?? "");
     setText(selected?.name ?? "");
   }
+  // close path: commit typed text if it names a room, clear if allowed,
+  // otherwise snap the text back to the saved room
+  const commitText = () => {
+    const t = text.trim().toLowerCase();
+    const hit = t ? (rooms.data ?? []).find((r) => r.name.toLowerCase() === t) : undefined;
+    if (hit) onChange(hit.id);
+    else if (!t && allowNone) onChange(null);
+    else setText(selected?.name ?? "");
+    setOpen(false);
+  };
+  const commitRef = useRef(commitText);
+  const insideRef = useRef(false);
+  const openRef = useRef(open);
+  useEffect(() => {
+    commitRef.current = commitText;
+    openRef.current = open;
+  });
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+      if (openRef.current && wrapRef.current && !wrapRef.current.contains(e.target as Node)) commitRef.current();
     };
+    const onUp = () => { insideRef.current = false; };
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("mouseup", onUp);
+    };
   }, []);
 
   const q = text.trim().toLowerCase();
@@ -95,7 +117,7 @@ export function RoomPicker({
   }
 
   return (
-    <div className="relative" ref={wrapRef}>
+    <div className="relative" ref={wrapRef} onMouseDown={() => { insideRef.current = true; }}>
       <input
         id="room-picker"
         autoFocus={autoFocus}
@@ -103,23 +125,21 @@ export function RoomPicker({
         placeholder="room…"
         value={text}
         onFocus={() => setOpen(true)}
+        onBlur={() => { if (open && !insideRef.current) commitText(); }}
         onChange={(e) => {
           setText(e.target.value);
           setOpen(true);
           if (e.target.value.trim() === "" && allowNone) onChange(null);
         }}
         onKeyDown={(e) => {
-          if (!open || rowCount === 0) {
-            if (e.key === "Escape") setOpen(false);
-            return;
-          }
+          if (e.key === "Escape") { commitText(); return; }
+          if (!open || rowCount === 0) return;
           if (e.key === "ArrowDown") { e.preventDefault(); setHighlight((h) => (h + 1) % rowCount); }
           else if (e.key === "ArrowUp") { e.preventDefault(); setHighlight((h) => (h - 1 + rowCount) % rowCount); }
           else if (e.key === "Enter") { e.preventDefault(); selectAt(highlight); }
-          else if (e.key === "Escape") setOpen(false);
         }}
       />
-      {!open && selected && <Check className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-emerald-600" />}
+      {!open && selected && text.trim().toLowerCase() === selected.name.toLowerCase() && <Check className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-emerald-600" />}
       {open && rowCount > 0 && (
         <div className="absolute z-20 mt-1 w-full rounded-md border border-border bg-white shadow-lg max-h-56 overflow-auto">
           {matches.map((r, i) => (
