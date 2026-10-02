@@ -11,6 +11,12 @@ import { Box } from "@/components/DetectObjects";
 import { Loader2 } from "lucide-react";
 
 type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
+type PhotoSize = "small" | "medium" | "big";
+const SIZE_OPTIONS: { value: PhotoSize; label: string }[] = [
+  { value: "small", label: "Small" },
+  { value: "medium", label: "Medium" },
+  { value: "big", label: "Big" },
+];
 
 function LibraryThumb({ storageKey, onPick }: { storageKey: string; onPick: () => void }) {
   const url = trpc.attachments.url.useQuery({ key: storageKey });
@@ -45,6 +51,7 @@ export function ChooseFromLibraryDialog({
   const [pickedCaptureId, setPickedCaptureId] = useState<number | null>(null);
   const [sourceAttachmentId, setSourceAttachmentId] = useState<number | null>(null);
   const [box, setBox] = useState<CropBox>({ xPct: 50, yPct: 50, wPct: 40, hPct: 40 });
+  const [photoSize, setPhotoSize] = useState<PhotoSize>("big");
 
   const ensure = trpc.map.ensureAttachmentForCapture.useMutation();
   const photoUrl = trpc.attachments.urlForAttachment.useQuery(
@@ -65,6 +72,7 @@ export function ChooseFromLibraryDialog({
     setPickedCaptureId(null);
     setSourceAttachmentId(null);
     setBox({ xPct: 50, yPct: 50, wPct: 40, hPct: 40 });
+    setPhotoSize("big");
   };
 
   const pick = async (captureId: number) => {
@@ -126,13 +134,30 @@ export function ChooseFromLibraryDialog({
                 <Box box={box} color="#2d4a22" onChange={setBox} />
               </div>
             )}
+            <div className="flex items-center gap-2">
+              <span className="micro-label text-muted-foreground">Size</span>
+              <div className="flex items-center gap-0.5 rounded-md bg-muted/50 p-0.5">
+                {SIZE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setPhotoSize(opt.value)}
+                    className={`px-2.5 py-1 rounded text-[12px] font-medium ${
+                      photoSize === opt.value ? "bg-white shadow-sm" : "text-muted-foreground"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="flex gap-2">
               <Button size="sm" variant="ghost" onClick={reset} disabled={create.isPending}>
                 Back
               </Button>
               <Button
                 size="sm"
-                onClick={() => create.mutate({ itemId, sourceAttachmentId, box })}
+                onClick={() => create.mutate({ itemId, sourceAttachmentId, box, photoSize })}
                 disabled={create.isPending}
               >
                 {create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}

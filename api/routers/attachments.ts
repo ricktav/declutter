@@ -192,7 +192,14 @@ export const attachmentsRouter = createRouter({
    * one, otherwise the attachment's own image) so pinning a new object
    * doesn't leave it imageless. */
   createCutoutFromAttachment: publicQuery
-    .input(z.object({ itemId: z.number(), sourceAttachmentId: z.number(), box: cropBoxInput }))
+    .input(
+      z.object({
+        itemId: z.number(),
+        sourceAttachmentId: z.number(),
+        box: cropBoxInput,
+        photoSize: z.enum(["small", "medium", "big"]).default("big"),
+      }),
+    )
     .mutation(async ({ input }) => {
       const db = getDb();
       const source = await db.query.attachments.findFirst({ where: eq(attachments.id, input.sourceAttachmentId) });
@@ -220,7 +227,8 @@ export const attachmentsRouter = createRouter({
         if (dup) return { id: dup.id, storageKey: dup.storageKey, created: false as const };
       }
 
-      const cropped = await cropPercent(bytes, input.box);
+      const maxDim = { small: 480, medium: 900, big: undefined }[input.photoSize];
+      const cropped = await cropPercent(bytes, input.box, maxDim);
       const saved = await putFile({
         bytes: new Uint8Array(cropped),
         fileName: `items/${input.itemId}/cutout-${Date.now()}.jpg`,

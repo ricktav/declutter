@@ -24,6 +24,9 @@ export async function normalizeOrientation(input: Uint8Array): Promise<Buffer> {
 export async function cropPercent(
   input: Uint8Array,
   box: { xPct: number; yPct: number; wPct: number; hPct: number },
+  /** Downscale the cropped region to fit inside this many px (longest
+   * side) - omit for the original crop resolution. Never upscales. */
+  maxDim?: number,
 ): Promise<Buffer> {
   // xPct/yPct/wPct/hPct are drawn against the image as the BROWSER displays
   // it, which auto-applies EXIF orientation (most phone portrait photos
@@ -46,10 +49,14 @@ export async function cropPercent(
   y = Math.max(0, Math.min(y, H - 1));
   w = Math.min(w, W - x);
   h = Math.min(h, H - y);
-  return sharp(normalized)
-    .extract({ left: Math.round(x), top: Math.round(y), width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) })
-    .jpeg({ quality: 88 })
-    .toBuffer();
+  let pipeline = sharp(normalized).extract({
+    left: Math.round(x),
+    top: Math.round(y),
+    width: Math.max(1, Math.round(w)),
+    height: Math.max(1, Math.round(h)),
+  });
+  if (maxDim) pipeline = pipeline.resize(maxDim, maxDim, { fit: "inside", withoutEnlargement: true });
+  return pipeline.jpeg({ quality: 88 }).toBuffer();
 }
 
 /**
