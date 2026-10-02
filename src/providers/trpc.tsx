@@ -5,6 +5,7 @@ import superjson from "superjson";
 import type { AppRouter } from "../../api/router";
 import type { ReactNode } from "react";
 import { authHeaders } from "@/lib/auth";
+import { getStoredHouseId } from "@/context/house";
 
 export const trpc = createTRPCReact<AppRouter>();
 
@@ -16,7 +17,10 @@ const trpcClient = trpc.createClient({
     httpBatchLink({
       url: "/api/trpc",
       transformer: superjson,
-      headers: () => authHeaders(),
+      headers: () => {
+        const h = getStoredHouseId();
+        return { ...authHeaders(), ...(h != null ? { "x-house-id": String(h) } : {}) };
+      },
       fetch(input, init) {
         return globalThis.fetch(input, {
           ...(init ?? {}),

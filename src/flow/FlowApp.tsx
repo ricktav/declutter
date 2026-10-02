@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Camera, Cpu, Inbox, MapPin, Scale, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { HouseSwitcher } from "@/components/HouseSwitcher";
 import { FlowProvider, useFlow } from "./context";
 import { LocationSheet } from "./LocationSheet";
 import { SnapTab } from "./SnapTab";
@@ -79,6 +80,7 @@ function Shell() {
             <MapPin className="h-3.5 w-3.5 shrink-0 text-[#d2ff00]" />
             <span className="truncate">{here.room ? placeLabel(here, houses) : "Where are you?"}</span>
           </button>
+          <HouseSwitcher />
           <a href="/" aria-label="Workbench" title="Workbench" className="shrink-0 text-[12px] text-[#b4b8a5] hover:text-[#f4f4ed]">
             <span className="hidden min-[430px]:inline">Workbench </span>↗
           </a>

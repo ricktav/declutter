@@ -20,15 +20,17 @@ export const areasRouter = createRouter({
   // breakdown reflects that house instead of the whole inventory
   list: procedure
     .input(z.object({ houseId: z.number().nullable().optional() }).optional())
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // explicit input wins; `null` explicitly means "all houses"
+      const houseId = input?.houseId !== undefined ? input.houseId : ctx.houseId;
       const db = getDb();
       const all = await db.select().from(areas).orderBy(areas.sortOrder, areas.id);
       const counts = await db
         .select({ areaId: items.areaId, count: sql<number>`count(*)` })
         .from(items)
         .where(
-          input?.houseId != null
-            ? and(eq(items.status, "active"), eq(items.houseId, input.houseId))
+          houseId != null
+            ? and(eq(items.status, "active"), eq(items.houseId, houseId))
             : eq(items.status, "active"),
         )
         .groupBy(items.areaId);

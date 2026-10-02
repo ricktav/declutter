@@ -4,6 +4,7 @@ import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { HouseSwitcher } from "@/components/HouseSwitcher";
 import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
 import {
   LayoutDashboard,
@@ -190,6 +191,10 @@ export default function Layout() {
         <button className="md:hidden ml-auto text-[#b4b8a5] p-1" onClick={() => setMenuOpen(false)}>
           <X className="h-5 w-5" />
         </button>
+      </div>
+
+      <div className="px-2 pb-2">
+        <HouseSwitcher dark />
       </div>
 
       <nav className="px-2 space-y-0.5">

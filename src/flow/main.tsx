@@ -2,7 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "../index.css";
 import { TRPCProvider } from "@/providers/trpc";
-import { AuthGate } from "@/components/AuthGate";
+import { AuthGate } from "@/components/AuthGate"
+import { HouseProvider } from "@/context/house";
 import { FlowApp } from "./FlowApp";
 
 // Second front end on the same API and database as the Workbench (src/main.tsx):
@@ -11,7 +12,9 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <TRPCProvider>
       <AuthGate>
-        <FlowApp />
+        <HouseProvider>
+          <FlowApp />
+        </HouseProvider>
       </AuthGate>
     </TRPCProvider>
   </StrictMode>,

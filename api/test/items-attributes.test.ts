@@ -4,7 +4,7 @@ import { areas, events, items, relations } from "@db/schema";
 import { appRouter } from "../router";
 import { getTestDb, resetTestDb } from "./db";
 
-const caller = () => appRouter.createCaller({ req: new Request("http://test.local/"), resHeaders: new Headers() });
+const caller = () => appRouter.createCaller({ req: new Request("http://test.local/"), resHeaders: new Headers(), houseId: null });
 
 async function makeItem(attributes: Record<string, string | number> | null = null) {
   const db = getTestDb();
