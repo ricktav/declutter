@@ -26,6 +26,20 @@ describe("ensureRoom", () => {
   });
 });
 
+describe("ensureRoom race", () => {
+  it("concurrent creates of one name converge on one room", async () => {
+    const db = getTestDb();
+    const [{ id: houseId }] = await db.insert(houses).values({ name: "H" }).$returningId();
+    const res = await Promise.all([
+      ensureRoom(db, { houseId, name: "Race" }),
+      ensureRoom(db, { houseId, name: "race" }),
+    ]);
+    expect(res[0].id).toBe(res[1].id);
+    expect(res.filter((r) => r.created)).toHaveLength(1);
+    expect(await db.select().from(rooms)).toHaveLength(1);
+  });
+});
+
 describe("setItemLocation", () => {
   it("putting an item in a room sets houseId to the room's house, even across houses", async () => {
     const db = getTestDb();

@@ -407,25 +407,39 @@ export const roomsRouter = createRouter({
         }
       }
 
+      const name = input.name.trim();
+      const [existing] = await db
+        .select()
+        .from(rooms)
+        .where(and(eq(rooms.houseId, source.houseId), sql`lower(${rooms.name}) = ${name.toLowerCase()}`))
+        .limit(1);
+      if (existing?.walls) {
+        throw new TRPCError({ code: "CONFLICT", message: `A room called "${name}" already has a plan in this house.` });
+      }
+
       const { newRoomId, moved } = await db.transaction(async (tx) => {
-      const [{ id: newRoomId }] = await tx
-        .insert(rooms)
-        .values({
-          houseId: source.houseId,
-          name: input.name,
-          floor: source.floor,
-          source: "manual",
-          scanDate: new Date(),
-          widthM: bw,
-          depthM: bd,
-          wallHeightM: source.wallHeightM,
-          walls: cutWalls,
-          openings: [],
-          parentRoomId: source.id,
-          offsetXM: bx,
-          offsetYM: by,
-        })
-        .$returningId();
+      const cutValues = {
+        source: "manual" as const,
+        scanDate: new Date(),
+        widthM: bw,
+        depthM: bd,
+        wallHeightM: source.wallHeightM,
+        walls: cutWalls,
+        openings: [],
+        parentRoomId: source.id,
+        offsetXM: bx,
+        offsetYM: by,
+      };
+      let newRoomId: number;
+      if (existing) {
+        newRoomId = existing.id;
+        await tx.update(rooms).set({ ...cutValues, floor: existing.floor ?? source.floor }).where(eq(rooms.id, existing.id));
+      } else {
+        [{ id: newRoomId }] = await tx
+          .insert(rooms)
+          .values({ houseId: source.houseId, name, floor: source.floor, ...cutValues })
+          .$returningId();
+      }
 
       const sourceItems = await tx.select().from(items).where(eq(items.roomId, input.sourceRoomId));
       let moved = 0;
@@ -450,7 +464,7 @@ export const roomsRouter = createRouter({
           entityType: "room",
           entityId: newRoomId,
           action: "cut",
-          summary: `Room "${input.name}" cut from room #${input.sourceRoomId} (${moved} placed item${moved === 1 ? "" : "s"})`,
+          summary: `Room "${name}" cut from room #${input.sourceRoomId} (${moved} placed item${moved === 1 ? "" : "s"})`,
         },
         tx,
       );

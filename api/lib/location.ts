@@ -15,22 +15,31 @@ export async function ensureRoom(
 ): Promise<{ id: number; created: boolean }> {
   const name = input.name.trim();
   if (!name) throw new Error("A room needs a name.");
-  const existing = await db
-    .select({ id: rooms.id, floor: rooms.floor })
-    .from(rooms)
-    .where(and(eq(rooms.houseId, input.houseId), sql`lower(${rooms.name}) = ${name.toLowerCase()}`))
-    .limit(1);
+  const find = () =>
+    db
+      .select({ id: rooms.id, floor: rooms.floor })
+      .from(rooms)
+      .where(and(eq(rooms.houseId, input.houseId), sql`lower(${rooms.name}) = ${name.toLowerCase()}`))
+      .limit(1);
+  const existing = await find();
   if (existing[0]) {
     if (!existing[0].floor && input.floor) {
       await db.update(rooms).set({ floor: input.floor }).where(eq(rooms.id, existing[0].id));
     }
     return { id: existing[0].id, created: false };
   }
-  const [{ id }] = await db
-    .insert(rooms)
-    .values({ houseId: input.houseId, name, floor: input.floor || null, source: "manual" })
-    .$returningId();
-  return { id, created: true };
+  try {
+    const [{ id }] = await db
+      .insert(rooms)
+      .values({ houseId: input.houseId, name, floor: input.floor || null, source: "manual" })
+      .$returningId();
+    return { id, created: true };
+  } catch (err) {
+    if ((err as { cause?: { code?: string } }).cause?.code !== "ER_DUP_ENTRY") throw err;
+    const again = await find();
+    if (!again[0]) throw err;
+    return { id: again[0].id, created: false };
+  }
 }
 
 /**

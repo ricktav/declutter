@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { areas, attachments, houses, items, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
-import { callerFor } from "./areas.test";
+import { callerFor } from "./caller";
 
 beforeEach(async () => {
   await resetTestDb();
@@ -115,5 +115,44 @@ describe("rooms.remove", () => {
     await callerFor(h1).rooms.remove({ id: keuken, force: true });
     const rows = await db.select().from(items).where(eq(items.houseId, h1));
     expect(rows.filter((r) => r.roomId == null)).toHaveLength(2);
+  });
+});
+
+describe("rooms.cutFromRoom", () => {
+  async function seedSource() {
+    const s = await seed();
+    const { db, h1, areaId } = s;
+    const [{ id: src }] = await db
+      .insert(rooms)
+      .values({
+        houseId: h1, name: "Begane grond", floor: "ground", source: "manual", widthM: 4, depthM: 3,
+        walls: [
+          { points: [[0, 0], [4, 0]] }, { points: [[4, 0], [4, 3]] },
+          { points: [[4, 3], [0, 3]] }, { points: [[0, 3], [0, 0]] },
+        ],
+      })
+      .$returningId();
+    const [{ id: itemId }] = await db
+      .insert(items)
+      .values({ areaId, name: "kast", houseId: h1, roomId: src, pos: { xM: 0.5, yM: 0.5, wM: 0.5, dM: 0.5 } as never })
+      .$returningId();
+    return { ...s, src, itemId };
+  }
+  const bounds = { xM: 0, yM: 0, wM: 2, dM: 2 };
+
+  it("adopts an existing geometry-less room of the same name", async () => {
+    const { db, h1, src, itemId, keuken } = await seedSource();
+    const r = await callerFor(h1).rooms.cutFromRoom({ sourceRoomId: src, name: " keuken ", bounds });
+    expect(r.id).toBe(keuken);
+    const [room] = await db.select().from(rooms).where(eq(rooms.id, keuken));
+    expect(room.parentRoomId).toBe(src);
+    expect(room.walls).not.toBeNull();
+    const [it] = await db.select().from(items).where(eq(items.id, itemId));
+    expect(it.roomId).toBe(keuken);
+  });
+  it("refuses a name whose room already has a plan", async () => {
+    const { db, h1, src, keuken } = await seedSource();
+    await db.update(rooms).set({ walls: [] }).where(eq(rooms.id, keuken));
+    await expect(callerFor(h1).rooms.cutFromRoom({ sourceRoomId: src, name: "Keuken", bounds })).rejects.toThrow(/already has a plan/);
   });
 });
