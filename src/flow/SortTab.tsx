@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Loader2, MapPin, Sparkles, Plus, X } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { cn } from "@/lib/utils";
@@ -7,51 +7,21 @@ import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { useFlow } from "./context";
 import { LocationSheet } from "./LocationSheet";
 import { EmptyState, ErrorLine, Photo } from "./ui";
-import {
-  getSnapPlace,
-  isGeojsonKey,
-  isUnplaced,
-  needsCheck,
-  placeLabel,
-  usableSuggestion,
-  type FlowCapture,
-  type FlowItem,
-  type Place,
-} from "./data";
-
-type Card =
-  | { key: string; kind: "capture"; capture: FlowCapture }
-  | { key: string; kind: "check"; item: FlowItem }
-  | { key: string; kind: "place"; item: FlowItem };
-type Filter = "all" | "capture" | "check" | "place";
+import { BackupPicker, LabFields } from "./LabParts";
+import { filterOf, useSortCards, type Filter } from "./queue";
+import { getSnapPlace, isGeojsonKey, placeLabel, usableSuggestion, type FlowCapture, type FlowItem, type Place } from "./data";
+import { LAB, LAB_KEYS, role, roleLabel } from "./lenses";
 
 /** Finish the record, one card at a time: what is it, is it right, where is it. */
 export function SortTab() {
-  const { items, captures, ready } = useFlow();
+  const { lens, ready } = useFlow();
   const [filter, setFilter] = useState<Filter>("all");
   const [skipped, setSkipped] = useState<string[]>([]);
+  const cards = useSortCards();
 
-  const cards = useMemo<Card[]>(() => {
-    // photos first (the common case), notes/links next, floor scans last -
-    // a scan can only be imported in the Workbench, so it must not block the line
-    const rank = (x: FlowCapture) =>
-      x.kind === "scan" || isGeojsonKey(x.storageKey) ? 2 : x.kind === "image" ? 0 : 1;
-    const c: Card[] = captures
-      .filter((x) => x.status === "pending")
-      .sort((a, b) => rank(a) - rank(b))
-      .map((capture) => ({ key: `c${capture.id}`, kind: "capture", capture }));
-    const k: Card[] = items.filter(needsCheck).map((item) => ({ key: `k${item.id}`, kind: "check", item }));
-    const p: Card[] = items.filter(isUnplaced).map((item) => ({ key: `p${item.id}`, kind: "place", item }));
-    return [...c, ...k, ...p];
-  }, [captures, items]);
-
-  const counts = {
-    all: cards.length,
-    capture: cards.filter((x) => x.kind === "capture").length,
-    check: cards.filter((x) => x.kind === "check").length,
-    place: cards.filter((x) => x.kind === "place").length,
-  };
-  const visible = cards.filter((x) => filter === "all" || x.kind === filter);
+  const counts: Record<Filter, number> = { all: cards.length, capture: 0, check: 0, lab: 0, place: 0 };
+  for (const c of cards) counts[filterOf(c)]++;
+  const visible = cards.filter((x) => filter === "all" || filterOf(x) === filter);
   // skipped cards go to the back of the line instead of disappearing
   const ordered = [...visible.filter((x) => !skipped.includes(x.key)), ...visible.filter((x) => skipped.includes(x.key))];
   const card = ordered[0];
@@ -68,6 +38,7 @@ export function SortTab() {
             ["all", "All"],
             ["capture", "Photos"],
             ["check", "Check"],
+            ...(lens === "lab" ? ([["lab", "Lab"]] as const) : []),
             ["place", "Place"],
           ] as const
         ).map(([f, label]) => (
@@ -86,12 +57,16 @@ export function SortTab() {
 
       {!card ? (
         <EmptyState title="Nothing to sort">
-          Everything is named, checked and placed. Snap more things, or go to Act to decide what stays.
+          {lens === "lab"
+            ? "Every lab thing has its role, its backup and its place."
+            : "Everything is named, checked and placed. Snap more things, or go to Act to decide what stays."}
         </EmptyState>
       ) : (
         <>
           {card.kind === "capture" && <CaptureCard key={card.key} capture={card.capture} onSkip={skip} />}
           {card.kind === "check" && <CheckCard key={card.key} item={card.item} onSkip={skip} />}
+          {card.kind === "lab" && <LabDetailsCard key={card.key} item={card.item} onSkip={skip} />}
+          {card.kind === "backup" && <BackupCard key={card.key} item={card.item} onSkip={skip} />}
           {card.kind === "place" && <PlaceCard key={card.key} item={card.item} onSkip={skip} />}
           <p className="text-center font-data text-[12px] text-muted-foreground">{ordered.length} left in this list</p>
         </>
@@ -117,8 +92,9 @@ function CardShell({ question, children, onSkip }: { question: string; children:
 type Row = { name: string; areaId: number | null; checked: boolean; attributes?: Record<string, string> };
 
 function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => void }) {
-  const { areas, here, houses, refresh } = useFlow();
+  const { areas, here, houses, lens, refresh } = useFlow();
   const suggestion = usableSuggestion(capture);
+  const defaultAreaId = (lens === "lab" ? areas.find((a) => a.slug === LAB.defaultAreaSlug)?.id : undefined) ?? areas[0]?.id ?? null;
   const matched = suggestion?.items.filter((s) => !s.isNewItem && s.matchedItemName) ?? [];
 
   const initialRows = (): Row[] =>
@@ -126,7 +102,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
       .filter((s) => s.isNewItem || !s.matchedItemName)
       .map((s) => ({
         name: s.itemName,
-        areaId: areas.find((a) => a.slug === s.areaSlug)?.id ?? areas[0]?.id ?? null,
+        areaId: areas.find((a) => a.slug === s.areaSlug)?.id ?? defaultAreaId,
         checked: true,
         attributes: s.attributes,
       }));
@@ -142,10 +118,11 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
   const [error, setError] = useState<string | null>(null);
 
   // AI finished in the background: show its rows (but never clobber edits)
-  useEffect(() => {
+  const [seenSuggestion, setSeenSuggestion] = useState(capture.suggestion);
+  if (capture.suggestion !== seenSuggestion) {
+    setSeenSuggestion(capture.suggestion);
     if (suggestion && rows.length === 0) setRows(initialRows());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capture.suggestion]);
+  }
 
   const triage = trpc.inbox.triage.useMutation({
     onSuccess: (res) => (res.ok ? refresh() : setError(res.error)),
@@ -160,7 +137,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
   const addExtra = () => {
     const n = extra.trim();
     if (!n) return;
-    setRows((r) => [...r, { name: n, areaId: areas[0]?.id ?? null, checked: true }]);
+    setRows((r) => [...r, { name: n, areaId: defaultAreaId, checked: true }]);
     setExtra("");
   };
 
@@ -379,6 +356,49 @@ function PlaceCard({ item, onSkip }: { item: FlowItem; onSkip: () => void }) {
         {here.room ? "Another place…" : "Pick a place…"}
       </button>
       {open && <LocationSheet title="Where is it?" value={here} onPick={put} onClose={() => setOpen(false)} />}
+    </CardShell>
+  );
+}
+
+function LabItemHeader({ item }: { item: FlowItem }) {
+  const { houses } = useFlow();
+  return (
+    <div className="flex items-center gap-3">
+      <Photo storageKey={item.imageKey} className="h-20 w-20 shrink-0" />
+      <div className="min-w-0">
+        <p className="text-[16px] font-semibold leading-tight">{item.name}</p>
+        <p className="text-[12px] text-muted-foreground">
+          {[role(item) ? roleLabel(role(item)) : item.areaName, placeLabel(item, houses)].filter(Boolean).join(" · ")}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function LabDetailsCard({ item, onSkip }: { item: FlowItem; onSkip: () => void }) {
+  const { refresh } = useFlow();
+  const patch = trpc.items.patchAttributes.useMutation({ onSuccess: refresh });
+  return (
+    <CardShell question="What device is it?" onSkip={onSkip}>
+      <LabItemHeader item={item} />
+      <LabFields item={item} requireRole>
+        <button
+          disabled={patch.isPending}
+          onClick={() => patch.mutate({ id: item.id, set: { [LAB_KEYS.exclude]: "yes" } })}
+          className="rounded-xl border border-border px-3 text-[13px] text-muted-foreground disabled:opacity-40"
+        >
+          Not a lab thing
+        </button>
+      </LabFields>
+    </CardShell>
+  );
+}
+
+function BackupCard({ item, onSkip }: { item: FlowItem; onSkip: () => void }) {
+  return (
+    <CardShell question="Is it backed up?" onSkip={onSkip}>
+      <LabItemHeader item={item} />
+      <BackupPicker item={item} />
     </CardShell>
   );
 }

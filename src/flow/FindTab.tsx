@@ -4,28 +4,40 @@ import { trpc } from "@/providers/trpc";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { useFlow } from "./context";
 import { DecisionBadge, DecisionButtons, EmptyState, Photo, Sheet } from "./ui";
+import { BackupPicker, LabFields, SafetyChecklist } from "./LabParts";
 import { isReal, placeLabel, type FlowItem } from "./data";
+import { holdsData, inLab, role, roleLabel } from "./lenses";
 
 /** "Where is it?" - type a word, see the place and a photo. */
 export function FindTab() {
-  const { items, houses, ready } = useFlow();
+  const { items, houses, lens, ready } = useFlow();
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<number | null>(null);
 
   const results = useMemo(() => {
-    const live = items.filter((it) => it.status === "active" && isReal(it));
+    const live = items.filter((it) => it.status === "active" && isReal(it) && (lens !== "lab" || inLab(it)));
     const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return live.slice(0, 20);
     return live
       .filter((it) => {
-        const hay = [it.name, it.description, it.room, it.floor, it.areaName, houses.find((h) => h.id === it.houseId)?.name]
+        // attribute values too, so a hostname, an IP or a serial number finds its thing
+        const hay = [
+          it.name,
+          it.description,
+          it.room,
+          it.floor,
+          it.areaName,
+          houses.find((h) => h.id === it.houseId)?.name,
+          ...Object.values(it.attributes ?? {}),
+          role(it) && roleLabel(role(it)),
+        ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
         return terms.every((t) => hay.includes(t));
       })
       .slice(0, 60);
-  }, [items, houses, q]);
+  }, [items, houses, q, lens]);
   const open = items.find((it) => it.id === openId) ?? null;
 
   if (!ready) return <p className="py-10 text-center text-[13px] text-muted-foreground">Loading…</p>;
@@ -39,7 +51,7 @@ export function FindTab() {
           type="search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search a thing, a room or a kind"
+          placeholder={lens === "lab" ? "Search a device, hostname, IP or serial" : "Search a thing, a room or a kind"}
           className="flex-1 bg-transparent text-[16px] outline-none"
         />
       </label>
@@ -58,7 +70,9 @@ export function FindTab() {
                     <span className="truncate text-[15px] font-medium">{it.name}</span>
                     <DecisionBadge decision={it.decision} />
                   </span>
-                  <span className="block truncate text-[12px] text-muted-foreground">{placeLabel(it, houses) || "no place yet"}</span>
+                  <span className="block truncate text-[12px] text-muted-foreground">
+                    {[role(it) && roleLabel(role(it)), it.attributes?.model, placeLabel(it, houses) || "no place yet"].filter(Boolean).join(" · ")}
+                  </span>
                 </span>
               </button>
             </li>
@@ -72,7 +86,7 @@ export function FindTab() {
 }
 
 function ThingSheet({ item, onClose }: { item: FlowItem; onClose: () => void }) {
-  const { houses, refresh } = useFlow();
+  const { houses, lens, refresh } = useFlow();
   const setDecision = trpc.items.setDecision.useMutation({ onSuccess: refresh });
   return (
     <Sheet title={item.name} onClose={onClose}>
@@ -84,6 +98,19 @@ function ThingSheet({ item, onClose }: { item: FlowItem; onClose: () => void }) 
           {item.areaName && <p className="text-[12px] text-muted-foreground">{item.areaName}</p>}
         </div>
         {item.roomId != null && item.pos && <ItemRoomPreview roomId={item.roomId} itemId={item.id} />}
+        {(lens === "lab" || role(item)) && inLab(item) && (
+          <div className="flex flex-col gap-2 rounded-xl border border-border bg-white p-3">
+            <span className="micro-label text-muted-foreground">Device</span>
+            <LabFields key={item.id} item={item} />
+            {holdsData(item) && (
+              <>
+                <span className="micro-label mt-1 text-muted-foreground">Backup</span>
+                <BackupPicker item={item} />
+              </>
+            )}
+          </div>
+        )}
+        {holdsData(item) && (item.decision === "sell" || item.decision === "donate" || item.decision === "toss") && <SafetyChecklist item={item} />}
         <span className="micro-label text-muted-foreground">Decision</span>
         <DecisionButtons
           current={item.decision}

@@ -4,14 +4,16 @@ import { trpc } from "@/providers/trpc";
 import { cn } from "@/lib/utils";
 import type { ItemDecision } from "@db/schema";
 import { useFlow } from "./context";
-import { DecisionButtons, EmptyState, ErrorLine, Photo, Ring, Sheet } from "./ui";
-import { DECISIONS, isDecided, isReal, needsCheck, needsDecision, placeLabel, type FlowItem } from "./data";
+import { DecisionButtons, EmptyState, ErrorLine, Photo, Ring } from "./ui";
+import { DecisionList } from "./Lists";
+import { DECISIONS, LIST_TITLE, isDecided, isReal, needsCheck, needsDecision, placeLabel, type FlowItem } from "./data";
+import { inLab, role, roleLabel } from "./lenses";
 
 const NO_ROOM = "__none__";
 
 /** Decide what happens to each thing - later, in short sprints, when you are ready. */
 export function ActTab() {
-  const { items, houses, here, ready, refresh } = useFlow();
+  const { items, houses, here, lens, ready, refresh } = useFlow();
   const [houseId, setHouseId] = useState<number | "all">(here.houseId ?? "all");
   const [room, setRoom] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<number[]>([]);
@@ -24,8 +26,11 @@ export function ActTab() {
   // everything that counts for this house: real, checked things - including
   // the ones already gone, so the ring keeps their progress
   const inHouse = useMemo(
-    () => items.filter((it) => isReal(it) && !needsCheck(it) && (houseId === "all" || it.houseId === houseId)),
-    [items, houseId],
+    () =>
+      items.filter(
+        (it) => isReal(it) && !needsCheck(it) && (houseId === "all" || it.houseId === houseId) && (lens !== "lab" || inLab(it)),
+      ),
+    [items, houseId, lens],
   );
   const rooms = useMemo(() => {
     const m = new Map<string, number>();
@@ -43,7 +48,11 @@ export function ActTab() {
   const lists = DECISIONS.filter((d) => d.key === "sell" || d.key === "donate" || d.key === "toss").map((d) => ({
     ...d,
     items: inHouse.filter((it) => it.status === "active" && it.decision === d.key),
+    gone: inHouse
+      .filter((it) => it.status === "archived" && it.decision === d.key)
+      .sort((a, b) => new Date(b.archivedAt ?? 0).getTime() - new Date(a.archivedAt ?? 0).getTime()),
   }));
+  const openList = lists.find((l) => l.key === listOpen);
 
   const decide = (it: FlowItem, d: ItemDecision) => {
     setError(null);
@@ -98,11 +107,11 @@ export function ActTab() {
             <button
               key={l.key}
               onClick={() => setListOpen(l.key)}
-              disabled={l.items.length === 0}
+              disabled={l.items.length === 0 && l.gone.length === 0}
               className="flex items-center justify-between rounded-lg border px-3 py-1.5 text-[13px] disabled:opacity-40"
               style={{ borderColor: l.color, color: l.color }}
             >
-              <span className="font-semibold">{l.key === "sell" ? "Sell list" : l.key === "donate" ? "Donate box" : "Toss run"}</span>
+              <span className="font-semibold">{LIST_TITLE[l.key]}</span>
               <span className="font-data">{l.items.length}</span>
             </button>
           ))}
@@ -125,7 +134,11 @@ export function ActTab() {
 
       {!current ? (
         <EmptyState title={total === 0 ? "No things here yet" : "Everything here is decided"}>
-          {total === 0 ? "Snap and sort things first." : "Pick another room, or work through the lists above."}
+          {total === 0
+            ? lens === "lab"
+              ? "No lab things here. Give a thing a device role in Sort, or file it under Computers."
+              : "Snap and sort things first."
+            : "Pick another room, or work through the lists above."}
         </EmptyState>
       ) : (
         <div key={current.id} className="flex flex-col gap-3 rounded-2xl border border-border bg-white p-3 shadow-sm">
@@ -133,7 +146,9 @@ export function ActTab() {
           <div>
             <p className="text-[17px] font-semibold leading-tight">{current.name}</p>
             <p className="text-[12px] text-muted-foreground">
-              {[current.areaName, placeLabel(current, houses) || "no place yet"].filter(Boolean).join(" · ")}
+              {[role(current) ? roleLabel(role(current)) : current.areaName, current.attributes?.model, placeLabel(current, houses) || "no place yet"]
+                .filter(Boolean)
+                .join(" · ")}
               {current.decision === "later" && " · was Later"}
             </p>
           </div>
@@ -148,44 +163,7 @@ export function ActTab() {
         </div>
       )}
 
-      {listOpen && <DecisionList decision={listOpen} items={lists.find((l) => l.key === listOpen)?.items ?? []} onClose={() => setListOpen(null)} />}
+      {openList && <DecisionList decision={openList.key} items={openList.items} gone={openList.gone} onClose={() => setListOpen(null)} />}
     </div>
-  );
-}
-
-/** Sell list / Donate box / Toss run - mark each thing gone once it has left the house. */
-function DecisionList({ decision, items, onClose }: { decision: ItemDecision; items: FlowItem[]; onClose: () => void }) {
-  const { houses, refresh } = useFlow();
-  const archive = trpc.items.setArchived.useMutation({ onSuccess: refresh });
-  const clear = trpc.items.setDecision.useMutation({ onSuccess: refresh });
-  const title = decision === "sell" ? "Sell list" : decision === "donate" ? "Donate box" : "Toss run";
-  return (
-    <Sheet title={title} onClose={onClose}>
-      {items.length === 0 ? (
-        <p className="py-6 text-center text-[13px] text-muted-foreground">This list is empty.</p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {items.map((it) => (
-            <li key={it.id} className="flex items-center gap-3 rounded-xl border border-border bg-white p-2">
-              <Photo storageKey={it.imageKey} className="h-14 w-14 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-[14px] font-medium truncate">{it.name}</p>
-                <p className="text-[11px] text-muted-foreground truncate">{placeLabel(it, houses) || "no place"}</p>
-                <button onClick={() => clear.mutate({ id: it.id, decision: null })} className="text-[11px] text-muted-foreground underline">
-                  undo decision
-                </button>
-              </div>
-              <button
-                onClick={() => archive.mutate({ id: it.id, archived: true })}
-                disabled={archive.isPending}
-                className="rounded-lg bg-[#282c20] px-3 py-2 font-data text-[12px] font-semibold text-[#f4f4ed] disabled:opacity-40"
-              >
-                Gone
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Sheet>
   );
 }

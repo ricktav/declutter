@@ -36,6 +36,26 @@ export const needsDecision = (it: FlowItem) => {
 };
 export const isDecided = (it: FlowItem) => it.decision != null && it.decision !== "later";
 
+// Selling and donating keep their state in attributes with a prefix, so it
+// reads as workflow and never as a description of the thing.
+export const SELL_KEYS = {
+  askPrice: "sell.ask_price", // whole euros
+  channel: "sell.channel",
+  listedAt: "sell.listed_at", // local date
+  soldPrice: "sell.sold_price", // whole euros
+  soldAt: "sell.sold_at", // local date
+};
+export const LIST_TITLE: Record<string, string> = { sell: "Sell list", donate: "Donate box", toss: "Toss run" };
+export const SELL_CHANNELS = ["Marktplaats", "Vinted", "eBay", "Facebook", "Other"];
+export const DONATE_TO = "donate.to";
+
+const EUR = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+export const euro = (n: number) => EUR.format(n);
+export const num = (v: string | number | undefined | null) => {
+  const n = typeof v === "number" ? v : v ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+};
+
 export function placeLabel(p: { houseId: number | null; floor?: string | null; room?: string | null }, houses: FlowHouse[] | undefined) {
   const house = p.houseId != null ? houses?.find((h) => h.id === p.houseId)?.name : null;
   return [house, p.floor, p.room].filter(Boolean).join(" › ");

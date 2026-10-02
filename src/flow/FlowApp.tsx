@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import { Camera, Inbox, MapPin, Scale, Search } from "lucide-react";
+import { Camera, Cpu, Inbox, MapPin, Scale, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FlowProvider, useFlow } from "./context";
 import { LocationSheet } from "./LocationSheet";
 import { SnapTab } from "./SnapTab";
 import { SortTab } from "./SortTab";
+import { useSortCards } from "./queue";
 import { ActTab } from "./ActTab";
 import { FindTab } from "./FindTab";
-import { isUnplaced, needsCheck, placeLabel } from "./data";
+import { placeLabel } from "./data";
+import { backupState, inLab, needsLabDetails } from "./lenses";
 import { ScreenBoundary } from "./ui";
 
 type Tab = "snap" | "sort" | "act" | "find";
@@ -37,7 +39,7 @@ export function FlowApp() {
  * donate / toss when you are ready; Find answers "where is it?".
  */
 function Shell() {
-  const { here, setHere, houses, items, captures } = useFlow();
+  const { here, setHere, houses, lens, setLens } = useFlow();
   const [tab, setTab] = useState<Tab>(tabFromHash);
   const [hereOpen, setHereOpen] = useState(false);
 
@@ -52,8 +54,7 @@ function Shell() {
     window.scrollTo({ top: 0 });
   };
 
-  const sortCount =
-    captures.filter((c) => c.status === "pending").length + items.filter(needsCheck).length + items.filter(isUnplaced).length;
+  const sortCount = useSortCards().length;
 
   return (
     <div className="min-h-[100dvh] bg-background text-foreground">
@@ -61,19 +62,31 @@ function Shell() {
         <div className="mx-auto flex h-12 max-w-md items-center gap-3 px-4">
           <span className="font-data text-[14px] font-semibold">⌂ Flow</span>
           <button
+            onClick={() => setLens(lens === "lab" ? null : "lab")}
+            aria-pressed={lens === "lab"}
+            title="Computer lab lens"
+            className={cn(
+              "flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 font-data text-[12px]",
+              lens === "lab" ? "bg-[#d2ff00] font-semibold text-[#282c20]" : "bg-[#3a3f2e] text-[#b4b8a5]",
+            )}
+          >
+            <Cpu className="h-3.5 w-3.5" /> Lab
+          </button>
+          <button
             onClick={() => setHereOpen(true)}
             className="flex min-w-0 flex-1 items-center gap-1.5 rounded-full bg-[#3a3f2e] px-3 py-1 text-left text-[12px]"
           >
             <MapPin className="h-3.5 w-3.5 shrink-0 text-[#d2ff00]" />
             <span className="truncate">{here.room ? placeLabel(here, houses) : "Where are you?"}</span>
           </button>
-          <a href="/" className="shrink-0 text-[12px] text-[#b4b8a5] hover:text-[#f4f4ed]">
-            Workbench ↗
+          <a href="/" aria-label="Workbench" title="Workbench" className="shrink-0 text-[12px] text-[#b4b8a5] hover:text-[#f4f4ed]">
+            <span className="hidden min-[430px]:inline">Workbench </span>↗
           </a>
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-md px-4 pt-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))]">
+        {lens === "lab" && <LabBand onGoSort={() => go("sort")} />}
         <ScreenBoundary key={tab}>
           {tab === "snap" && <SnapTab onChangeHere={() => setHereOpen(true)} onGoSort={() => go("sort")} />}
           {tab === "sort" && <SortTab />}
@@ -105,6 +118,30 @@ function Shell() {
       </nav>
 
       {hereOpen && <LocationSheet title="Where are you?" value={here} onPick={setHere} onClose={() => setHereOpen(false)} allowClear />}
+    </div>
+  );
+}
+
+/** With the lab lens on: how far the lab is - devices, backups, missing details. */
+function LabBand({ onGoSort }: { onGoSort: () => void }) {
+  const { items, backups } = useFlow();
+  const lab = items.filter((it) => it.status === "active" && it.verificationStatus !== "rejected" && inLab(it));
+  const states = lab.map((it) => backupState(it, backups));
+  const needBackup = states.filter((s) => s !== "n/a").length;
+  const covered = states.filter((s) => s === "covered" || s === "none-needed").length;
+  const noRole = lab.filter(needsLabDetails).length;
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-[#282c20]/15 bg-[#d2ff00]/25 px-3 py-2 text-[12px]">
+      <span className="font-data font-semibold">Computer lab</span>
+      <span className="font-data tabular-nums">{lab.length} things</span>
+      <span className="font-data tabular-nums">
+        {covered}/{needBackup} backed up
+      </span>
+      {noRole > 0 && (
+        <button onClick={onGoSort} className="font-data tabular-nums text-[#AD432B] underline">
+          {noRole} without a role
+        </button>
+      )}
     </div>
   );
 }
