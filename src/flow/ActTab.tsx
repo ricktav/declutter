@@ -14,7 +14,7 @@ const NO_ROOM = -1;
 /** Decide what happens to each thing - later, in short sprints, when you are ready. */
 export function ActTab() {
   const { items, locations, lens, ready, refresh } = useFlow();
-  const [room, setRoom] = useState<number | null>(null);
+  const [roomSel, setRoom] = useState<number | null>(null);
   const [skipped, setSkipped] = useState<number[]>([]);
   const [last, setLast] = useState<{ id: number; prev: ItemDecision | null; name: string } | null>(null);
   const [listOpen, setListOpen] = useState<ItemDecision | null>(null);
@@ -35,6 +35,8 @@ export function ActTab() {
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [inHouse]);
 
+  // a room that is gone (merged, other house) falls back to every room
+  const room = roomSel != null && (roomSel === NO_ROOM || locations.some((l) => l.id === roomSel)) ? roomSel : null;
   const scope = inHouse.filter((it) => room == null || (it.roomId ?? NO_ROOM) === room);
   const total = scope.filter((it) => it.status === "active" || isDecided(it)).length;
   const done = scope.filter(isDecided).length;
@@ -74,7 +76,7 @@ export function ActTab() {
             onClick={() => setRoom(r)}
             className={cn("shrink-0 rounded-full border px-3 py-1 text-[12px]", room === r ? "border-[#3C5D41] bg-[#3C5D41]/10" : "border-border bg-white")}
           >
-            {r === NO_ROOM ? "Unplaced" : (locations.find((l) => l.id === r)?.name ?? "Room")} <span className="font-data opacity-60">{n}</span>
+            {r === NO_ROOM ? "Unplaced" : (inHouse.find((it) => it.roomId === r)?.room?.name ?? locations.find((l) => l.id === r)?.name ?? "")} <span className="font-data opacity-60">{n}</span>
           </button>
         ))}
       </div>

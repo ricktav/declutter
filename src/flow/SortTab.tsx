@@ -114,6 +114,8 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
     if (suggestion?.roomId != null) return { roomId: suggestion.roomId };
     return here;
   });
+  // the room must belong to the current house (a snapped place may predate a house switch)
+  const validPlace: Place = place.roomId != null && locations.some((l) => l.id === place.roomId) ? place : { roomId: null };
   const [placeOpen, setPlaceOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -251,7 +253,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
 
           <button onClick={() => setPlaceOpen(true)} className="flex items-center gap-2 rounded-xl bg-muted/60 px-3 py-2.5 text-left text-[13px]">
             <MapPin className="h-4 w-4 shrink-0 text-[#3C5D41]" />
-            <span className="flex-1 truncate">{placeLabel(place.roomId, locations) || "No place yet"}</span>
+            <span className="flex-1 truncate">{placeLabel(validPlace.roomId, locations) || "No place yet"}</span>
             <span className="text-[12px] text-muted-foreground underline">change</span>
           </button>
 
@@ -263,7 +265,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
               onClick={() =>
                 accept.mutate({
                   id: capture.id,
-                  roomId: place.roomId,
+                  roomId: validPlace.roomId,
                   items: chosen.map((r) => ({ areaId: r.areaId!, itemId: null, itemName: r.name.trim(), attributes: r.attributes })),
                 })
               }
@@ -282,7 +284,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
         </>
       )}
 
-      {placeOpen && <LocationSheet title="Where is it?" value={place} onPick={setPlace} onClose={() => setPlaceOpen(false)} />}
+      {placeOpen && <LocationSheet title="Where is it?" value={validPlace} onPick={setPlace} onClose={() => setPlaceOpen(false)} />}
     </CardShell>
   );
 }

@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { trpc } from "@/providers/trpc";
 import { setLastRoomId } from "@/lib/lastRoom";
+import { useHouse } from "@/context/house";
 import { useLastRoomId } from "@/hooks/use-last-room";
 import type { FlowArea, FlowCapture, FlowItem, FlowLocation, Place } from "./data";
 import { BACKS_UP, getLens, storeLens, type LensKey, type Rel } from "./lenses";
@@ -35,9 +36,25 @@ export function FlowProvider({ children }: { children: ReactNode }) {
   // start from the last-used room once it is known to exist in this house,
   // unless the user has already chosen (or cleared) a place
   const lastRoomId = useLastRoomId();
+  const { houseId } = useHouse();
   const [here, setHereState] = useState<Place>({ roomId: null });
   const [touched, setTouched] = useState(false);
-  if (!touched && here.roomId == null && lastRoomId != null) setHereState({ roomId: lastRoomId });
+  // a room id belongs to one house: switching house forgets the old place
+  const [prevHouseId, setPrevHouseId] = useState(houseId);
+  if (prevHouseId !== houseId) {
+    setPrevHouseId(houseId);
+    setHereState({ roomId: null });
+    setTouched(false);
+  }
+  if (prevHouseId === houseId && !touched && here.roomId == null && lastRoomId != null) setHereState({ roomId: lastRoomId });
+  // never hand out a room that is not in the current house's list
+  const effectiveHere = useMemo<Place>(
+    () =>
+      here.roomId != null && locations.isSuccess && !locations.data.some((l) => l.id === here.roomId)
+        ? { roomId: null }
+        : here,
+    [here, locations.isSuccess, locations.data],
+  );
   const [lens, setLensState] = useState<LensKey | null>(() => getLens());
 
   const backups = useMemo(() => {
@@ -52,7 +69,7 @@ export function FlowProvider({ children }: { children: ReactNode }) {
     areas: areas.data ?? [],
     locations: locations.data ?? [],
     backups,
-    here,
+    here: effectiveHere,
     setHere: (p) => {
       setTouched(true);
       setHereState(p);
