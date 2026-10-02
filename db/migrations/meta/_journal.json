@@ -36,6 +36,13 @@
       "when": 1790951390386,
       "tag": "0004_drop_location_strings",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1790963799149,
+      "tag": "0005_add_photos_tables",
+      "breakpoints": true
     }
   ]
 }

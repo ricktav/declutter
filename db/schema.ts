@@ -191,6 +191,84 @@ export const attachments = mysqlTable(
 );
 
 // ---------------------------------------------------------------------------
+// Photos — images only (replaces attachments with kind "image"). An item's
+// photo has itemId; a location photo has roomId and no itemId; a cutout
+// carries the capture it was cropped from (sourceCaptureId) and the box.
+// ---------------------------------------------------------------------------
+export const photos = mysqlTable(
+  "photos",
+  {
+    id: serial("id").primaryKey(),
+    itemId: bigint("itemId", { mode: "number", unsigned: true }),
+    areaId: bigint("areaId", { mode: "number", unsigned: true }),
+    roomId: bigint("roomId", { mode: "number", unsigned: true }),
+    title: varchar("title", { length: 255 }),
+    storageKey: varchar("storageKey", { length: 512 }).notNull(),
+    mimeType: varchar("mimeType", { length: 128 }),
+    size: bigint("size", { mode: "number" }),
+    sourceCaptureId: bigint("sourceCaptureId", { mode: "number", unsigned: true }),
+    cropBox: json("cropBox").$type<CropBox | null>(),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [
+    index("photos_item_idx").on(t.itemId),
+    index("photos_room_idx").on(t.roomId),
+    index("photos_source_capture_idx").on(t.sourceCaptureId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Item links — a link, a note or a non-image file on an item (replaces
+// attachments with kind "link" | "note" | "file"). sourceCaptureId marks the
+// inbox capture it was filed from, so inbox.mergeDuplicates never deletes it.
+// ---------------------------------------------------------------------------
+export const itemLinks = mysqlTable(
+  "item_links",
+  {
+    id: serial("id").primaryKey(),
+    itemId: bigint("itemId", { mode: "number", unsigned: true }),
+    areaId: bigint("areaId", { mode: "number", unsigned: true }),
+    kind: varchar("kind", { length: 32 }).$type<"link" | "note" | "file">().notNull(),
+    title: varchar("title", { length: 255 }),
+    content: text("content"),
+    url: text("url"),
+    storageKey: varchar("storageKey", { length: 512 }),
+    mimeType: varchar("mimeType", { length: 128 }),
+    size: bigint("size", { mode: "number" }),
+    sourceCaptureId: bigint("sourceCaptureId", { mode: "number", unsigned: true }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [
+    index("item_links_item_idx").on(t.itemId),
+    index("item_links_source_capture_idx").on(t.sourceCaptureId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Photo pins — pins on a photo, optionally linked to an item (replaces
+// photo_annotations; attachmentId is now photoId).
+// ---------------------------------------------------------------------------
+export const photoPins = mysqlTable(
+  "photo_pins",
+  {
+    id: serial("id").primaryKey(),
+    photoId: bigint("photoId", { mode: "number", unsigned: true }).notNull(),
+    xPct: double("xPct").notNull(),
+    yPct: double("yPct").notNull(),
+    wPct: double("wPct"),
+    hPct: double("hPct"),
+    label: varchar("label", { length: 255 }).notNull().default(""),
+    itemId: bigint("itemId", { mode: "number", unsigned: true }),
+    origin: varchar("origin", { length: 32 }).$type<"user" | "ai">().notNull().default("user"),
+    status: varchar("status", { length: 32 }).$type<"suggested" | "confirmed">().notNull().default("confirmed"),
+    // "needs attention", independent of confirm status - the Map view's focus marker
+    flagged: boolean("flagged").notNull().default(false),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [index("photo_pins_photo_idx").on(t.photoId), index("photo_pins_item_idx").on(t.itemId)],
+);
+
+// ---------------------------------------------------------------------------
 // Measurements — human-validated dimensions (laser/tape) against a room edge
 // or an item footprint; a second data point, never a silent overwrite.
 // ---------------------------------------------------------------------------
@@ -411,3 +489,6 @@ export type AppEvent = typeof events.$inferSelect;
 export type WikiPage = typeof wikiPages.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type PhotoAnnotation = typeof photoAnnotations.$inferSelect;
+export type Photo = typeof photos.$inferSelect;
+export type ItemLink = typeof itemLinks.$inferSelect;
+export type PhotoPin = typeof photoPins.$inferSelect;
