@@ -419,6 +419,56 @@ export const itemsRouter = createRouter({
       return { ok: true };
     }),
 
+  /**
+   * Set or clear single attribute keys without resending the whole map -
+   * null or "" removes a key. Descriptive fields use plain keys (model,
+   * serial); workflow state uses a prefix (sell.ask_price, lab.wiped_at).
+   */
+  patchAttributes: procedure
+    .input(
+      z.object({
+        id: z.number(),
+        set: z.record(z.string().min(1).max(64), z.union([z.string().max(500), z.number(), z.null()])),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
+      if (!item) throw new Error("Item not found.");
+      const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
+      const changed: string[] = [];
+      for (const [key, value] of Object.entries(input.set)) {
+        if (value === null || value === "") {
+          if (key in next) {
+            delete next[key];
+            changed.push(`${key} removed`);
+          }
+        } else if (next[key] !== value) {
+          next[key] = value;
+          changed.push(`${key} = ${value}`);
+        }
+      }
+      if (changed.length > 0) {
+        await db
+          .update(items)
+          .set({ attributes: Object.keys(next).length > 0 ? next : null })
+          .where(eq(items.id, input.id));
+        await logEvent({
+          entityType: "item",
+          entityId: input.id,
+          action: "updated",
+          summary: `Item "${item.name}" details: ${changed.join(", ")}`,
+          payload: input.set,
+        });
+      }
+      return { ok: true, attributes: next };
+    }),
+
+  /** Every relation of one type (for example "backs-up"), for views that need all links at once. */
+  listRelations: procedure
+    .input(z.object({ type: z.string().min(1).max(64) }))
+    .query(async ({ input }) => getDb().select().from(relations).where(eq(relations.type, input.type))),
+
   remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
