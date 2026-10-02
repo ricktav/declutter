@@ -77,7 +77,7 @@ export function ChooseFromLibraryDialog({
 
   const pick = async (captureId: number) => {
     setPickedCaptureId(captureId);
-    const res = await ensure.mutateAsync({ captureId, houseId: null });
+    const res = await ensure.mutateAsync({ captureId });
     setSourceAttachmentId(res.attachmentId);
   };
 

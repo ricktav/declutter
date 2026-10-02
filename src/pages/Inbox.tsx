@@ -6,8 +6,8 @@ import { uploadFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { AreaPicker } from "@/components/AreaPicker";
 import { ItemPicker } from "@/components/ItemPicker";
-import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
-import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
+import { RoomPicker } from "@/components/RoomPicker";
+import { getLastRoomId, setLastRoomId } from "@/lib/lastRoom";
 import { AiProgressBar } from "@/components/AiProgressBar";
 import { DetectObjectsModal } from "@/components/DetectObjects";
 import { GeojsonThumb } from "@/components/GeojsonThumb";
@@ -79,12 +79,12 @@ function ProcessedThumb({ storageKey, kind }: { storageKey: string | null; kind:
  * to miss next to the rest of a processed row's clutter. */
 function PinCaptureButton({
   captureId,
-  houseId = null,
+  roomId = null,
   className = "shrink-0",
   iconOnly = false,
 }: {
   captureId: number;
-  houseId?: number | null;
+  roomId?: number | null;
   className?: string;
   iconOnly?: boolean;
 }) {
@@ -100,7 +100,7 @@ function PinCaptureButton({
         disabled={ensure.isPending}
         onClick={(e) => {
           e.stopPropagation();
-          ensure.mutate({ captureId, houseId });
+          ensure.mutate({ captureId, roomId });
         }}
       >
         {ensure.isPending ? (
@@ -120,7 +120,7 @@ function PinCaptureButton({
       disabled={ensure.isPending}
       onClick={(e) => {
         e.stopPropagation();
-        ensure.mutate({ captureId, houseId });
+        ensure.mutate({ captureId, roomId });
       }}
     >
       {ensure.isPending ? (
@@ -212,21 +212,16 @@ function CaptureImage({ storageKey }: { storageKey: string }) {
 function PinPendingButton({ captureId }: { captureId: number }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const [loc, setLoc] = useState<RoomValue>(() => getLastLocation());
-  const hasDefaultLocation = loc.houseId != null && loc.room.trim() !== "";
+  const [roomId, setRoomId] = useState<number | null>(() => getLastRoomId());
+  const rooms = trpc.rooms.list.useQuery();
+  const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "unset";
+  const hasDefaultLocation = roomId != null;
   const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
     onSuccess: (res) => {
-      setLastLocation(loc);
-      const params = new URLSearchParams({
-        houseId: loc.houseId != null ? String(loc.houseId) : "none",
-        floor: loc.floor.trim() || "none",
-        room: loc.room.trim() || "none",
-      });
-      navigate(`/annotate/${res.attachmentId}?${params.toString()}`);
+      setLastRoomId(roomId);
+      navigate(`/annotate/${res.attachmentId}?roomId=${roomId ?? "none"}`);
     },
   });
-  const pinWithLocation = (l: RoomValue) =>
-    ensure.mutate({ captureId, houseId: l.houseId, floor: l.floor.trim() || null, room: l.room.trim() || null });
 
   return (
     <>
@@ -241,7 +236,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
             // already have a working default (set here before, or anywhere
             // else that's confirmed one) - pinning again shouldn't re-ask
             // the same question every single time
-            if (hasDefaultLocation) pinWithLocation(loc);
+            if (hasDefaultLocation) ensure.mutate({ captureId, roomId });
             else setOpen(true);
           }}
         >
@@ -255,7 +250,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
         {hasDefaultLocation && (
           <button
             className="text-muted-foreground hover:text-foreground"
-            title={`Change location (currently ${[loc.room, loc.floor].filter(Boolean).join(" · ") || "unset"})`}
+            title={`Change location (currently ${roomName})`}
             onClick={(e) => {
               e.stopPropagation();
               setOpen(true);
@@ -273,7 +268,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
           <p className="text-[12px] text-muted-foreground -mt-2">
             Confirms the location before pinning - a new item created there starts out placed.
           </p>
-          <RoomPicker value={loc} onChange={setLoc} />
+          <RoomPicker value={roomId} onChange={setRoomId} />
           <div className="flex justify-end gap-2 mt-1">
             <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
               Cancel
@@ -281,14 +276,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
             <Button
               size="sm"
               disabled={ensure.isPending}
-              onClick={() =>
-                ensure.mutate({
-                  captureId,
-                  houseId: loc.houseId,
-                  floor: loc.floor.trim() || null,
-                  room: loc.room.trim() || null,
-                })
-              }
+              onClick={() => ensure.mutate({ captureId, roomId })}
             >
               {ensure.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
@@ -414,27 +402,11 @@ function TriageCard({
   const areas = trpc.areas.list.useQuery();
 
   const [rows, setRows] = useState<TriageRow[]>(() => (s ? buildTriageRows(s, areas.data) : []));
-  const [loc, setLoc] = useState<RoomValue>(() =>
-    s?.room ? { houseId: getLastLocation().houseId, floor: s.floor ?? "", room: s.room } : getLastLocation(),
-  );
+  const [roomId, setRoomId] = useState<number | null>(() => s?.roomId ?? getLastRoomId());
   const [aiError, setAiError] = useState<string | null>(null);
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [detectOpen, setDetectOpen] = useState(false);
-  const isGeojson = isGeojsonFile(capture.storageKey) || capture.kind === "scan";
-  const houses = trpc.houses.list.useQuery(undefined, { enabled: isGeojson });
-  const allLocations = trpc.map.listLocations.useQuery(undefined, { enabled: isGeojson });
-  const allRooms = trpc.rooms.listAll.useQuery(undefined, { enabled: isGeojson });
-  // locations that already have items filed there but no scanned floor plan
-  // yet - the natural candidates for "this geojson is probably that room"
-  const unmappedLocations = (allLocations.data ?? []).filter(
-    (l) =>
-      l.houseId != null &&
-      !(allRooms.data ?? []).some(
-        (r) => r.houseId === l.houseId && r.name.trim().toLowerCase() === l.room.trim().toLowerCase(),
-      ),
-  );
-  const [geoHouseId, setGeoHouseId] = useState<number | "">(() => getLastLocation().houseId ?? "");
-  const [geoRoomName, setGeoRoomName] = useState("");
+  const [geoRoomId, setGeoRoomId] = useState<number | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
 
   const triage = trpc.inbox.triage.useMutation({
@@ -442,9 +414,7 @@ function TriageCard({
       if (res.ok) {
         utils.inbox.list.invalidate();
         setRows(buildTriageRows(res.suggestion, areas.data));
-        setLoc((prev) =>
-          res.suggestion.room ? { ...prev, floor: res.suggestion.floor ?? "", room: res.suggestion.room } : prev,
-        );
+        if (res.suggestion.roomId != null) setRoomId(res.suggestion.roomId);
       } else setAiError(res.error);
     },
     onError: (e) => setAiError(e.message),
@@ -463,7 +433,7 @@ function TriageCard({
     onSuccess: () => {
       setGeoError(null);
       utils.inbox.list.invalidate();
-      utils.rooms.listByHouse.invalidate();
+      utils.rooms.list.invalidate();
     },
     onError: (e) => setGeoError(e.message),
   });
@@ -509,52 +479,15 @@ function TriageCard({
                 <GeojsonThumb storageKey={capture.storageKey} />
               </div>
               <div className="flex flex-col gap-1.5 flex-1 max-w-xs">
-                {unmappedLocations.length > 0 && (
-                  <select
-                    className="rounded-md border border-input px-2 py-1.5 text-[12px] bg-white"
-                    value=""
-                    onChange={(e) => {
-                      const loc = unmappedLocations[Number(e.target.value)];
-                      if (!loc?.houseId) return;
-                      setGeoHouseId(loc.houseId);
-                      setGeoRoomName(loc.room);
-                    }}
-                  >
-                    <option value="">Pick an unmapped location…</option>
-                    {unmappedLocations.map((l, i) => (
-                      <option key={`${l.houseId}-${l.room}`} value={i}>
-                        {l.houseName} · {l.room} ({l.count} item{l.count === 1 ? "" : "s"})
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <select
-                  className="rounded-md border border-input px-2 py-1.5 text-[12px] bg-white"
-                  value={geoHouseId}
-                  onChange={(e) => setGeoHouseId(e.target.value ? Number(e.target.value) : "")}
-                >
-                  <option value="">house…</option>
-                  {(houses.data ?? []).map((h) => (
-                    <option key={h.id} value={h.id}>{h.name}</option>
-                  ))}
-                </select>
-                <input
-                  className="rounded-md border border-input px-2 py-1.5 text-[12px]"
-                  placeholder="room name (e.g. Begane grond)…"
-                  value={geoRoomName}
-                  onChange={(e) => setGeoRoomName(e.target.value)}
-                />
+                <RoomPicker value={geoRoomId} onChange={setGeoRoomId} />
+                <div className="text-[11px] text-muted-foreground">
+                  Pick the room this scan belongs to, or type a new name
+                </div>
                 <Button
                   size="sm"
                   className="h-7 text-[12px] w-fit"
-                  disabled={!geoHouseId || !geoRoomName.trim() || importGeojson.isPending}
-                  onClick={() =>
-                    importGeojson.mutate({
-                      captureId: capture.id,
-                      houseId: geoHouseId as number,
-                      roomName: geoRoomName.trim(),
-                    })
-                  }
+                  disabled={geoRoomId == null || importGeojson.isPending}
+                  onClick={() => importGeojson.mutate({ captureId: capture.id, roomId: geoRoomId! })}
                 >
                   {importGeojson.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
                   Import floor
@@ -658,9 +591,7 @@ function TriageCard({
         onUse={(side) => {
           if (!side.suggestion) return;
           setRows(buildTriageRows(side.suggestion, areas.data));
-          if (side.suggestion.room) {
-            setLoc((prev) => ({ ...prev, floor: side.suggestion!.floor ?? "", room: side.suggestion!.room! }));
-          }
+          if (side.suggestion.roomId != null) setRoomId(side.suggestion.roomId);
           setCompareResult(null);
         }}
       />
@@ -689,7 +620,7 @@ function TriageCard({
           <label className="block mt-2">
             <span className="micro-label text-muted-foreground">Location (applies to every new item above)</span>
             <div className="mt-0.5">
-              <RoomPicker value={loc} onChange={setLoc} />
+              <RoomPicker value={roomId} onChange={setRoomId} allowNone />
             </div>
           </label>
 
@@ -699,12 +630,10 @@ function TriageCard({
               className="h-7 text-[12px]"
               disabled={acceptMany.isPending || !canFile}
               onClick={() => {
-                setLastLocation(loc);
+                setLastRoomId(roomId);
                 acceptMany.mutate({
                   id: capture.id,
-                  houseId: loc.houseId,
-                  floor: loc.floor || undefined,
-                  room: loc.room || undefined,
+                  roomId,
                   items: rows.map((r) => ({
                     areaId: r.areaId ?? 0,
                     itemId: r.matchedId,
@@ -767,9 +696,9 @@ function CompareModal({
                 ) : side.suggestion ? (
                   <>
                     {side.suggestion.note && <div className="text-[12px] text-muted-foreground">{side.suggestion.note}</div>}
-                    {(side.suggestion.floor || side.suggestion.room) && (
+                    {side.suggestion.roomId == null && side.suggestion.room && (
                       <div className="font-data text-[11px] text-muted-foreground">
-                        location: {[side.suggestion.floor, side.suggestion.room].filter(Boolean).join(" · ")}
+                        unknown room "{side.suggestion.room}"
                       </div>
                     )}
                     <div className="space-y-1">

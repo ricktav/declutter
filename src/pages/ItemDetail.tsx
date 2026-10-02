@@ -169,11 +169,7 @@ export default function ItemDetail() {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  const [loc, setLoc] = useState<{ houseId: number | null; floor: string; room: string }>({
-    houseId: null,
-    floor: "",
-    room: "",
-  });
+  const [roomId, setRoomId] = useState<number | null>(null);
   const [editingLoc, setEditingLoc] = useState(false);
   const [childName, setChildName] = useState("");
   const [recropId, setRecropId] = useState<number | null>(null);
@@ -257,28 +253,24 @@ export default function ItemDetail() {
   };
 
   const startEditLoc = () => {
-    if (it.houseId == null && !it.floor && !it.room) {
+    if (it.roomId == null) {
       // nothing set yet - default to wherever the adjacent item (same area,
       // one filed just before/after this one) landed, since items are
       // usually filed room-by-room in a batch
       const adjacent = [prevId, nextId]
         .map((sid) => (siblings.data ?? []).find((s) => s.id === sid))
-        .find((s) => s && (s.houseId != null || s.floor || s.room));
-      if (adjacent) {
-        setLoc({ houseId: adjacent.houseId ?? null, floor: adjacent.floor ?? "", room: adjacent.room ?? "" });
-        setEditingLoc(true);
-        return;
-      }
+        .find((s) => s && s.roomId != null);
+      setRoomId(adjacent?.roomId ?? null);
+    } else {
+      setRoomId(it.roomId);
     }
-    setLoc({ houseId: it.houseId ?? null, floor: it.floor ?? "", room: it.room ?? "" });
     setEditingLoc(true);
   };
   const saveLoc = () => {
     update.mutate({
       id: itemId,
-      houseId: loc.houseId,
-      floor: loc.floor || null,
-      room: loc.room || null,
+      roomId,
+      houseId: roomId == null ? it.houseId : undefined,
     });
     setEditingLoc(false);
   };
@@ -730,24 +722,21 @@ export default function ItemDetail() {
             </div>
             {!editingLoc ? (
               <div className="text-[13px] space-y-0.5">
-                {!it.house && !it.floor && !it.room && (
-                  <div className="text-muted-foreground">No location set.</div>
-                )}
-                {it.house && (
-                  <div>
-                    <b>{it.house.name}</b>
-                    {it.house.address && <span className="text-muted-foreground"> — {it.house.address}</span>}
-                  </div>
-                )}
-                {(it.floor || it.room) && (
-                  <div className="text-muted-foreground">
-                    {[it.floor, it.room].filter(Boolean).join(" · ")}
-                  </div>
+                {it.room ? (
+                  <span className="text-[13px]">
+                    <Link to={`/items?roomId=${it.room.id}`} className="hover:underline">{it.room.name}</Link>
+                    {it.room.floor && <span className="ml-1.5 rounded bg-muted px-1 text-[10px] text-muted-foreground">{it.room.floor}</span>}
+                    {it.room.hasGeometry && <Link to={`/rooms/${it.room.id}`} className="ml-2 text-[11px] text-muted-foreground hover:underline">open plan</Link>}
+                  </span>
+                ) : it.house ? (
+                  <span className="text-[13px] text-muted-foreground">Unplaced in {it.house.name}</span>
+                ) : (
+                  <span className="text-[13px] text-muted-foreground">No location</span>
                 )}
               </div>
             ) : (
               <div className="space-y-2">
-                <RoomPicker value={loc} onChange={setLoc} />
+                <RoomPicker value={roomId} onChange={setRoomId} allowNone autoFocus />
                 <p className="text-[10px] text-muted-foreground">
                   Area = what the thing is (computers). This = where it physically is.
                 </p>
@@ -791,9 +780,8 @@ export default function ItemDetail() {
                       areaId: it.areaId,
                       name: childName.trim(),
                       parentId: it.id,
+                      roomId: it.roomId,
                       houseId: it.houseId,
-                      floor: it.floor,
-                      room: it.room,
                     });
                     setChildName("");
                   }
@@ -809,9 +797,8 @@ export default function ItemDetail() {
                     areaId: it.areaId,
                     name: childName.trim(),
                     parentId: it.id,
+                    roomId: it.roomId,
                     houseId: it.houseId,
-                    floor: it.floor,
-                    room: it.room,
                   });
                   setChildName("");
                 }}

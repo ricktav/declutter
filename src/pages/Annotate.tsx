@@ -139,17 +139,8 @@ export default function AnnotatePage() {
   // "Pin" flow, which has no location of its own yet) - only applied to a
   // brand-new item created while pinning, so it doesn't start out homeless
   const [searchParams] = useSearchParams();
-  const confirmedLocation = (() => {
-    const room = searchParams.get("room");
-    if (!room || room === "none") return null;
-    const houseIdParam = searchParams.get("houseId");
-    const floorParam = searchParams.get("floor");
-    return {
-      houseId: houseIdParam && houseIdParam !== "none" ? Number(houseIdParam) : null,
-      floor: floorParam && floorParam !== "none" ? floorParam : null,
-      room,
-    };
-  })();
+  const roomIdParam = searchParams.get("roomId");
+  const confirmedRoomId = roomIdParam && roomIdParam !== "none" ? Number(roomIdParam) : null;
 
   const pinsQuery = trpc.annotations.listForAttachment.useQuery({ attachmentId: attId });
   const urlQuery = trpc.attachments.urlForAttachment.useQuery({ attachmentId: attId });
@@ -453,15 +444,13 @@ export default function AnnotatePage() {
       const res = await createItem.mutateAsync({
         areaId: Number(newItemArea),
         name: pendingLabel.trim(),
-        houseId: confirmedLocation?.houseId,
-        floor: confirmedLocation?.floor,
-        room: confirmedLocation?.room,
+        roomId: confirmedRoomId ?? undefined,
       });
       itemId = res.id;
       utils.items.listByArea.invalidate();
       utils.items.listAll.invalidate();
       utils.areas.list.invalidate();
-      utils.map.listLocations.invalidate();
+      utils.rooms.list.invalidate();
     }
     // whether brand-new or existing, the drawn/adjusted box is already the
     // confirmed photo - no separate "now pick a crop" step

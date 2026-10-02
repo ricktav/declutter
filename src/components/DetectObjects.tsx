@@ -11,7 +11,7 @@ import {
 import { AreaPicker } from "@/components/AreaPicker";
 import { RoomPicker } from "@/components/RoomPicker";
 import { AiProgressBar } from "@/components/AiProgressBar";
-import { getLastLocation } from "@/lib/lastLocation";
+import { getLastRoomId, setLastRoomId } from "@/lib/lastRoom";
 import { Check, Loader2, ScanSearch, AlertTriangle, RefreshCw } from "lucide-react";
 
 type Suggestion = {
@@ -113,11 +113,7 @@ export function DetectObjectsModal({
   const [mode, setMode] = useState<"existing" | "new">("existing");
   const [newName, setNewName] = useState("");
   const [newArea, setNewArea] = useState<number | null>(null);
-  const [loc, setLoc] = useState<{ houseId: number | null; floor: string; room: string }>({
-    houseId: null,
-    floor: "",
-    room: "",
-  });
+  const [roomId, setRoomId] = useState<number | null>(null);
   const areas = trpc.areas.list.useQuery();
 
   const captureQuery = trpc.inbox.list.useQuery(undefined, { enabled: open });
@@ -142,8 +138,7 @@ export function DetectObjectsModal({
       // best available default while detection runs - a specific location
       // from an already-recognized item in this same photo wins once
       // detection comes back (see detect.onSuccess below)
-      const last = getLastLocation();
-      setLoc({ houseId: last.houseId, floor: last.floor, room: "" });
+      setRoomId(getLastRoomId());
     }
   }, [open]);
 
@@ -170,9 +165,7 @@ export function DetectObjectsModal({
       const matched = res.suggestions.find((s) => s.matchedItemId != null);
       if (matched?.matchedItemId) {
         const item = await utils.items.get.fetch({ id: matched.matchedItemId });
-        if (item?.houseId || item?.room) {
-          setLoc({ houseId: item.houseId ?? null, floor: item.floor ?? "", room: item.room ?? "" });
-        }
+        if (item?.roomId != null) setRoomId(item.roomId);
       }
     },
     onError: (e) => setAiError(e.message),
@@ -190,6 +183,7 @@ export function DetectObjectsModal({
   }, [open, captureId, capture?.storageKey]);
   const fileObject = trpc.inbox.fileObject.useMutation({
     onSuccess: () => {
+      setLastRoomId(roomId);
       setSuggestions((prev) =>
         prev.map((s) => (s.key === selected ? { ...s, state: "filed" as const } : s)),
       );
@@ -216,9 +210,7 @@ export function DetectObjectsModal({
       itemId: mode === "existing" ? sel.matchedItemId : null,
       itemName: mode === "existing" ? (sel.matchedItemName ?? sel.label) : newName.trim() || sel.label,
       areaId: newArea ?? selAreaDefault ?? 0,
-      houseId: loc.houseId ?? null,
-      floor: loc.floor || undefined,
-      room: loc.room || undefined,
+      roomId,
       markProcessed,
     });
   };
@@ -362,7 +354,7 @@ export function DetectObjectsModal({
                   </div>
                 )}
 
-                <RoomPicker value={loc} onChange={setLoc} />
+                <RoomPicker value={roomId} onChange={setRoomId} allowNone />
 
                 <div className="flex gap-2 pt-1">
                   <Button
