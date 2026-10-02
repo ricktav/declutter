@@ -414,6 +414,10 @@ function TriageCard({
   const [aiError, setAiError] = useState<string | null>(null);
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [detectOpen, setDetectOpen] = useState(false);
+  const houses = trpc.houses.list.useQuery(undefined, { enabled: isGeojsonFile(capture.storageKey) || capture.kind === "scan" });
+  const [geoHouseId, setGeoHouseId] = useState<number | "">(() => getLastLocation().houseId ?? "");
+  const [geoRoomName, setGeoRoomName] = useState("");
+  const [geoError, setGeoError] = useState<string | null>(null);
 
   const triage = trpc.inbox.triage.useMutation({
     onSuccess: (res) => {
@@ -436,6 +440,14 @@ function TriageCard({
   });
   const dismiss = trpc.inbox.dismiss.useMutation({
     onSuccess: () => utils.inbox.list.invalidate(),
+  });
+  const importGeojson = trpc.inbox.importGeojson.useMutation({
+    onSuccess: () => {
+      setGeoError(null);
+      utils.inbox.list.invalidate();
+      utils.rooms.listByHouse.invalidate();
+    },
+    onError: (e) => setGeoError(e.message),
   });
   const compare = trpc.inbox.compare.useMutation({
     onSuccess: (res) => {
@@ -474,8 +486,44 @@ function TriageCard({
             </div>
           )}
           {capture.storageKey && (capture.kind === "scan" || isGeojsonFile(capture.storageKey)) && (
-            <div className="mt-2 w-28">
-              <GeojsonThumb storageKey={capture.storageKey} />
+            <div className="mt-2 flex items-start gap-3">
+              <div className="w-28 shrink-0">
+                <GeojsonThumb storageKey={capture.storageKey} />
+              </div>
+              <div className="flex flex-col gap-1.5 flex-1 max-w-xs">
+                <select
+                  className="rounded-md border border-input px-2 py-1.5 text-[12px] bg-white"
+                  value={geoHouseId}
+                  onChange={(e) => setGeoHouseId(e.target.value ? Number(e.target.value) : "")}
+                >
+                  <option value="">house…</option>
+                  {(houses.data ?? []).map((h) => (
+                    <option key={h.id} value={h.id}>{h.name}</option>
+                  ))}
+                </select>
+                <input
+                  className="rounded-md border border-input px-2 py-1.5 text-[12px]"
+                  placeholder="room name (e.g. Begane grond)…"
+                  value={geoRoomName}
+                  onChange={(e) => setGeoRoomName(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  className="h-7 text-[12px] w-fit"
+                  disabled={!geoHouseId || !geoRoomName.trim() || importGeojson.isPending}
+                  onClick={() =>
+                    importGeojson.mutate({
+                      captureId: capture.id,
+                      houseId: geoHouseId as number,
+                      roomName: geoRoomName.trim(),
+                    })
+                  }
+                >
+                  {importGeojson.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
+                  Import floor
+                </Button>
+                {geoError && <div className="text-[11px] text-destructive">{geoError}</div>}
+              </div>
             </div>
           )}
           {capture.storageKey && capture.kind === "image" && (

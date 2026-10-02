@@ -4,7 +4,8 @@ import { eq, desc, isNull, and, inArray } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, areas, items, attachments, type TriageSuggestion } from "@db/schema";
+import { captures, areas, items, attachments, rooms, type TriageSuggestion, type RoomGeometry } from "@db/schema";
+import { parseGeojsonFloor, FURNITURE_KIND_MAP } from "../lib/geojsonFloor";
 import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
@@ -676,6 +677,102 @@ export const inboxRouter = createRouter({
         summary: `Capture accepted → ${input.items.length} item(s) filed (${created} new)`,
       });
       return { ok: true, created };
+    }),
+
+  /** Parse a pending .geojson capture's floor scan into a room (geometry +
+   * detected furniture items) and mark the capture processed - the same
+   * work scripts/import-geojson-floor.mjs did by hand, now reachable from
+   * the Inbox itself so the capture doesn't sit pending forever. */
+  importGeojson: publicQuery
+    .input(z.object({ captureId: z.number(), houseId: z.number(), roomName: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.captureId) });
+      if (!cap?.storageKey) throw new Error("Capture has no file to import.");
+
+      let geojson: unknown;
+      try {
+        const bytes = await readFileBytes(cap.storageKey);
+        geojson = JSON.parse(Buffer.from(bytes).toString("utf8"));
+      } catch {
+        throw new Error("Not valid JSON.");
+      }
+      const parsed = parseGeojsonFloor(geojson as { features: { geometry: { type: string; coordinates: unknown }; properties: Record<string, unknown> }[] });
+      if (!parsed) throw new Error("No wall geometry found in this file.");
+      const { walls, furniturePolys, widthM, depthM } = parsed;
+
+      // same houseId-then-name match as rooms.upsertFromScan, so re-running
+      // an import for the same house+name updates in place
+      const existingForHouse = await db.query.rooms.findFirst({ where: eq(rooms.houseId, input.houseId) });
+      const match = existingForHouse?.name === input.roomName ? existingForHouse : undefined;
+      const values = {
+        houseId: input.houseId,
+        name: input.roomName,
+        source: "mappedin" as const,
+        scanDate: new Date(),
+        widthM,
+        depthM,
+        walls,
+        openings: [] as RoomGeometry["openings"],
+      };
+      let roomId: number;
+      if (match) {
+        await db.update(rooms).set(values).where(eq(rooms.id, match.id));
+        roomId = match.id;
+      } else {
+        const [{ id }] = await db.insert(rooms).values(values).$returningId();
+        roomId = id;
+      }
+
+      const areaRows = await db.select().from(areas);
+      const areaBySlug = new Map(areaRows.map((a) => [a.slug, a.id]));
+      const nameCounts: Record<string, number> = {};
+      let created = 0;
+      for (const poly of furniturePolys) {
+        const meta = FURNITURE_KIND_MAP[poly.kind] ?? { topic: "furniture", label: poly.kind || "Item" };
+        const areaId = areaBySlug.get(meta.topic);
+        if (!areaId) continue;
+        nameCounts[meta.label] = (nameCounts[meta.label] ?? 0) + 1;
+        const n = nameCounts[meta.label];
+        const name = n > 1 ? `${meta.label} ${n}` : meta.label;
+
+        const xs = poly.ring.map((p) => p[0]);
+        const ys = poly.ring.map((p) => p[1]);
+        const xM = +Math.min(...xs).toFixed(2);
+        const yM = +Math.min(...ys).toFixed(2);
+        const wM = +(Math.max(...xs) - Math.min(...xs)).toFixed(2);
+        const dM = +(Math.max(...ys) - Math.min(...ys)).toFixed(2);
+
+        await db.insert(items).values({
+          areaId,
+          houseId: input.houseId,
+          roomId,
+          name,
+          status: "active",
+          verificationStatus: "detected",
+          pos: {
+            xM,
+            yM,
+            wM: Math.max(0.1, wM),
+            dM: Math.max(0.1, dM),
+            rotDeg: 0,
+            ...(meta.hM != null ? { hM: meta.hM } : {}),
+          },
+          room: input.roomName,
+          description: `Auto-detected from the ${input.roomName} floor scan (MappedIn export) - not yet reviewed.`,
+        });
+        created++;
+      }
+
+      await db.update(captures).set({ status: "processed" }).where(eq(captures.id, input.captureId));
+      await logEvent({
+        entityType: "room",
+        entityId: roomId,
+        action: match ? "rescanned" : "created",
+        summary: `Room "${input.roomName}" ${match ? "updated" : "created"} from inbox geojson scan (${created} item(s) detected)`,
+        actor: "system",
+      });
+      return { ok: true, roomId, created };
     }),
 
   dismiss: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
