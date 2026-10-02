@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { areas, houses, items, rooms } from "@db/schema";
+import { areas, attachments, captures, houses, items, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 
@@ -54,6 +54,47 @@ describe("items.listAll / get", () => {
 
     const one = await callerFor(h1).items.get({ id: mine.find((r) => r.name === "pan")!.id });
     expect(one?.room).toMatchObject({ id: keuken, name: "Keuken", floor: "ground", hasGeometry: false });
-    // items.create tries a best-effort LLM link suggestion for same-area siblings, which is slow without a provider
-  }, 30_000);
+  });
+});
+
+describe("items.create atomicity", () => {
+  it("a bad roomId leaves no orphan item", async () => {
+    const { db, h1, areaId } = await seed();
+    await expect(callerFor(h1).items.create({ areaId, name: "ghost", roomId: 999999 })).rejects.toThrow(/does not exist/);
+    expect(await db.select().from(items)).toHaveLength(0);
+  });
+});
+
+describe("items.update location", () => {
+  it("roomId null keeps the house and clears the room; houseId alone unplaces into that house", async () => {
+    const { db, h1, h2, areaId, keuken } = await seed();
+    const { id } = await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
+    await callerFor(h1).items.update({ id, roomId: null });
+    let [it] = await db.select().from(items).where(eq(items.id, id));
+    expect([it.roomId, it.houseId]).toEqual([null, h1]);
+
+    await callerFor(h1).items.update({ id, roomId: keuken });
+    await callerFor(h1).items.update({ id, houseId: h2 });
+    [it] = await db.select().from(items).where(eq(items.id, id));
+    expect([it.roomId, it.houseId]).toEqual([null, h2]);
+  });
+});
+
+describe("attachments.unlink / map.photosForLocation", () => {
+  it("unlink copies the item's room onto the attachment", async () => {
+    const { db, h1, areaId, keuken } = await seed();
+    const { id } = await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
+    const [{ id: attId }] = await db.insert(attachments).values({ itemId: id, areaId, kind: "image", storageKey: "local/x.jpg" }).$returningId();
+    await callerFor(h1).attachments.unlink({ id: attId });
+    const [att] = await db.select().from(attachments).where(eq(attachments.id, attId));
+    expect([att.itemId, att.roomId]).toEqual([null, keuken]);
+  });
+  it("photosForLocation returns the source capture of a cutout whose item is in the room", async () => {
+    const { db, h1, areaId, keuken } = await seed();
+    const { id } = await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
+    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: "local/src.jpg" }).$returningId();
+    await db.insert(attachments).values({ itemId: id, areaId, kind: "image", storageKey: "local/cut.jpg", sourceCaptureId: capId });
+    expect(await callerFor(h1).map.photosForLocation({ roomId: keuken })).toEqual([{ id: capId, storageKey: "local/src.jpg" }]);
+    expect(await callerFor(h1).map.photosForLocation({ roomId: 999999 })).toEqual([]);
+  });
 });

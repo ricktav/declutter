@@ -104,7 +104,7 @@ async function buildTriageContent(cap: CaptureRow): Promise<
  * matched item's own location when the model didn't already (everything in
  * one photo is almost certainly the same room, same logic as Detect
  * Objects uses for its location default). */
-async function resolveSuggestion(object: z.infer<typeof triageSchema>, houseId: number | null): Promise<TriageSuggestion> {
+export async function resolveSuggestion(object: z.infer<typeof triageSchema>, houseId: number | null): Promise<TriageSuggestion> {
   const db = getDb();
   const ids = [...new Set(object.items.map((i) => i.matchedItemId).filter((id): id is number => id != null))];
   const matched = ids.length ? await db.select().from(items).where(inArray(items.id, ids)) : [];
@@ -468,23 +468,28 @@ export const inboxRouter = createRouter({
 
       let itemId = input.itemId;
       if (!itemId) {
-        const [{ id: newId }] = await db
-          .insert(items)
-          .values({
-            areaId: input.areaId,
-            name: input.itemName,
-            description: `Detected in snap: ${cap.rawText ?? "photo"}`,
-            houseId: input.houseId ?? ctx.houseId ?? null,
-          })
-          .$returningId();
-        itemId = newId;
-        if (input.roomId != null) await setItemLocation(db, itemId, { roomId: input.roomId });
-        await logEvent({
-          entityType: "item",
-          entityId: itemId,
-          action: "created",
-          summary: `Item "${input.itemName}" created from detected object`,
-          payload: { captureId: cap.id, origin: "ai-detect" },
+        itemId = await db.transaction(async (tx) => {
+          const [{ id: newId }] = await tx
+            .insert(items)
+            .values({
+              areaId: input.areaId,
+              name: input.itemName,
+              description: `Detected in snap: ${cap.rawText ?? "photo"}`,
+              houseId: input.houseId ?? ctx.houseId ?? null,
+            })
+            .$returningId();
+          if (input.roomId != null) await setItemLocation(tx, newId, { roomId: input.roomId });
+          await logEvent(
+            {
+              entityType: "item",
+              entityId: newId,
+              action: "created",
+              summary: `Item "${input.itemName}" created from detected object`,
+              payload: { captureId: cap.id, origin: "ai-detect" },
+            },
+            tx,
+          );
+          return newId;
         });
       }
 
@@ -641,16 +646,6 @@ export const inboxRouter = createRouter({
     )
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
-      const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.captureId) });
-      if (!cap?.storageKey) throw new Error("Capture has no file to import.");
-
-      let geojson: unknown;
-      try {
-        const bytes = await readFileBytes(cap.storageKey);
-        geojson = JSON.parse(Buffer.from(bytes).toString("utf8"));
-      } catch {
-        throw new Error("Not valid JSON.");
-      }
       const houseId = input.houseId ?? ctx.houseId;
       if (houseId == null && input.roomId == null) throw new Error("Pick a house first.");
       const target = input.roomId != null
@@ -662,6 +657,16 @@ export const inboxRouter = createRouter({
         where: and(eq(rooms.houseId, targetHouseId), sql`lower(${rooms.name}) = ${input.roomName!.trim().toLowerCase()}`),
       }));
       const roomName = target?.name ?? input.roomName!.trim();
+      const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.captureId) });
+      if (!cap?.storageKey) throw new Error("Capture has no file to import.");
+
+      let geojson: unknown;
+      try {
+        const bytes = await readFileBytes(cap.storageKey);
+        geojson = JSON.parse(Buffer.from(bytes).toString("utf8"));
+      } catch {
+        throw new Error("Not valid JSON.");
+      }
       const parsed = parseGeojsonFloor(geojson as { features: { geometry: { type: string; coordinates: unknown }; properties: Record<string, unknown> }[] });
       if (!parsed) throw new Error("No wall geometry found in this file.");
       const { walls, furniturePolys, widthM, depthM } = parsed;

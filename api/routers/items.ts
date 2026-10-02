@@ -187,26 +187,33 @@ export const itemsRouter = createRouter({
     )
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
-      const [{ id }] = await db
-        .insert(items)
-        .values({
-          areaId: input.areaId,
-          name: input.name,
-          description: input.description ?? null,
-          attributes: input.attributes ?? null,
-          parentId: input.parentId ?? null,
-          houseId: input.houseId ?? ctx.houseId ?? null,
-          roomId: null,
-          verificationStatus: input.verificationStatus ?? "confirmed",
-        })
-        .$returningId();
-      if (input.roomId != null) await setItemLocation(db, id, { roomId: input.roomId });
-      await logEvent({
-        entityType: "item",
-        entityId: id,
-        action: "created",
-        summary: `Item "${input.name}" created`,
-        payload: { areaId: input.areaId, attributes: input.attributes },
+      // insert + location + event are atomic: a bad roomId must not leave an orphan item
+      const id = await db.transaction(async (tx) => {
+        const [{ id: newId }] = await tx
+          .insert(items)
+          .values({
+            areaId: input.areaId,
+            name: input.name,
+            description: input.description ?? null,
+            attributes: input.attributes ?? null,
+            parentId: input.parentId ?? null,
+            houseId: input.houseId ?? ctx.houseId ?? null,
+            roomId: null,
+            verificationStatus: input.verificationStatus ?? "confirmed",
+          })
+          .$returningId();
+        if (input.roomId != null) await setItemLocation(tx, newId, { roomId: input.roomId });
+        await logEvent(
+          {
+            entityType: "item",
+            entityId: newId,
+            action: "created",
+            summary: `Item "${input.name}" created`,
+            payload: { areaId: input.areaId, attributes: input.attributes },
+          },
+          tx,
+        );
+        return newId;
       });
 
       // name-based suggestions run regardless; the LLM adds semantic matches

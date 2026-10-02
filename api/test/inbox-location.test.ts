@@ -55,3 +55,18 @@ describe("map.ensureAttachmentForCapture", () => {
     fs.rmSync("uploads/does-not-matter.jpg", { force: true });
   });
 });
+
+describe("inbox.importGeojson input handling", () => {
+  it("needs a room id or name", async () => {
+    const { h1, capId } = await seed();
+    await expect(callerFor(h1).inbox.importGeojson({ captureId: capId })).rejects.toThrow();
+  });
+  it("unknown roomId", async () => {
+    const { h1, capId } = await seed();
+    await expect(callerFor(h1).inbox.importGeojson({ captureId: capId, roomId: 999999 })).rejects.toThrow(/Room not found/);
+  });
+  it("roomName without any house", async () => {
+    const { capId } = await seed();
+    await expect(callerFor(null).inbox.importGeojson({ captureId: capId, roomName: "Nieuw" })).rejects.toThrow(/Pick a house first/);
+  });
+});

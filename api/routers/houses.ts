@@ -1,9 +1,21 @@
 import { z } from "zod";
-import { eq, asc, inArray } from "drizzle-orm";
+import { eq, asc, inArray, or } from "drizzle-orm";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { houses, items, attachments, rooms } from "@db/schema";
 import { logEvent } from "../lib/events";
+
+/** Photos of a house: attachments in one of its rooms, or on one of its items. */
+async function photosOfHouse(db: ReturnType<typeof getDb>, houseId: number) {
+  const roomIds = (await db.select({ id: rooms.id }).from(rooms).where(eq(rooms.houseId, houseId))).map((r) => r.id);
+  const itemIds = (await db.select({ id: items.id }).from(items).where(eq(items.houseId, houseId))).map((r) => r.id);
+  const conds = [
+    roomIds.length ? inArray(attachments.roomId, roomIds) : undefined,
+    itemIds.length ? inArray(attachments.itemId, itemIds) : undefined,
+  ].filter((c) => c !== undefined);
+  if (!conds.length) return [];
+  return db.select({ id: attachments.id }).from(attachments).where(or(...conds));
+}
 
 export const housesRouter = createRouter({
   list: procedure.query(async () => {
@@ -89,7 +101,7 @@ export const housesRouter = createRouter({
   impact: procedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.houseId, input.id));
-    const photoRows = await db.select({ id: attachments.id }).from(attachments).where(eq(attachments.houseId, input.id));
+    const photoRows = await photosOfHouse(db, input.id);
     return { itemCount: itemRows.length, photoCount: photoRows.length };
   }),
 
@@ -107,10 +119,9 @@ export const housesRouter = createRouter({
       const toHouse = await db.query.houses.findFirst({ where: eq(houses.id, input.toId) });
       if (!fromHouse || !toHouse) throw new Error("House not found");
       const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.houseId, input.fromId));
-      const photoRows = await db.select({ id: attachments.id }).from(attachments).where(eq(attachments.houseId, input.fromId));
+      const photoRows = await photosOfHouse(db, input.fromId);
       await db.transaction(async (tx) => {
         await tx.update(items).set({ houseId: input.toId }).where(eq(items.houseId, input.fromId));
-        await tx.update(attachments).set({ houseId: input.toId }).where(eq(attachments.houseId, input.fromId));
         await tx.update(rooms).set({ houseId: input.toId }).where(eq(rooms.houseId, input.fromId));
         await logEvent(
           {
@@ -136,7 +147,6 @@ export const housesRouter = createRouter({
         await tx.delete(rooms).where(inArray(rooms.id, roomIds));
       }
       await tx.update(items).set({ houseId: null }).where(eq(items.houseId, input.id));
-      await tx.update(attachments).set({ houseId: null }).where(eq(attachments.houseId, input.id));
       await tx.delete(houses).where(eq(houses.id, input.id));
       await logEvent(
         {

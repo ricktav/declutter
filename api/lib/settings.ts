@@ -6,8 +6,10 @@ import path from "path";
 // plaintext, and the project root is what Vite's dev server serves over the
 // LAN (host: true) - a file sitting there is reachable by anyone on the
 // network who requests its path, dev server or not.
-const SETTINGS_DIR = path.join(os.homedir(), ".declutter");
-const SETTINGS_PATH = path.join(SETTINGS_DIR, "settings.json");
+// DECLUTTER_SETTINGS_PATH overrides it (tests point it at nothing).
+function settingsPath(): string {
+  return process.env.DECLUTTER_SETTINGS_PATH || path.join(os.homedir(), ".declutter", "settings.json");
+}
 
 export interface AppSettings {
   llmBaseUrl?: string;
@@ -22,7 +24,7 @@ export interface AppSettings {
 
 export function loadSettings(): AppSettings {
   try {
-    return JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf-8")) as AppSettings;
+    return JSON.parse(fs.readFileSync(settingsPath(), "utf-8")) as AppSettings;
   } catch {
     return {};
   }
@@ -35,7 +37,7 @@ export function saveSettings(patch: AppSettings): AppSettings {
     if (v === undefined || v === "") delete (next as Record<string, unknown>)[k];
     else (next as Record<string, unknown>)[k] = v;
   }
-  fs.mkdirSync(SETTINGS_DIR, { recursive: true });
-  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(next, null, 2));
+  fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
+  fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2));
   return next;
 }
