@@ -1,0 +1,119 @@
+// api/test/rooms.test.ts
+import { beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { areas, attachments, houses, items, rooms } from "@db/schema";
+import { getTestDb, resetTestDb } from "./db";
+import { callerFor } from "./areas.test";
+
+beforeEach(async () => {
+  await resetTestDb();
+});
+
+async function seed() {
+  const db = getTestDb();
+  const [{ id: h1 }] = await db.insert(houses).values({ name: "A" }).$returningId();
+  const [{ id: h2 }] = await db.insert(houses).values({ name: "B" }).$returningId();
+  const [{ id: areaId }] = await db.insert(areas).values({ slug: "x", name: "X" }).$returningId();
+  const [{ id: keuken }] = await db.insert(rooms).values({ houseId: h1, name: "Keuken", floor: "ground", source: "manual" }).$returningId();
+  const [{ id: zolder }] = await db.insert(rooms).values({ houseId: h1, name: "Zolder", floor: "attic", source: "manual" }).$returningId();
+  const [{ id: hal }] = await db.insert(rooms).values({ houseId: h2, name: "Hal", source: "manual" }).$returningId();
+  await db.insert(items).values([
+    { areaId, name: "pan", houseId: h1, roomId: keuken },
+    { areaId, name: "pot", houseId: h1, roomId: keuken },
+    { areaId, name: "box", houseId: h1, roomId: zolder },
+    { areaId, name: "coat", houseId: h2, roomId: hal },
+  ]);
+  return { db, h1, h2, areaId, keuken, zolder, hal };
+}
+
+describe("rooms.list", () => {
+  it("defaults to the context house, sorted by floor then name, with counts and geometry flag", async () => {
+    const { h1 } = await seed();
+    const rows = await callerFor(h1).rooms.list();
+    expect(rows.map((r) => [r.name, r.floor, r.itemCount, r.hasGeometry])).toEqual([
+      ["Zolder", "attic", 1, false],
+      ["Keuken", "ground", 2, false],
+    ]);
+  });
+  it("returns every house's rooms with no context and no input", async () => {
+    await seed();
+    expect(await callerFor(null).rooms.list()).toHaveLength(3);
+  });
+  it("explicit houseId beats the context", async () => {
+    const { h1, h2 } = await seed();
+    expect((await callerFor(h1).rooms.list({ houseId: h2 })).map((r) => r.name)).toEqual(["Hal"]);
+  });
+});
+
+describe("rooms.ensure / create", () => {
+  it("ensure returns the existing room for a case-variant name", async () => {
+    const { h1, keuken } = await seed();
+    const r = await callerFor(h1).rooms.ensure({ name: "keuken" });
+    expect(r).toEqual({ id: keuken, created: false });
+  });
+  it("create refuses a duplicate with a readable message", async () => {
+    const { h1 } = await seed();
+    await expect(callerFor(h1).rooms.create({ name: "Keuken" })).rejects.toThrow(/already exists/);
+  });
+  it("ensure without a house anywhere is an error", async () => {
+    await seed();
+    await expect(callerFor(null).rooms.ensure({ name: "Nieuw" })).rejects.toThrow(/house/i);
+  });
+});
+
+describe("rooms.update", () => {
+  it("renaming a room moves nothing and logs an event; floor can be cleared", async () => {
+    const { db, h1, keuken } = await seed();
+    await callerFor(h1).rooms.update({ id: keuken, name: "Kitchen", floor: null });
+    const [room] = await db.select().from(rooms).where(eq(rooms.id, keuken));
+    expect([room.name, room.floor]).toEqual(["Kitchen", null]);
+    const inRoom = await db.select().from(items).where(eq(items.roomId, keuken));
+    expect(inRoom).toHaveLength(2);
+  });
+});
+
+describe("rooms.update duplicate", () => {
+  it("renaming to another room's name (case-variant) is a readable conflict", async () => {
+    const { h1, zolder } = await seed();
+    await expect(callerFor(h1).rooms.update({ id: zolder, name: "KEUKEN" })).rejects.toThrow(/already exists/);
+  });
+});
+
+describe("rooms.merge", () => {
+  it("moves items and location photos, then deletes the source", async () => {
+    const { db, h1, keuken, zolder } = await seed();
+    await db.insert(attachments).values({ kind: "image", roomId: zolder, title: "photo" });
+    const r = await callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken });
+    expect(r).toEqual({ ok: true, itemsMoved: 1, photosMoved: 1 });
+    expect(await db.select().from(rooms)).toHaveLength(2);
+    expect(await db.select().from(items).where(eq(items.roomId, keuken))).toHaveLength(3);
+  });
+  it("refuses when both rooms carry geometry", async () => {
+    const { db, h1, keuken, zolder } = await seed();
+    await db.update(rooms).set({ walls: [] }).where(eq(rooms.id, keuken));
+    await db.update(rooms).set({ walls: [] }).where(eq(rooms.id, zolder));
+    await expect(callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken })).rejects.toThrow(/geometry/);
+  });
+  it("carries geometry over when only the source has it", async () => {
+    const { db, h1, keuken, zolder } = await seed();
+    await db.update(rooms).set({ walls: [{ points: [[0, 0], [1, 0]] }], widthM: 1, depthM: 1 }).where(eq(rooms.id, zolder));
+    await callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken });
+    const [room] = await db.select().from(rooms).where(eq(rooms.id, keuken));
+    expect(room.walls).toHaveLength(1);
+    expect(room.widthM).toBe(1);
+  });
+  it("refuses to merge across houses", async () => {
+    const { h1, keuken, hal } = await seed();
+    await expect(callerFor(h1).rooms.merge({ fromId: hal, toId: keuken })).rejects.toThrow(/same house/);
+  });
+});
+
+describe("rooms.remove", () => {
+  it("refuses a room with items unless forced, and forced items stay in the house unplaced", async () => {
+    const { db, h1, keuken } = await seed();
+    await expect(callerFor(h1).rooms.remove({ id: keuken })).rejects.toThrow(/2 item/);
+    await callerFor(h1).rooms.remove({ id: keuken, force: true });
+    const rows = await db.select().from(items).where(eq(items.houseId, h1));
+    expect(rows.filter((r) => r.roomId == null)).toHaveLength(2);
+  });
+});

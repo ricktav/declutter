@@ -1,9 +1,11 @@
 import { z } from "zod";
-import { eq, asc, and, isNull } from "drizzle-orm";
+import { eq, and, sql, isNotNull } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { rooms, items, type RoomGeometry, type ItemPos } from "@db/schema";
+import { rooms, items, attachments, type RoomGeometry, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
+import { ensureRoom, setItemLocation } from "../lib/location";
 
 const geometryInput = z.object({
   walls: z.array(
@@ -107,29 +109,145 @@ function rollupItem(
 }
 
 export const roomsRouter = createRouter({
-  /** Every scanned room across every house - just enough to tell which
-   * house+name combos already have a floor plan, without a per-house
-   * round trip (used by the Inbox's "pick an unmapped location" picker). */
-  listAll: procedure.query(async () => {
-    const db = getDb();
-    return db.select({ id: rooms.id, houseId: rooms.houseId, name: rooms.name }).from(rooms);
-  }),
-
-  listByHouse: procedure
-    .input(z.object({ houseId: z.number() }))
-    .query(async ({ input }) => {
+  /** Every room of a house (default: the context house; null = all houses). */
+  list: procedure
+    .input(z.object({ houseId: z.number().nullable().optional() }).optional())
+    .query(async ({ input, ctx }) => {
+      const houseId = input?.houseId !== undefined ? input.houseId : ctx.houseId;
       const db = getDb();
-      const all = await db
-        .select()
+      const rows = await db
+        .select({
+          id: rooms.id,
+          houseId: rooms.houseId,
+          name: rooms.name,
+          floor: rooms.floor,
+          parentRoomId: rooms.parentRoomId,
+          hasGeometry: isNotNull(rooms.walls),
+          itemCount: sql<number>`(select count(*) from items i where i.roomId = rooms.id and i.status = 'active')`,
+        })
         .from(rooms)
-        .where(eq(rooms.houseId, input.houseId))
-        .orderBy(asc(rooms.name));
-      const counts = await db.select({ roomId: items.roomId }).from(items);
-      const countMap = new Map<number, number>();
-      for (const c of counts) {
-        if (c.roomId) countMap.set(c.roomId, (countMap.get(c.roomId) ?? 0) + 1);
+        .where(houseId != null ? eq(rooms.houseId, houseId) : undefined);
+      return rows
+        .map((r) => ({ ...r, hasGeometry: !!r.hasGeometry, itemCount: Number(r.itemCount) }))
+        .sort((a, b) => (a.floor ?? "").localeCompare(b.floor ?? "") || a.name.localeCompare(b.name));
+    }),
+
+  /** Find-or-create by name in a house (the picker's "create room …" row). */
+  ensure: procedure
+    .input(z.object({ name: z.string().min(1), floor: z.string().nullable().optional(), houseId: z.number().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const houseId = input.houseId ?? ctx.houseId;
+      if (houseId == null) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a house first." });
+      const r = await ensureRoom(getDb(), { houseId, name: input.name, floor: input.floor });
+      if (r.created) {
+        await logEvent({ entityType: "room", entityId: r.id, action: "created", summary: `Room "${input.name.trim()}" added` });
       }
-      return all.map((r) => ({ ...r, itemCount: countMap.get(r.id) ?? 0 }));
+      return r;
+    }),
+
+  /** Strict create: a second room with the same name in one house is an error. */
+  create: procedure
+    .input(z.object({ name: z.string().min(1), floor: z.string().nullable().optional(), houseId: z.number().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const houseId = input.houseId ?? ctx.houseId;
+      if (houseId == null) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a house first." });
+      const r = await ensureRoom(getDb(), { houseId, name: input.name, floor: input.floor });
+      if (!r.created) throw new TRPCError({ code: "CONFLICT", message: `A room called "${input.name.trim()}" already exists in this house.` });
+      await logEvent({ entityType: "room", entityId: r.id, action: "created", summary: `Room "${input.name.trim()}" added` });
+      return { id: r.id };
+    }),
+
+  update: procedure
+    .input(
+      z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        floor: z.string().nullable().optional(),
+        lat: z.number().min(-90).max(90).nullable().optional(),
+        lng: z.number().min(-180).max(180).nullable().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const { id, ...rest } = input;
+      const before = await db.query.rooms.findFirst({ where: eq(rooms.id, id) });
+      if (!before) throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
+      const patch: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = k === "name" ? String(v).trim() : v;
+      try {
+        await db.update(rooms).set(patch).where(eq(rooms.id, id));
+      } catch (err) {
+        if ((err as { cause?: { code?: string } }).cause?.code === "ER_DUP_ENTRY") {
+          throw new TRPCError({ code: "CONFLICT", message: `A room called "${patch.name}" already exists in this house.` });
+        }
+        throw err;
+      }
+      const parts: string[] = [];
+      if (patch.name !== undefined && patch.name !== before.name) parts.push(`renamed from "${before.name}" to "${patch.name}"`);
+      if (patch.floor !== undefined && patch.floor !== before.floor) parts.push(`floor set to ${patch.floor ?? "none"}`);
+      if (patch.lat !== undefined || patch.lng !== undefined) parts.push("position updated");
+      await logEvent({
+        entityType: "room",
+        entityId: id,
+        action: "updated",
+        summary: parts.length ? `Room "${before.name}" ${parts.join(", ")}` : `Room "${before.name}" updated (no changes)`,
+        payload: patch,
+      });
+      return { ok: true };
+    }),
+
+  /**
+   * Fold one room into another (the old "rename location to merge" flow).
+   * Items and location photos move; geometry moves only if the target has
+   * none; two scanned rooms cannot be merged.
+   */
+  merge: procedure
+    .input(z.object({ fromId: z.number(), toId: z.number() }))
+    .mutation(async ({ input }) => {
+      if (input.fromId === input.toId) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a different room to merge into." });
+      const db = getDb();
+      const from = await db.query.rooms.findFirst({ where: eq(rooms.id, input.fromId) });
+      const to = await db.query.rooms.findFirst({ where: eq(rooms.id, input.toId) });
+      if (!from || !to) throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
+      if (from.houseId !== to.houseId) throw new TRPCError({ code: "BAD_REQUEST", message: "Rooms must be in the same house to merge." });
+      if (from.walls && to.walls) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Both rooms have scanned geometry; merging would drop one scan. Delete or cut rooms on the plan instead." });
+      }
+      return db.transaction(async (tx) => {
+        const movedItems = await tx.select({ id: items.id }).from(items).where(eq(items.roomId, from.id));
+        for (const it of movedItems) await setItemLocation(tx, it.id, { roomId: to.id });
+        const movedPhotos = await tx.select({ id: attachments.id }).from(attachments).where(eq(attachments.roomId, from.id));
+        if (movedPhotos.length) await tx.update(attachments).set({ roomId: to.id }).where(eq(attachments.roomId, from.id));
+        await tx.update(rooms).set({ parentRoomId: to.id }).where(eq(rooms.parentRoomId, from.id));
+        if (from.walls && !to.walls) {
+          await tx
+            .update(rooms)
+            .set({
+              walls: from.walls,
+              openings: from.openings,
+              widthM: from.widthM,
+              depthM: from.depthM,
+              wallHeightM: from.wallHeightM,
+              source: from.source,
+              scanDate: from.scanDate,
+              floor: to.floor ?? from.floor,
+            })
+            .where(eq(rooms.id, to.id));
+        } else if (!to.floor && from.floor) {
+          await tx.update(rooms).set({ floor: from.floor }).where(eq(rooms.id, to.id));
+        }
+        await tx.delete(rooms).where(eq(rooms.id, from.id));
+        await logEvent(
+          {
+            entityType: "room",
+            entityId: to.id,
+            action: "merged",
+            summary: `Room "${from.name}" merged into "${to.name}" (${movedItems.length} item(s), ${movedPhotos.length} photo(s))`,
+          },
+          tx,
+        );
+        return { ok: true as const, itemsMoved: movedItems.length, photosMoved: movedPhotos.length };
+      });
     }),
 
   get: procedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
@@ -158,6 +276,7 @@ export const roomsRouter = createRouter({
         widthM: z.number().optional(),
         depthM: z.number().optional(),
         wallHeightM: z.number().optional(),
+        floor: z.string().nullable().optional(),
         geometry: geometryInput,
       }),
     )
@@ -170,6 +289,7 @@ export const roomsRouter = createRouter({
       const values = {
         houseId: input.houseId,
         name: input.name,
+        floor: input.floor ?? undefined,
         source: input.source,
         scanDate: input.scanDate ?? new Date(),
         widthM: input.widthM ?? null,
@@ -202,102 +322,54 @@ export const roomsRouter = createRouter({
       return { id, created: true };
     }),
 
-  update: procedure
-    .input(
-      z.object({
-        id: z.number(),
-        name: z.string().min(1).optional(),
-        lat: z.number().min(-90).max(90).nullable().optional(),
-        lng: z.number().min(-180).max(180).nullable().optional(),
-      }),
-    )
+  remove: procedure
+    .input(z.object({ id: z.number(), force: z.boolean().default(false) }))
     .mutation(async ({ input }) => {
-      const { id, ...rest } = input;
-      const patch: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
-      await getDb().update(rooms).set(patch).where(eq(rooms.id, id));
-      return { ok: true };
-    }),
+      const db = getDb();
+      const room = await db.query.rooms.findFirst({ where: eq(rooms.id, input.id) });
+      if (!room) return { ok: true, moved: 0 };
+      const roomItems = await db.select().from(items).where(eq(items.roomId, input.id));
 
-  /**
-   * Deleting a cut room "un-cuts" it: its items move back to the parent
-   * (pos re-expressed in the parent's frame via the stored offset) since
-   * the parent's own geometry was never touched and still has room for
-   * them. A room with no parent (a root scan) has nowhere to send items
-   * back to - they're orphaned (roomId null), which is why the frontend
-   * asks harder before allowing that case.
-   */
-  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    const db = getDb();
-    const room = await db.query.rooms.findFirst({ where: eq(rooms.id, input.id) });
-    if (!room) return { ok: true };
+      if (room.parentRoomId != null) {
+        // un-cut: items go back to the parent in the parent's frame
+        const ox = room.offsetXM ?? 0, oy = room.offsetYM ?? 0;
+        const parentId = room.parentRoomId;
+        await db.transaction(async (tx) => {
+          for (const it of roomItems) {
+            const p = it.pos as ItemPos | null;
+            await tx
+              .update(items)
+              .set({ roomId: parentId, pos: p ? { ...p, xM: +(p.xM + ox).toFixed(2), yM: +(p.yM + oy).toFixed(2) } : p })
+              .where(eq(items.id, it.id));
+          }
+          await tx.update(attachments).set({ roomId: parentId }).where(eq(attachments.roomId, input.id));
+          await tx.delete(rooms).where(eq(rooms.id, input.id));
+          await logEvent(
+            { entityType: "room", entityId: input.id, action: "deleted", summary: `Room "${room.name}" deleted, ${roomItems.length} item(s) moved back to parent room #${parentId}` },
+            tx,
+          );
+        });
+        return { ok: true, moved: roomItems.length };
+      }
 
-    if (room.parentRoomId != null) {
-      const ox = room.offsetXM ?? 0, oy = room.offsetYM ?? 0;
-      const parentId = room.parentRoomId;
-      const moved = await db.transaction(async (tx) => {
-        const roomItems = await tx.select().from(items).where(eq(items.roomId, input.id));
-        for (const it of roomItems) {
-          const p = it.pos as ItemPos | null;
-          await tx
-            .update(items)
-            .set({
-              roomId: parentId,
-              pos: p ? { ...p, xM: +(p.xM + ox).toFixed(2), yM: +(p.yM + oy).toFixed(2) } : p,
-            })
-            .where(eq(items.id, it.id));
-        }
+      if (roomItems.length > 0 && !input.force) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `"${room.name}" still holds ${roomItems.length} item(s). Merge it into another room, or delete anyway to leave them unplaced in the house.`,
+        });
+      }
+      await db.transaction(async (tx) => {
+        for (const it of roomItems) await setItemLocation(tx, it.id, { roomId: null, houseId: room.houseId });
+        await tx.update(attachments).set({ roomId: null }).where(eq(attachments.roomId, input.id));
+        await tx.update(rooms).set({ parentRoomId: null }).where(eq(rooms.parentRoomId, input.id));
         await tx.delete(rooms).where(eq(rooms.id, input.id));
         await logEvent(
-          {
-            entityType: "room",
-            entityId: input.id,
-            action: "deleted",
-            summary: `Room "${room.name}" deleted, ${roomItems.length} item(s) moved back to parent room #${parentId}`,
-          },
+          { entityType: "room", entityId: input.id, action: "deleted", summary: `Room "${room.name}" deleted (${roomItems.length} item(s) left unplaced)` },
           tx,
         );
-        return roomItems.length;
       });
-      return { ok: true, moved };
-    }
-
-    await db.transaction(async (tx) => {
-      await tx.update(items).set({ roomId: null }).where(eq(items.roomId, input.id));
-      await tx.delete(rooms).where(eq(rooms.id, input.id));
-      await logEvent(
-        {
-          entityType: "room",
-          entityId: input.id,
-          action: "deleted",
-          summary: `Room "${room.name}" deleted (no parent - items unassigned)`,
-        },
-        tx,
-      );
-    });
-    return { ok: true };
-  }),
-
-  /**
-   * Existing floor/room text labels (the plain location field used all over
-   * the app, independent of any geometry) that don't have a matching rooms
-   * row yet for this house - the pick list for naming a room cut out of a
-   * whole-floor scan, so cut rooms reuse the vocabulary already in use
-   * instead of inventing new names.
-   */
-  unlinkedLocations: procedure.input(z.object({ houseId: z.number() })).query(async ({ input }) => {
-    const db = getDb();
-    const itemRows = await db.select({ room: items.room }).from(items).where(eq(items.houseId, input.houseId));
-    const existing = new Set(
-      (await db.select({ name: rooms.name }).from(rooms).where(eq(rooms.houseId, input.houseId))).map((r) => r.name),
-    );
-    const names = new Set<string>();
-    for (const r of itemRows) {
-      const name = r.room?.trim();
-      if (name && !existing.has(name)) names.add(name);
-    }
-    return [...names].sort();
-  }),
+      return { ok: true, moved: roomItems.length };
+    }),
 
   /**
    * Carve a named sub-room out of a whole-floor geometry blob: wall/door/
@@ -305,9 +377,6 @@ export const roomsRouter = createRouter({
    * (rebased to a local origin), as do placed items whose footprint center
    * falls inside it. The source room's own geometry is never touched -
    * sacred raw scan, same principle lidarventory's docs state explicitly.
-   * Items already using this location name (string match) but not yet
-   * linked to any room get linked too, landing "unplaced" (pos stays null)
-   * until someone drags them onto the new plan.
    */
   cutFromRoom: procedure
     .input(
@@ -344,6 +413,7 @@ export const roomsRouter = createRouter({
         .values({
           houseId: source.houseId,
           name: input.name,
+          floor: source.floor,
           source: "manual",
           scanDate: new Date(),
           widthM: bw,
@@ -368,17 +438,12 @@ export const roomsRouter = createRouter({
           .update(items)
           .set({
             roomId: newRoomId,
-            room: input.name,
+            houseId: source.houseId,
             pos: { ...p, xM: +(p.xM - bx).toFixed(2), yM: +(p.yM - by).toFixed(2) },
           })
           .where(eq(items.id, it.id));
         moved++;
       }
-
-      await tx
-        .update(items)
-        .set({ roomId: newRoomId })
-        .where(and(eq(items.houseId, source.houseId), eq(items.room, input.name), isNull(items.roomId)));
 
       await logEvent(
         {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, asc, isNotNull, and, inArray } from "drizzle-orm";
+import { eq, asc, inArray } from "drizzle-orm";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { houses, items, attachments, rooms } from "@db/schema";
@@ -16,30 +16,6 @@ export const housesRouter = createRouter({
     }
     return all.map((h) => ({ ...h, itemCount: countMap.get(h.id) ?? 0 }));
   }),
-
-  /** distinct floor/room combos discovered from items in a house — used by RoomPicker */
-  rooms: procedure
-    .input(z.object({ houseId: z.number() }))
-    .query(async ({ input }) => {
-      const rows = await getDb()
-        .select({ floor: items.floor, room: items.room })
-        .from(items)
-        .where(
-          and(
-            eq(items.houseId, input.houseId),
-            isNotNull(items.room),
-          ),
-        );
-      const seen = new Set<string>();
-      const out: { floor: string | null; room: string }[] = [];
-      for (const r of rows) {
-        const room = r.room!;
-        if (seen.has(room)) continue;
-        seen.add(room);
-        out.push({ floor: r.floor, room });
-      }
-      return out;
-    }),
 
   create: procedure
     .input(

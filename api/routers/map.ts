@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { eq, and, isNotNull, isNull } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { items, attachments, captures, houses } from "@db/schema";
+import { items, attachments, captures } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { copyStoredFile } from "../lib/filestore";
 
@@ -12,28 +12,6 @@ import { copyStoredFile } from "../lib/filestore";
  * tuple, matching what every item already carries; no new geometry concept.
  */
 export const mapRouter = createRouter({
-  /** Every distinct location with at least one active item, for the picker. */
-  listLocations: procedure.query(async () => {
-    const db = getDb();
-    const rows = await db
-      .select({ houseId: items.houseId, floor: items.floor, room: items.room })
-      .from(items)
-      .where(and(eq(items.status, "active"), isNotNull(items.room)));
-    const allHouses = await db.select().from(houses);
-    const houseById = new Map(allHouses.map((h) => [h.id, h]));
-
-    const counts = new Map<string, { houseId: number | null; floor: string | null; room: string; count: number }>();
-    for (const r of rows) {
-      const key = `${r.houseId ?? 0}|${r.floor ?? ""}|${r.room}`;
-      const entry = counts.get(key);
-      if (entry) entry.count++;
-      else counts.set(key, { houseId: r.houseId, floor: r.floor, room: r.room!, count: 1 });
-    }
-    return [...counts.values()]
-      .map((l) => ({ ...l, houseName: l.houseId ? (houseById.get(l.houseId)?.name ?? null) : null }))
-      .sort((a, b) => (a.houseName ?? "").localeCompare(b.houseName ?? "") || a.room.localeCompare(b.room));
-  }),
-
   /**
    * The photo pool for a location - every distinct source photo behind that
    * location's items. Derived from cutout provenance (sourceCaptureId), not
@@ -138,49 +116,5 @@ export const mapRouter = createRouter({
         summary: `Location photo attachment created from capture #${cap.id} (via Map view)`,
       });
       return { attachmentId: id };
-    }),
-
-  /**
-   * Rename a location, or merge it into another one by renaming it to match
-   * exactly - bulk-updates every item currently filed under `from` to `to`
-   * in one go, since a location is just a (houseId, floor, room) tuple on
-   * items, not a row of its own.
-   */
-  renameLocation: procedure
-    .input(
-      z.object({
-        from: z.object({
-          houseId: z.number().nullable(),
-          floor: z.string().nullable(),
-          room: z.string().min(1),
-        }),
-        to: z.object({
-          houseId: z.number().nullable(),
-          floor: z.string().nullable(),
-          room: z.string().min(1),
-        }),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const db = getDb();
-      const { from, to } = input;
-      const where = and(
-        eq(items.room, from.room),
-        from.floor == null ? isNull(items.floor) : eq(items.floor, from.floor),
-        from.houseId == null ? isNull(items.houseId) : eq(items.houseId, from.houseId),
-      );
-      const affected = await db.select({ id: items.id }).from(items).where(where);
-      const changed = affected.length;
-      await db
-        .update(items)
-        .set({ room: to.room, floor: to.floor, houseId: to.houseId })
-        .where(where);
-      await logEvent({
-        entityType: "item",
-        entityId: 0,
-        action: "location-renamed",
-        summary: `Location "${from.room}" renamed to "${to.room}" (${changed} item(s))`,
-      });
-      return { ok: true, changed };
     }),
 });
