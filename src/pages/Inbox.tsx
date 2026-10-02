@@ -10,6 +10,8 @@ import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
 import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
 import { AiProgressBar } from "@/components/AiProgressBar";
 import { DetectObjectsModal } from "@/components/DetectObjects";
+import { GeojsonThumb } from "@/components/GeojsonThumb";
+import { isGeojsonFile } from "@/lib/geojsonFloor";
 import {
   Dialog,
   DialogContent,
@@ -60,6 +62,9 @@ function ProcessedThumb({ storageKey, kind }: { storageKey: string | null; kind:
         <img src={url.data.url} alt="" className="h-full w-full object-cover" />
       </div>
     );
+  }
+  if ((kind === "scan" || isGeojsonFile(storageKey)) && storageKey) {
+    return <GeojsonThumb storageKey={storageKey} />;
   }
   return (
     <div className="aspect-square w-full flex items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground">
@@ -464,8 +469,13 @@ function TriageCard({
                   {capture.url}
                 </a>
               ) : (
-                capture.rawText || "(file)"
+                capture.rawText || (isGeojsonFile(capture.storageKey) ? "GeoJSON floor scan" : "(file)")
               )}
+            </div>
+          )}
+          {capture.storageKey && (capture.kind === "scan" || isGeojsonFile(capture.storageKey)) && (
+            <div className="mt-2 w-28">
+              <GeojsonThumb storageKey={capture.storageKey} />
             </div>
           )}
           {capture.storageKey && capture.kind === "image" && (
