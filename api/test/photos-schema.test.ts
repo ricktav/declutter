@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { itemLinks, photoPins, photos } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 
@@ -45,5 +45,13 @@ describe("photos schema", () => {
       ["note", "same", null, 3],
       ["note", "same", null, 3],
     ]);
+  });
+
+  it("has no attachments or photo_annotations table any more", async () => {
+    const db = getTestDb();
+    const [rows] = await db.execute(
+      sql`select table_name as t from information_schema.tables where table_schema = database() and table_name in ('attachments', 'photo_annotations')`,
+    );
+    expect(rows).toEqual([]);
   });
 });

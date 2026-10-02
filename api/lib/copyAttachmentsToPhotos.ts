@@ -1,3 +1,4 @@
+// HISTORICAL after migration 0006: reads attachments/photo_annotations, which 0006 drops. Run only between 0005 and 0006 (photos consolidation plan, Task 6).
 // api/lib/copyAttachmentsToPhotos.ts
 // One-off data move for the photos consolidation, run between migrations
 // 0005 (add photos/item_links/photo_pins) and 0006 (drop attachments/

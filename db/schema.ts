@@ -161,36 +161,6 @@ export interface CropBox {
 }
 
 // ---------------------------------------------------------------------------
-// Attachments — images / files (storageKey), links (url), notes (content)
-// ---------------------------------------------------------------------------
-export const attachments = mysqlTable(
-  "attachments",
-  {
-    id: serial("id").primaryKey(),
-    itemId: bigint("itemId", { mode: "number", unsigned: true }),
-    areaId: bigint("areaId", { mode: "number", unsigned: true }),
-    roomId: bigint("roomId", { mode: "number", unsigned: true }),
-    kind: varchar("kind", { length: 32 }).$type<"image" | "link" | "note" | "file">().notNull(),
-    title: varchar("title", { length: 255 }),
-    content: text("content"),
-    url: text("url"),
-    storageKey: varchar("storageKey", { length: 512 }),
-    mimeType: varchar("mimeType", { length: 128 }),
-    size: bigint("size", { mode: "number" }),
-    // provenance for a cutout: which capture it was cropped from, and the
-    // box used — lets a cutout be re-cropped later without re-detecting
-    sourceCaptureId: bigint("sourceCaptureId", { mode: "number", unsigned: true }),
-    cropBox: json("cropBox").$type<CropBox | null>(),
-    createdAt: timestamp("createdAt").notNull().defaultNow(),
-  },
-  (t) => [
-    index("att_item_idx").on(t.itemId),
-    index("att_room_idx").on(t.roomId),
-    index("att_source_capture_idx").on(t.sourceCaptureId),
-  ],
-);
-
-// ---------------------------------------------------------------------------
 // Photos — images only (replaces attachments with kind "image"). An item's
 // photo has itemId; a location photo has roomId and no itemId; a cutout
 // carries the capture it was cropped from (sourceCaptureId) and the box.
@@ -387,29 +357,6 @@ export const timeLogs = mysqlTable("time_logs", {
 });
 
 // ---------------------------------------------------------------------------
-// Photo annotations — pins on image attachments, linked to items
-// ---------------------------------------------------------------------------
-export const photoAnnotations = mysqlTable(
-  "photo_annotations",
-  {
-    id: serial("id").primaryKey(),
-    attachmentId: bigint("attachmentId", { mode: "number", unsigned: true }).notNull(),
-    xPct: double("xPct").notNull(),
-    yPct: double("yPct").notNull(),
-    wPct: double("wPct"),
-    hPct: double("hPct"),
-    label: varchar("label", { length: 255 }).notNull().default(""),
-    itemId: bigint("itemId", { mode: "number", unsigned: true }),
-    origin: varchar("origin", { length: 32 }).$type<"user" | "ai">().notNull().default("user"),
-    status: varchar("status", { length: 32 }).$type<"suggested" | "confirmed">().notNull().default("confirmed"),
-    // "needs attention", independent of confirm status - the Map view's focus marker
-    flagged: boolean("flagged").notNull().default(false),
-    createdAt: timestamp("createdAt").notNull().defaultNow(),
-  },
-  (t) => [index("pins_att_idx").on(t.attachmentId), index("pins_item_idx").on(t.itemId)],
-);
-
-// ---------------------------------------------------------------------------
 // Relations — typed links between items; AI may suggest, user confirms
 // ---------------------------------------------------------------------------
 export const relations = mysqlTable(
@@ -479,7 +426,6 @@ export type Room = typeof rooms.$inferSelect;
 export type Measurement = typeof measurements.$inferSelect;
 export type Area = typeof areas.$inferSelect;
 export type Item = typeof items.$inferSelect;
-export type Attachment = typeof attachments.$inferSelect;
 export type Capture = typeof captures.$inferSelect;
 export type Idea = typeof ideas.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
@@ -488,7 +434,6 @@ export type Relation = typeof relations.$inferSelect;
 export type AppEvent = typeof events.$inferSelect;
 export type WikiPage = typeof wikiPages.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
-export type PhotoAnnotation = typeof photoAnnotations.$inferSelect;
 export type Photo = typeof photos.$inferSelect;
 export type ItemLink = typeof itemLinks.$inferSelect;
 export type PhotoPin = typeof photoPins.$inferSelect;

@@ -1,3 +1,4 @@
+// HISTORICAL after migration 0006: reads attachments/photo_annotations, which 0006 drops. Run only between 0005 and 0006 (photos consolidation plan, Task 6).
 // scripts/copy-attachments-to-photos.mjs
 // Photos consolidation data move: runs between migrations 0005 and 0006.
 // Reads DATABASE_URL from .env. Logic and tests: api/lib/copyAttachmentsToPhotos.ts

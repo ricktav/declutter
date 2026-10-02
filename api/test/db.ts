@@ -67,7 +67,7 @@ let instance: TestDb | undefined;
 
 export function getTestDb(): TestDb {
   if (instance) return instance;
-  const p = mysql.createPool({ uri: requireTestDatabaseUrl(), connectionLimit: 4 });
+  const p = mysql.createPool({ uri: requireTestDatabaseUrl(), connectionLimit: 4, multipleStatements: true });
   const db: TestDb = drizzle(p, { mode: "default", schema });
   pool = p;
   instance = db;
@@ -81,14 +81,13 @@ export function schemaTables(): MySqlTable[] {
 
 export async function resetTestDb(): Promise<void> {
   const db = getTestDb();
-  await db.execute(sql`SET FOREIGN_KEY_CHECKS = 0`);
-  try {
-    for (const table of schemaTables()) {
-      await db.execute(sql.raw(`TRUNCATE TABLE \`${getTableName(table)}\``));
-    }
-  } finally {
-    await db.execute(sql`SET FOREIGN_KEY_CHECKS = 1`);
-  }
+  // One round trip (multipleStatements is on for this pool only): per-table
+  // round trips to a remote DB timed out db.smoke at 20+ tables. A single
+  // query also keeps the session-scoped FOREIGN_KEY_CHECKS on one connection.
+  const truncates = schemaTables().map((t) => `TRUNCATE TABLE \`${getTableName(t)}\`;`);
+  await db.execute(
+    sql.raw(`SET FOREIGN_KEY_CHECKS = 0; ${truncates.join(" ")} SET FOREIGN_KEY_CHECKS = 1;`),
+  );
 }
 
 export async function closeTestDb(): Promise<void> {
