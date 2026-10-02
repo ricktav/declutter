@@ -99,12 +99,32 @@ export const areasRouter = createRouter({
       }
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
+
+      // fetch the pre-update row so the history entry can name what actually
+      // changed instead of just listing which field keys were touched
+      const before = await db.query.areas.findFirst({ where: eq(areas.id, id) });
       await db.update(areas).set(patch).where(eq(areas.id, id));
+
+      const subject = before?.name ?? `#${id}`;
+      const parts: string[] = [];
+      if (patch.name !== undefined && patch.name !== before?.name) {
+        parts.push(`renamed from "${before?.name ?? "?"}" to "${patch.name}"`);
+      }
+      if (patch.slug !== undefined && patch.slug !== before?.slug) {
+        parts.push(`slug changed to "${patch.slug}"`);
+      }
+      if (patch.icon !== undefined) parts.push("icon changed");
+      if (patch.color !== undefined) parts.push("color changed");
+      if (patch.description !== undefined) parts.push("description updated");
+      if (patch.attributeDefs !== undefined) parts.push("attribute fields updated");
+
       await logEvent({
         entityType: "area",
         entityId: id,
         action: "updated",
-        summary: `Area #${id} updated (${Object.keys(patch).join(", ")})`,
+        summary: parts.length
+          ? `Area "${subject}" ${parts.join(", ")}`
+          : `Area "${subject}" updated (no changes)`,
         payload: patch,
       });
       return db.query.areas.findFirst({ where: eq(areas.id, id) });

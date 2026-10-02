@@ -73,12 +73,30 @@ export const ideasRouter = createRouter({
       const { id, ...rest } = input;
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
+
+      // fetch the pre-update row so the history entry can name what actually
+      // changed instead of just listing which field keys were touched
+      const before = await db.query.ideas.findFirst({ where: eq(ideas.id, id) });
       await db.update(ideas).set(patch).where(eq(ideas.id, id));
+
+      const subject = before?.title ?? `#${id}`;
+      const parts: string[] = [];
+      if (patch.title !== undefined && patch.title !== before?.title) {
+        parts.push(`renamed from "${before?.title ?? "?"}" to "${patch.title}"`);
+      }
+      if (patch.status !== undefined && patch.status !== before?.status) {
+        parts.push(`status changed to "${patch.status}"`);
+      }
+      if (patch.areaId !== undefined) parts.push("area changed");
+      if (patch.body !== undefined) parts.push("body updated");
+
       await logEvent({
         entityType: "idea",
         entityId: id,
         action: "updated",
-        summary: `Idea #${id} updated (${Object.keys(patch).join(", ")})`,
+        summary: parts.length
+          ? `Idea "${subject}" ${parts.join(", ")}`
+          : `Idea "${subject}" updated (no changes)`,
         payload: patch,
       });
       return { ok: true };
