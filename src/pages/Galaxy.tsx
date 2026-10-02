@@ -86,7 +86,7 @@ const GROUPINGS: Grouping[] = [
   {
     id: "topic-floor",
     label: "Topic → Floor",
-    shortLabel: "Topic",
+    shortLabel: "Topic · Floor",
     level1: (it) => String(it.areaId),
     level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Topic #${key}`,
     level1Color: (key, index, areas) => areas.find((a) => String(a.id) === key)?.color ?? paletteColor(index),
@@ -116,7 +116,7 @@ const GROUPINGS: Grouping[] = [
   {
     id: "topic-room",
     label: "Topic → Room",
-    shortLabel: "Topic",
+    shortLabel: "Topic · Room",
     level1: (it) => String(it.areaId),
     level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Topic #${key}`,
     level1Color: (key, index, areas) => areas.find((a) => String(a.id) === key)?.color ?? paletteColor(index),
