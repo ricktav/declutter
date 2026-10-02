@@ -312,12 +312,36 @@ export const itemsRouter = createRouter({
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
       if (attributes !== undefined) patch.attributes = attributes;
       if (pos !== undefined) patch.pos = pos as ItemPos | null;
+
+      // fetch the pre-update row so the history entry can name what actually
+      // changed (e.g. "renamed from X to Y") instead of just listing which
+      // field keys were touched
+      const before = await db.query.items.findFirst({ where: eq(items.id, id) });
       await db.update(items).set(patch).where(eq(items.id, id));
+
+      const subject = before?.name ?? `#${id}`;
+      const parts: string[] = [];
+      if (patch.name !== undefined && patch.name !== before?.name) {
+        parts.push(`renamed from "${before?.name ?? "?"}" to "${patch.name}"`);
+      }
+      if (patch.floor !== undefined || patch.room !== undefined) {
+        const floor = patch.floor !== undefined ? patch.floor : before?.floor;
+        const room = patch.room !== undefined ? patch.room : before?.room;
+        parts.push(`location set to ${[floor, room].filter(Boolean).join(" · ") || "none"}`);
+      }
+      if (patch.houseId !== undefined) parts.push("house changed");
+      if (patch.roomId !== undefined) parts.push("room placement changed");
+      if (patch.description !== undefined) parts.push("description updated");
+      if (patch.attributes !== undefined) parts.push("attributes updated");
+      if (patch.pos !== undefined) parts.push("position updated");
+
       await logEvent({
         entityType: "item",
         entityId: id,
         action: "updated",
-        summary: `Item #${id} updated (${Object.keys(patch).join(", ") || "no changes"})`,
+        summary: parts.length
+          ? `Item "${subject}" ${parts.join(", ")}`
+          : `Item "${subject}" updated (no changes)`,
         payload: patch as Record<string, unknown>,
       });
       return { ok: true };
