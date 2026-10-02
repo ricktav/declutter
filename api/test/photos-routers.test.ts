@@ -1,0 +1,204 @@
+// api/test/photos-routers.test.ts
+import fs from "fs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { areas, captures, houses, itemLinks, items, photoPins, photos, rooms } from "@db/schema";
+import { getTestDb, resetTestDb } from "./db";
+import { callerFor } from "./caller";
+import { keyPath, removeTestUploads, writeTestJpeg } from "./fixtures";
+import { releaseStoredFiles } from "../lib/entities";
+
+beforeEach(async () => {
+  await resetTestDb();
+});
+afterEach(removeTestUploads);
+
+async function seed() {
+  const db = getTestDb();
+  const [{ id: h1 }] = await db.insert(houses).values({ name: "A" }).$returningId();
+  const [{ id: areaId }] = await db.insert(areas).values({ slug: "x", name: "Kitchen stuff" }).$returningId();
+  const [{ id: keuken }] = await db.insert(rooms).values({ houseId: h1, name: "Keuken", floor: "ground", source: "manual" }).$returningId();
+  const [{ id: itemId }] = await db.insert(items).values({ areaId, name: "pan", houseId: h1, roomId: keuken }).$returningId();
+  return { db, h1, areaId, keuken, itemId };
+}
+
+const box = { xPct: 50, yPct: 50, wPct: 40, hPct: 40 };
+
+describe("photos.add / remove", () => {
+  it("add sniffs the file; remove deletes the photo, its pins and its file", async () => {
+    const { db, h1, itemId, areaId } = await seed();
+    const key = await writeTestJpeg();
+    const { id } = await callerFor(h1).photos.add({ itemId, areaId, storageKey: key, title: "front" });
+    const [row] = await db.select().from(photos).where(eq(photos.id, id));
+    expect([row.mimeType, row.itemId, (row.size ?? 0) > 0]).toEqual(["image/jpeg", itemId, true]);
+
+    await callerFor(h1).pins.add({ photoId: id, xPct: 10, yPct: 10, label: "handle" });
+    await callerFor(h1).photos.remove({ id });
+    expect(await db.select().from(photos)).toHaveLength(0);
+    expect(await db.select().from(photoPins)).toHaveLength(0);
+    expect(fs.existsSync(keyPath(key))).toBe(false);
+  });
+
+  it("remove keeps the file while an inbox capture still uses the same key", async () => {
+    const { db, h1, itemId } = await seed();
+    const key = await writeTestJpeg();
+    await db.insert(captures).values({ kind: "image", storageKey: key });
+    const { id } = await callerFor(h1).photos.add({ itemId, storageKey: key });
+    await callerFor(h1).photos.remove({ id });
+    expect(fs.existsSync(keyPath(key))).toBe(true);
+  });
+});
+
+describe("photos.unlink", () => {
+  it("puts the photo back in the pool, in its item's room", async () => {
+    const { db, h1, itemId, keuken } = await seed();
+    const [{ id }] = await db.insert(photos).values({ itemId, storageKey: "local/test-fake-unlink.jpg" }).$returningId();
+    await callerFor(h1).photos.unlink({ id });
+    const [row] = await db.select().from(photos).where(eq(photos.id, id));
+    expect([row.itemId, row.roomId]).toEqual([null, keuken]);
+  });
+});
+
+describe("photos.ensureForCapture / createCutout / recrop", () => {
+  it("ensureForCapture makes one bare photo per capture with its own copy of the file, and saves a room given later", async () => {
+    const { db, h1, keuken } = await seed();
+    const capKey = await writeTestJpeg();
+    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: capKey }).$returningId();
+
+    const first = await callerFor(h1).photos.ensureForCapture({ captureId: capId });
+    const again = await callerFor(h1).photos.ensureForCapture({ captureId: capId, roomId: keuken });
+    expect(again.photoId).toBe(first.photoId);
+
+    const [row] = await db.select().from(photos).where(eq(photos.id, first.photoId));
+    expect(row.storageKey).not.toBe(capKey);
+    expect([row.itemId, row.roomId, row.sourceCaptureId]).toEqual([null, keuken, capId]);
+    expect((await callerFor(h1).photos.get({ id: first.photoId })).url).toMatch(/^\/uploads\//);
+  });
+
+  it("createCutout crops from the source capture once per item and capture; recrop replaces the file", async () => {
+    const { db, h1, itemId } = await seed();
+    const capKey = await writeTestJpeg();
+    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: capKey }).$returningId();
+    const { photoId } = await callerFor(h1).photos.ensureForCapture({ captureId: capId });
+
+    const a = await callerFor(h1).photos.createCutout({ itemId, sourcePhotoId: photoId, box });
+    const b = await callerFor(h1).photos.createCutout({ itemId, sourcePhotoId: photoId, box });
+    expect([a.created, b.created, b.id]).toEqual([true, false, a.id]);
+    const [cut] = await db.select().from(photos).where(eq(photos.id, a.id));
+    expect([cut.itemId, cut.sourceCaptureId, cut.cropBox]).toEqual([itemId, capId, box]);
+    expect(await callerFor(h1).photos.sourcePhoto({ photoId: a.id })).toMatchObject({ available: true, cropBox: box });
+
+    const narrower = { ...box, wPct: 20 };
+    const re = await callerFor(h1).photos.recrop({ photoId: a.id, box: narrower });
+    const [after] = await db.select().from(photos).where(eq(photos.id, a.id));
+    expect([after.storageKey, after.cropBox]).toEqual([re.storageKey, narrower]);
+    expect(fs.existsSync(keyPath(a.storageKey))).toBe(false);
+  });
+
+  it("a source photo that is gone from disk gives a readable error and writes nothing", async () => {
+    const { db, h1, itemId } = await seed();
+    const [{ id: capId }] = await db
+      .insert(captures)
+      .values({ kind: "image", storageKey: "local/test-fake-missing-capture.jpg" })
+      .$returningId();
+    await expect(callerFor(h1).photos.ensureForCapture({ captureId: capId })).rejects.toThrow(/no longer available/);
+    expect(await db.select().from(photos)).toHaveLength(0);
+
+    const [{ id: bare }] = await db
+      .insert(photos)
+      .values({ storageKey: "local/test-fake-missing-photo.jpg", sourceCaptureId: capId })
+      .$returningId();
+    await expect(callerFor(h1).photos.createCutout({ itemId, sourcePhotoId: bare, box })).rejects.toThrow(/no longer available/);
+    await expect(callerFor(h1).photos.recrop({ photoId: bare, box })).rejects.toThrow(/no longer available/);
+    expect(await db.select().from(photos)).toHaveLength(1);
+  });
+});
+
+describe("photos.listAll / forRoom", () => {
+  it("lists filed photos with room, topic and cover flag, plus inbox photos that have no photo yet", async () => {
+    const { db, h1, itemId, keuken } = await seed();
+    const [{ id: filedCap }] = await db.insert(captures).values({ kind: "image", storageKey: "local/test-fake-list-a.jpg" }).$returningId();
+    const [{ id: looseCap }] = await db
+      .insert(captures)
+      .values({ kind: "image", storageKey: "local/test-fake-list-b.jpg", status: "triaged" })
+      .$returningId();
+    await db.insert(captures).values({ kind: "note", rawText: "not a photo" });
+    const [{ id: cover }] = await db
+      .insert(photos)
+      .values({ itemId, storageKey: "local/test-fake-list-c.jpg", sourceCaptureId: filedCap })
+      .$returningId();
+    const [{ id: second }] = await db.insert(photos).values({ itemId, storageKey: "local/test-fake-list-d.jpg" }).$returningId();
+    const [{ id: location }] = await db.insert(photos).values({ roomId: keuken, storageKey: "local/test-fake-list-e.jpg" }).$returningId();
+
+    const rows = await callerFor(h1).photos.listAll();
+    const byKey = new Map(rows.map((r) => [`${r.source}:${r.id}`, r]));
+    expect(rows).toHaveLength(4);
+    expect(byKey.get(`photo:${cover}`)).toMatchObject({
+      itemName: "pan",
+      roomName: "Keuken",
+      floor: "ground",
+      houseId: h1,
+      areaName: "Kitchen stuff",
+      isItemCover: true,
+    });
+    expect(byKey.get(`photo:${second}`)?.isItemCover).toBe(false);
+    expect(byKey.get(`photo:${location}`)).toMatchObject({ itemId: null, roomId: keuken, roomName: "Keuken", isItemCover: false });
+    expect(byKey.get(`capture:${looseCap}`)).toMatchObject({ captureId: looseCap, captureStatus: "triaged", isItemCover: false });
+    expect(byKey.has(`capture:${filedCap}`)).toBe(false);
+  });
+
+  it("forRoom returns the source captures behind cutouts of items in the room", async () => {
+    const { db, h1, itemId, keuken } = await seed();
+    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: "local/test-fake-forroom-src.jpg" }).$returningId();
+    await db.insert(photos).values({ itemId, storageKey: "local/test-fake-forroom-cut.jpg", sourceCaptureId: capId });
+    expect(await callerFor(h1).photos.forRoom({ roomId: keuken })).toEqual([{ id: capId, storageKey: "local/test-fake-forroom-src.jpg" }]);
+    expect(await callerFor(h1).photos.forRoom({ roomId: 999999 })).toEqual([]);
+  });
+});
+
+describe("pins", () => {
+  it("lists a photo's pins with item names and an item's pins with their photo", async () => {
+    const { db, h1, itemId } = await seed();
+    const [{ id: photoId }] = await db.insert(photos).values({ storageKey: "local/test-fake-pins.jpg", title: "Kitchen wall" }).$returningId();
+    const { id: pinId } = await callerFor(h1).pins.add({ photoId, xPct: 30, yPct: 40, label: "pan", itemId });
+    expect((await callerFor(h1).pins.listForPhoto({ photoId })).map((p) => [p.id, p.itemName])).toEqual([[pinId, "pan"]]);
+    const forItem = await callerFor(h1).pins.listForItem({ itemId });
+    expect([forItem[0].photoId, forItem[0].photo?.title]).toEqual([photoId, "Kitchen wall"]);
+    await callerFor(h1).pins.resolve({ id: pinId, confirm: false });
+    expect(await db.select().from(photoPins)).toHaveLength(0);
+  });
+
+  it("detect on a photo that does not exist says so instead of throwing", async () => {
+    const { h1 } = await seed();
+    expect(await callerFor(h1).pins.detect({ photoId: 424242 })).toEqual({ ok: false, error: "No stored image for this photo." });
+  });
+});
+
+describe("itemLinks", () => {
+  it("keeps two identical notes, lists newest first, and remove releases a file link's file", async () => {
+    const { db, h1, itemId, areaId } = await seed();
+    await callerFor(h1).itemLinks.add({ itemId, areaId, kind: "note", content: "same" });
+    await callerFor(h1).itemLinks.add({ itemId, areaId, kind: "note", content: "same" });
+    const key = await writeTestJpeg();
+    const file = await callerFor(h1).itemLinks.add({ itemId, kind: "file", title: "scan", storageKey: key, fileName: "scan.jpg" });
+
+    expect((await callerFor(h1).itemLinks.listForItem({ itemId })).map((l) => l.kind).sort()).toEqual(["file", "note", "note"]);
+    const [row] = await db.select().from(itemLinks).where(eq(itemLinks.id, file.id));
+    expect(row.mimeType).toBe("image/jpeg");
+    await callerFor(h1).itemLinks.remove({ id: file.id });
+    expect(fs.existsSync(keyPath(key))).toBe(false);
+  });
+});
+
+describe("releaseStoredFiles", () => {
+  it("keeps a file a photo or a link still uses and deletes one nothing uses", async () => {
+    const db = getTestDb();
+    const byPhoto = await writeTestJpeg();
+    const byLink = await writeTestJpeg();
+    const loose = await writeTestJpeg();
+    await db.insert(photos).values({ storageKey: byPhoto });
+    await db.insert(itemLinks).values({ kind: "file", storageKey: byLink });
+    expect(await releaseStoredFiles(db, [byPhoto, byLink, loose])).toBe(1);
+    expect([byPhoto, byLink, loose].map((k) => fs.existsSync(keyPath(k)))).toEqual([true, true, false]);
+  });
+});

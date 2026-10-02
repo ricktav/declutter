@@ -2,6 +2,8 @@ import { eq, or, and, inArray } from "drizzle-orm";
 import {
   items,
   attachments,
+  photos,
+  itemLinks,
   relations,
   ideaItems,
   photoAnnotations,
@@ -57,6 +59,12 @@ export async function releaseStoredFiles(db: Db, keys: string[]): Promise<number
   if (unique.length === 0) return 0;
   const stillUsed = new Set<string>();
   for (const row of await db.select({ k: attachments.storageKey }).from(attachments).where(inArray(attachments.storageKey, unique))) {
+    if (row.k) stillUsed.add(row.k);
+  }
+  for (const row of await db.select({ k: photos.storageKey }).from(photos).where(inArray(photos.storageKey, unique))) {
+    stillUsed.add(row.k);
+  }
+  for (const row of await db.select({ k: itemLinks.storageKey }).from(itemLinks).where(inArray(itemLinks.storageKey, unique))) {
     if (row.k) stillUsed.add(row.k);
   }
   for (const row of await db.select({ k: captures.storageKey }).from(captures).where(inArray(captures.storageKey, unique))) {
