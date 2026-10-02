@@ -52,6 +52,10 @@ type House = { id: number; name: string };
 type Grouping = {
   id: string;
   label: string;
+  /** Short tab text - just the level-1 dimension, since that's what the
+   * bubble color/position actually reads as; the full "X → Y" stays
+   * available as the tab's title tooltip. */
+  shortLabel: string;
   level1: (it: Item) => string;
   level1Label: (key: string, areas: Area[], houses: House[]) => string;
   level1Color: (key: string, index: number, areas: Area[]) => string;
@@ -69,6 +73,7 @@ const GROUPINGS: Grouping[] = [
   {
     id: "house-floor",
     label: "House → Floor",
+    shortLabel: "House",
     level1: (it) => String(it.houseId ?? "none"),
     level1Label: (key, _areas, houses) =>
       key === "none" ? "No house" : (houses.find((h) => String(h.id) === key)?.name ?? `House #${key}`),
@@ -81,6 +86,7 @@ const GROUPINGS: Grouping[] = [
   {
     id: "topic-floor",
     label: "Topic → Floor",
+    shortLabel: "Topic",
     level1: (it) => String(it.areaId),
     level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Topic #${key}`,
     level1Color: (key, index, areas) => areas.find((a) => String(a.id) === key)?.color ?? paletteColor(index),
@@ -98,6 +104,7 @@ const GROUPINGS: Grouping[] = [
   {
     id: "floor-topic",
     label: "Floor → Topic",
+    shortLabel: "Floor",
     level1: (it) => it.floor?.trim() || "No floor",
     level1Label: (key) => key,
     level1Color: (_key, index) => paletteColor(index),
@@ -109,6 +116,7 @@ const GROUPINGS: Grouping[] = [
   {
     id: "topic-room",
     label: "Topic → Room",
+    shortLabel: "Topic",
     level1: (it) => String(it.areaId),
     level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Topic #${key}`,
     level1Color: (key, index, areas) => areas.find((a) => String(a.id) === key)?.color ?? paletteColor(index),
@@ -121,6 +129,18 @@ const GROUPINGS: Grouping[] = [
       return a ? (AREA_ICONS[a.icon] ?? Box) : null;
     },
     level2: (it) => it.room?.trim() || "No room",
+    level2Label: (key) => key,
+  },
+  {
+    id: "room-topic",
+    label: "Room → Topic",
+    shortLabel: "Room",
+    level1: (it) => it.room?.trim() || "No room",
+    level1Label: (key) => key,
+    level1Color: (_key, index) => paletteColor(index),
+    level1Nav: () => null,
+    level1Icon: () => null,
+    level2: (it) => String(it.areaId),
     level2Label: (key) => key,
   },
 ];
@@ -516,12 +536,13 @@ export default function GalaxyPage() {
           {GROUPINGS.map((g) => (
             <button
               key={g.id}
+              title={g.label}
               onClick={() => setGroupingId(g.id)}
               className={`px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors ${
                 g.id === groupingId ? "bg-[#d2ff00] text-[#14160f]" : "bg-white/5 text-[#b4b8a5] hover:bg-white/10"
               }`}
             >
-              {g.label}
+              {g.shortLabel}
             </button>
           ))}
         </div>
@@ -564,7 +585,7 @@ export default function GalaxyPage() {
 
         {built && (
           <div className="absolute bottom-4 left-4 rounded-lg bg-[#0b0d08]/90 border border-white/10 px-3 py-2.5 max-w-[220px]">
-            <div className="micro-label text-[#b4b8a5] mb-1.5">{grouping.label.split(" → ")[0]}</div>
+            <div className="micro-label text-[#b4b8a5] mb-1.5">{grouping.shortLabel}</div>
             <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
               {built.l1List.map((g1) => (
                 <div key={g1.key} className="flex items-center gap-1.5 text-[11px]">
