@@ -20,7 +20,8 @@ export const DECISIONS: { key: ItemDecision; label: string; color: string }[] = 
 ];
 export const decisionMeta = (d: ItemDecision | null | undefined) => DECISIONS.find((x) => x.key === d) ?? null;
 
-const LATER_DAYS = 30;
+// a "Later" thing comes back into Act's queue after a week
+const LATER_DAYS = 7;
 
 /** A rejected detection is not a real thing - it never shows up for sorting or deciding. */
 export const isReal = (it: FlowItem) => it.verificationStatus !== "rejected";

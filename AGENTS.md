@@ -1,0 +1,65 @@
+# Rules for agents in this repo
+
+Read this before you change code. These rules apply to every agent (Kimi, Claude sessions, others) and to Rick's own scripts. Rick decides when a rule changes.
+
+## 1. Who owns what
+
+| Area | Files | Owner |
+| --- | --- | --- |
+| Flow front end | `flow/`, `src/flow/` | Claude session "declutter-flow" |
+| Workbench front end | `index.html`, `src/pages/`, `src/components/`, `src/context/` | Rick, or the session Rick assigns |
+| API and database | `api/`, `db/` | Shared: follow sections 2, 3 and 4 |
+
+- Do not edit `flow/` or `src/flow/`. If your change needs a Flow change, stop and tell Rick.
+- If `npm run check` shows errors only under `src/flow/`, your change broke a Flow contract. Do not fix Flow yourself. Tell Rick.
+- Do not commit files that another session made (for example its plans in `docs/`).
+
+## 2. Contracts that Flow uses
+
+Do not remove or rename these. Do not change their inputs or outputs in a way that breaks a caller. You can add optional fields.
+
+- tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany`, `inbox.dismiss`, `items.listAll`, `items.update`, `items.setVerification`, `items.setArchived`, `items.setDecision`, `houses.list`, `areas.list`, `map.listLocations`, `attachments.url`, `rooms.get`.
+- HTTP: `POST /api/upload` (multipart, fields `file` and `scope`).
+- Shared code: `src/providers/trpc.tsx`, `src/components/AuthGate.tsx`, `src/components/ItemRoomPreview.tsx`, `src/components/GeojsonThumb.tsx`, `src/components/RoomPicker.tsx` (`DEFAULT_FLOORS`, `RoomValue`), `src/lib/upload.ts`, `src/lib/lastLocation.ts`, `src/lib/auth.ts`.
+- Data meaning:
+  - `items.decision` is `keep`, `sell`, `donate`, `toss` or `later`. `items.decidedAt` is the time of the decision.
+  - "Gone" is `items.status = "archived"` on an item with a decision. Do not add a second status for this.
+  - `items.verificationStatus` is `detected`, `confirmed` or `rejected`. Flow never shows `rejected` items.
+
+NOTE: The rooms consolidation plan (`docs/superpowers/plans/2026-10-02-rooms-consolidation.md`) changes `map.listLocations`, `items.floor` and `items.room`. Rick sets the order. The API change lands first. Flow then adapts in its own branch.
+
+## 3. Database
+
+- Live database: MySQL on `10.50.0.10`, database `declutter` (`DATABASE_URL`).
+- Test database: `declutter_test` (`TEST_DATABASE_URL`). It is disposable. The tests in `api/test/` truncate it.
+- Change the schema only in `db/schema.ts`. Then run `npm run db:generate -- --name <short-name>`. Read the generated SQL. Commit the SQL, the snapshot and `meta/_journal.json`.
+- Make one schema change branch at a time. Two branches must not use the same migration number.
+- Additive changes (new table, new nullable column, new index): apply to the test database, then to the live database. Then tell Rick.
+- Destructive changes (drop, rename, type change, backfill): ask Rick first. Make a backup first.
+- Do not change the live database by hand. Do not point tests or experiments at `DATABASE_URL`.
+
+CAUTION: Both databases use the same `uploads/` folder. Delete code removes a file when no row in the *current* database uses it. Do not copy live rows into `declutter_test`, or a test delete can remove a live photo.
+
+## 4. Git
+
+- Run `git fetch` before you start.
+- Work in your own worktree: `git worktree add ../declutter-<topic> -b <topic> origin/main`. Do not switch branches in a folder that another session uses.
+- Use one topic for each branch.
+- Before you push:
+  1. Run `npm run check`. It must pass. Both front ends share the API types.
+  2. Run `npm test` when you change database code.
+  3. Run `npm run build` when you change the build or the server.
+- Merge to `main` only when Rick says so. Use a fast-forward or a rebase. Do not force-push to `main`.
+- Write in the commit message why you made the change, not only what you changed.
+
+## 5. Product words
+
+- Use five words on every screen: Thing, Place, Photo, Decision, Lens.
+- The Flow loop is "register all, act later": Snap, then Sort (what is it, is it right, where is it), then Act (keep, sell, donate, toss, later), then Gone.
+- A lens adds its own fields, views and steps for one field of work (first lens: Computer lab). A lens does not copy core data and does not use a second database.
+- Live meter data (DSMR, Home Assistant, Zigbee) is read-only. It does not go through the confirm step.
+
+## 6. Run the app
+
+- `npm run dev` starts the Workbench at `/` and Flow at `/flow/` on port 3000.
+- Run one dev server for each worktree. Give a second server another port: `npx vite --port 3001`.
