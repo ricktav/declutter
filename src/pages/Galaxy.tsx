@@ -132,24 +132,36 @@ type SimNode = d3.SimulationNodeDatum & {
   label: string;
   item?: Item;
   parentId?: string;
+  hx?: number;
+  hy?: number;
 };
 
-const W = 1100;
-const H = 720;
+const W = 1300;
+const H = 850;
 
-/** Settle a small force simulation synchronously (no live ticking) - used
- * to lay out cluster/sub-cluster centers once per grouping change, rather
- * than animating the whole scene every time a tab is clicked. */
-function settle(nodes: SimNode[], opts: { charge: number; collidePad: number; cx: number; cy: number; strength: number }) {
-  const sim = d3
-    .forceSimulation(nodes)
-    .force("charge", d3.forceManyBody().strength(opts.charge))
-    .force("collide", d3.forceCollide<SimNode>((n) => n.r + opts.collidePad))
-    .force("x", d3.forceX(opts.cx).strength(opts.strength))
-    .force("y", d3.forceY(opts.cy).strength(opts.strength))
-    .stop();
-  for (let i = 0; i < 300; i++) sim.tick();
-  return nodes;
+/** Deterministic, evenly-spaced positions for `count` leaves inside an
+ * angular wedge around a center - filling concentric arcs (more items on
+ * an outer arc, since its circumference is longer) rather than one
+ * overcrowded ring or a random scatter, so leaves read as an even halo
+ * instead of a lopsided clump. Each ring's starting angle is staggered
+ * (like brick coursing) so items don't line up into radial spokes, which
+ * an aligned ring-by-ring layout produces otherwise. */
+function wedgePlacements(count: number, startAngle: number, wedgeSpan: number, baseR: number, ringGap: number) {
+  const maxPerRing = 9;
+  const rings = Math.max(1, Math.ceil(count / maxPerRing));
+  const base = Math.floor(count / rings);
+  const extra = count % rings;
+  const out: { angle: number; radius: number }[] = [];
+  for (let r = 0; r < rings; r++) {
+    const n = base + (r < extra ? 1 : 0);
+    if (n === 0) continue;
+    const radius = baseR + r * ringGap;
+    const stagger = ((r % 2) * 0.5) / n;
+    for (let i = 0; i < n; i++) {
+      out.push({ angle: startAngle + (((i + 0.5) / n) + stagger) * wedgeSpan, radius });
+    }
+  }
+  return out;
 }
 
 /** Custom d3-force: keeps every node strictly outside a circle (the
@@ -246,55 +258,52 @@ export default function GalaxyPage() {
       g1.icon = grouping.level1Icon(g1.key, areaList);
     });
 
-    // 1. lay out level-1 centers
+    // 1. lay out level-1 centers - padded by each disc's own eventual halo
+    // size (not just its drawn radius), or two big clusters' leaves would
+    // intermix in the gap between them
     const l1Nodes: SimNode[] = l1List.map((g1) => {
       const count = [...g1.l2.values()].reduce((s, g) => s + g.items.length, 0);
       return { id: `1:${g1.key}`, r: 18 + Math.sqrt(count) * 6, kind: "level1", color: g1.color, label: g1.label };
     });
-    settle(l1Nodes, { charge: -900, collidePad: 24, cx: W / 2, cy: H / 2, strength: 0.06 });
+    {
+      const sim = d3
+        .forceSimulation(l1Nodes)
+        .force("charge", d3.forceManyBody().strength(-1400))
+        .force("collide", d3.forceCollide<SimNode>((n) => n.r * 2.6 + 55))
+        .force("x", d3.forceX(W / 2).strength(0.05))
+        .force("y", d3.forceY(H / 2).strength(0.05))
+        .stop();
+      for (let i = 0; i < 350; i++) sim.tick();
+    }
     const l1Pos = new Map(l1Nodes.map((n) => [n.id.slice(2), n]));
 
-    // 2. place level-2 sub-centers OUTSIDE their level-1 circle, spread
-    // evenly around it - anchoring items to a point already clear of the
-    // disc, rather than fighting a separate "stay outside" force against a
-    // centering pull toward a point near/inside it
-    const l2Nodes: SimNode[] = [];
-    for (const g1 of l1List) {
-      const parent = l1Pos.get(g1.key)!;
-      const subsArr = [...g1.l2.values()];
-      const subs: SimNode[] = subsArr.map((g2, i) => {
-        const r2 = 6 + Math.sqrt(g2.items.length) * 3;
-        const angle = (i / subsArr.length) * Math.PI * 2 + Math.random() * 0.4;
-        const dist = (parent.r ?? 20) + r2 + 16;
-        return {
-          id: `2:${g1.key}:${g2.key}`,
-          r: r2,
-          kind: "level2",
-          color: g1.color,
-          label: g2.label,
-          parentId: g1.key,
-          x: (parent.x ?? W / 2) + Math.cos(angle) * dist,
-          y: (parent.y ?? H / 2) + Math.sin(angle) * dist,
-        };
-      });
-      // de-overlap siblings without a centering force, so they stay on
-      // their ring outside the disc instead of drifting back toward it
-      const relax = d3
-        .forceSimulation(subs)
-        .force("charge", d3.forceManyBody().strength(-15))
-        .force("collide", d3.forceCollide<SimNode>((n) => n.r + 5))
-        .stop();
-      for (let i = 0; i < 120; i++) relax.tick();
-      l2Nodes.push(...subs);
-    }
-    const l2Pos = new Map(l2Nodes.map((n) => [n.id, n]));
-
-    // 3. leaf items, pulled toward their level-2 sub-center
+    // 2. give every item a deterministic "home" position - items sharing a
+    // level-2 sub-group get a contiguous angular wedge around their
+    // level-1 circle (sized by their share of it), filled in concentric
+    // arcs so they read as an even halo instead of one lopsided clump or
+    // several overlapping side-blobs
     const itemNodes: SimNode[] = [];
     for (const g1 of l1List) {
-      for (const g2 of g1.l2.values()) {
-        const center = l2Pos.get(`2:${g1.key}:${g2.key}`)!;
-        for (const it of g2.items) {
+      const parent = l1Pos.get(g1.key)!;
+      const cx = parent.x ?? W / 2;
+      const cy = parent.y ?? H / 2;
+      const subsArr = [...g1.l2.values()];
+      const total = subsArr.reduce((s, g) => s + g.items.length, 0) || 1;
+      const gap = subsArr.length > 1 ? 0.14 : 0;
+      let angleCursor = -Math.PI / 2; // start at 12 o'clock, read clockwise
+      for (const g2 of subsArr) {
+        const wedgeSpan = (Math.PI * 2 - gap * subsArr.length) * (g2.items.length / total);
+        const placements = wedgePlacements(g2.items.length, angleCursor, wedgeSpan, parent.r + 14, 10);
+        g2.items.forEach((it, i) => {
+          const p = placements[i];
+          // small deterministic jitter (seeded by item id) so the halo reads
+          // as organic rather than a perfectly mechanical grid of arcs
+          const seed = Math.sin(it.id * 12.9898) * 43758.5453;
+          const jitter = seed - Math.floor(seed);
+          const angle = p.angle + (jitter - 0.5) * (wedgeSpan / Math.max(g2.items.length, 1)) * 0.6;
+          const radius = p.radius + (jitter - 0.5) * 6;
+          const hx = cx + Math.cos(angle) * radius;
+          const hy = cy + Math.sin(angle) * radius;
           itemNodes.push({
             id: `i:${it.id}`,
             r: 3.2,
@@ -302,14 +311,17 @@ export default function GalaxyPage() {
             color: g1.color,
             label: it.name,
             item: it,
-            parentId: `2:${g1.key}:${g2.key}`,
-            x: (center.x ?? W / 2) + (Math.random() - 0.5) * (center.r * 1.6 + 4),
-            y: (center.y ?? H / 2) + (Math.random() - 0.5) * (center.r * 1.6 + 4),
+            parentId: g1.key,
+            hx,
+            hy,
+            x: hx,
+            y: hy,
           });
-        }
+        });
+        angleCursor += wedgeSpan + gap;
       }
     }
-    return { l1Nodes, l2Nodes, itemNodes, l1List, l1Pos, l2Pos };
+    return { l1Nodes, itemNodes, l1List, l1Pos };
   }, [ready, items.data, areas.data, houses.data, groupingId, houseFilter]);
 
   // one-time zoom behavior setup
@@ -335,23 +347,9 @@ export default function GalaxyPage() {
     g.selectAll("*").remove();
 
     const linkLayer = g.append("g");
-    const l2Layer = g.append("g");
     const l1Layer = g.append("g");
     const itemLayer = g.append("g");
     const labelLayer = g.append("g");
-
-    // faint sub-cluster rings for depth, matching the reference's layered look
-    l2Layer
-      .selectAll("circle")
-      .data(built.l2Nodes)
-      .join("circle")
-      .attr("cx", (d) => d.x ?? 0)
-      .attr("cy", (d) => d.y ?? 0)
-      .attr("r", (d) => d.r)
-      .attr("fill", (d) => d.color)
-      .attr("fill-opacity", 0.07)
-      .attr("stroke", (d) => d.color)
-      .attr("stroke-opacity", 0.25);
 
     const itemSel = itemLayer
       .selectAll<SVGCircleElement, SimNode>("circle")
@@ -417,17 +415,20 @@ export default function GalaxyPage() {
     void linkLayer;
 
     // live, never-stopping simulation (alphaTarget keeps it above 0) so the
-    // scene has the reference mindmap's constant gentle bounce/jitter rather
-    // than freezing once settled; forceAvoidCircle keeps every item dot
-    // outside its own level-1 disc instead of drifting on top of it
-    const centerOf2 = (id: string) => built.l2Pos.get(id)!;
-    const l1Of = (item: SimNode) => built.l1Pos.get(built.l2Pos.get(item.parentId!)!.parentId!)!;
+    // scene has a constant gentle bounce rather than freezing once settled.
+    // Each item has a precomputed, evenly-spaced home (hx/hy); the sim just
+    // adds a soft wobble around it - charge/collide give it give, the x/y
+    // anchor is strong enough that items don't wander into a neighboring
+    // cluster's territory, and forceAvoidCircle is a safety net against
+    // drifting back onto the level-1 disc itself.
+    const l1Of = (item: SimNode) => built.l1Pos.get(item.parentId!)!;
     const sim = d3
       .forceSimulation(built.itemNodes)
-      .force("charge", d3.forceManyBody().strength(-14))
-      .force("collide", d3.forceCollide<SimNode>((n) => n.r + 1.5))
-      .force("x", d3.forceX<SimNode>((n) => centerOf2(n.parentId!).x ?? W / 2).strength(0.045))
-      .force("y", d3.forceY<SimNode>((n) => centerOf2(n.parentId!).y ?? H / 2).strength(0.045))
+      .velocityDecay(0.3)
+      .force("charge", d3.forceManyBody().strength(-3))
+      .force("collide", d3.forceCollide<SimNode>((n) => n.r + 1.2))
+      .force("x", d3.forceX<SimNode>((n) => n.hx ?? W / 2).strength(0.25))
+      .force("y", d3.forceY<SimNode>((n) => n.hy ?? H / 2).strength(0.25))
       .force(
         "avoidL1",
         forceAvoidCircle<SimNode>(
@@ -436,7 +437,7 @@ export default function GalaxyPage() {
           3,
         ),
       )
-      .alphaTarget(0.015)
+      .alphaTarget(0.02)
       .on("tick", () => {
         itemSel.attr("cx", (d) => d.x ?? 0).attr("cy", (d) => d.y ?? 0);
       });
@@ -454,7 +455,7 @@ export default function GalaxyPage() {
           ev.subject.fy = ev.y;
         })
         .on("end", (ev) => {
-          if (!ev.active) sim.alphaTarget(0.015);
+          if (!ev.active) sim.alphaTarget(0.02);
           ev.subject.fx = null;
           ev.subject.fy = null;
         }),
