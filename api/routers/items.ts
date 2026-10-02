@@ -299,6 +299,7 @@ export const itemsRouter = createRouter({
             dM: z.number(),
             rotDeg: z.number(),
             baseM: z.number().optional(),
+            hM: z.number().optional(),
           })
           .nullable()
           .optional(),

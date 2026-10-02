@@ -5,7 +5,9 @@ import { RoomPlan2D } from "@/components/RoomPlan2D";
 import { RoomPlan3D } from "@/components/RoomPlan3D";
 import { Button } from "@/components/ui/button";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
-import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2, MapPin, Box } from "lucide-react";
+import { ItemPicker } from "@/components/ItemPicker";
+import { applyStacking } from "@/lib/roomStacking";
+import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2, MapPin, Box, Plus } from "lucide-react";
 import type { ItemPos } from "@db/schema";
 
 /**
@@ -51,6 +53,38 @@ export default function RoomPlanPage() {
       editable: it.ownerRoomId === id,
     })) ?? [];
   const areasList = trpc.areas.list.useQuery(undefined, { enabled: pendingPin != null });
+  const [attaching, setAttaching] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const selectedDetail = trpc.items.get.useQuery({ id: selectedId ?? -1 }, { enabled: selectedId != null });
+  const setParent = trpc.items.setParent.useMutation();
+
+  /** Put an existing floor item inside the currently selected one (cabinet,
+   * drawer, table) - it stops being its own box on the plan; the host is
+   * now the only place that says where it physically is. */
+  const putInside = async (childId: number) => {
+    if (selectedId == null) return;
+    const res = await setParent.mutateAsync({ id: childId, parentId: selectedId });
+    if (!res.ok) {
+      setAttachError(res.error);
+      return;
+    }
+    setAttaching(false);
+    setAttachError(null);
+    await updatePos.mutateAsync({ id: childId, pos: null });
+    await utils.items.get.invalidate({ id: selectedId });
+    utils.rooms.get.invalidate({ id });
+  };
+
+  const takeOut = async (childId: number) => {
+    await setParent.mutateAsync({ id: childId, parentId: null });
+    if (selectedId != null) utils.items.get.invalidate({ id: selectedId });
+  };
+
+  const selectItem = (itemId: number) => {
+    setSelectedId(itemId);
+    setAttaching(false);
+    setAttachError(null);
+  };
 
   const unlinkedLocations = trpc.rooms.unlinkedLocations.useQuery(
     { houseId: room.data?.houseId ?? 0 },
@@ -88,9 +122,13 @@ export default function RoomPlanPage() {
         roomId: id,
         room: room.data.name,
       });
+      const basePos = { xM: pendingPin.xM, yM: pendingPin.yM, wM: 0.5, dM: 0.5, rotDeg: 0 };
       await updatePos.mutateAsync({
         id: newItemId,
-        pos: { xM: pendingPin.xM, yM: pendingPin.yM, wM: 0.5, dM: 0.5, rotDeg: 0 },
+        // a new pin lands on whatever's already under it (a table, a desk)
+        // the same way dragging an existing item does - stacked, not floating
+        // at floor level just because it was just created
+        pos: applyStacking(-1, basePos, planItems),
       });
       setPendingPin(null);
       setPinName("");
@@ -241,7 +279,7 @@ export default function RoomPlanPage() {
                   items={planItems}
                   editable
                   selectedId={selectedId}
-                  onSelect={setSelectedId}
+                  onSelect={selectItem}
                   onPosChange={(itemId, pos: ItemPos) => updatePos.mutate({ id: itemId, pos })}
                   rotationDeg={rotation}
                   cutMode={cutMode}
@@ -265,7 +303,7 @@ export default function RoomPlanPage() {
                   walls={room.data.walls}
                   items={planItems}
                   selectedId={selectedId}
-                  onSelect={setSelectedId}
+                  onSelect={selectItem}
                   active={view === "3d"}
                   pinMode={pinMode}
                   onPinPlace={(pos) => {
@@ -430,6 +468,60 @@ export default function RoomPlanPage() {
                     <p className="mt-3 inline-flex items-center gap-1 text-[12px] text-emerald-700">
                       <Check className="h-3.5 w-3.5" /> Confirmed
                     </p>
+                  )}
+
+                  {selectedItem.ownerRoomId === room.data.id && (
+                    <div className="mt-4 pt-3 border-t border-border">
+                      <p className="micro-label text-muted-foreground mb-1.5">Contains</p>
+                      {selectedDetail.data?.children?.length ? (
+                        <ul className="space-y-1 mb-2">
+                          {selectedDetail.data.children.map((c) => (
+                            <li key={c.id} className="flex items-center justify-between gap-2 text-[12px]">
+                              <Link to={`/items/${c.id}`} className="hover:underline truncate">
+                                {c.name}
+                              </Link>
+                              <button
+                                type="button"
+                                onClick={() => takeOut(c.id)}
+                                className="text-muted-foreground hover:text-foreground shrink-0"
+                                title="Take out"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-[12px] text-muted-foreground mb-2">Nothing inside yet.</p>
+                      )}
+
+                      {attaching ? (
+                        <>
+                          <ItemPicker
+                            placeholder="Search an item to put inside…"
+                            excludeId={selectedItem.id}
+                            onSelect={(item) => putInside(item.id)}
+                            autoFocus
+                          />
+                          {attachError && <p className="mt-1 text-[11px] text-destructive">{attachError}</p>}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[12px] mt-1.5"
+                            onClick={() => {
+                              setAttaching(false);
+                              setAttachError(null);
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => setAttaching(true)}>
+                          <Plus className="h-3.5 w-3.5 mr-1" /> Put item inside…
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </>
               )}

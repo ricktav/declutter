@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { ItemPos, RoomGeometry } from "@db/schema";
+import { applyStacking } from "@/lib/roomStacking";
 
 export type PlanItem = {
   id: number;
@@ -19,30 +20,6 @@ type DragState = { kind: DragKind; id: number; startLoc: { x: number; y: number 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 const round2 = (v: number) => +v.toFixed(2);
 
-/** Whatever contains this footprint's center and is bigger than it (a desk,
- * a table) is its stacking host - ported from lidarventory's findHost(). */
-function findHost(id: number, pos: ItemPos, items: PlanItem[]): (PlanItem & { pos: ItemPos }) | null {
-  const cx = pos.xM + pos.wM / 2, cy = pos.yM + pos.dM / 2;
-  const area = pos.wM * pos.dM;
-  for (const h of items) {
-    if (h.id === id || !h.pos) continue;
-    const hp = h.pos;
-    if (cx < hp.xM || cx > hp.xM + hp.wM || cy < hp.yM || cy > hp.yM + hp.dM) continue;
-    if (hp.wM * hp.dM <= area) continue;
-    return h as PlanItem & { pos: ItemPos };
-  }
-  return null;
-}
-
-/** Sets/clears pos.baseM to the host's top height, or back to the floor. */
-function applyStacking(id: number, pos: ItemPos, items: PlanItem[]): ItemPos {
-  const host = findHost(id, pos, items);
-  if (!host) {
-    const { baseM: _drop, ...rest } = pos;
-    return rest;
-  }
-  return { ...pos, baseM: round2((host.pos.baseM ?? 0) + (host.pos.hM ?? 0.8)) };
-}
 
 /**
  * 2D floor plan, to scale in meters - read-only render plus drag/rotate/
@@ -157,6 +134,15 @@ export function RoomPlan2D({
     e.stopPropagation();
   };
 
+  const handlePinClick = (e: React.MouseEvent) => {
+    if (!pinMode) return;
+    const loc = toLocal(e.clientX, e.clientY);
+    onPinPlace?.({
+      xM: round2(clamp((loc.x - PAD) / S, 0, widthM)),
+      yM: round2(clamp((loc.y - PAD) / S, 0, depthM)),
+    });
+  };
+
   const startCut = (e: React.PointerEvent) => {
     if (!cutMode) return;
     const loc = toLocal(e.clientX, e.clientY);
@@ -261,14 +247,7 @@ export function RoomPlan2D({
         className={`fill-muted/20 stroke-border ${cutMode || pinMode ? "cursor-crosshair" : ""}`}
         strokeWidth={1}
         onPointerDown={startCut}
-        onClick={(e) => {
-          if (!pinMode) return;
-          const loc = toLocal(e.clientX, e.clientY);
-          onPinPlace?.({
-            xM: round2(clamp((loc.x - PAD) / S, 0, widthM)),
-            yM: round2(clamp((loc.y - PAD) / S, 0, depthM)),
-          });
-        }}
+        onClick={handlePinClick}
       />
 
       {(walls ?? []).map((wall, i) => {
@@ -317,6 +296,7 @@ export function RoomPlan2D({
               if (editable && it.editable !== false) startDrag("move", it.id, e);
               else onSelect?.(it.id);
             }}
+            onClick={handlePinClick}
             className={cutMode || pinMode ? "" : editable && it.editable !== false ? "cursor-move" : "cursor-pointer"}
           >
             <rect

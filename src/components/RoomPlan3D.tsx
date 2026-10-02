@@ -129,12 +129,14 @@ export function RoomPlan3D({
       if (downPos && Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 6) return;
       setPtr(e.clientX, e.clientY);
       ray.setFromCamera(ptr, camera);
-      const hit = ray.intersectObjects(itemMeshesRef.current)[0];
-      if (hit) {
-        onSelect?.(hit.object.userData.id as number);
+      if (!pinModeRef.current) {
+        const hit = ray.intersectObjects(itemMeshesRef.current)[0];
+        if (hit) onSelect?.(hit.object.userData.id as number);
         return;
       }
-      if (!pinModeRef.current) return;
+      // in pin mode, clicking on top of an item (a table, a desk) should
+      // place the new pin there - not select the item underneath - so
+      // stacking can apply the same way it does from a 2D pin/drag
       const roomGroup = roomGroupRef.current;
       if (!roomGroup) return;
       const v = new THREE.Vector3();
