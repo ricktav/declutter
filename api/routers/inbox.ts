@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createHash } from "crypto";
-import { eq, desc, isNull, and, inArray } from "drizzle-orm";
+import { eq, desc, isNull, and, inArray, sql } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -14,6 +14,7 @@ import { putFile, readFileBytes, copyStoredFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
+import { setItemLocation } from "../lib/location";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -103,26 +104,32 @@ async function buildTriageContent(cap: CaptureRow): Promise<
  * matched item's own location when the model didn't already (everything in
  * one photo is almost certainly the same room, same logic as Detect
  * Objects uses for its location default). */
-async function resolveSuggestion(object: z.infer<typeof triageSchema>): Promise<TriageSuggestion> {
+async function resolveSuggestion(object: z.infer<typeof triageSchema>, houseId: number | null): Promise<TriageSuggestion> {
   const db = getDb();
   const ids = [...new Set(object.items.map((i) => i.matchedItemId).filter((id): id is number => id != null))];
   const matched = ids.length ? await db.select().from(items).where(inArray(items.id, ids)) : [];
   const byId = new Map(matched.map((i) => [i.id, i]));
 
-  let floor = object.floor;
-  let room = object.room;
-  if (!room) {
-    const withLocation = matched.find((i) => i.room);
-    if (withLocation) {
-      floor = withLocation.floor ?? floor;
-      room = withLocation.room ?? room;
-    }
+  const floor = object.floor;
+  const room = object.room;
+  let roomId: number | null = null;
+  if (room && houseId != null) {
+    const [hit] = await db
+      .select({ id: rooms.id })
+      .from(rooms)
+      .where(and(eq(rooms.houseId, houseId), sql`lower(${rooms.name}) = ${room.trim().toLowerCase()}`))
+      .limit(1);
+    roomId = hit?.id ?? null;
+  } else if (!room) {
+    const withRoom = matched.find((i) => i.roomId != null);
+    roomId = withRoom?.roomId ?? null;
   }
 
   return {
     note: object.note,
     floor,
     room,
+    roomId,
     items: object.items.map((it) => ({
       itemName: it.itemName,
       areaSlug: it.areaSlug,
@@ -135,13 +142,13 @@ async function resolveSuggestion(object: z.infer<typeof triageSchema>): Promise<
   };
 }
 
-async function runTriage(model: Awaited<ReturnType<typeof getModel>>, content: TriageContent) {
+async function runTriage(model: Awaited<ReturnType<typeof getModel>>, content: TriageContent, houseId: number | null) {
   const { object } = await generateObject({
     model,
     schema: triageSchema,
     messages: [{ role: "user", content }],
   });
-  return resolveSuggestion(object);
+  return resolveSuggestion(object, houseId);
 }
 
 const TRIAGE_JSON_SHAPE = `{
@@ -156,7 +163,7 @@ const TRIAGE_JSON_SHAPE = `{
 
 /** Dev-mode: same triage prompt, routed through `claude -p` instead of the
  * configured API provider - see claudeCli.ts for why/how. */
-async function runTriageViaClaudeCli(content: TriageContent) {
+async function runTriageViaClaudeCli(content: TriageContent, houseId: number | null) {
   const textPrompt = content.find((p) => p.type === "text")?.text ?? "";
   const imagePart = content.find((p) => p.type === "image") as { type: "image"; image: Uint8Array } | undefined;
   const object = await claudeCliObject({
@@ -165,7 +172,7 @@ async function runTriageViaClaudeCli(content: TriageContent) {
     schema: triageSchema,
     jsonShape: TRIAGE_JSON_SHAPE,
   });
-  return resolveSuggestion(object);
+  return resolveSuggestion(object, houseId);
 }
 
 type TriageContent = Awaited<ReturnType<typeof buildTriageContent>>;
@@ -220,7 +227,7 @@ export const inboxRouter = createRouter({
     }),
 
   /** Ask the LLM to propose where this capture belongs */
-  triage: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  triage: procedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
     if (!cap) throw new Error("capture not found");
@@ -228,8 +235,8 @@ export const inboxRouter = createRouter({
     try {
       const content = await buildTriageContent(cap);
       const suggestion = isClaudeCliDevMode()
-        ? await runTriageViaClaudeCli(content)
-        : await runTriage(await getModel(), content);
+        ? await runTriageViaClaudeCli(content, ctx.houseId)
+        : await runTriage(await getModel(), content, ctx.houseId);
 
       await db.update(captures).set({ suggestion }).where(eq(captures.id, input.id));
       await logEvent({
@@ -253,7 +260,7 @@ export const inboxRouter = createRouter({
   }),
 
   /** Run the same triage prompt on Provider A and Provider B, side by side */
-  compare: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  compare: procedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
     if (!cap) throw new Error("capture not found");
@@ -277,8 +284,8 @@ export const inboxRouter = createRouter({
 
     const aModel = await getModel();
     const [aRes, bRes] = await Promise.allSettled([
-      runTriage(aModel, content),
-      runTriage(second.model, content),
+      runTriage(aModel, content, ctx.houseId),
+      runTriage(second.model, content, ctx.houseId),
     ]);
 
     const side = (
@@ -449,13 +456,12 @@ export const inboxRouter = createRouter({
         itemId: z.number().nullable(), // null = create new
         itemName: z.string().min(1), // used when creating
         areaId: z.number(), // used when creating
+        roomId: z.number().nullable().optional(),
         houseId: z.number().nullable().optional(),
-        floor: z.string().optional(),
-        room: z.string().optional(),
         markProcessed: z.boolean().default(false),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
       if (!cap?.storageKey) throw new Error("capture has no stored image");
@@ -468,12 +474,11 @@ export const inboxRouter = createRouter({
             areaId: input.areaId,
             name: input.itemName,
             description: `Detected in snap: ${cap.rawText ?? "photo"}`,
-            houseId: input.houseId ?? null,
-            floor: input.floor ?? null,
-            room: input.room ?? null,
+            houseId: input.houseId ?? ctx.houseId ?? null,
           })
           .$returningId();
         itemId = newId;
+        if (input.roomId != null) await setItemLocation(db, itemId, { roomId: input.roomId });
         await logEvent({
           entityType: "item",
           entityId: itemId,
@@ -531,9 +536,8 @@ export const inboxRouter = createRouter({
     .input(
       z.object({
         id: z.number(),
+        roomId: z.number().nullable().optional(),
         houseId: z.number().nullable().optional(),
-        floor: z.string().optional(),
-        room: z.string().optional(),
         items: z
           .array(
             z.object({
@@ -546,77 +550,78 @@ export const inboxRouter = createRouter({
           .min(1),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
-      const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
-      if (!cap) throw new Error("capture not found");
+      return db.transaction(async (tx) => {
+        const cap = await tx.query.captures.findFirst({ where: eq(captures.id, input.id) });
+        if (!cap) throw new Error("capture not found");
 
-      let created = 0;
-      for (const it of input.items) {
-        let itemId = it.itemId;
-        if (!itemId) {
-          const [{ id: newId }] = await db
-            .insert(items)
-            .values({
-              areaId: it.areaId,
-              name: it.itemName,
-              description: cap.rawText?.slice(0, 500) ?? null,
-              attributes: it.attributes ?? null,
-              houseId: input.houseId ?? null,
-              floor: input.floor || null,
-              room: input.room || null,
-            })
-            .$returningId();
-          itemId = newId;
-          created++;
-          await logEvent({
-            entityType: "item",
-            entityId: itemId,
-            action: "created",
-            summary: `Item "${it.itemName}" created from inbox capture`,
-          });
+        let created = 0;
+        for (const it of input.items) {
+          let itemId = it.itemId;
+          if (!itemId) {
+            const [{ id: newId }] = await tx
+              .insert(items)
+              .values({
+                areaId: it.areaId,
+                name: it.itemName,
+                description: cap.rawText?.slice(0, 500) ?? null,
+                attributes: it.attributes ?? null,
+                houseId: input.houseId ?? ctx.houseId ?? null,
+              })
+              .$returningId();
+            itemId = newId;
+            if (input.roomId != null) await setItemLocation(tx, itemId, { roomId: input.roomId });
+            created++;
+            await logEvent({
+              entityType: "item",
+              entityId: itemId,
+              action: "created",
+              summary: `Item "${it.itemName}" created from inbox capture`,
+            }, tx);
 
-          if (cap.rawText || cap.url || cap.storageKey) {
-            // the item gets its own copy of the file: a capture and an
-            // attachment must never share one storage key (deleting one
-            // would delete the other's bytes)
-            const copy = cap.storageKey
-              ? await copyStoredFile(cap.storageKey, `items/${itemId}/${cap.storageKey.split("/").pop() ?? "photo"}`)
-              : null;
-            await db.insert(attachments).values({
-              itemId,
-              areaId: it.areaId,
-              kind:
-                cap.kind === "link"
-                  ? "link"
-                  : cap.kind === "image" || cap.kind === "file"
-                    ? cap.kind
-                    : cap.storageKey
-                      ? "file"
-                      : "note",
-              title: cap.url ?? it.itemName,
-              content: cap.rawText ?? null,
-              url: cap.url ?? null,
-              storageKey: copy?.key ?? null,
-              size: copy?.size ?? null,
-              sourceCaptureId: cap.id,
-            });
+            if (cap.rawText || cap.url || cap.storageKey) {
+              // the item gets its own copy of the file: a capture and an
+              // attachment must never share one storage key (deleting one
+              // would delete the other's bytes)
+              const copy = cap.storageKey
+                ? await copyStoredFile(cap.storageKey, `items/${itemId}/${cap.storageKey.split("/").pop() ?? "photo"}`)
+                : null;
+              await tx.insert(attachments).values({
+                itemId,
+                areaId: it.areaId,
+                kind:
+                  cap.kind === "link"
+                    ? "link"
+                    : cap.kind === "image" || cap.kind === "file"
+                      ? cap.kind
+                      : cap.storageKey
+                        ? "file"
+                        : "note",
+                title: cap.url ?? it.itemName,
+                content: cap.rawText ?? null,
+                url: cap.url ?? null,
+                storageKey: copy?.key ?? null,
+                size: copy?.size ?? null,
+                sourceCaptureId: cap.id,
+              });
+            }
+          } else if (it.attributes && Object.keys(it.attributes).length) {
+            const existing = await tx.query.items.findFirst({ where: eq(items.id, itemId) });
+            const merged = { ...(existing?.attributes ?? {}), ...it.attributes };
+            await tx.update(items).set({ attributes: merged }).where(eq(items.id, itemId));
           }
-        } else if (it.attributes && Object.keys(it.attributes).length) {
-          const existing = await db.query.items.findFirst({ where: eq(items.id, itemId) });
-          const merged = { ...(existing?.attributes ?? {}), ...it.attributes };
-          await db.update(items).set({ attributes: merged }).where(eq(items.id, itemId));
         }
-      }
 
-      await db.update(captures).set({ status: "triaged" }).where(eq(captures.id, input.id));
-      await logEvent({
-        entityType: "capture",
-        entityId: input.id,
-        action: "accepted",
-        summary: `Capture accepted → ${input.items.length} item(s) filed (${created} new)`,
+        await tx.update(captures).set({ status: "triaged" }).where(eq(captures.id, input.id));
+        await logEvent({
+          entityType: "capture",
+          entityId: input.id,
+          action: "accepted",
+          summary: `Capture accepted → ${input.items.length} item(s) filed (${created} new)`,
+        }, tx);
+        return { ok: true, created };
       });
-      return { ok: true, created };
     }),
 
   /** Parse a pending .geojson capture's floor scan into a room (geometry +
@@ -624,8 +629,17 @@ export const inboxRouter = createRouter({
    * work scripts/import-geojson-floor.mjs did by hand, now reachable from
    * the Inbox itself so the capture doesn't sit pending forever. */
   importGeojson: procedure
-    .input(z.object({ captureId: z.number(), houseId: z.number(), roomName: z.string().min(1) }))
-    .mutation(async ({ input }) => {
+    .input(
+      z
+        .object({
+          captureId: z.number(),
+          roomId: z.number().optional(),
+          roomName: z.string().min(1).optional(),
+          houseId: z.number().optional(),
+        })
+        .refine((v) => v.roomId != null || v.roomName != null, { message: "Pick a room or give a room name." }),
+    )
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.captureId) });
       if (!cap?.storageKey) throw new Error("Capture has no file to import.");
@@ -637,18 +651,26 @@ export const inboxRouter = createRouter({
       } catch {
         throw new Error("Not valid JSON.");
       }
+      const houseId = input.houseId ?? ctx.houseId;
+      if (houseId == null && input.roomId == null) throw new Error("Pick a house first.");
+      const target = input.roomId != null
+        ? await db.query.rooms.findFirst({ where: eq(rooms.id, input.roomId) })
+        : null;
+      if (input.roomId != null && !target) throw new Error("Room not found.");
+      const targetHouseId = target?.houseId ?? houseId!;
+      const match = target ?? (await db.query.rooms.findFirst({
+        where: and(eq(rooms.houseId, targetHouseId), sql`lower(${rooms.name}) = ${input.roomName!.trim().toLowerCase()}`),
+      }));
+      const roomName = target?.name ?? input.roomName!.trim();
       const parsed = parseGeojsonFloor(geojson as { features: { geometry: { type: string; coordinates: unknown }; properties: Record<string, unknown> }[] });
       if (!parsed) throw new Error("No wall geometry found in this file.");
       const { walls, furniturePolys, widthM, depthM } = parsed;
 
       // same houseId-then-name match as rooms.upsertFromScan, so re-running
       // an import for the same house+name updates in place
-      const match = await db.query.rooms.findFirst({
-        where: and(eq(rooms.houseId, input.houseId), eq(rooms.name, input.roomName)),
-      });
       const values = {
-        houseId: input.houseId,
-        name: input.roomName,
+        houseId: targetHouseId,
+        name: roomName,
         source: "mappedin" as const,
         scanDate: new Date(),
         widthM,
@@ -687,7 +709,7 @@ export const inboxRouter = createRouter({
 
         await tx.insert(items).values({
           areaId,
-          houseId: input.houseId,
+          houseId: targetHouseId,
           roomId,
           name,
           status: "active",
@@ -700,8 +722,7 @@ export const inboxRouter = createRouter({
             rotDeg: 0,
             ...(meta.hM != null ? { hM: meta.hM } : {}),
           },
-          room: input.roomName,
-          description: `Auto-detected from the ${input.roomName} floor scan (MappedIn export) - not yet reviewed.`,
+          description: `Auto-detected from the ${roomName} floor scan (MappedIn export) - not yet reviewed.`,
         });
         created++;
       }
@@ -712,7 +733,7 @@ export const inboxRouter = createRouter({
           entityType: "room",
           entityId: roomId,
           action: match ? "rescanned" : "created",
-          summary: `Room "${input.roomName}" ${match ? "updated" : "created"} from inbox geojson scan (${created} item(s) detected)`,
+          summary: `Room "${roomName}" ${match ? "updated" : "created"} from inbox geojson scan (${created} item(s) detected)`,
           actor: "system",
         },
         tx,

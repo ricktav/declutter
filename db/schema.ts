@@ -262,6 +262,7 @@ export interface TriageSuggestion {
   note?: string;
   floor?: string | null;
   room?: string | null;
+  roomId?: number | null; // resolved from `room` text within the session's house; null = no such room yet
   items: TriageSpottedItem[];
 }
 

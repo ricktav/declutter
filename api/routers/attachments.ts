@@ -8,6 +8,7 @@ import { releaseStoredFiles } from "../lib/entities";
 import { sniffMime } from "../lib/sniff";
 import { cropPercent } from "../lib/crop";
 import { logEvent } from "../lib/events";
+import { roomSummary } from "../lib/location";
 
 const cropBoxInput = z.object({
   xPct: z.number().min(0).max(100),
@@ -92,9 +93,9 @@ export const attachmentsRouter = createRouter({
 
   /** Un-pin a photo from an item without deleting it - the file and any
    * location context it has stay put, it just goes back into the general
-   * Photos pool instead of being removed outright. The house/floor/room it
-   * belonged to (via its item) are copied onto the attachment itself first,
-   * since those currently only exist through the item link we're about to
+   * Photos pool instead of being removed outright. The room it
+   * belonged to (via its item) is copied onto the attachment itself first,
+   * since that currently only exists through the item link we're about to
    * drop - otherwise the photo would lose its location when unlinked. */
   unlink: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
@@ -103,12 +104,7 @@ export const attachmentsRouter = createRouter({
     const item = att.itemId ? await db.query.items.findFirst({ where: eq(items.id, att.itemId) }) : null;
     await db
       .update(attachments)
-      .set({
-        itemId: null,
-        houseId: att.houseId ?? item?.houseId ?? null,
-        floor: att.floor ?? item?.floor ?? null,
-        room: att.room ?? item?.room ?? null,
-      })
+      .set({ itemId: null, roomId: att.roomId ?? item?.roomId ?? null })
       .where(eq(attachments.id, input.id));
     await logEvent({
       entityType: "attachment",
@@ -292,6 +288,10 @@ export const attachmentsRouter = createRouter({
     const itemById = new Map(allItems.map((i) => [i.id, i]));
     const allAreas = await db.select().from(areas);
     const areaById = new Map(allAreas.map((a) => [a.id, a]));
+    const roomsById = await roomSummary(
+      db,
+      [...allItems.map((i) => i.roomId), ...atts.map((a) => a.roomId)].filter((x): x is number => x != null),
+    );
 
     const attachmentRows = atts.map((a) => {
       const it = a.itemId != null ? itemById.get(a.itemId) : undefined;
@@ -305,9 +305,10 @@ export const attachmentsRouter = createRouter({
         itemName: it?.name ?? null,
         itemStatus: it?.status ?? null,
         captureStatus: null as string | null,
-        houseId: it?.houseId ?? a.houseId ?? null,
-        floor: it?.floor ?? a.floor ?? null,
-        room: it?.room ?? a.room ?? null,
+        roomId: it?.roomId ?? a.roomId ?? null,
+        roomName: roomsById.get(it?.roomId ?? a.roomId ?? -1)?.name ?? null,
+        floor: roomsById.get(it?.roomId ?? a.roomId ?? -1)?.floor ?? null,
+        houseId: roomsById.get(it?.roomId ?? a.roomId ?? -1)?.houseId ?? it?.houseId ?? null,
         areaName: it ? (areaById.get(it.areaId)?.name ?? null) : null,
       };
     });
@@ -343,9 +344,10 @@ export const attachmentsRouter = createRouter({
         itemName: null,
         itemStatus: null,
         captureStatus: c.status,
-        houseId: null,
+        roomId: null,
+        roomName: null,
         floor: null,
-        room: null,
+        houseId: null,
         areaName: null,
         isItemCover: false,
       }));

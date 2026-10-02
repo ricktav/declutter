@@ -8,8 +8,8 @@ import { copyStoredFile } from "../lib/filestore";
 
 /**
  * Location-first entry point onto the same SSOT the item workbench uses -
- * see architecture artifact §07. A "location" is a (houseId, floor, room)
- * tuple, matching what every item already carries; no new geometry concept.
+ * see architecture artifact §07. A "location" is a room (roomId), the same
+ * link every item already carries; no new geometry concept.
  */
 export const mapRouter = createRouter({
   /**
@@ -19,19 +19,14 @@ export const mapRouter = createRouter({
    * files more items there.
    */
   photosForLocation: procedure
-    .input(z.object({ houseId: z.number().nullable(), floor: z.string().nullable(), room: z.string() }))
+    .input(z.object({ roomId: z.number() }))
     .query(async ({ input }) => {
       const db = getDb();
       const locItems = await db
         .select({ id: items.id })
         .from(items)
         .where(
-          and(
-            eq(items.status, "active"),
-            eq(items.room, input.room),
-            input.houseId != null ? eq(items.houseId, input.houseId) : undefined,
-            input.floor != null ? eq(items.floor, input.floor) : undefined,
-          ),
+          and(eq(items.status, "active"), eq(items.roomId, input.roomId)),
         );
       if (!locItems.length) return [];
       const itemIds = new Set(locItems.map((i) => i.id));
@@ -59,9 +54,7 @@ export const mapRouter = createRouter({
     .input(
       z.object({
         captureId: z.number(),
-        houseId: z.number().nullable(),
-        floor: z.string().nullable().optional(),
-        room: z.string().nullable().optional(),
+        roomId: z.number().nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -81,10 +74,10 @@ export const mapRouter = createRouter({
       if (existing) {
         // a location confirmed just now (e.g. Inbox's pending-item "Pin"
         // flow) is worth saving onto an attachment that doesn't have one yet
-        if (input.room && !existing.room) {
+        if (input.roomId != null && existing.roomId == null) {
           await db
             .update(attachments)
-            .set({ houseId: input.houseId, floor: input.floor ?? null, room: input.room })
+            .set({ roomId: input.roomId })
             .where(eq(attachments.id, existing.id));
         }
         return { attachmentId: existing.id };
@@ -103,9 +96,7 @@ export const mapRouter = createRouter({
           size: copy.size,
           mimeType: "image/jpeg",
           sourceCaptureId: cap.id,
-          houseId: input.houseId,
-          floor: input.floor ?? null,
-          room: input.room ?? null,
+          roomId: input.roomId ?? null,
           title: "Location photo",
         })
         .$returningId();

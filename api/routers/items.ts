@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, desc, or, and, asc } from "drizzle-orm";
+import { eq, desc, or, and, asc, inArray } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -7,6 +7,7 @@ import { areas, items, attachments, relations, tasks, ideaItems, ideas, events, 
 import { logEvent } from "../lib/events";
 import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { getModel } from "../lib/ai";
+import { roomSummary, setItemLocation } from "../lib/location";
 
 /** crude name-similarity: shared significant tokens */
 function nameScore(a: string, b: string): number {
@@ -52,26 +53,42 @@ export const itemsRouter = createRouter({
 
   /** Every active item across every area, for the cross-area browser (search/sort by area or location). */
   listAll: procedure
-    .input(z.object({ includeArchived: z.boolean().default(false) }))
-    .query(async ({ input }) => {
+    .input(
+      z.object({
+        includeArchived: z.boolean().default(false),
+        houseId: z.number().nullable().optional(),
+        roomId: z.number().optional(),
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const houseId = input.houseId !== undefined ? input.houseId : ctx.houseId;
       const db = getDb();
       const rows = await db
         .select()
         .from(items)
-        .where(input.includeArchived ? undefined : eq(items.status, "active"))
+        .where(
+          and(
+            input.includeArchived ? undefined : eq(items.status, "active"),
+            houseId != null ? eq(items.houseId, houseId) : undefined,
+            input.roomId != null ? eq(items.roomId, input.roomId) : undefined,
+          ),
+        )
         .orderBy(desc(items.updatedAt));
       const allAreas = await db.select().from(areas);
       const areaById = new Map(allAreas.map((a) => [a.id, a]));
-      const atts = await db.select().from(attachments).where(eq(attachments.kind, "image"));
+      const roomsById = await roomSummary(db, rows.map((r) => r.roomId).filter((x): x is number => x != null));
+      const ids = rows.map((r) => r.id);
+      const atts = ids.length
+        ? await db.select().from(attachments).where(and(eq(attachments.kind, "image"), inArray(attachments.itemId, ids)))
+        : [];
       const imgMap = new Map<number, string>();
-      for (const a of atts) {
-        if (a.itemId && a.storageKey && !imgMap.has(a.itemId)) imgMap.set(a.itemId, a.storageKey);
-      }
+      for (const a of atts) if (a.itemId && a.storageKey && !imgMap.has(a.itemId)) imgMap.set(a.itemId, a.storageKey);
       return rows.map((r) => ({
         ...r,
         imageKey: imgMap.get(r.id) ?? null,
         areaName: areaById.get(r.areaId)?.name ?? null,
         areaSlug: areaById.get(r.areaId)?.slug ?? null,
+        room: r.roomId != null ? (roomsById.get(r.roomId) ?? null) : null,
       }));
     }),
 
@@ -83,6 +100,7 @@ export const itemsRouter = createRouter({
     const house = item.houseId
       ? await db.query.houses.findFirst({ where: eq(houses.id, item.houseId) })
       : null;
+    const room = item.roomId != null ? ((await roomSummary(db, [item.roomId])).get(item.roomId) ?? null) : null;
     const atts = await db
       .select()
       .from(attachments)
@@ -134,6 +152,7 @@ export const itemsRouter = createRouter({
       ...item,
       area,
       house,
+      room,
       attachments: atts,
       relations: rels.map((r) => ({
         ...r,
@@ -158,17 +177,15 @@ export const itemsRouter = createRouter({
         description: z.string().optional(),
         attributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
         parentId: z.number().nullable().optional(),
-        houseId: z.number().nullable().optional(),
         roomId: z.number().nullable().optional(),
-        floor: z.string().nullable().optional(),
-        room: z.string().nullable().optional(),
+        houseId: z.number().nullable().optional(),
         // defaults to "confirmed": a human calling this procedure (via the UI)
         // already made the decision. Automated filers (normalizer, bot
         // preprocessing) pass "detected" explicitly.
         verificationStatus: z.enum(["detected", "confirmed", "rejected"]).optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const [{ id }] = await db
         .insert(items)
@@ -178,13 +195,12 @@ export const itemsRouter = createRouter({
           description: input.description ?? null,
           attributes: input.attributes ?? null,
           parentId: input.parentId ?? null,
-          houseId: input.houseId ?? null,
-          roomId: input.roomId ?? null,
-          floor: input.floor ?? null,
-          room: input.room ?? null,
+          houseId: input.houseId ?? ctx.houseId ?? null,
+          roomId: null,
           verificationStatus: input.verificationStatus ?? "confirmed",
         })
         .$returningId();
+      if (input.roomId != null) await setItemLocation(db, id, { roomId: input.roomId });
       await logEvent({
         entityType: "item",
         entityId: id,
@@ -288,10 +304,8 @@ export const itemsRouter = createRouter({
         name: z.string().min(1).optional(),
         description: z.string().nullable().optional(),
         attributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
-        houseId: z.number().nullable().optional(),
         roomId: z.number().nullable().optional(),
-        floor: z.string().nullable().optional(),
-        room: z.string().nullable().optional(),
+        houseId: z.number().nullable().optional(),
         pos: z
           .object({
             xM: z.number(),
@@ -308,7 +322,7 @@ export const itemsRouter = createRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      const { id, attributes, pos, ...rest } = input;
+      const { id, attributes, pos, roomId, houseId, ...rest } = input;
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
       if (attributes !== undefined) patch.attributes = attributes;
@@ -318,20 +332,22 @@ export const itemsRouter = createRouter({
       // changed (e.g. "renamed from X to Y") instead of just listing which
       // field keys were touched
       const before = await db.query.items.findFirst({ where: eq(items.id, id) });
-      await db.update(items).set(patch).where(eq(items.id, id));
+      if (Object.keys(patch).length) await db.update(items).set(patch).where(eq(items.id, id));
+      if (roomId !== undefined || houseId !== undefined) {
+        if (roomId != null) await setItemLocation(db, id, { roomId });
+        else await setItemLocation(db, id, { roomId: null, houseId: houseId !== undefined ? houseId : (before?.houseId ?? null) });
+      }
 
       const subject = before?.name ?? `#${id}`;
       const parts: string[] = [];
       if (patch.name !== undefined && patch.name !== before?.name) {
         parts.push(`renamed from "${before?.name ?? "?"}" to "${patch.name}"`);
       }
-      if (patch.floor !== undefined || patch.room !== undefined) {
-        const floor = patch.floor !== undefined ? patch.floor : before?.floor;
-        const room = patch.room !== undefined ? patch.room : before?.room;
-        parts.push(`location set to ${[floor, room].filter(Boolean).join(" · ") || "none"}`);
+      if (roomId !== undefined || houseId !== undefined) {
+        const after = await db.query.items.findFirst({ where: eq(items.id, id) });
+        const label = after?.roomId != null ? ((await roomSummary(db, [after.roomId])).get(after.roomId)?.name ?? `room #${after.roomId}`) : after?.houseId != null ? "unplaced in house" : "none";
+        if (after?.roomId !== before?.roomId || after?.houseId !== before?.houseId) parts.push(`location set to ${label}`);
       }
-      if (patch.houseId !== undefined) parts.push("house changed");
-      if (patch.roomId !== undefined) parts.push("room placement changed");
       if (patch.description !== undefined) parts.push("description updated");
       if (patch.attributes !== undefined) parts.push("attributes updated");
       if (patch.pos !== undefined) parts.push("position updated");
