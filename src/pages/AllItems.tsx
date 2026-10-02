@@ -9,83 +9,64 @@ import { usePersistedState } from "@/hooks/use-persisted-state";
 
 type SortBy = "area" | "location" | "updated";
 
-// "none" is a sentinel the sidebar's Locations links use for a null
-// houseId/floor, since that's how map.listLocations groups them - distinct
-// from the param being absent entirely (which means "don't filter on this").
-function paramMatches(value: string | null, itemValue: string | number | null): boolean {
-  if (value == null) return true;
-  if (value === "none") return itemValue == null || itemValue === "";
-  return String(itemValue ?? "") === value;
-}
-
 export default function AllItems() {
-  const items = trpc.items.listAll.useQuery({ includeArchived: false });
+  const [searchParams, setSearchParams] = useSearchParams();
+  const roomIdParam = searchParams.get("roomId");
+  const roomFilter = roomIdParam && roomIdParam !== "none" && Number.isFinite(Number(roomIdParam)) ? Number(roomIdParam) : null;
+  const clearRoom = () => { const next = new URLSearchParams(searchParams); next.delete("roomId"); setSearchParams(next, { replace: true }); };
+  const items = trpc.items.listAll.useQuery({ includeArchived: false, roomId: roomFilter ?? undefined });
+  const roomsQuery = trpc.rooms.list.useQuery({ houseId: null }, { enabled: roomFilter != null });
+  const filterRoom = roomFilter != null ? roomsQuery.data?.find((r) => r.id === roomFilter) : undefined;
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = usePersistedState<SortBy>("allItems.sortBy", "area");
   const [view, setView] = usePersistedState<"list" | "gallery">("allItems.view", "list");
-  const [searchParams, setSearchParams] = useSearchParams();
 
-  const locHouseId = searchParams.get("houseId");
-  const locFloor = searchParams.get("floor");
-  const locRoom = searchParams.get("room");
-  const locationFilterActive = locRoom != null;
+  const locationFilterActive = roomFilter != null;
 
   useEffect(() => {
     if (locationFilterActive) setSortBy("location");
   }, [locationFilterActive]);
 
-  const clearLocationFilter = () => setSearchParams((prev) => {
-    const next = new URLSearchParams(prev);
-    next.delete("houseId");
-    next.delete("floor");
-    next.delete("room");
-    return next;
-  });
-
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
-    const rows = (items.data ?? []).filter((i) => {
-      if (locationFilterActive) {
-        return (
-          i.room === locRoom && paramMatches(locFloor, i.floor) && paramMatches(locHouseId, i.houseId)
-        );
-      }
-      return (
+    if (locationFilterActive) return items.data ?? [];
+    return (items.data ?? []).filter(
+      (i) =>
         !query ||
         i.name.toLowerCase().includes(query) ||
-        (i.room ?? "").toLowerCase().includes(query) ||
-        (i.floor ?? "").toLowerCase().includes(query) ||
-        (i.areaName ?? "").toLowerCase().includes(query)
-      );
-    });
-    return rows;
-  }, [items.data, q, locationFilterActive, locRoom, locFloor, locHouseId]);
+        (i.room?.name ?? "").toLowerCase().includes(query) ||
+        (i.room?.floor ?? "").toLowerCase().includes(query) ||
+        (i.areaName ?? "").toLowerCase().includes(query),
+    );
+  }, [items.data, q, locationFilterActive]);
 
-  // group key + label depending on sort mode
-  const groupOf = (i: (typeof filtered)[number]) => {
-    if (sortBy === "area") return i.areaName ?? "(no topic)";
-    if (sortBy === "location") {
-      const loc = [i.floor, i.room].filter(Boolean).join(" · ");
-      return loc || "(no location)";
+  // group key + label (+ floor sub-label for rooms) depending on sort mode
+  const groupOf = (i: (typeof filtered)[number]): { key: string; label: string; sub?: string } => {
+    if (sortBy === "area") {
+      const l = i.areaName ?? "(no topic)";
+      return { key: l, label: l };
     }
-    return "All items";
+    if (sortBy === "location") {
+      return i.room
+        ? { key: `room:${i.room.id}`, label: i.room.name, sub: i.room.floor ?? undefined }
+        : { key: "none", label: "(no room)" };
+    }
+    return { key: "all", label: "All items" };
   };
 
   const groups = useMemo(() => {
     const sorted = [...filtered];
     if (sortBy === "updated") {
       sorted.sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt));
-      return [{ label: "All items, most recently updated first", rows: sorted }];
+      return [{ key: "all", label: "All items, most recently updated first", sub: undefined as string | undefined, rows: sorted }];
     }
-    const map = new Map<string, typeof filtered>();
+    const map = new Map<string, { key: string; label: string; sub?: string; rows: typeof filtered }>();
     for (const i of sorted) {
-      const key = groupOf(i);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(i);
+      const g = groupOf(i);
+      if (!map.has(g.key)) map.set(g.key, { ...g, rows: [] });
+      map.get(g.key)!.rows.push(i);
     }
-    return [...map.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([label, rows]) => ({ label, rows }));
+    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label) || (a.sub ?? "").localeCompare(b.sub ?? ""));
   }, [filtered, sortBy]);
 
   return (
@@ -99,9 +80,10 @@ export default function AllItems() {
 
       {locationFilterActive && (
         <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-accent px-3 py-1 text-[12px]">
-          <span className="text-muted-foreground">location:</span>
-          <span className="font-medium">{locRoom}</span>
-          <button onClick={clearLocationFilter} className="text-muted-foreground hover:text-foreground ml-1">
+          <span className="text-muted-foreground">room:</span>
+          <span className="font-medium">{filterRoom?.name ?? `#${roomFilter}`}</span>
+          {filterRoom?.floor && <span className="text-[11px] text-muted-foreground">{filterRoom.floor}</span>}
+          <button onClick={clearRoom} className="text-muted-foreground hover:text-foreground ml-1">
             <X className="h-3 w-3" />
           </button>
         </div>
@@ -126,7 +108,7 @@ export default function AllItems() {
             onChange={(e) => setSortBy(e.target.value as SortBy)}
           >
             <option value="area">Topic</option>
-            <option value="location">Location (floor · room)</option>
+            <option value="location">Room</option>
             <option value="updated">Recently updated</option>
           </select>
         </div>
@@ -150,9 +132,10 @@ export default function AllItems() {
 
       <div className="mt-5 space-y-7">
         {groups.map((g) => (
-          <div key={g.label}>
+          <div key={g.key}>
             <div className="micro-label text-muted-foreground mb-2 flex items-center gap-2">
               {g.label}
+              {g.sub && <span className="normal-case tracking-normal text-[11px] opacity-80">{g.sub}</span>}
               <span className="font-data text-[11px] opacity-60">{g.rows.length}</span>
             </div>
             {view === "gallery" ? (
@@ -219,7 +202,10 @@ export default function AllItems() {
                         )}
                         {sortBy !== "location" && (
                           <td className="text-[12px] text-muted-foreground">
-                            {[it.floor, it.room].filter(Boolean).join(" · ") || "—"}
+                            {it.room?.name ?? "—"}
+                            {it.room?.floor && (
+                              <span className="ml-1.5 rounded bg-muted px-1.5 text-[10px]">{it.room.floor}</span>
+                            )}
                           </td>
                         )}
                         <td className="font-data text-[11px] text-muted-foreground">{timeAgo(it.updatedAt)}</td>
@@ -233,7 +219,7 @@ export default function AllItems() {
         ))}
         {filtered.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
-            {locationFilterActive ? `No items are placed in "${locRoom}" yet.` : `No items match "${q}".`}
+            {locationFilterActive ? `No items are placed in ${filterRoom ? `"${filterRoom.name}"` : "this room"} yet.` : `No items match "${q}".`}
           </div>
         )}
       </div>

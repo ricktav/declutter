@@ -86,10 +86,6 @@ export default function RoomPlanPage() {
     setAttachError(null);
   };
 
-  const unlinkedLocations = trpc.rooms.unlinkedLocations.useQuery(
-    { houseId: room.data?.houseId ?? 0 },
-    { enabled: room.data?.houseId != null && pendingCut != null },
-  );
   const cutFromRoom = trpc.rooms.cutFromRoom.useMutation({
     onSuccess: ({ id: newRoomId }) => {
       setPendingCut(null);
@@ -118,9 +114,7 @@ export default function RoomPlanPage() {
       const { id: newItemId } = await createItem.mutateAsync({
         areaId: pinAreaId,
         name: pinName.trim(),
-        houseId: room.data.houseId,
-        roomId: id,
-        room: room.data.name,
+        roomId: room.data.id,
       });
       const basePos = { xM: pendingPin.xM, yM: pendingPin.yM, wM: 0.5, dM: 0.5, rotDeg: 0 };
       await updatePos.mutateAsync({
@@ -379,27 +373,10 @@ export default function RoomPlanPage() {
                     {pendingCut.wM.toFixed(2)}×{pendingCut.dM.toFixed(2)} m
                   </p>
 
-                  {unlinkedLocations.data && unlinkedLocations.data.length > 0 && (
-                    <select
-                      className="mt-3 w-full h-8 rounded-md border border-border bg-white px-2 text-[13px]"
-                      value={unlinkedLocations.data.includes(cutName) ? cutName : ""}
-                      onChange={(e) => setCutName(e.target.value)}
-                    >
-                      <option value="" disabled>
-                        Pick an existing location…
-                      </option>
-                      {unlinkedLocations.data.map((name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-
                   <input
                     type="text"
-                    placeholder="Or type a new name"
-                    className="mt-2 w-full h-8 rounded-md border border-border bg-white px-2 text-[13px]"
+                    placeholder="Room name"
+                    className="mt-3 w-full h-8 rounded-md border border-border bg-white px-2 text-[13px]"
                     value={cutName}
                     onChange={(e) => setCutName(e.target.value)}
                   />

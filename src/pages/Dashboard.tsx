@@ -11,9 +11,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
-import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
+import { useHouse } from "@/context/house";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
-import { FloorsEditor } from "@/components/FloorsEditor";
 const HousesMap = lazy(() => import("@/components/HousesMap").then((m) => ({ default: m.HousesMap })));
 import { aerialThumbUrl, fetchParcelInfo, kadastraleKaartUrl, reverseGeocode, type AddressSuggestion, type ParcelInfo } from "@/lib/pdok";
 import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Plus } from "lucide-react";
@@ -278,9 +277,6 @@ function AddHouseDialog({
 }) {
   const [name, setName] = useState("");
   const [addr, setAddr] = useState<ResolvedAddress>(EMPTY_ADDRESS);
-  // most houses have at least a ground floor, so start with it pre-added
-  // instead of making every new house re-click the same first pill
-  const [floors, setFloors] = useState<string[] | null>(["ground"]);
   const utils = trpc.useUtils();
   const create = trpc.houses.create.useMutation({
     onSuccess: (house) => {
@@ -288,7 +284,6 @@ function AddHouseDialog({
       onOpenChange(false);
       setName("");
       setAddr(EMPTY_ADDRESS);
-      setFloors(["ground"]);
       if (house) onCreated(house.id);
     },
   });
@@ -301,7 +296,6 @@ function AddHouseDialog({
         if (v) {
           setName("");
           setAddr(EMPTY_ADDRESS);
-          setFloors(["ground"]);
         }
       }}
     >
@@ -332,12 +326,6 @@ function AddHouseDialog({
               />
             </div>
           </label>
-          <label className="block">
-            <span className="micro-label text-muted-foreground">Floors (optional)</span>
-            <div className="mt-0.5">
-              <FloorsEditor value={floors} onChange={setFloors} />
-            </div>
-          </label>
           <div className="flex justify-end">
             <Button
               size="sm"
@@ -352,7 +340,6 @@ function AddHouseDialog({
                   bagId: addr.bagId ?? undefined,
                   parcelId: addr.parcel?.parcelId || undefined,
                   parcelAreaM2: addr.parcel?.parcelAreaM2 ?? undefined,
-                  floors: floors ?? undefined,
                 })
               }
             >
@@ -378,7 +365,6 @@ interface EditableHouse {
   bagId?: string | null;
   parcelId?: string | null;
   parcelAreaM2?: number | null;
-  floors?: string[] | null;
 }
 
 function houseToResolvedAddress(h: EditableHouse): ResolvedAddress {
@@ -408,7 +394,6 @@ function EditHouseDialog({
 }) {
   const [name, setName] = useState(house.name);
   const [addr, setAddr] = useState<ResolvedAddress>(() => houseToResolvedAddress(house));
-  const [floors, setFloors] = useState<string[] | null>(house.floors ?? null);
   const utils = trpc.useUtils();
   const update = trpc.houses.update.useMutation({
     onSuccess: () => {
@@ -425,7 +410,6 @@ function EditHouseDialog({
         if (v) {
           setName(house.name);
           setAddr(houseToResolvedAddress(house));
-          setFloors(house.floors ?? null);
         }
       }}
     >
@@ -477,12 +461,6 @@ function EditHouseDialog({
               </a>
             )}
           </label>
-          <label className="block">
-            <span className="micro-label text-muted-foreground">Floors</span>
-            <div className="mt-0.5">
-              <FloorsEditor value={floors} onChange={setFloors} />
-            </div>
-          </label>
           <p className="text-[11px] text-muted-foreground">Notes can be edited in Settings → Houses.</p>
           <div className="flex justify-end">
             <Button
@@ -499,7 +477,6 @@ function EditHouseDialog({
                   bagId: addr.bagId,
                   parcelId: addr.parcel?.parcelId ?? undefined,
                   parcelAreaM2: addr.parcel?.parcelAreaM2 ?? undefined,
-                  floors,
                 })
               }
             >
@@ -613,56 +590,43 @@ function HouseSection({
   );
 }
 
-function LocationsSection({ houseId }: { houseId: number | null }) {
-  const locations = trpc.map.listLocations.useQuery();
-  const scoped = (locations.data ?? []).filter((l) => houseId == null || l.houseId === houseId);
+function LocationsSection() {
+  const rooms = trpc.rooms.list.useQuery(); // context house
+  const top = [...(rooms.data ?? [])].sort((a, b) => b.itemCount - a.itemCount).slice(0, 8);
 
   return (
     <section>
       <div className="flex items-center h-7 mb-2">
-        <h2 className="micro-label text-muted-foreground">Locations</h2>
+        <h2 className="micro-label text-muted-foreground">Rooms</h2>
         <Link to="/map" className="ml-auto text-[12px] text-primary hover:underline">
           Map view →
         </Link>
       </div>
       <div className="rounded-lg border border-border bg-white divide-y divide-border">
-        {scoped.length === 0 && (
+        {rooms.data?.length === 0 && (
           <div className="px-4 py-5 text-[13px] text-muted-foreground">
-            No locations yet — set a room on an item, or confirm one while pinning from the Inbox.
+            No rooms yet — set a room on an item, or confirm one while pinning from the Inbox.
           </div>
         )}
-        {scoped.slice(0, 8).map((l) => {
-          const key = `${l.houseId ?? "none"}|${l.floor ?? "none"}|${l.room}`;
-          const to = `/items?houseId=${l.houseId ?? "none"}&floor=${encodeURIComponent(l.floor ?? "none")}&room=${encodeURIComponent(l.room)}`;
-          return (
-            <Link key={key} to={to} className="flex items-center gap-3 px-4 py-2.5 hover:bg-accent/40 transition-colors">
-              <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="text-[13px] font-medium flex-1 truncate">
-                {l.room}
-                {(l.houseName || l.floor) && (
-                  <span className="text-muted-foreground font-normal">
-                    {" "}
-                    · {[l.houseName, l.floor].filter(Boolean).join(" · ")}
-                  </span>
-                )}
-              </span>
-              <span className="font-data text-[12px] text-muted-foreground">{l.count}</span>
-              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-            </Link>
-          );
-        })}
+        {top.map((r) => (
+          <Link key={r.id} to={`/items?roomId=${r.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-accent/40 transition-colors">
+            <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-[13px] font-medium flex-1 truncate">
+              {r.name}
+              {r.floor && <span className="ml-2 text-[11px] text-muted-foreground font-normal">{r.floor}</span>}
+            </span>
+            <span className="font-data text-[12px] text-muted-foreground">{r.itemCount}</span>
+            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+          </Link>
+        ))}
       </div>
     </section>
   );
 }
 
 export default function Dashboard() {
-  const [houseId, setHouseId] = useState<number | null>(() => getLastLocation().houseId);
+  const { houseId, setHouseId } = useHouse();
   const [showMap, setShowMap] = useState(false);
-  const selectHouse = (id: number | null) => {
-    setHouseId(id);
-    setLastLocation({ ...getLastLocation(), houseId: id });
-  };
 
   // Topics (and the Items stat, derived from them) are scoped to whichever
   // house is "working in" - the whole dashboard reflects that context, not
@@ -700,7 +664,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
-        <HouseSection houseId={houseId} onSelectHouse={selectHouse} onToggleMap={() => setShowMap((v) => !v)} />
+        <HouseSection houseId={houseId} onSelectHouse={setHouseId} onToggleMap={() => setShowMap((v) => !v)} />
         {stats.map((s) => (
           <Link
             key={s.label}
@@ -719,7 +683,7 @@ export default function Dashboard() {
       {showMap && (
         <div className="mt-4">
           <Suspense fallback={<div className="h-[260px] rounded-lg border border-border bg-muted/30" />}>
-            <HousesMap onSelectHouse={selectHouse} />
+            <HousesMap onSelectHouse={setHouseId} />
           </Suspense>
         </div>
       )}
@@ -755,7 +719,7 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <LocationsSection houseId={houseId} />
+        <LocationsSection />
       </div>
 
       <div className="mt-6">

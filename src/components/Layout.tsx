@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { HouseSwitcher } from "@/components/HouseSwitcher";
-import { RoomPicker, type RoomValue } from "@/components/RoomPicker";
+import { RoomPicker } from "@/components/RoomPicker";
 import {
   LayoutDashboard,
   Inbox,
@@ -32,7 +32,6 @@ import {
   ChevronDown,
   ChevronRight,
   Pencil,
-  Loader2,
   Images,
   Network,
   Smartphone,
@@ -147,7 +146,16 @@ const NAV = [
 
 export default function Layout() {
   const areas = trpc.areas.list.useQuery();
-  const locations = trpc.map.listLocations.useQuery();
+  const roomList = trpc.rooms.list.useQuery(); // context house
+  const byFloor = useMemo(() => {
+    const groups = new Map<string, NonNullable<typeof roomList.data>>();
+    for (const r of roomList.data ?? []) {
+      const k = r.floor ?? "";
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(r);
+    }
+    return [...groups.entries()];
+  }, [roomList.data]);
   const inbox = trpc.inbox.list.useQuery();
   const { openAsk } = useAsk();
   const navigate = useNavigate();
@@ -156,18 +164,25 @@ export default function Layout() {
   const [locationsCollapsed, toggleLocations] = useCollapsed("sidebar.locations.collapsed");
   const pendingCount = (inbox.data ?? []).filter((c) => c.status === "pending").length;
 
-  const [editingLocation, setEditingLocation] = useState<{
-    houseId: number | null;
-    floor: string | null;
-    room: string;
-  } | null>(null);
-  const [renameTo, setRenameTo] = useState<RoomValue>({ houseId: null, floor: "", room: "" });
+  const [editingRoom, setEditingRoom] = useState<{ id: number; name: string; floor: string | null } | null>(null);
+  const [renameTo, setRenameTo] = useState("");
+  const [mergeInto, setMergeInto] = useState<number | null>(null);
   const utils = trpc.useUtils();
-  const renameLocation = trpc.map.renameLocation.useMutation({
+  const refreshRooms = () => {
+    utils.rooms.list.invalidate();
+    utils.items.listAll.invalidate();
+    utils.items.get.invalidate();
+  };
+  const updateRoom = trpc.rooms.update.useMutation({
+    onSuccess: (_d, vars) => {
+      refreshRooms();
+      if (vars.name !== undefined) setEditingRoom(null);
+    },
+  });
+  const mergeRoom = trpc.rooms.merge.useMutation({
     onSuccess: () => {
-      utils.map.listLocations.invalidate();
-      utils.items.listAll.invalidate();
-      setEditingLocation(null);
+      refreshRooms();
+      setEditingRoom(null);
     },
   });
 
@@ -239,37 +254,23 @@ export default function Layout() {
         <SidebarSectionTitle label="Locations" collapsed={locationsCollapsed} onToggle={toggleLocations} />
         {!locationsCollapsed && (
           <nav className="px-2 space-y-0.5">
-            {(locations.data ?? []).map((l) => {
-              const key = `${l.houseId ?? "none"}|${l.floor ?? "none"}|${l.room}`;
-              const to = `/items?houseId=${l.houseId ?? "none"}&floor=${encodeURIComponent(l.floor ?? "none")}&room=${encodeURIComponent(l.room)}`;
-              return (
-                <NavLink key={key} to={to} className={(a) => cn(navLinkClass(a), "group")} onClick={() => setMenuOpen(false)}>
-                  <MapPin className="h-4 w-4 text-[#b4b8a5] shrink-0" />
-                  <span className="flex-1 min-w-0 truncate">
-                    {l.room}
-                    {l.houseName || l.floor ? (
-                      <span className="opacity-60"> · {[l.houseName, l.floor].filter(Boolean).join(" · ")}</span>
-                    ) : null}
-                  </span>
-                  <span className="font-data text-[11px] opacity-60">{l.count}</span>
-                  <button
-                    className="shrink-0 opacity-0 group-hover:opacity-100 hover:text-[#f4f4ed]"
-                    title="Rename or merge this location"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setEditingLocation({ houseId: l.houseId, floor: l.floor, room: l.room });
-                      setRenameTo({ houseId: l.houseId, floor: l.floor ?? "", room: l.room });
-                    }}
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                </NavLink>
-              );
-            })}
-            {locations.data?.length === 0 && (
-              <div className="px-2.5 py-1 text-[12px] text-[#8a8e7a]">No locations set yet</div>
-            )}
+            {byFloor.map(([floor, list]) => (
+              <div key={floor || "nofloor"}>
+                {byFloor.length > 1 && <div className="px-2.5 pt-1 micro-label text-[#8a8e7a]">{floor || "no floor"}</div>}
+                {list.map((r) => (
+                  <NavLink key={r.id} to={`/items?roomId=${r.id}`} className={(a) => cn(navLinkClass(a), "group")} onClick={() => setMenuOpen(false)}>
+                    <MapPin className="h-4 w-4 text-[#b4b8a5] shrink-0" />
+                    <span className="flex-1 min-w-0 truncate">{r.name}</span>
+                    <span className="font-data text-[11px] opacity-60">{r.itemCount}</span>
+                    <button className="shrink-0 opacity-0 group-hover:opacity-100 hover:text-[#f4f4ed]" title="Rename or merge this room"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingRoom(r); setRenameTo(r.name); setMergeInto(null); }}>
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </NavLink>
+                ))}
+              </div>
+            ))}
+            {roomList.data?.length === 0 && <div className="px-2.5 py-1 text-[12px] text-[#8a8e7a]">No rooms yet</div>}
           </nav>
         )}
       </div>
@@ -316,44 +317,31 @@ export default function Layout() {
         <Outlet context={{ navigate }} />
       </main>
 
-      <Dialog open={!!editingLocation} onOpenChange={(o) => !o && setEditingLocation(null)}>
+      <Dialog open={!!editingRoom} onOpenChange={(o) => !o && setEditingRoom(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename or merge location</DialogTitle>
+            <DialogTitle>Rename or merge room</DialogTitle>
           </DialogHeader>
-          {editingLocation && (
+          {editingRoom && (
             <div className="space-y-3">
-              <p className="text-[12px] text-muted-foreground">
-                Updates every item currently filed under "{editingLocation.room}
-                {editingLocation.floor ? ` · ${editingLocation.floor}` : ""}". Set it to match another
-                location's house/floor/room exactly to merge the two.
-              </p>
-              <RoomPicker value={renameTo} onChange={setRenameTo} />
-              <div className="flex justify-end gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setEditingLocation(null)}>
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={!renameTo.room.trim() || renameLocation.isPending}
-                  onClick={() =>
-                    renameLocation.mutate({
-                      from: editingLocation,
-                      to: {
-                        houseId: renameTo.houseId,
-                        floor: renameTo.floor.trim() || null,
-                        room: renameTo.room.trim(),
-                      },
-                    })
-                  }
-                >
-                  {renameLocation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
-                  Save
-                </Button>
+              <label className="block text-[12px]">Name
+                <input id="room-rename" className="mt-1 w-full rounded border border-input px-2 py-1 text-[13px]" value={renameTo} onChange={(e) => setRenameTo(e.target.value)} />
+              </label>
+              <label className="block text-[12px]">Floor
+                <input id="room-floor" className="mt-1 w-full rounded border border-input px-2 py-1 text-[13px]" defaultValue={editingRoom.floor ?? ""} placeholder="e.g. ground, 1, attic" onBlur={(e) => updateRoom.mutate({ id: editingRoom.id, floor: e.target.value.trim() || null })} />
+              </label>
+              <div className="text-[12px]">Or merge into another room
+                <RoomPicker value={mergeInto} onChange={setMergeInto} allowCreate={false} allowNone />
               </div>
-              {renameLocation.isError && (
-                <div className="text-[12px] text-destructive">{renameLocation.error.message}</div>
-              )}
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setEditingRoom(null)}>Cancel</Button>
+                {mergeInto != null && mergeInto !== editingRoom.id ? (
+                  <Button size="sm" onClick={() => mergeRoom.mutate({ fromId: editingRoom.id, toId: mergeInto })}>Merge</Button>
+                ) : (
+                  <Button size="sm" disabled={!renameTo.trim()} onClick={() => updateRoom.mutate({ id: editingRoom.id, name: renameTo.trim() })}>Save</Button>
+                )}
+              </div>
+              {(updateRoom.isError || mergeRoom.isError) && <div className="text-[12px] text-destructive">{updateRoom.error?.message ?? mergeRoom.error?.message}</div>}
             </div>
           )}
         </DialogContent>

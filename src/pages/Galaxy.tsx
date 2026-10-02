@@ -17,7 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { trpc } from "@/providers/trpc";
-import { getLastLocation } from "@/lib/lastLocation";
+import { useHouse } from "@/context/house";
 
 const AREA_ICONS: Record<string, LucideIcon> = {
   laptop: Laptop,
@@ -42,8 +42,7 @@ type Item = {
   name: string;
   areaId: number;
   houseId: number | null;
-  floor: string | null;
-  room: string | null;
+  room: { id: number; name: string; floor: string | null } | null;
   verificationStatus: string;
 };
 type Area = { id: number; name: string; slug: string; color: string; icon: string };
@@ -80,7 +79,7 @@ const GROUPINGS: Grouping[] = [
     level1Color: (_key, index) => paletteColor(index),
     level1Nav: () => null,
     level1Icon: () => HomeIcon,
-    level2: (it) => it.floor?.trim() || "No floor",
+    level2: (it) => it.room?.floor?.trim() || "No floor",
     level2Label: (key) => key,
   },
   {
@@ -98,14 +97,14 @@ const GROUPINGS: Grouping[] = [
       const a = areas.find((a) => String(a.id) === key);
       return a ? (AREA_ICONS[a.icon] ?? Box) : null;
     },
-    level2: (it) => it.floor?.trim() || "No floor",
+    level2: (it) => it.room?.floor?.trim() || "No floor",
     level2Label: (key) => key,
   },
   {
     id: "floor-topic",
     label: "Floor → Topic",
     shortLabel: "Floor",
-    level1: (it) => it.floor?.trim() || "No floor",
+    level1: (it) => it.room?.floor?.trim() || "No floor",
     level1Label: (key) => key,
     level1Color: (_key, index) => paletteColor(index),
     level1Nav: () => null,
@@ -128,14 +127,14 @@ const GROUPINGS: Grouping[] = [
       const a = areas.find((a) => String(a.id) === key);
       return a ? (AREA_ICONS[a.icon] ?? Box) : null;
     },
-    level2: (it) => it.room?.trim() || "No room",
+    level2: (it) => it.room?.name?.trim() || "No room",
     level2Label: (key) => key,
   },
   {
     id: "room-topic",
     label: "Room → Topic",
     shortLabel: "Room",
-    level1: (it) => it.room?.trim() || "No room",
+    level1: (it) => it.room?.name?.trim() || "No room",
     level1Label: (key) => key,
     level1Color: (_key, index) => paletteColor(index),
     level1Nav: () => null,
@@ -221,15 +220,15 @@ function forceAvoidCircle<N extends d3.SimulationNodeDatum & { r: number }>(
 
 export default function GalaxyPage() {
   const navigate = useNavigate();
-  const items = trpc.items.listAll.useQuery({});
   const areas = trpc.areas.list.useQuery();
   const houses = trpc.houses.list.useQuery();
   const [groupingId, setGroupingId] = useState(GROUPINGS[0].id);
   const grouping = GROUPINGS.find((g) => g.id === groupingId)!;
-  // default to whatever house the rest of the app currently has "in
-  // context" (the last one used in a location picker), not every house
-  // mixed together - pick "all" explicitly to see the full inventory
-  const [houseFilter, setHouseFilter] = useState<number | "all">(() => getLastLocation().houseId ?? "all");
+  // default to the house the rest of the app has "in context", not every
+  // house mixed together - pick "all" explicitly to see the full inventory
+  const { houseId: ctxHouseId } = useHouse();
+  const [houseFilter, setHouseFilter] = useState<number | "all">(() => ctxHouseId ?? "all");
+  const items = trpc.items.listAll.useQuery({ houseId: houseFilter === "all" ? null : houseFilter });
 
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
@@ -242,9 +241,7 @@ export default function GalaxyPage() {
     if (!ready) return null;
     const areaList = areas.data! as Area[];
     const houseList = houses.data! as House[];
-    const allItems = (items.data! as Item[]).filter(
-      (it) => houseFilter === "all" || it.houseId === houseFilter,
-    );
+    const allItems = items.data! as Item[];
 
     type L2 = { key: string; label: string; items: Item[] };
     type L1 = {
@@ -351,7 +348,7 @@ export default function GalaxyPage() {
       }
     }
     return { l1Nodes, itemNodes, l1List, l1Pos };
-  }, [ready, items.data, areas.data, houses.data, groupingId, houseFilter]);
+  }, [ready, items.data, areas.data, houses.data, groupingId]);
 
   // one-time zoom behavior setup
   useEffect(() => {
@@ -424,8 +421,7 @@ export default function GalaxyPage() {
       .on("mouseenter", (ev: MouseEvent, d) => {
         select(ev.currentTarget as SVGCircleElement).attr("r", d.r * 2.2).attr("fill-opacity", 1);
         const it = d.item!;
-        const loc = [it.floor, it.room].filter(Boolean).join(" · ") || "no location";
-        setTooltip({ x: ev.clientX, y: ev.clientY, title: it.name, sub: loc });
+        setTooltip({ x: ev.clientX, y: ev.clientY, title: it.name, sub: it.room ? it.room.name : "no room" });
       })
       .on("mousemove", (ev: MouseEvent) => {
         setTooltip((t) => (t ? { ...t, x: ev.clientX, y: ev.clientY } : t));

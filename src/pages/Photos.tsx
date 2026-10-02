@@ -18,8 +18,9 @@ type Photo = {
   itemStatus: "active" | "archived" | null;
   captureStatus: string | null;
   houseId: number | null;
+  roomId: number | null;
+  roomName: string | null;
   floor: string | null;
-  room: string | null;
   areaName: string | null;
 };
 
@@ -56,7 +57,7 @@ function PhotoTile({ photo }: { photo: Photo }) {
       <button
         className="group rounded-lg border border-border bg-white p-2 text-left hover:border-primary/50 disabled:opacity-60"
         disabled={ensure.isPending}
-        onClick={() => ensure.mutate({ captureId: photo.captureId!, houseId: null })}
+        onClick={() => ensure.mutate({ captureId: photo.captureId! })}
         title="Pin objects on this photo"
       >
         {ensure.isPending ? (
@@ -98,7 +99,7 @@ export default function PhotosPage() {
       return (
         !query ||
         (p.itemName ?? "").toLowerCase().includes(query) ||
-        (p.room ?? "").toLowerCase().includes(query) ||
+        (p.roomName ?? "").toLowerCase().includes(query) ||
         (p.floor ?? "").toLowerCase().includes(query) ||
         (p.areaName ?? "").toLowerCase().includes(query)
       );
@@ -107,7 +108,7 @@ export default function PhotosPage() {
 
   const groupOf = (p: (typeof filtered)[number]) => {
     if (sortBy === "area") return p.areaName ?? "(no topic)";
-    if (sortBy === "location") return [p.floor, p.room].filter(Boolean).join(" · ") || "(no location)";
+    if (sortBy === "location") return p.roomName ?? "(no room)";
     return "All photos";
   };
 
@@ -156,14 +157,14 @@ export default function PhotosPage() {
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as SortBy)}
           >
-            <option value="location">Location (floor · room)</option>
+            <option value="location">Room</option>
             <option value="area">Topic</option>
             <option value="recent">Recently added</option>
           </select>
         </div>
         <label
           className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
-          title="Toggle off to hide every photo pinned to an item, showing only house/floor/location photos and unprocessed inbox captures"
+          title="Toggle off to hide every photo pinned to an item, showing only house/room photos and unprocessed inbox captures"
         >
           <input
             type="checkbox"

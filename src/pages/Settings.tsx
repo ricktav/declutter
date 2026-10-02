@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
-import { DEFAULT_FLOORS } from "@/components/RoomPicker";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
-import { FloorsEditor } from "@/components/FloorsEditor";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import {
   Dialog,
@@ -515,7 +513,6 @@ type HouseRowData = {
   address: string | null;
   lat: number | null;
   lng: number | null;
-  floors: string[] | null;
   itemCount: number;
   parcelId?: string | null;
   parcelAreaM2?: number | null;
@@ -654,7 +651,7 @@ function HouseRow({ house, allHouses }: { house: HouseRowData; allHouses: { id: 
   const [parcel, setParcel] = useState<{ parcelId: string; parcelAreaM2: number | null } | null>(
     house.parcelId ? { parcelId: house.parcelId, parcelAreaM2: house.parcelAreaM2 ?? null } : null,
   );
-  const [floors, setFloors] = useState<string[] | null>(house.floors);
+  const roomsOfHouse = trpc.rooms.list.useQuery({ houseId: house.id });
   const otherHousesCount = allHouses.filter((h) => h.id !== house.id).length;
 
   const update = trpc.houses.update.useMutation({
@@ -700,12 +697,6 @@ function HouseRow({ house, allHouses }: { house: HouseRowData; allHouses: { id: 
             onChange={(e) => setLng(e.target.value)}
           />
         </div>
-        <label className="block">
-          <span className="micro-label text-muted-foreground">Floors</span>
-          <div className="mt-0.5">
-            <FloorsEditor value={floors} onChange={setFloors} />
-          </div>
-        </label>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setEditing(false)}>
             <X className="h-3.5 w-3.5 mr-1" /> Cancel
@@ -721,7 +712,6 @@ function HouseRow({ house, allHouses }: { house: HouseRowData; allHouses: { id: 
                 address: address.trim() || null,
                 lat: lat.trim() ? Number(lat) : null,
                 lng: lng.trim() ? Number(lng) : null,
-                floors,
                 bagId: bagId || undefined,
                 parcelId: parcel?.parcelId || undefined,
                 parcelAreaM2: parcel?.parcelAreaM2 ?? undefined,
@@ -766,9 +756,7 @@ function HouseRow({ house, allHouses }: { house: HouseRowData; allHouses: { id: 
           </a>
         )}
         <div className="font-data text-[11px] text-muted-foreground mt-0.5">
-          {house.floors && house.floors.length === 0
-            ? "no floors"
-            : `floors: ${(house.floors ?? DEFAULT_FLOORS).join(", ")}`}
+          {`${roomsOfHouse.data?.length ?? 0} rooms`}
         </div>
       </div>
       <button

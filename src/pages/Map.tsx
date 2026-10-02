@@ -3,16 +3,12 @@ import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { HousesMap } from "@/components/HousesMap";
 import { Home, MapPin, ChevronRight, Loader2 } from "lucide-react";
+import type { inferRouterOutputs } from "@trpc/server";
+import type { AppRouter } from "../../api/router";
 
-type Location = {
-  houseId: number | null;
-  houseName: string | null;
-  floor: string | null;
-  room: string;
-  count: number;
-};
+type Location = inferRouterOutputs<AppRouter>["rooms"]["list"][number];
 
-const locationKey = (l: Pick<Location, "houseId" | "floor" | "room">) => `${l.houseId ?? 0}|${l.floor ?? ""}|${l.room}`;
+const locationKey = (l: { id: number }) => String(l.id);
 
 // sessionStorage, not localStorage - "keep last used during the session"
 // means forgetting it again once the tab/browser closes, not forever
@@ -25,7 +21,9 @@ const SESSION_KEY = "declutter.map.lastLocation";
  * of a specific attachment).
  */
 export default function MapPage() {
-  const locations = trpc.map.listLocations.useQuery();
+  const locations = trpc.rooms.list.useQuery({ houseId: null }); // every house: this is the cross-house view
+  const houses = trpc.houses.list.useQuery();
+  const houseName = (id: number) => houses.data?.find((h) => h.id === id)?.name ?? null;
   const [selected, setSelected] = useState<Location | null>(null);
 
   useEffect(() => {
@@ -45,7 +43,7 @@ export default function MapPage() {
   };
 
   const photos = trpc.map.photosForLocation.useQuery(
-    { houseId: selected?.houseId ?? null, floor: selected?.floor ?? null, room: selected?.room ?? "" },
+    { roomId: selected?.id ?? 0 },
     { enabled: !!selected },
   );
 
@@ -62,11 +60,11 @@ export default function MapPage() {
 
       <div className="flex gap-6 mt-6 items-start">
         <aside className="w-64 shrink-0 rounded-lg border border-border bg-white p-2 space-y-0.5">
-          <div className="micro-label text-muted-foreground px-2 py-1.5">Locations</div>
+          <div className="micro-label text-muted-foreground px-2 py-1.5">Rooms</div>
           {locations.isLoading && <div className="px-2 py-2 text-[13px] text-muted-foreground">Loading…</div>}
           {locations.data?.length === 0 && (
             <div className="px-2 py-2 text-[13px] text-muted-foreground">
-              No items have a room set yet.
+              No rooms yet.
             </div>
           )}
           {locations.data?.map((l) => {
@@ -82,12 +80,12 @@ export default function MapPage() {
               >
                 <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 <span className="flex-1 min-w-0">
-                  <span className="block truncate font-medium">{l.room}</span>
+                  <span className="block truncate font-medium">{l.name}</span>
                   <span className="block truncate text-[11px] text-muted-foreground">
-                    {[l.houseName, l.floor].filter(Boolean).join(" · ") || "—"}
+                    {[houseName(l.houseId), l.floor].filter(Boolean).join(" · ") || "—"}
                   </span>
                 </span>
-                <span className="font-data text-[11px] text-muted-foreground">{l.count}</span>
+                <span className="font-data text-[11px] text-muted-foreground">{l.itemCount}</span>
               </button>
             );
           })}
@@ -97,23 +95,23 @@ export default function MapPage() {
           {!selected ? (
             <div className="rounded-lg border border-dashed border-border px-4 py-16 text-center text-[13px] text-muted-foreground">
               <Home className="h-6 w-6 mx-auto mb-2 opacity-50" />
-              Pick a location on the left to see its photos and pins.
+              Pick a room on the left to see its photos and pins.
             </div>
           ) : photos.isLoading ? (
             <div className="text-[13px] text-muted-foreground px-2">Loading photos…</div>
           ) : !photos.data?.length ? (
             <div className="rounded-lg border border-dashed border-border px-4 py-16 text-center text-[13px] text-muted-foreground">
-              No source photos found for <b>{selected.room}</b> yet — the pool fills in automatically as items
+              No source photos found for <b>{selected.name}</b> yet — the pool fills in automatically as items
               from this room get detected via the inbox.
             </div>
           ) : (
             <>
               <div className="micro-label text-muted-foreground mb-2">
-                {selected.room} — {photos.data.length} photo{photos.data.length === 1 ? "" : "s"}
+                {selected.name} — {photos.data.length} photo{photos.data.length === 1 ? "" : "s"}
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {photos.data.map((p) => (
-                  <PhotoCard key={p.id} storageKey={p.storageKey} captureId={p.id} houseId={selected.houseId} />
+                  <PhotoCard key={p.id} storageKey={p.storageKey} captureId={p.id} roomId={selected.id} />
                 ))}
               </div>
             </>
@@ -131,7 +129,7 @@ export default function MapPage() {
  * one on demand (find-or-create, so repeat visits reuse the same row)
  * before navigating in.
  */
-function PhotoCard({ storageKey, captureId, houseId }: { storageKey: string; captureId: number; houseId: number | null }) {
+function PhotoCard({ storageKey, captureId, roomId }: { storageKey: string; captureId: number; roomId: number }) {
   const url = trpc.attachments.url.useQuery({ key: storageKey });
   const navigate = useNavigate();
   const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
@@ -146,7 +144,7 @@ function PhotoCard({ storageKey, captureId, houseId }: { storageKey: string; cap
         <div className="w-full aspect-video rounded bg-muted/40" />
       )}
       <button
-        onClick={() => ensure.mutate({ captureId, houseId })}
+        onClick={() => ensure.mutate({ captureId, roomId })}
         disabled={ensure.isPending}
         className="mt-1.5 flex items-center gap-1 text-[12px] text-primary hover:underline disabled:opacity-50"
       >

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { trpc } from "@/providers/trpc";
-import { setLastLocation, getLastLocation } from "@/lib/lastLocation";
+import { useHouse } from "@/context/house";
 
 // Leaflet's default marker icon references image files by relative URL,
 // which breaks under a bundler - point it at the package's own assets.
@@ -36,6 +36,7 @@ export function HousesMap({ onSelectHouse }: { onSelectHouse?: (houseId: number)
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const { setHouseId } = useHouse();
   const onSelectHouseRef = useRef(onSelectHouse);
   onSelectHouseRef.current = onSelectHouse;
 
@@ -58,7 +59,7 @@ export function HousesMap({ onSelectHouse }: { onSelectHouse?: (houseId: number)
     if (!map || !houses.data) return;
 
     const switchTo = (houseId: number) => {
-      setLastLocation({ ...getLastLocation(), houseId });
+      setHouseId(houseId);
       if (onSelectHouseRef.current) {
         onSelectHouseRef.current(houseId);
       } else {
@@ -95,7 +96,7 @@ export function HousesMap({ onSelectHouse }: { onSelectHouse?: (houseId: number)
     return () => {
       markers.forEach((m) => m.remove());
     };
-  }, [houses.data, navigate]);
+  }, [houses.data, navigate, setHouseId]);
 
   const locatedCount = (houses.data ?? []).filter((h) => h.lat != null && h.lng != null).length;
   const unlocatedCount = (houses.data ?? []).length - locatedCount;
