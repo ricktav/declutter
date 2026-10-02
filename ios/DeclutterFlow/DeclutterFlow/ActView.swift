@@ -171,7 +171,7 @@ struct ActView: View {
             get: { listOpen.map { DecisionListToken(decision: $0) } },
             set: { listOpen = $0?.decision }
         )) { token in
-            DecisionListSheet(decision: token.decision, items: inHouse)
+            DecisionListSheet(decision: token.decision, houseId: allHouses ? nil : houseId)
                 .environmentObject(session)
         }
     }
@@ -216,15 +216,21 @@ private struct DecisionListToken: Identifiable {
 private struct DecisionListSheet: View {
     @EnvironmentObject private var session: FlowSession
     let decision: ItemDecision
-    let items: [FlowItem]
+    var houseId: Int?
     @Environment(\.dismiss) private var dismiss
 
+    private var scoped: [FlowItem] {
+        session.visibleItems.filter { it in
+            !FlowLogic.needsCheck(it) && (houseId == nil || it.houseId == houseId)
+        }
+    }
+
     private var live: [FlowItem] {
-        items.filter { $0.status == .active && $0.decision == decision }
+        scoped.filter { $0.status == .active && $0.decision == decision }
     }
 
     private var gone: [FlowItem] {
-        items
+        scoped
             .filter { $0.status == .archived && $0.decision == decision }
             .sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
     }
