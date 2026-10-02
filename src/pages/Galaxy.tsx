@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import * as d3 from "d3-force";
 import { select } from "d3-selection";
 import { zoom, zoomIdentity, type ZoomBehavior } from "d3-zoom";
+import "d3-transition";
 import { drag } from "d3-drag";
 import {
   Laptop,
@@ -134,6 +135,10 @@ type SimNode = d3.SimulationNodeDatum & {
   parentId?: string;
   hx?: number;
   hy?: number;
+  /** level-1 only: radius to use for inter-cluster spacing, i.e. the disc's
+   * own radius plus how far its leaf halo actually reaches - not a flat
+   * guess, so clusters pack as tight as their real size allows. */
+  spacingR?: number;
 };
 
 const W = 1300;
@@ -258,20 +263,24 @@ export default function GalaxyPage() {
       g1.icon = grouping.level1Icon(g1.key, areaList);
     });
 
-    // 1. lay out level-1 centers - padded by each disc's own eventual halo
-    // size (not just its drawn radius), or two big clusters' leaves would
-    // intermix in the gap between them
+    // 1. lay out level-1 centers, spaced by each disc's OWN actual halo
+    // reach (not a flat guess) so a cluster with 2 leaves sits almost as
+    // close to its neighbor as its disc alone would allow, while a cluster
+    // with 50 leaves still gets the room its halo actually needs
     const l1Nodes: SimNode[] = l1List.map((g1) => {
       const count = [...g1.l2.values()].reduce((s, g) => s + g.items.length, 0);
-      return { id: `1:${g1.key}`, r: 18 + Math.sqrt(count) * 6, kind: "level1", color: g1.color, label: g1.label };
+      const r = 18 + Math.sqrt(count) * 6;
+      const maxRings = Math.max(1, ...[...g1.l2.values()].map((g2) => Math.ceil(g2.items.length / 9)));
+      const spacingR = r + 14 + maxRings * 10 + 6;
+      return { id: `1:${g1.key}`, r, spacingR, kind: "level1", color: g1.color, label: g1.label };
     });
     {
       const sim = d3
         .forceSimulation(l1Nodes)
-        .force("charge", d3.forceManyBody().strength(-1400))
-        .force("collide", d3.forceCollide<SimNode>((n) => n.r * 2.6 + 55))
-        .force("x", d3.forceX(W / 2).strength(0.05))
-        .force("y", d3.forceY(H / 2).strength(0.05))
+        .force("charge", d3.forceManyBody().strength(-120))
+        .force("collide", d3.forceCollide<SimNode>((n) => n.spacingR ?? n.r))
+        .force("x", d3.forceX(W / 2).strength(0.12))
+        .force("y", d3.forceY(H / 2).strength(0.12))
         .stop();
       for (let i = 0; i < 350; i++) sim.tick();
     }
@@ -345,6 +354,35 @@ export default function GalaxyPage() {
     simRef.current?.stop();
     const g = select(gRef.current);
     g.selectAll("*").remove();
+
+    // fit the whole scene in view on every grouping/filter change, so every
+    // node and leaf starts visible instead of requiring a manual zoom/pan
+    if (svgRef.current && zoomRef.current) {
+      const margin = 48;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (const n of [...built.l1Nodes, ...built.itemNodes]) {
+        const extra = n.kind === "level1" ? 22 : 0; // room for the label under the disc
+        minX = Math.min(minX, (n.x ?? 0) - n.r);
+        maxX = Math.max(maxX, (n.x ?? 0) + n.r);
+        minY = Math.min(minY, (n.y ?? 0) - n.r);
+        maxY = Math.max(maxY, (n.y ?? 0) + n.r + extra);
+      }
+      if (Number.isFinite(minX)) {
+        const bw = Math.max(maxX - minX, 50);
+        const bh = Math.max(maxY - minY, 50);
+        const scale = Math.min((W - margin * 2) / bw, (H - margin * 2) / bh, 6);
+        const k = Math.min(Math.max(scale, 0.3), 6);
+        const tx = W / 2 - k * (minX + maxX) / 2;
+        const ty = H / 2 - k * (minY + maxY) / 2;
+        select(svgRef.current)
+          .transition()
+          .duration(500)
+          .call(zoomRef.current.transform, zoomIdentity.translate(tx, ty).scale(k));
+      }
+    }
 
     const linkLayer = g.append("g");
     const l1Layer = g.append("g");
