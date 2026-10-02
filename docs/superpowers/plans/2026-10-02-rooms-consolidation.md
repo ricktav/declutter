@@ -2172,3 +2172,21 @@ git commit -m "Rooms consolidation: production rollout notes"
 **3. Type consistency.** `setItemLocation(db, itemId, { roomId } | { roomId: null; houseId })` is used with that exact shape in Tasks 4, 5. `rooms.list` row shape `{ id, houseId, name, floor, parentRoomId, hasGeometry, itemCount }` is what Tasks 6, 7, 8 read. `TriageSuggestion.roomId` is produced in Task 5 and read in Tasks 6 and 8. `callerFor` is exported from `api/test/areas.test.ts` and imported by later test files; vitest runs files serially so the shared export is safe.
 
 **4. Review Focus coverage.** (1) case-variant duplicate → Task 2 unique test + Task 4 `ensureRoom` test. (2) cross-house move → Task 4 `setItemLocation` test + Task 5 `items.update` test. (3) backfill twice → Task 3 idempotency test. (4) no header → Task 1 context test + Task 4 `rooms.list` no-context test. (5) merge two scanned rooms → Task 4 `rooms.merge` refusal test.
+
+---
+
+## Rollout executed 2026-10-02 17:00–17:10 (Task 10)
+
+- Backup: `~/declutter-before-rooms-20261002-1700.sql` (16 tables, 1,105 rows, 252 KB; `node db/backup.mjs`).
+- `db:adopt 0002_item_decision`, then 0003 applied from a worktree at the Task 2 commit (`d9bc1ec`).
+- Backfill run 1 (second run all zeros): rooms created 3 (Washok, Keuken, Zolderkamer), items linked 43,
+  photos linked 3. Verification counts: items with text but no room 0, photos with text but no room 0,
+  item/room house mismatch 0.
+- Ruling R5 applied through the API: `rooms.merge` Zolderkamer(13) → Floor 2(7) moved 32 items; Floor 2
+  renamed "Zolderkamer". House 2 now has 9 rooms: Begane grond, Floor 0, Washok (attic), Zolderkamer
+  (attic, scan, 40 items), Eetkamer, Eetkamer 2, Kamer 1 (LiDAR scan), Keuken, Woonkamer.
+- 0004 applied: dropped columns verified absent (`__drizzle_migrations` has 3 rows: 0002 adopted, 0003, 0004).
+- `npm run build`; production server restarted on port 3001 (old pid 38838 → new pid 22466, log
+  `~/declutter-prod.log`). Smoke: `/`, `/flow`, ping, rooms.list (9), items.listAll (138 placed / 0 unplaced),
+  attachments.listAllImages (144), areas.list, houses.list all 200 with the new shapes.
+- Note: the server logs "APP_TOKEN is not set"; access control from phase 1 is available but not enabled.
