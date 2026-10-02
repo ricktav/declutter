@@ -1,19 +1,24 @@
 import { defineConfig } from "vitest/config";
 import path from "path";
 
-const templateRoot = path.resolve(import.meta.dirname);
+const root = path.resolve(import.meta.dirname);
 
 export default defineConfig({
-  root: templateRoot,
+  root,
   resolve: {
     alias: {
-      "@": path.resolve(templateRoot, "src"),
-      "@contracts": path.resolve(templateRoot, "contracts"),
-      "@assets": path.resolve(templateRoot, "attached_assets"),
+      "@": path.resolve(root, "src"),
+      "@db": path.resolve(root, "db"),
+      "@contracts": path.resolve(root, "contracts"),
     },
   },
   test: {
     environment: "node",
     include: ["api/**/*.test.ts", "api/**/*.spec.ts"],
+    globalSetup: ["./api/test/globalSetup.ts"],
+    setupFiles: ["./api/test/setup.ts"],
+    // all test files share one test database; resetTestDb() in parallel
+    // workers would race, so files run one at a time
+    fileParallelism: false,
   },
 });
