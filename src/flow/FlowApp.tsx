@@ -127,7 +127,8 @@ function Shell() {
 /** With the lab lens on: how far the lab is - devices, backups, missing details. */
 function LabBand({ onGoSort }: { onGoSort: () => void }) {
   const { items, backups } = useFlow();
-  const lab = items.filter((it) => it.status === "active" && it.verificationStatus !== "rejected" && inLab(it));
+  // top-level things only: a computer's internal drives are part of it
+  const lab = items.filter((it) => it.status === "active" && it.verificationStatus !== "rejected" && inLab(it) && it.parentId == null);
   const states = lab.map((it) => backupState(it, backups));
   const needBackup = states.filter((s) => s !== "n/a").length;
   const covered = states.filter((s) => s === "covered" || s === "none-needed").length;
