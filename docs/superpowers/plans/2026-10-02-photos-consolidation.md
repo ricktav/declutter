@@ -10,7 +10,7 @@
 
 **Spec:** HomeBase architecture review §4.2 ("a picture of a thing is answered four ways") and roadmap Phase 3; the decisions in `/Users/ricktav/.claude/projects/-Volumes-T7-declutter/memory/homebase-review-decisions.md`; the pre-flight findings and controller rulings R-P1, R-P2 and R-P3 in `.superpowers/sdd/2026-10-02-photos-consolidation/preflight-findings.md`. Sibling plan, whose end state this plan is written against and whose executed rollout it mirrors: `docs/superpowers/plans/2026-10-02-rooms-consolidation.md` (read its Task 2, Task 9 and the "Rollout executed" notes at the end).
 
-**Out of scope (deferred to "P2"):** folding image-kind `captures` rows into `photos`. `captures` stays as it is: the inbox queue that photos and links are filed out of. `photos.sourceCaptureId` and `photos.cropBox` keep their current meaning (a cutout points at the capture it was cropped from). Drag-and-drop stays out of scope at Rick's request. Real foreign keys stay out of scope (router/FK cleanup plan).
+**Out of scope (deferred to "P2"):** folding image-kind `captures` rows into `photos`. `captures` stays as it is: the inbox queue that photos and links are filed out of. `photos.sourceCaptureId` and `photos.cropBox` keep their current meaning (a cutout points at the capture it was cropped from). Drag-and-drop stays out of scope at Rick's request. Real foreign keys stay out of scope (router/FK cleanup plan). `captures` stays structurally untouched: no column, procedure or ingestion path (web upload, Telegram) changes; only the write TARGETS of the filing procedures change in the cutover. P2 will also have to decide whether `photos` gets its own `contentHash`/`exifGps` (today only `captures` has them, so a photo added directly from the item page is never deduplicated).
 
 ## Design decisions this plan fixes
 
@@ -18,7 +18,7 @@
 |---|---|---|
 | Table split | `photos` (images, `storageKey` NOT NULL), `item_links` (`kind` ∈ link/note/file, plus `sourceCaptureId`), `photo_pins` (`photoId`) | One table per kind of thing; `item_links.sourceCaptureId` keeps the provenance `inbox.mergeDuplicates` relies on (finding #11). |
 | Ids | The copy preserves ids: `photos.id` and `item_links.id` equal the attachment's id, `photo_pins.id` the annotation's id, `photo_pins.photoId` the annotation's `attachmentId` | Old `/annotate/:id` links, event `entityId`s and pin references stay valid. Idempotency is keyed on the original id, so two identical notes never collapse (finding #13). |
-| Deprecated aliases (R-P1) | `attachments.url`, `attachments.add`, `attachments.remove`, `attachments.listAllImages`, `attachments.listForItem` stay with unchanged inputs and outputs. Rows that live in `item_links` are returned with the id **negated**; `attachments.remove` routes negative ids to `item_links`, positive ids to `photos` | After the copy, the two tables' id sequences diverge, so a bare number would be ambiguous. Negation keeps the output type (`number`) and makes the round trip exact. |
+| Deprecated aliases (R-P1) | `attachments.url`, `attachments.add`, `attachments.remove`, `attachments.unlink`, `attachments.listAllImages`, `attachments.listForItem` stay with unchanged inputs and outputs (`unlink` takes only a photo id). Rows that live in `item_links` are returned with the id **negated**; `attachments.remove` routes negative ids to `item_links`, positive ids to `photos` | After the copy, the two tables' id sequences diverge, so a bare number would be ambiguous. Negation keeps the output type (`number`) and makes the round trip exact. |
 | Router layout | `photos` (from `attachments.ts` and `map.ts`), `pins` (from `annotations.ts`, same procedure names except `listForAttachment` → `listForPhoto`), `itemLinks` (new) | Files stay focused (`annotations.ts` alone is 364 lines). Frontend renames stay mechanical: `trpc.annotations.X` → `trpc.pins.X`. `api/routers/map.ts` held only the two photo procedures, so it is deleted. |
 | Cutover (R-P2) | **Option (a): one cutover task, no dual-write** (Task 4) | Every reader and writer of the old tables switches in one commit, typed end to end by `tsc -b`. A dual-write period would need a second write path in `inbox` and `batch-detect-local.mjs` plus a reconciliation step, which is more code to get wrong than one larger, mechanical commit. Tasks 1–3 only add things nobody calls yet, and Task 5 only removes things nobody calls any more, so every commit on the branch is a working app. |
 | Event log | New events use `entityType` `"photo"`, `"item_link"`, `"pin"`; old `"attachment"`/`"annotation"` rows stay | The events table is append-only history. |
@@ -26,10 +26,10 @@
 
 ## Global Constraints
 
-- Work in your own worktree on branch `feat/photos-consolidation`, created from the tip of `feat/rooms-consolidation` (7f44f71), or from its rebased successor if Rick names one: `git -C /Volumes/T7/declutter worktree add /Volumes/T7/declutter-photos -b feat/photos-consolidation feat/rooms-consolidation`, then `cp /Volumes/T7/declutter/.env /Volumes/T7/declutter-photos/.env` and `cd /Volumes/T7/declutter-photos && npm ci`. Line numbers in this plan refer to 7f44f71. After a rebase they may be off by a few lines; the quoted code is what you match on.
+- `feat/photos-consolidation` already exists (main e85167d + this plan). The serving tree `/Volumes/T7/declutter` must be on `main` (it serves production from its `dist/`; switching branches there only changes source files, never `dist/`). Implementers work in the worktree `/Volumes/T7/declutter-photos` (created by the controller with `git worktree add /Volumes/T7/declutter-photos feat/photos-consolidation`, `node_modules` symlinked from the serving tree, `.env` copied). Line numbers in this plan refer to e85167d.
 - `/Volumes/T7/declutter` is the **production serving tree** (the server on port 3001 runs `dist/boot.js` from it, and its `uploads/` holds the live files). Tasks 1–5 never build, switch branches or run tests there.
 - Do not edit anything under `flow/` or `src/flow/` (AGENTS.md §1). If `npm run check` reports errors only under `src/flow/`, a Flow contract broke: stop and report it, do not fix Flow.
-- These must stay callable with unchanged input and output shapes: `attachments.url` (Flow, `src/flow/ui.tsx:10`), `items.listAll` including its `imageKey` field (Flow `ActTab`, `FindTab`, `SortTab`), `inbox.acceptMany`, and the adapter-facing `attachments.add`, `attachments.remove`, `attachments.listAllImages`, `attachments.listForItem`. You may add optional or extra fields.
+- These must stay callable with unchanged input and output shapes: `attachments.url` (Flow, `src/flow/ui.tsx:10`), `items.listAll` including its `imageKey` field (Flow `ActTab`, `FindTab`, `SortTab`), `inbox.acceptMany`, and the adapter-facing `attachments.add`, `attachments.remove`, `attachments.unlink`, `attachments.listAllImages`, `attachments.listForItem`. You may add optional or extra fields.
 - No new npm dependencies.
 - Schema changes go only through `db/schema.ts` + `npm run db:generate -- --name <tag>`; read the generated SQL; commit the SQL, the snapshot and `meta/_journal.json`. Tags: `0005_add_photos_tables` (Task 1), `0006_drop_attachments` (Task 5). Assumption, verified on 2026-10-02 across every local and remote ref: no other branch has a migration numbered 0005 or higher. Task 1 re-checks this before committing. Never `db:push`. `db:adopt` already ran on production during the rooms rollout and must never be run again.
 - Every DB-touching change has a vitest test on the seam: import `getTestDb`/`resetTestDb` from `api/test/db.ts`, call `resetTestDb()` in `beforeEach`, never set `DATABASE_URL` in a test.
@@ -68,7 +68,7 @@
 ### Task 1: Schema step A: add `photos`, `item_links`, `photo_pins`
 
 **Files:**
-- Modify: `db/schema.ts` (insert after the `attachments` table, which ends at line 187; extend the inferred-types block at the end of the file)
+- Modify: `db/schema.ts` (insert after the `attachments` table, which ends at line 191; extend the inferred-types block at the end of the file)
 - Create: `db/migrations/0005_add_photos_tables.sql`, `db/migrations/meta/0005_snapshot.json` (generated), `db/migrations/meta/_journal.json` (generated update)
 - Test: `api/test/photos-schema.test.ts`
 
@@ -138,7 +138,7 @@ Expected: FAIL. `photos`, `itemLinks` and `photoPins` are not exported from `@db
 
 - [ ] **Step 3: Add the three tables to `db/schema.ts`**
 
-Insert directly after the closing `);` of the `attachments` table (line 187), before the `// Measurements` comment block. Leave `attachments` and `photoAnnotations` in place; this step only adds:
+Insert directly after the closing `);` of the `attachments` table (line 191), before the `// Measurements` comment block. Leave `attachments` and `photoAnnotations` in place; this step only adds:
 
 ```typescript
 // ---------------------------------------------------------------------------
@@ -298,7 +298,8 @@ import { blockingIds, copyAttachmentsToPhotos, planCopy, verifyCopy } from "../l
 let conn: mysql.Connection;
 
 beforeAll(async () => {
-  conn = await mysql.createConnection({ uri: requireTestDatabaseUrl() });
+  // dateStrings: TIMESTAMP values round-trip as strings, so the copy cannot shift them across the DST gap
+  conn = await mysql.createConnection({ uri: requireTestDatabaseUrl(), dateStrings: true });
 });
 afterAll(async () => {
   await conn.end();
@@ -396,6 +397,9 @@ describe("copyAttachmentsToPhotos", () => {
     expect(await copyAttachmentsToPhotos(conn)).toEqual({ photosCreated: 0, itemLinksCreated: 0, pinsCreated: 0 });
     expect(await verifyCopy(conn)).toEqual({ missingPhotos: 0, missingItemLinks: 0, missingPins: 0, mismatched: 0, ok: true });
     expect(await db.select().from(photos)).toHaveLength(1);
+    // the counter moved past the legacy ids: a fresh photo cannot collide with, or reuse, one
+    const [{ id: fresh }] = await db.insert(photos).values({ storageKey: "local/test-fake-fresh.jpg" }).$returningId();
+    expect(fresh).toBeGreaterThan(51);
   });
 });
 ```
@@ -547,6 +551,18 @@ export async function copyAttachmentsToPhotos(c: Connection): Promise<CopyResult
     await c.rollback();
     throw err;
   }
+  // The copied rows carry their legacy ids, so each new table's counter must
+  // start above the largest legacy id (an explicit-id insert does not always
+  // move it far enough, and the old sequences were larger). ALTER TABLE commits
+  // implicitly, so these run after the transaction, with the value computed first.
+  for (const [table, source] of [
+    ["photos", "attachments"],
+    ["item_links", "attachments"],
+    ["photo_pins", "photo_annotations"],
+  ] as const) {
+    const next = Number((await rows(c, `select coalesce(max(id), 0) + 1 as n from ${source}`))[0].n);
+    await c.query(`ALTER TABLE ${table} AUTO_INCREMENT = ${next}`);
+  }
   return result;
 }
 
@@ -612,7 +628,8 @@ if (!["--plan", "--copy", "--verify"].includes(mode)) {
   process.exit(1);
 }
 
-const c = await mysql.createConnection({ uri: process.env.DATABASE_URL });
+// dateStrings: TIMESTAMP values round-trip as strings, so the copy cannot shift them across the DST gap
+const c = await mysql.createConnection({ uri: process.env.DATABASE_URL, dateStrings: true });
 try {
   const plan = await planCopy(c);
   console.log("plan", plan);
@@ -683,7 +700,7 @@ JSON crop boxes are re-serialized for mysql2."
 - Create: `api/lib/photos.ts`
 - Create: `api/routers/photos.ts`, `api/routers/itemLinks.ts`
 - Create: `api/routers/pins.ts` (copied from `api/routers/annotations.ts`, then edited)
-- Modify: `api/lib/entities.ts:55-72` (`releaseStoredFiles` also checks `photos` and `item_links`)
+- Modify: `api/lib/entities.ts:50-72` (`releaseStoredFiles` also checks `photos` and `item_links`)
 - Modify: `api/router.ts` (mount `photos`, `pins`, `itemLinks`; the old `attachments`, `annotations` and `map` stay mounted until Task 4)
 - Create: `api/test/fixtures.ts`
 - Test: `api/test/photos-routers.test.ts`
@@ -1030,6 +1047,7 @@ export async function releaseStoredFiles(db: Db, keys: string[]): Promise<number
 // file). The photos/pins/itemLinks routers and the deprecated attachments.*
 // aliases all go through these, so each table is written one way.
 import { asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 import { areas, captures, itemLinks, items, photoPins, photos } from "@db/schema";
 import type { getDb } from "../queries/connection";
 import { readFileBytes } from "./filestore";
@@ -1092,6 +1110,26 @@ export async function removePhoto(db: Db, id: number): Promise<{ ok: true }> {
     await logEvent({ entityType: "photo", entityId: id, action: "deleted", summary: `Photo "${row?.title ?? id}" removed` }, tx);
   });
   if (row) await releaseStoredFiles(db, [row.storageKey]);
+  return { ok: true as const };
+}
+
+/** Un-pin a photo from its item without deleting it: it goes back to the
+ * Photos pool, keeping the item's room so it does not lose its place. Used by
+ * photos.unlink and the deprecated attachments.unlink alias. */
+export async function unlinkPhoto(db: Db, id: number): Promise<{ ok: true }> {
+  const photo = await db.query.photos.findFirst({ where: eq(photos.id, id) });
+  if (!photo) throw new TRPCError({ code: "NOT_FOUND", message: "Photo not found." });
+  const item = photo.itemId ? await db.query.items.findFirst({ where: eq(items.id, photo.itemId) }) : null;
+  await db
+    .update(photos)
+    .set({ itemId: null, roomId: photo.roomId ?? item?.roomId ?? null })
+    .where(eq(photos.id, id));
+  await logEvent({
+    entityType: "photo",
+    entityId: id,
+    action: "unlinked",
+    summary: `Photo "${photo.title ?? id}" unlinked from item #${photo.itemId} - back in the photo pool`,
+  });
   return { ok: true as const };
 }
 
@@ -1253,8 +1291,12 @@ import { putFile, readFileBytes, urlForKey } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
 import { logEvent } from "../lib/events";
-import { addPhoto, listPhotoCatalog, removePhoto } from "../lib/photos";
+import { addPhoto, listPhotoCatalog, removePhoto, unlinkPhoto } from "../lib/photos";
 
+// `photos.unlink` delegates to `unlinkPhoto` in api/lib/photos.ts (Step 5), so
+// the deprecated attachments.unlink alias (Task 4) shares one implementation.
+// Drop any import above (`items`, `logEvent`, `TRPCError`, `eq`...) that no
+// other procedure in this file still uses; `npx eslint api` flags them.
 const cropBoxInput = z.object({
   xPct: z.number().min(0).max(100),
   yPct: z.number().min(0).max(100),
@@ -1298,23 +1340,7 @@ export const photosRouter = createRouter({
 
   /** Un-pin a photo from its item without deleting it: it goes back to the
    * Photos pool, keeping the item's room so it does not lose its place. */
-  unlink: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    const db = getDb();
-    const photo = await db.query.photos.findFirst({ where: eq(photos.id, input.id) });
-    if (!photo) throw new TRPCError({ code: "NOT_FOUND", message: "Photo not found." });
-    const item = photo.itemId ? await db.query.items.findFirst({ where: eq(items.id, photo.itemId) }) : null;
-    await db
-      .update(photos)
-      .set({ itemId: null, roomId: photo.roomId ?? item?.roomId ?? null })
-      .where(eq(photos.id, input.id));
-    await logEvent({
-      entityType: "photo",
-      entityId: input.id,
-      action: "unlinked",
-      summary: `Photo "${photo.title ?? input.id}" unlinked from item #${photo.itemId} - back in the photo pool`,
-    });
-    return { ok: true };
-  }),
+  unlink: procedure.input(z.object({ id: z.number() })).mutation(({ input }) => unlinkPhoto(getDb(), input.id)),
 
   listForItem: procedure.input(z.object({ itemId: z.number() })).query(({ input }) =>
     getDb().select().from(photos).where(eq(photos.itemId, input.itemId)).orderBy(desc(photos.createdAt)),
@@ -1660,9 +1686,9 @@ This is the R-P2 cutover (option (a), see Design decisions). After this commit n
   - `linkAsLegacy(l: ItemLink): LegacyAttachment` (id **negated**)
   - `legacyAttachmentsForItem(db: Db, itemId: number): Promise<LegacyAttachment[]>` (newest first)
 - Produces, tRPC:
-  - `items.get` now returns `photos: Photo[]` and `links: ItemLink[]` (each newest first) instead of `attachments`. `items.listByArea` and `items.listAll` keep `imageKey: string | null`, now the storage key of `coverPhotos()`.
-  - Deprecated aliases, inputs and outputs unchanged: `attachments.url({ key }) → { url }`, `attachments.add({ itemId?, areaId?, kind, title?, content?, url?, fileName?, storageKey?, mimeType? }) → { id: number; storageKey: string | null }` (a negative id for link/note/file), `attachments.remove({ id }) → { ok: true }` (negative → `item_links`), `attachments.listAllImages() → (CatalogRow with source "attachment" | "capture")[]`, `attachments.listForItem({ itemId }) → LegacyAttachment[]`. One deliberate change: `attachments.add` with `kind: "image"` and no `storageKey` now fails (BAD_REQUEST) instead of writing a photo row with no file.
-  - Removed: `annotations.*` (use `pins.*`), `map.photosForLocation` (use `photos.forRoom`), `map.ensureAttachmentForCapture` (use `photos.ensureForCapture`, which returns `{ photoId }`), `attachments.unlink`, `attachments.urlForAttachment`, `attachments.sourcePhoto`, `attachments.recrop`, `attachments.createCutoutFromAttachment` (use the `photos.*` equivalents).
+  - `items.get` now returns `photos: Photo[]`, `links: ItemLink[]` (each newest first) and a deprecated `attachments: LegacyAttachment[]` array (photos plus links in the old shape, newest first; link ids negated) for external callers. `items.listByArea` and `items.listAll` keep `imageKey: string | null`, now the storage key of `coverPhotos()`.
+  - Deprecated aliases, inputs and outputs unchanged: `attachments.url({ key }) → { url }`, `attachments.add({ itemId?, areaId?, kind, title?, content?, url?, fileName?, storageKey?, mimeType? }) → { id: number; storageKey: string | null }` (a negative id for link/note/file), `attachments.remove({ id }) → { ok: true }` (negative → `item_links`), `attachments.unlink({ id }) → { ok: true }` (photo ids only; a negative id is BAD_REQUEST), `attachments.listAllImages() → (CatalogRow with source "attachment" | "capture")[]`, `attachments.listForItem({ itemId }) → LegacyAttachment[]`. One deliberate change: `attachments.add` with `kind: "image"` and no `storageKey` now fails (BAD_REQUEST) instead of writing a photo row with no file.
+  - Removed: `annotations.*` (use `pins.*`), `map.photosForLocation` (use `photos.forRoom`), `map.ensureAttachmentForCapture` (use `photos.ensureForCapture`, which returns `{ photoId }`), `attachments.urlForAttachment`, `attachments.sourcePhoto`, `attachments.recrop`, `attachments.createCutoutFromAttachment` (use the `photos.*` equivalents).
   - `houses.impact` and `houses.reassign` `photoCount` now count photos only. The old count included notes and links on the house's items.
   - Workbench route `/annotate/:photoId` (same ids as before, because the copy preserves them).
 
@@ -1677,6 +1703,7 @@ import { areas, captures, houses, itemLinks, items, photoPins, photos, rooms } f
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 import { keyPath, removeTestUploads, writeTestJpeg } from "./fixtures";
+import { addPhoto } from "../lib/photos";
 
 beforeEach(async () => {
   await resetTestDb();
@@ -1710,6 +1737,7 @@ describe("after the cutover, a filed object is visible everywhere", () => {
     const detail = await callerFor(h1).items.get({ id: itemId });
     expect(detail?.photos.map((p) => p.id)).toEqual([photo.id]);
     expect(detail?.links).toEqual([]);
+    expect(detail?.attachments.map((a) => [a.id, a.kind])).toEqual([[photo.id, "image"]]);
     const catalog = await callerFor(h1).photos.listAll();
     expect(catalog.filter((r) => r.source === "photo").map((r) => r.id)).toEqual([photo.id]);
     expect(catalog.some((r) => r.source === "capture" && r.id === capId)).toBe(false);
@@ -1831,6 +1859,17 @@ describe("deprecated attachments.* aliases", () => {
     expect((await db.select().from(photos)).map((p) => p.id)).toEqual([7]);
   });
 
+  it("attachments.unlink puts a photo back in the pool and refuses a negative id", async () => {
+    const { db, h1, itemId, areaId, keuken } = await seed();
+    const photo = await addPhoto(db, { itemId, areaId, storageKey: "local/test-fake-unlink-alias.jpg" });
+
+    expect(await callerFor(h1).attachments.unlink({ id: photo.id })).toEqual({ ok: true });
+    const [row] = await db.select().from(photos).where(eq(photos.id, photo.id));
+    expect(row.itemId).toBeNull();
+    expect(row.roomId).toBe(keuken);
+    await expect(callerFor(h1).attachments.unlink({ id: -1 })).rejects.toThrow(/Only a photo/);
+  });
+
   it("add routes images to photos and the rest to item_links; url, listAllImages and remove keep their shapes", async () => {
     const { db, h1, itemId, areaId } = await seed();
     const key = await writeTestJpeg();
@@ -1865,13 +1904,13 @@ describe("deprecated attachments.* aliases", () => {
     await db.insert(photos).values({ roomId: zolder, title: "photo", storageKey: "local/test-fake-merge.jpg" });
 ```
 
-`api/test/items-location.test.ts`: delete the whole `describe("attachments.unlink / map.photosForLocation", ...)` block (lines 83-100 and the blank line after it). `photos.unlink` and `photos.forRoom` are covered in `photos-routers.test.ts`. Change line 3 to:
+`api/test/items-location.test.ts`: delete the whole `describe("attachments.unlink / map.photosForLocation", ...)` block (lines 83-100 and the blank line after it). `photos.unlink` and `photos.forRoom` are covered in `photos-routers.test.ts`. Then change the remaining schema import line to:
 
 ```typescript
 import { areas, houses, items, rooms } from "@db/schema";
 ```
 
-`api/test/inbox-location.test.ts`: delete the whole `describe("map.ensureAttachmentForCapture", ...)` block (lines 42-57 and the blank line after it; `photos.ensureForCapture` is covered in `photos-routers.test.ts`), delete line 2 (`import { eq } from "drizzle-orm";`, now unused) and change line 3 to:
+`api/test/inbox-location.test.ts`: delete the whole `describe("map.ensureAttachmentForCapture", ...)` block (lines 42-57 and the blank line after it; `photos.ensureForCapture` is covered in `photos-routers.test.ts`), delete line 2 (`import { eq } from "drizzle-orm";`, now unused) and then change the remaining schema import line to:
 
 ```typescript
 import { areas, captures, houses, items, rooms } from "@db/schema";
@@ -2114,7 +2153,7 @@ Line 2 becomes `import { eq, desc, or, and, asc } from "drizzle-orm";` and line 
 import { areas, items, photos, itemLinks, relations, tasks, ideaItems, ideas, events, houses, ITEM_DECISIONS, type ItemPos } from "@db/schema";
 ```
 
-and after line 10 add `import { coverPhotos } from "../lib/photos";`.
+and after line 10 add `import { coverPhotos } from "../lib/photos";` (Step 7 below extends it).
 
 In `listByArea`, replace lines 43-51 (from `const atts = await db` through the `return rows.map(...)`) with:
 
@@ -2143,7 +2182,10 @@ and in its return object replace `attachments: atts,` (line 156) with:
 ```typescript
       photos: itemPhotos,
       links: itemLinkRows,
+      attachments: [...itemPhotos.map(photoAsLegacy), ...itemLinkRows.map(linkAsLegacy)].sort((a, b) => +b.createdAt - +a.createdAt || b.id - a.id), // DEPRECATED alias field for external callers; link ids are negated
 ```
+
+and extend the `../lib/photos` import added above to `import { coverPhotos, linkAsLegacy, photoAsLegacy } from "../lib/photos";`.
 
 (The local `links` variable further down in `get` holds `ideaItems` rows; it is a different name from the `links` return key and stays as it is.)
 
@@ -2191,7 +2233,7 @@ Replace the whole of `api/routers/attachments.ts` with:
 // api/routers/attachments.ts
 // DEPRECATED aliases, kept for one release (AGENTS.md section 2). Flow
 // (src/flow/ui.tsx) and the Computer Lab adapter call attachments.url/add/
-// remove/listAllImages/listForItem; their inputs and outputs are unchanged.
+// remove/unlink/listAllImages/listForItem; their inputs and outputs are unchanged.
 // Storage moved to photos (images) and item_links (link/note/file). Rows from
 // item_links carry a NEGATED id so a number never means both a photo and a
 // link; pass ids back to attachments.remove exactly as received.
@@ -2201,7 +2243,7 @@ import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { urlForKey } from "../lib/filestore";
-import { addItemLink, addPhoto, legacyAttachmentsForItem, listPhotoCatalog, removeItemLink, removePhoto } from "../lib/photos";
+import { addItemLink, addPhoto, legacyAttachmentsForItem, listPhotoCatalog, removeItemLink, removePhoto, unlinkPhoto } from "../lib/photos";
 
 export const attachmentsRouter = createRouter({
   add: procedure
@@ -2240,6 +2282,11 @@ export const attachmentsRouter = createRouter({
   remove: procedure.input(z.object({ id: z.number() })).mutation(({ input }) => {
     const db = getDb();
     return input.id < 0 ? removeItemLink(db, -input.id) : removePhoto(db, input.id);
+  }),
+
+  unlink: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    if (input.id < 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Only a photo can be unlinked; remove a link or note with attachments.remove." });
+    return unlinkPhoto(getDb(), input.id);
   }),
 
   url: procedure.input(z.object({ key: z.string() })).query(async ({ input }) => ({ url: await urlForKey(input.key) })),
@@ -2478,7 +2525,7 @@ Expected: the first command prints nothing. The second prints exactly `src/flow/
 In `AGENTS.md` §2, in the tRPC bullet replace `` `attachments.url`, `rooms.get`. `` with `` `attachments.url` (deprecated alias of `photos.url`), `rooms.get`. `` and add this bullet directly below the tRPC bullet:
 
 ```markdown
-- Photos (since the photos consolidation): `photos.url`, `photos.listAll`, `photos.listForItem`, `photos.add`, `photos.remove`, `itemLinks.add`, `itemLinks.remove`, `itemLinks.listForItem`. Deprecated aliases, kept for one release with unchanged inputs and outputs: `attachments.url`, `attachments.add`, `attachments.remove`, `attachments.listAllImages`, `attachments.listForItem`. They return `item_links` rows with a negated id; pass ids back to `attachments.remove` unchanged. New callers use the `photos.*` and `itemLinks.*` names.
+- Photos (since the photos consolidation): `photos.url`, `photos.listAll`, `photos.listForItem`, `photos.add`, `photos.remove`, `photos.unlink`, `itemLinks.add`, `itemLinks.remove`, `itemLinks.listForItem`. Deprecated aliases, kept for one release with unchanged inputs and outputs: `attachments.url`, `attachments.add`, `attachments.remove`, `attachments.unlink`, `attachments.listAllImages`, `attachments.listForItem`. They return `item_links` rows with a negated id, and `items.get` still carries a deprecated `attachments` array in the same shape next to `photos` and `links`; pass ids back to `attachments.remove` unchanged; `attachments.unlink` accepts photo ids only. New callers use the `photos.*` and `itemLinks.*` names.
 ```
 
 In `README.md` line 41, replace `` `/annotate/:attachmentId` `` with `` `/annotate/:photoId` ``.
@@ -2518,11 +2565,13 @@ and map's photo procedures are replaced by pins.* and photos.*."
 ### Task 5: Schema step B: drop `attachments` and `photo_annotations`
 
 **Files:**
-- Modify: `db/schema.ts` (remove the `attachments` table and its comment block, lines 162-187; the `photoAnnotations` table and its comment block, lines 310-331; the `Attachment` and `PhotoAnnotation` types)
+- Modify: `db/schema.ts` (remove the `attachments` table and its comment block, lines 162-191; the `photoAnnotations` table and its comment block, lines 311-335; the `Attachment` and `PhotoAnnotation` types)
 - Create: `db/migrations/0006_drop_attachments.sql`, `db/migrations/meta/0006_snapshot.json` (generated), `meta/_journal.json` (generated update)
 - Delete: `api/test/copy-attachments.test.ts` (its subject tables no longer exist in the schema; Task 2 proved the behaviour and Task 6 logs the production run, the same call the rooms plan made for its backfill test)
 - Modify: `api/lib/copyAttachmentsToPhotos.ts`, `scripts/copy-attachments-to-photos.mjs` (a HISTORICAL header line)
 - Test: `api/test/photos-schema.test.ts`
+
+**Warning:** once 0006 is applied to `declutter_test`, any other worktree still on the old schema fails `npm test` at `TRUNCATE attachments` until it rebases onto this branch. Tell Rick and the declutter-flow session before running Task 5 Step 6.
 
 **Interfaces:**
 - Consumes: Task 4's guarantee that no code path reads or writes `attachments` or `photo_annotations`.
@@ -2616,7 +2665,7 @@ Shell variables do not survive between separate commands in an agent session. Ea
 - Tasks 1–5 are committed on `feat/photos-consolidation` and the whole-branch review is done.
 - `npm test` passes in `/Volumes/T7/declutter-photos`.
 - Re-run Task 1 Step 6's branch scan. No branch other than `feat/photos-consolidation` may have `0005_` or `0006_` files.
-- Ask Rick, and wait for an explicit yes: "Photos rollout: about 5 minutes of downtime on :3001. The serving tree `/Volumes/T7/declutter` moves (detached) to the `feat/photos-consolidation` tip. The drop of `attachments`/`photo_annotations` is a separate yes, later. OK to start?"
+- Ask Rick, and wait for an explicit yes: "Photos rollout: about 5 minutes of downtime on :3001. The serving tree `/Volumes/T7/declutter` moves (detached) to the `feat/photos-consolidation` tip. The drop of `attachments`/`photo_annotations` is a separate yes, later. Also: old-code dev servers must not run against production after 0006. OK to start?"
 
 - [ ] **Step 1: Back up**
 
@@ -2696,10 +2745,18 @@ Expected: 4 rows in `__drizzle_migrations` (0002 adopted, 0003, 0004, 0005); `ph
 
 - [ ] **Step 4: Stop the production server**
 
+First list every vite dev server and the worktree it runs in:
+
+```bash
+for p in $(pgrep -f 'node_modules/.bin/vite'); do echo "$p $(lsof -a -p $p -d cwd -Fn | sed -n 's/^n//p')"; done
+```
+
+Rick stops every dev server whose worktree `.env` has the production `DATABASE_URL` (on 2026-10-02: :3000 in /Volumes/T7/declutter and :3011 in /Volumes/T7/declutter-flow). A dev server on the old code writes `attachments` straight to production and would slip rows past the copy. Re-check with the same command after the copy (Step 5). Then:
+
 ```bash
 git -C /Volumes/T7/declutter rev-parse --abbrev-ref HEAD > ~/photos-rollout-prev-ref
 git -C /Volumes/T7/declutter rev-parse --short HEAD >> ~/photos-rollout-prev-ref
-cat ~/photos-rollout-prev-ref
+cat ~/photos-rollout-prev-ref   # expected: main, then e85167d
 PID=$(pgrep -f 'node dist/boot.js'); echo "pid $PID"
 echo "$(date -u +%FT%TZ) photos rollout: stopping pid $PID (serving $(tr '\n' ' ' < ~/photos-rollout-prev-ref))" >> ~/declutter-prod.log
 kill "$PID"
@@ -2717,6 +2774,8 @@ Expected: `copied { photosCreated: <plan.images>, itemLinksCreated: <plan.links>
 
 If the exit code is 3, or anything throws: do not start the new build. Start the old server again (Rollback A below) and report to Rick. The copy runs in one transaction, so a failed run left nothing half-written.
 
+After the copy, re-run the dev-server listing from Step 4. Anything that started in the meantime and points at the production `DATABASE_URL` is stopped before the new server starts.
+
 - [ ] **Step 6: Build and start the new server**
 
 ```bash
@@ -2733,7 +2792,7 @@ cd /Volumes/T7/declutter && git switch --detach feat/photos-consolidation \
   && echo "$(date -u +%FT%TZ) photos rollout: started new build at $(git rev-parse --short HEAD)" >> ~/declutter-prod.log
 ```
 
-(`--detach`, because the branch is checked out in `/Volumes/T7/declutter-photos` and git refuses a branch that is checked out in two worktrees.) The `git diff --stat` must show only the `db:copy-photos` line in `package.json` and nothing in `package-lock.json`, so `npm ci` is not needed. Then run `pgrep -f 'node dist/boot.js'` (note the new pid) and `tail -4 ~/declutter-prod.log`. Expected: `Server running on http://localhost:3001/` and `[telegram] inbox bot started`.
+(`--detach`, because the branch is checked out in `/Volumes/T7/declutter-photos` and git refuses a branch that is checked out in two worktrees.) The `git diff --stat` must show only the `db:copy-photos` line in `package.json` and nothing in `package-lock.json`, so `npm ci` is not needed. Step 6 is the point where the serving tree leaves `main` for the branch tip. Then run `pgrep -f 'node dist/boot.js'` (note the new pid) and `tail -4 ~/declutter-prod.log`. Expected: `Server running on http://localhost:3001/` and `[telegram] inbox bot started`.
 
 - [ ] **Step 7: Smoke the new server**
 
@@ -2781,7 +2840,7 @@ cd /Volumes/T7/declutter-photos && git add docs/superpowers/plans/2026-10-02-pho
 
 **Rollback A (any time before Step 8):** `attachments` and `photo_annotations` are untouched.
 1. Stop the new server: `kill $(pgrep -f 'node dist/boot.js')`.
-2. `cd /Volumes/T7/declutter && git switch "$(sed -n 1p ~/photos-rollout-prev-ref)"`. That line holds the branch the tree was on; if it says `HEAD`, use `git switch --detach "$(sed -n 2p ~/photos-rollout-prev-ref)"`.
+2. `cd /Volumes/T7/declutter && git switch "$(sed -n 1p ~/photos-rollout-prev-ref)"`. The serving tree starts the rollout on `main` (e85167d), which is what that file records, so this switches it back to `main`; if the file says `HEAD`, use `git switch --detach "$(sed -n 2p ~/photos-rollout-prev-ref)"`.
 3. `npm run build`, then start the server the same way as in Step 6.
 
 The new tables can stay (they are additive). Anything filed while the new server ran exists only in `photos`/`item_links`. List it with `select * from photos where id > (select max(id) from attachments)` and the same query for `item_links`, and tell Rick.
