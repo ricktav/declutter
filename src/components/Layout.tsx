@@ -33,7 +33,6 @@ import {
   Pencil,
   Loader2,
   Images,
-  Workflow,
   Network,
   type LucideIcon,
 } from "lucide-react";
@@ -141,7 +140,6 @@ const NAV = [
   { to: "/tasks", label: "Tasks", icon: ListChecks },
   { to: "/wiki", label: "Wiki", icon: BookOpen },
   { to: "/activity", label: "Activity", icon: History },
-  { to: "/sessie-overzicht", label: "Overview", icon: Workflow },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 

@@ -27,8 +27,7 @@ photo pins) works normally.
 
 For AI features set any OpenAI-compatible provider via `LLM_BASE_URL`,
 `LLM_API_KEY`, `LLM_MODEL`, `LLM_VISION_MODEL` — e.g. xAI Grok, OpenAI, or a
-local Ollama. When deployed on the Kimi platform, the platform gateway is used
-automatically instead.
+local Ollama.
 
 ## Modes
 
@@ -47,7 +46,9 @@ automatically instead.
 
 ## Notes for self-hosting
 
-- Database: MySQL 8 (or TiDB). The schema is managed via Drizzle — `npm run db:push`.
-- File/photo storage and the LLM run through the Kimi platform gateway when deployed there;
-  self-hosted setups keep notes/links without binary photo storage unless deployed on the platform.
+- Database: MySQL 8. The schema lives in `db/schema.ts`; `db/migrations/` holds the
+  generated SQL (`npm run db:generate` after a schema change, `npm run db:migrate` to
+  apply). An existing database that was created with `db:push` can keep using
+  `db:push`; the `0000_baseline` migration describes that same state.
+- Photos and files are stored on local disk under `uploads/` and served at `/uploads/*`.
 - No authentication — intended for a trusted LAN (or behind Tailscale).

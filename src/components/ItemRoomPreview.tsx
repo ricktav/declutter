@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Link } from "react-router";
 import { Box } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
-import { RoomPlan3D } from "@/components/RoomPlan3D";
+const RoomPlan3D = lazy(() => import("@/components/RoomPlan3D").then((m) => ({ default: m.RoomPlan3D })));
 
 /**
  * Compact, read-only 2D/3D room-plan preview for an item's detail page -
@@ -13,6 +13,8 @@ import { RoomPlan3D } from "@/components/RoomPlan3D";
 export function ItemRoomPreview({ roomId, itemId }: { roomId: number; itemId: number }) {
   const room = trpc.rooms.get.useQuery({ id: roomId });
   const [view, setView] = useState<"2d" | "3d">("2d");
+  // three.js (and its WebGL context) is only loaded once the 3D tab is opened
+  const [opened3d, setOpened3d] = useState(false);
 
   if (!room.data) return null;
   const planItems = room.data.items.map((it) => ({ id: it.id, name: it.name, pos: it.pos }));
@@ -33,7 +35,7 @@ export function ItemRoomPreview({ roomId, itemId }: { roomId: number; itemId: nu
           </button>
           <button
             type="button"
-            onClick={() => setView("3d")}
+            onClick={() => { setOpened3d(true); setView("3d"); }}
             className={`px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-0.5 ${view === "3d" ? "bg-white shadow-sm" : "text-muted-foreground"}`}
           >
             <Box className="h-2.5 w-2.5" /> 3D
@@ -41,8 +43,8 @@ export function ItemRoomPreview({ roomId, itemId }: { roomId: number; itemId: nu
         </div>
       </div>
       <div className="max-w-[220px] mx-auto">
-        {/* both views stay mounted, same as the full RoomPlan page, so
-            switching tabs doesn't tear down the 3D view's WebGL context */}
+        {/* once opened, both views stay mounted so switching tabs doesn't
+            tear down the 3D view's WebGL context */}
         <div hidden={view !== "2d"}>
           <RoomPlan2D
             widthM={room.data.widthM ?? 0}
@@ -54,6 +56,8 @@ export function ItemRoomPreview({ roomId, itemId }: { roomId: number; itemId: nu
           />
         </div>
         <div hidden={view !== "3d"}>
+          {opened3d && (
+          <Suspense fallback={null}>
           <RoomPlan3D
             widthM={room.data.widthM ?? 0}
             depthM={room.data.depthM ?? 0}
@@ -63,6 +67,8 @@ export function ItemRoomPreview({ roomId, itemId }: { roomId: number; itemId: nu
             selectedId={itemId}
             active={view === "3d"}
           />
+          </Suspense>
+          )}
         </div>
       </div>
     </div>

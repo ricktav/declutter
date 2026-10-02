@@ -4,7 +4,6 @@ import fs from "fs"
 const __dirname = import.meta.dirname
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
-import { inspectAttr } from 'kimi-plugin-inspect-react'
 
 // Local HTTPS cert (mkcert, gitignored under .certs/) - browser APIs like
 // navigator.geolocation require a secure context, which plain http:// over
@@ -21,7 +20,8 @@ const https = fs.existsSync(certFile) && fs.existsSync(keyFile)
 export default defineConfig({
   plugins: [
     devServer({ entry: "api/boot.ts", exclude: [/^\/(?!api\/).*$/] }),
-    inspectAttr(), react()],
+    react(),
+  ],
   server: {
     port: 3000,
     host: true, // listen on 0.0.0.0 — reachable from LAN (phone on same wifi)

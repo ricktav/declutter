@@ -155,7 +155,6 @@ export default function SettingsPage() {
   const sourceLabel: Record<string, string> = {
     settings: "Settings (this page)",
     env: ".env file",
-    kimi: "Kimi platform",
     none: "not configured",
   };
 
@@ -343,8 +342,8 @@ export default function SettingsPage() {
       </div>
 
       <p className="text-[12px] text-muted-foreground mt-4">
-        Precedence: this page → <span className="font-data">.env</span> <span className="font-data">LLM_*</span> variables →
-        Kimi platform gateway. Settings are stored in <span className="font-data">settings.json</span> next to the app
+        Precedence: this page → <span className="font-data">.env</span> <span className="font-data">LLM_*</span> variables.
+        Settings are stored in <span className="font-data">~/.declutter/settings.json</span>
         (not committed to git).
       </p>
 

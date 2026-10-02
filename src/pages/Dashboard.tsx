@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { timeAgo } from "@/lib/format";
 import { getLastLocation, setLastLocation } from "@/lib/lastLocation";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { FloorsEditor } from "@/components/FloorsEditor";
-import { HousesMap } from "@/components/HousesMap";
+const HousesMap = lazy(() => import("@/components/HousesMap").then((m) => ({ default: m.HousesMap })));
 import { aerialThumbUrl, fetchParcelInfo, kadastraleKaartUrl, reverseGeocode, type AddressSuggestion, type ParcelInfo } from "@/lib/pdok";
 import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Plus } from "lucide-react";
 import {
@@ -718,7 +718,9 @@ export default function Dashboard() {
 
       {showMap && (
         <div className="mt-4">
-          <HousesMap onSelectHouse={selectHouse} />
+          <Suspense fallback={<div className="h-[260px] rounded-lg border border-border bg-muted/30" />}>
+            <HousesMap onSelectHouse={selectHouse} />
+          </Suspense>
         </div>
       )}
 
