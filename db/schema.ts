@@ -357,7 +357,7 @@ export const events = mysqlTable(
     actor: varchar("actor", { length: 32 }).$type<"user" | "ai" | "system">().notNull().default("user"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
-  (t) => [index("events_created_idx").on(t.createdAt)],
+  (t) => [index("events_created_idx").on(t.createdAt), index("events_entity_idx").on(t.entityType, t.entityId, t.createdAt)],
 );
 
 // ---------------------------------------------------------------------------

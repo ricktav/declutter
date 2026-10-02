@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { eq, and, sql } from "drizzle-orm";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { areas, items } from "@db/schema";
 import type { AttributeDef } from "@db/schema";
 import { logEvent } from "../lib/events";
+import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 
 const attributeDefSchema = z.object({
   key: z.string().min(1),
@@ -17,7 +18,7 @@ export const areasRouter = createRouter({
   // optional houseId scopes the item counts to just that house - the
   // Dashboard uses this so "working in" a house also means its topic
   // breakdown reflects that house instead of the whole inventory
-  list: publicQuery
+  list: procedure
     .input(z.object({ houseId: z.number().nullable().optional() }).optional())
     .query(async ({ input }) => {
       const db = getDb();
@@ -35,11 +36,11 @@ export const areasRouter = createRouter({
       return all.map((a) => ({ ...a, itemCount: countMap.get(a.id) ?? 0 }));
     }),
 
-  get: publicQuery.input(z.object({ slug: z.string() })).query(async ({ input }) => {
+  get: procedure.input(z.object({ slug: z.string() })).query(async ({ input }) => {
     return getDb().query.areas.findFirst({ where: eq(areas.slug, input.slug) });
   }),
 
-  create: publicQuery
+  create: procedure
     .input(
       z.object({
         name: z.string().min(1),
@@ -72,7 +73,7 @@ export const areasRouter = createRouter({
       return db.query.areas.findFirst({ where: eq(areas.id, id) });
     }),
 
-  update: publicQuery
+  update: procedure
     .input(
       z.object({
         id: z.number(),
@@ -130,17 +131,26 @@ export const areasRouter = createRouter({
       return db.query.areas.findFirst({ where: eq(areas.id, id) });
     }),
 
-  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const area = await db.query.areas.findFirst({ where: eq(areas.id, input.id) });
-    await db.delete(items).where(eq(items.areaId, input.id));
-    await db.delete(areas).where(eq(areas.id, input.id));
-    await logEvent({
-      entityType: "area",
-      entityId: input.id,
-      action: "deleted",
-      summary: `Area "${area?.name ?? input.id}" and its items deleted`,
+    const files = await db.transaction(async (tx) => {
+      const rows = await tx.select({ id: items.id }).from(items).where(eq(items.areaId, input.id));
+      const keys: string[] = [];
+      for (const r of rows) keys.push(...(await deleteItemTx(tx, r.id)));
+      await tx.delete(areas).where(eq(areas.id, input.id));
+      await logEvent(
+        {
+          entityType: "area",
+          entityId: input.id,
+          action: "deleted",
+          summary: `Area "${area?.name ?? input.id}" and its ${rows.length} item(s) deleted`,
+        },
+        tx,
+      );
+      return keys;
     });
+    await releaseStoredFiles(db, files);
     return { ok: true };
   }),
 });

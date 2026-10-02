@@ -1,4 +1,4 @@
-import { createRouter, publicQuery } from "./middleware";
+import { createRouter, procedure } from "./middleware";
 import { areasRouter } from "./routers/areas";
 import { itemsRouter } from "./routers/items";
 import { inboxRouter } from "./routers/inbox";
@@ -16,7 +16,7 @@ import { measurementsRouter } from "./routers/measurements";
 import { mapRouter } from "./routers/map";
 
 export const appRouter = createRouter({
-  ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
+  ping: procedure.query(() => ({ ok: true, ts: Date.now() })),
   areas: areasRouter,
   items: itemsRouter,
   inbox: inboxRouter,

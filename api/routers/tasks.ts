@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { eq, desc, isNull, and } from "drizzle-orm";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { tasks, timeLogs, items, areas } from "@db/schema";
 import { logEvent } from "../lib/events";
 
 export const tasksRouter = createRouter({
-  list: publicQuery.query(async () => {
+  list: procedure.query(async () => {
     const db = getDb();
     const all = await db.select().from(tasks).orderBy(desc(tasks.createdAt));
     const allItems = await db.select().from(items);
@@ -25,7 +25,7 @@ export const tasksRouter = createRouter({
     }));
   }),
 
-  create: publicQuery
+  create: procedure
     .input(
       z.object({
         title: z.string().min(1),
@@ -56,7 +56,7 @@ export const tasksRouter = createRouter({
       return { id };
     }),
 
-  update: publicQuery
+  update: procedure
     .input(
       z.object({
         id: z.number(),
@@ -81,7 +81,7 @@ export const tasksRouter = createRouter({
       return { ok: true };
     }),
 
-  setStatus: publicQuery
+  setStatus: procedure
     .input(z.object({ id: z.number(), status: z.enum(["todo", "doing", "done"]) }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -113,7 +113,7 @@ export const tasksRouter = createRouter({
       return { ok: true };
     }),
 
-  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     await db.delete(timeLogs).where(eq(timeLogs.taskId, input.id));
     await db.delete(tasks).where(eq(tasks.id, input.id));
@@ -127,7 +127,7 @@ export const tasksRouter = createRouter({
   }),
 
   /** start a timer — stops any other running timer first */
-  startTimer: publicQuery
+  startTimer: procedure
     .input(z.object({ taskId: z.number(), note: z.string().optional() }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -153,7 +153,7 @@ export const tasksRouter = createRouter({
       return { id };
     }),
 
-  stopTimer: publicQuery.input(z.object({ taskId: z.number() })).mutation(async ({ input }) => {
+  stopTimer: procedure.input(z.object({ taskId: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const running = await db
       .select()
@@ -178,7 +178,7 @@ export const tasksRouter = createRouter({
     return { ok: true, stopped: running.length };
   }),
 
-  runningTimer: publicQuery.query(async () => {
+  runningTimer: procedure.query(async () => {
     const db = getDb();
     const running = await db.select().from(timeLogs).where(isNull(timeLogs.endedAt));
     if (!running.length) return null;

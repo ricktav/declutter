@@ -67,3 +67,19 @@ export async function urlForKey(key: string): Promise<string | null> {
   if (!fs.existsSync(abs)) return null;
   return `/uploads/${relOf(key)}`;
 }
+
+/** Duplicate a stored file under a new key so two rows never share one file. */
+export async function copyStoredFile(key: string, fileName: string): Promise<{ key: string; size: number }> {
+  const bytes = await readFileBytes(key);
+  return putFile({ bytes, fileName });
+}
+
+/** Absolute path for serving; null when the key is malformed or missing. */
+export function servePathForKey(key: string): string | null {
+  try {
+    const abs = pathOf(key);
+    return fs.existsSync(abs) ? abs : null;
+  } catch {
+    return null;
+  }
+}

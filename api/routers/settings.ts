@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { loadSettings, saveSettings } from "../lib/settings";
 import { getProviderSource } from "../lib/ai";
 import { logEvent } from "../lib/events";
 
 export const settingsRouter = createRouter({
   /** current effective config (key masked) */
-  get: publicQuery.query(async () => {
+  get: procedure.query(async () => {
     const s = loadSettings();
     const envConfigured = !!(process.env.LLM_BASE_URL && process.env.LLM_API_KEY);
     let source: string;
@@ -51,7 +51,7 @@ export const settingsRouter = createRouter({
   }),
 
   /** persist settings (UI takes precedence over env) */
-  update: publicQuery
+  update: procedure
     .input(
       z.object({
         llmBaseUrl: z.string().optional(),
@@ -92,7 +92,7 @@ export const settingsRouter = createRouter({
     }),
 
   /** list models the configured key can actually use */
-  testConnection: publicQuery
+  testConnection: procedure
     .input(
       z
         .object({
@@ -110,9 +110,14 @@ export const settingsRouter = createRouter({
         (want2 ? (s.llm2BaseUrl ?? process.env.LLM2_BASE_URL) : (s.llmBaseUrl ?? process.env.LLM_BASE_URL)) ??
         ""
       ).replace(/\/+$/, "");
+      // The stored key is only ever sent to the stored base URL. A caller
+      // that supplies its own URL must also supply the key, otherwise this
+      // endpoint would leak the configured secret to any address.
+      const storedBase = (want2 ? (s.llm2BaseUrl ?? process.env.LLM2_BASE_URL) : (s.llmBaseUrl ?? process.env.LLM_BASE_URL))?.replace(/\/+$/, "");
+      const mayUseStoredKey = !input?.llmBaseUrl || baseURL === storedBase;
       const apiKey =
         input?.llmApiKey ||
-        (want2 ? (s.llm2ApiKey || process.env.LLM2_API_KEY) : (s.llmApiKey || process.env.LLM_API_KEY)) ||
+        (mayUseStoredKey ? (want2 ? (s.llm2ApiKey || process.env.LLM2_API_KEY) : (s.llmApiKey || process.env.LLM_API_KEY)) : "") ||
         "";
       if (!baseURL || !apiKey) {
         return { ok: false as const, error: "No base URL / API key configured yet." };
@@ -135,7 +140,7 @@ export const settingsRouter = createRouter({
     }),
 
   /** real generation test: send a tiny prompt, report latency + reply */
-  testPrompt: publicQuery
+  testPrompt: procedure
     .input(
       z.object({
         llmBaseUrl: z.string().optional(),
@@ -152,9 +157,11 @@ export const settingsRouter = createRouter({
         (want2 ? (s.llm2BaseUrl ?? process.env.LLM2_BASE_URL) : (s.llmBaseUrl ?? process.env.LLM_BASE_URL)) ??
         ""
       ).replace(/\/+$/, "");
+      const storedBase = (want2 ? (s.llm2BaseUrl ?? process.env.LLM2_BASE_URL) : (s.llmBaseUrl ?? process.env.LLM_BASE_URL))?.replace(/\/+$/, "");
+      const mayUseStoredKey = !input.llmBaseUrl || baseURL === storedBase;
       const apiKey =
         input.llmApiKey ||
-        (want2 ? (s.llm2ApiKey || process.env.LLM2_API_KEY) : (s.llmApiKey || process.env.LLM_API_KEY)) ||
+        (mayUseStoredKey ? (want2 ? (s.llm2ApiKey || process.env.LLM2_API_KEY) : (s.llmApiKey || process.env.LLM_API_KEY)) : "") ||
         "";
       if (!baseURL || !input.model.trim()) {
         return { ok: false as const, error: "Base URL and model are required." };

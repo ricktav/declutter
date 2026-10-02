@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { eq, or, desc } from "drizzle-orm";
 import { generateObject } from "ai";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { photoAnnotations, attachments, items, areas } from "@db/schema";
 import { readFileBytes } from "../lib/filestore";
@@ -78,7 +78,7 @@ async function buildReferenceContent(
 }
 
 export const annotationsRouter = createRouter({
-  listForAttachment: publicQuery
+  listForAttachment: procedure
     .input(z.object({ attachmentId: z.number() }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -105,7 +105,7 @@ export const annotationsRouter = createRouter({
     }),
 
   /** items pinned anywhere (back-references for the item page) */
-  listForItem: publicQuery.input(z.object({ itemId: z.number() })).query(async ({ input }) => {
+  listForItem: procedure.input(z.object({ itemId: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const pins = await db
       .select()
@@ -119,7 +119,7 @@ export const annotationsRouter = createRouter({
     return pins.map((p) => ({ ...p, attachment: attMap.get(p.attachmentId) ?? null }));
   }),
 
-  add: publicQuery
+  add: procedure
     .input(
       z.object({
         attachmentId: z.number(),
@@ -156,7 +156,7 @@ export const annotationsRouter = createRouter({
       return { id };
     }),
 
-  update: publicQuery
+  update: procedure
     .input(
       z.object({
         id: z.number(),
@@ -177,7 +177,7 @@ export const annotationsRouter = createRouter({
       return { ok: true };
     }),
 
-  resolve: publicQuery
+  resolve: procedure
     .input(
       z.object({
         id: z.number(),
@@ -205,7 +205,7 @@ export const annotationsRouter = createRouter({
       return { ok: true };
     }),
 
-  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     await getDb().delete(photoAnnotations).where(eq(photoAnnotations.id, input.id));
     await logEvent({
       entityType: "annotation",
@@ -217,7 +217,7 @@ export const annotationsRouter = createRouter({
   }),
 
   /** AI: detect objects in the photo, match against inventory, suggest pins */
-  detect: publicQuery
+  detect: procedure
     .input(z.object({ attachmentId: z.number() }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -308,7 +308,7 @@ export const annotationsRouter = createRouter({
     }),
 
   /** AI: label a single hand-drawn box (the "New pin" AI-suggest button) */
-  suggestForBox: publicQuery
+  suggestForBox: procedure
     .input(
       z.object({
         attachmentId: z.number(),

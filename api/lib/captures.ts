@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { captures, type Capture } from "@db/schema";
 import { logEvent } from "./events";
-import { putFile } from "./filestore";
+import { putFile, readFileBytes, deleteStoredFile } from "./filestore";
+import { sniffMime } from "./sniff";
 
 export type CaptureKind = "note" | "link" | "image" | "file" | "scan" | "voice";
 
@@ -11,7 +12,10 @@ export interface CreateCaptureInput {
   kind: CaptureKind;
   rawText?: string | null;
   url?: string | null;
+  /** raw bytes (unattended channels such as the Telegram bot) */
   bytes?: Uint8Array;
+  /** a key returned by POST /api/upload (the web UI) */
+  storageKey?: string;
   fileName?: string;
   contentType?: string;
   exifGps?: { lat: number; lng: number } | null;
@@ -31,19 +35,31 @@ export async function createCapture(input: CreateCaptureInput): Promise<Capture>
   let storageKey: string | null = null;
   let contentHash: string | null = null;
 
-  if (input.bytes) {
-    contentHash = createHash("sha256").update(input.bytes).digest("hex");
+  let bytes = input.bytes;
+  if (!bytes && input.storageKey) bytes = await readFileBytes(input.storageKey);
+
+  if (bytes) {
+    // content type comes from the bytes, never from the sender
+    await sniffMime(bytes, input.fileName);
+    contentHash = createHash("sha256").update(bytes).digest("hex");
     // same bytes already in the inbox (a re-sent Telegram photo, the same
     // file uploaded twice) - return that one instead of storing a duplicate
     const dup = await db.query.captures.findFirst({ where: eq(captures.contentHash, contentHash) });
-    if (dup) return dup;
+    if (dup) {
+      if (input.storageKey) await deleteStoredFile(input.storageKey).catch(() => {});
+      return dup;
+    }
 
-    const saved = await putFile({
-      bytes: input.bytes,
-      fileName: `inbox/${input.fileName ?? input.kind}`,
-      contentType: input.contentType,
-    });
-    storageKey = saved.key;
+    if (input.storageKey) {
+      storageKey = input.storageKey;
+    } else {
+      const saved = await putFile({
+        bytes,
+        fileName: `inbox/${input.fileName ?? input.kind}`,
+        contentType: input.contentType,
+      });
+      storageKey = saved.key;
+    }
   }
 
   const [{ id }] = await db

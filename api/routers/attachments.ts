@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { eq, and, or, desc, isNotNull } from "drizzle-orm";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { attachments, photoAnnotations, captures, items, areas, type CropBox } from "@db/schema";
-import { putFile, deleteStoredFile, readFileBytes, urlForKey } from "../lib/filestore";
+import { putFile, readFileBytes, urlForKey } from "../lib/filestore";
+import { releaseStoredFiles } from "../lib/entities";
+import { sniffMime } from "../lib/sniff";
 import { cropPercent } from "../lib/crop";
 import { logEvent } from "../lib/events";
 
@@ -15,7 +17,7 @@ const cropBoxInput = z.object({
 });
 
 export const attachmentsRouter = createRouter({
-  add: publicQuery
+  add: procedure
     .input(
       z.object({
         itemId: z.number().optional(),
@@ -25,7 +27,8 @@ export const attachmentsRouter = createRouter({
         content: z.string().optional(),
         url: z.string().optional(),
         fileName: z.string().optional(),
-        contentBase64: z.string().max(14_000_000).optional(), // ~10MB file
+        /** key returned by POST /api/upload */
+        storageKey: z.string().startsWith("local/").optional(),
         mimeType: z.string().optional(),
       }),
     )
@@ -33,16 +36,13 @@ export const attachmentsRouter = createRouter({
       const db = getDb();
       let storageKey: string | null = null;
       let size: number | null = null;
+      let mimeType = input.mimeType ?? null;
 
-      if ((input.kind === "image" || input.kind === "file") && input.contentBase64) {
-        const bytes = Uint8Array.from(Buffer.from(input.contentBase64, "base64"));
-        const saved = await putFile({
-          bytes,
-          fileName: `attachments/${input.fileName ?? "file"}`,
-          contentType: input.mimeType,
-        });
-        storageKey = saved.key;
-        size = saved.size;
+      if ((input.kind === "image" || input.kind === "file") && input.storageKey) {
+        const bytes = await readFileBytes(input.storageKey);
+        mimeType = await sniffMime(bytes, input.fileName);
+        storageKey = input.storageKey;
+        size = bytes.byteLength;
       }
 
       const [{ id }] = await db
@@ -55,7 +55,7 @@ export const attachmentsRouter = createRouter({
           content: input.content ?? null,
           url: input.url ?? null,
           storageKey,
-          mimeType: input.mimeType ?? null,
+          mimeType,
           size,
         })
         .$returningId();
@@ -69,20 +69,24 @@ export const attachmentsRouter = createRouter({
       return { id, storageKey };
     }),
 
-  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const row = await db.query.attachments.findFirst({ where: eq(attachments.id, input.id) });
-    if (row?.storageKey) {
-      await deleteStoredFile(row.storageKey);
-    }
-    await db.delete(photoAnnotations).where(eq(photoAnnotations.attachmentId, input.id));
-    await db.delete(attachments).where(eq(attachments.id, input.id));
-    await logEvent({
-      entityType: "attachment",
-      entityId: input.id,
-      action: "deleted",
-      summary: `Attachment "${row?.title ?? input.id}" removed`,
+    await db.transaction(async (tx) => {
+      await tx.delete(photoAnnotations).where(eq(photoAnnotations.attachmentId, input.id));
+      await tx.delete(attachments).where(eq(attachments.id, input.id));
+      await logEvent(
+        {
+          entityType: "attachment",
+          entityId: input.id,
+          action: "deleted",
+          summary: `Attachment "${row?.title ?? input.id}" removed`,
+        },
+        tx,
+      );
     });
+    // the file goes only if no capture or other attachment still uses it
+    if (row?.storageKey) await releaseStoredFiles(db, [row.storageKey]);
     return { ok: true };
   }),
 
@@ -92,7 +96,7 @@ export const attachmentsRouter = createRouter({
    * belonged to (via its item) are copied onto the attachment itself first,
    * since those currently only exist through the item link we're about to
    * drop - otherwise the photo would lose its location when unlinked. */
-  unlink: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  unlink: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const att = await db.query.attachments.findFirst({ where: eq(attachments.id, input.id) });
     if (!att) throw new Error("attachment not found");
@@ -115,11 +119,11 @@ export const attachmentsRouter = createRouter({
     return { ok: true };
   }),
 
-  url: publicQuery.input(z.object({ key: z.string() })).query(async ({ input }) => {
+  url: procedure.input(z.object({ key: z.string() })).query(async ({ input }) => {
     return { url: await urlForKey(input.key) };
   }),
 
-  urlForAttachment: publicQuery
+  urlForAttachment: procedure
     .input(z.object({ attachmentId: z.number() }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -131,7 +135,7 @@ export const attachmentsRouter = createRouter({
       return { attachment: att, url: await urlForKey(att.storageKey) };
     }),
 
-  listForItem: publicQuery.input(z.object({ itemId: z.number() })).query(({ input }) =>
+  listForItem: procedure.input(z.object({ itemId: z.number() })).query(({ input }) =>
     getDb()
       .select()
       .from(attachments)
@@ -140,7 +144,7 @@ export const attachmentsRouter = createRouter({
   ),
 
   /** The original photo a cutout was cropped from, plus its current box — for a re-crop UI. */
-  sourcePhoto: publicQuery
+  sourcePhoto: procedure
     .input(z.object({ attachmentId: z.number() }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -156,7 +160,7 @@ export const attachmentsRouter = createRouter({
     }),
 
   /** Re-crop a cutout from its original source photo with a new box — replaces the image in place. */
-  recrop: publicQuery
+  recrop: procedure
     .input(z.object({ attachmentId: z.number(), box: cropBoxInput }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -173,17 +177,22 @@ export const attachmentsRouter = createRouter({
         contentType: "image/jpeg",
       });
       const oldKey = att.storageKey;
-      await db
-        .update(attachments)
-        .set({ storageKey: saved.key, size: saved.size, cropBox: input.box })
-        .where(eq(attachments.id, input.attachmentId));
-      if (oldKey) await deleteStoredFile(oldKey);
-      await logEvent({
-        entityType: "attachment",
-        entityId: input.attachmentId,
-        action: "recropped",
-        summary: `Cutout "${att.title ?? input.attachmentId}" re-cropped from its source photo`,
+      await db.transaction(async (tx) => {
+        await tx
+          .update(attachments)
+          .set({ storageKey: saved.key, size: saved.size, cropBox: input.box })
+          .where(eq(attachments.id, input.attachmentId));
+        await logEvent(
+          {
+            entityType: "attachment",
+            entityId: input.attachmentId,
+            action: "recropped",
+            summary: `Cutout "${att.title ?? input.attachmentId}" re-cropped from its source photo`,
+          },
+          tx,
+        );
       });
+      if (oldKey) await releaseStoredFiles(db, [oldKey]);
       return { ok: true, storageKey: saved.key };
     }),
 
@@ -191,7 +200,7 @@ export const attachmentsRouter = createRouter({
    * attachment being annotated (its original source capture when it has
    * one, otherwise the attachment's own image) so pinning a new object
    * doesn't leave it imageless. */
-  createCutoutFromAttachment: publicQuery
+  createCutoutFromAttachment: procedure
     .input(
       z.object({
         itemId: z.number(),
@@ -260,7 +269,7 @@ export const attachmentsRouter = createRouter({
    * "photo catalog" (Photos page), groupable/filterable by location since
    * that's what actually varies photo to photo, not the item's other
    * attributes. */
-  listAllImages: publicQuery.query(async () => {
+  listAllImages: procedure.query(async () => {
     const db = getDb();
     // every image attachment, whatever state it's in: an item's own photo, a
     // photo whose location was confirmed before any item existed (Inbox's

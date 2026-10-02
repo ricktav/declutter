@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { eq, desc, or } from "drizzle-orm";
 import { generateObject } from "ai";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { ideas, ideaItems, items, tasks, areas } from "@db/schema";
 import { logEvent } from "../lib/events";
@@ -9,7 +9,7 @@ import { getModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 
 export const ideasRouter = createRouter({
-  list: publicQuery.query(async () => {
+  list: procedure.query(async () => {
     const db = getDb();
     const all = await db.select().from(ideas).orderBy(desc(ideas.updatedAt));
     const links = await db.select().from(ideaItems);
@@ -31,7 +31,7 @@ export const ideasRouter = createRouter({
     }));
   }),
 
-  create: publicQuery
+  create: procedure
     .input(
       z.object({
         title: z.string().min(1),
@@ -58,7 +58,7 @@ export const ideasRouter = createRouter({
       return { id };
     }),
 
-  update: publicQuery
+  update: procedure
     .input(
       z.object({
         id: z.number(),
@@ -102,7 +102,7 @@ export const ideasRouter = createRouter({
       return { ok: true };
     }),
 
-  linkItem: publicQuery
+  linkItem: procedure
     .input(z.object({ ideaId: z.number(), itemId: z.number() }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -117,7 +117,7 @@ export const ideasRouter = createRouter({
       return { ok: true };
     }),
 
-  unlinkItem: publicQuery
+  unlinkItem: procedure
     .input(z.object({ ideaId: z.number(), itemId: z.number() }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -127,8 +127,9 @@ export const ideasRouter = createRouter({
       return { ok: true };
     }),
 
-  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
+    await db.update(tasks).set({ ideaId: null }).where(eq(tasks.ideaId, input.id));
     await db.delete(ideaItems).where(eq(ideaItems.ideaId, input.id));
     await db.delete(ideas).where(eq(ideas.id, input.id));
     await logEvent({
@@ -141,7 +142,7 @@ export const ideasRouter = createRouter({
   }),
 
   /** AI: break an idea into concrete tasks */
-  breakdown: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  breakdown: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const idea = await db.query.ideas.findFirst({ where: eq(ideas.id, input.id) });
     if (!idea) throw new Error("idea not found");

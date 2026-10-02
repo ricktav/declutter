@@ -51,4 +51,9 @@ local Ollama.
   apply). An existing database that was created with `db:push` can keep using
   `db:push`; the `0000_baseline` migration describes that same state.
 - Photos and files are stored on local disk under `uploads/` and served at `/uploads/*`.
-- No authentication — intended for a trusted LAN (or behind Tailscale).
+- Access: set `APP_TOKEN` in `.env` and the app asks for it once per browser. Without it the
+  API and photos are open to anyone who can reach the port, so only run that way on a
+  trusted LAN (or behind Tailscale).
+- Uploads go through `POST /api/upload` (multipart); the file type is sniffed from content and
+  only images, audio, video, PDF, JSON/GeoJSON and 3D scan formats are accepted. Stored files
+  are served with `nosniff` and non-media types download instead of rendering.

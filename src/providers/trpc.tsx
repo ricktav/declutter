@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import superjson from "superjson";
 import type { AppRouter } from "../../api/router";
 import type { ReactNode } from "react";
+import { authHeaders } from "@/lib/auth";
 
 export const trpc = createTRPCReact<AppRouter>();
 
@@ -15,6 +16,7 @@ const trpcClient = trpc.createClient({
     httpBatchLink({
       url: "/api/trpc",
       transformer: superjson,
+      headers: () => authHeaders(),
       fetch(input, init) {
         return globalThis.fetch(input, {
           ...(init ?? {}),

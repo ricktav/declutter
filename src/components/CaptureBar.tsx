@@ -2,7 +2,7 @@ import { useState, useRef } from "react";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Link2, ImagePlus, StickyNote, Loader2 } from "lucide-react";
-import { fileToBase64 } from "@/lib/format";
+import { uploadFile } from "@/lib/upload";
 
 /** Frictionless capture: paste text/URL or drop a file — lands in the inbox. */
 export function CaptureBar({ compact = false }: { compact?: boolean }) {
@@ -25,16 +25,21 @@ export function CaptureBar({ compact = false }: { compact?: boolean }) {
     create.mutate(isUrl ? { kind: "link", url: t } : { kind: "note", rawText: t });
   };
 
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const submitFile = async (file: File) => {
-    const kind = file.type.startsWith("image/") ? "image" : "file";
-    const contentBase64 = await fileToBase64(file);
-    create.mutate({
-      kind,
-      fileName: file.name,
-      contentBase64,
-      mimeType: file.type,
-      rawText: file.name,
-    });
+    setUploadError(null);
+    try {
+      const up = await uploadFile(file, "inbox");
+      create.mutate({
+        kind: up.mimeType.startsWith("image/") ? "image" : "file",
+        fileName: up.fileName,
+        storageKey: up.key,
+        mimeType: up.mimeType,
+        rawText: file.name,
+      });
+    } catch (e) {
+      setUploadError((e as Error).message);
+    }
   };
 
   return (
@@ -87,6 +92,9 @@ export function CaptureBar({ compact = false }: { compact?: boolean }) {
           Capture
         </Button>
       </div>
+      {(uploadError || create.isError) && (
+        <div className="mt-2 text-[12px] text-destructive">{uploadError ?? create.error?.message}</div>
+      )}
     </div>
   );
 }

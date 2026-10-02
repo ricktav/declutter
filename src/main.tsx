@@ -4,12 +4,15 @@ import { BrowserRouter } from 'react-router'
 import './index.css'
 import { TRPCProvider } from "@/providers/trpc"
 import App from './App.tsx'
+import { AuthGate } from "@/components/AuthGate"
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <TRPCProvider>
-        <App />
+        <AuthGate>
+          <App />
+        </AuthGate>
       </TRPCProvider>
     </BrowserRouter>
   </StrictMode>,

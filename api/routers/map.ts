@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { eq, and, isNotNull, isNull } from "drizzle-orm";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { items, attachments, captures, houses } from "@db/schema";
 import { logEvent } from "../lib/events";
+import { copyStoredFile } from "../lib/filestore";
 
 /**
  * Location-first entry point onto the same SSOT the item workbench uses -
@@ -12,7 +13,7 @@ import { logEvent } from "../lib/events";
  */
 export const mapRouter = createRouter({
   /** Every distinct location with at least one active item, for the picker. */
-  listLocations: publicQuery.query(async () => {
+  listLocations: procedure.query(async () => {
     const db = getDb();
     const rows = await db
       .select({ houseId: items.houseId, floor: items.floor, room: items.room })
@@ -39,7 +40,7 @@ export const mapRouter = createRouter({
    * a manual tagging step: it grows automatically as the inbox pipeline
    * files more items there.
    */
-  photosForLocation: publicQuery
+  photosForLocation: procedure
     .input(z.object({ houseId: z.number().nullable(), floor: z.string().nullable(), room: z.string() }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -76,7 +77,7 @@ export const mapRouter = createRouter({
    * anything yet. Find-or-create a bare, itemId-less attachment for it
    * (one per capture, reused on repeat visits) so it becomes pinnable.
    */
-  ensureAttachmentForCapture: publicQuery
+  ensureAttachmentForCapture: procedure
     .input(
       z.object({
         captureId: z.number(),
@@ -114,11 +115,14 @@ export const mapRouter = createRouter({
       const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.captureId) });
       if (!cap?.storageKey) throw new Error("Capture has no stored photo.");
 
+      // own copy of the bytes: a capture and an attachment never share a key
+      const copy = await copyStoredFile(cap.storageKey, `locations/${cap.storageKey.split("/").pop() ?? "photo"}`);
       const [{ id }] = await db
         .insert(attachments)
         .values({
           kind: "image",
-          storageKey: cap.storageKey,
+          storageKey: copy.key,
+          size: copy.size,
           mimeType: "image/jpeg",
           sourceCaptureId: cap.id,
           houseId: input.houseId,
@@ -142,7 +146,7 @@ export const mapRouter = createRouter({
    * in one go, since a location is just a (houseId, floor, room) tuple on
    * items, not a row of its own.
    */
-  renameLocation: publicQuery
+  renameLocation: procedure
     .input(
       z.object({
         from: z.object({

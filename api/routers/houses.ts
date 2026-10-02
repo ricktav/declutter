@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { eq, asc, isNotNull, and } from "drizzle-orm";
-import { createRouter, publicQuery } from "../middleware";
+import { eq, asc, isNotNull, and, inArray } from "drizzle-orm";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { houses, items, attachments } from "@db/schema";
+import { houses, items, attachments, rooms } from "@db/schema";
 import { logEvent } from "../lib/events";
 
 export const housesRouter = createRouter({
-  list: publicQuery.query(async () => {
+  list: procedure.query(async () => {
     const db = getDb();
     const all = await db.select().from(houses).orderBy(asc(houses.name), asc(houses.id));
     const counts = await db.select({ houseId: items.houseId, count: items.id }).from(items);
@@ -18,7 +18,7 @@ export const housesRouter = createRouter({
   }),
 
   /** distinct floor/room combos discovered from items in a house — used by RoomPicker */
-  rooms: publicQuery
+  rooms: procedure
     .input(z.object({ houseId: z.number() }))
     .query(async ({ input }) => {
       const rows = await getDb()
@@ -41,7 +41,7 @@ export const housesRouter = createRouter({
       return out;
     }),
 
-  create: publicQuery
+  create: procedure
     .input(
       z.object({
         name: z.string().min(1),
@@ -84,7 +84,7 @@ export const housesRouter = createRouter({
       return db.query.houses.findFirst({ where: eq(houses.id, id) });
     }),
 
-  update: publicQuery
+  update: procedure
     .input(
       z.object({
         id: z.number(),
@@ -110,7 +110,7 @@ export const housesRouter = createRouter({
   /** What moving everything out of a house would touch - shown before the
    * actual move, so the impact (how many items/photos) is visible up front
    * rather than discovered after the fact. */
-  impact: publicQuery.input(z.object({ id: z.number() })).query(async ({ input }) => {
+  impact: procedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.houseId, input.id));
     const photoRows = await db.select({ id: attachments.id }).from(attachments).where(eq(attachments.houseId, input.id));
@@ -122,7 +122,7 @@ export const housesRouter = createRouter({
    * then the old (now-empty) house can be deleted with nothing lost. Floor/
    * room text is left as-is; it's freeform, so it still displays fine even
    * if the target house has a different floor list. */
-  reassign: publicQuery
+  reassign: procedure
     .input(z.object({ fromId: z.number(), toId: z.number() }))
     .mutation(async ({ input }) => {
       if (input.fromId === input.toId) throw new Error("Pick a different house to move into");
@@ -132,26 +132,45 @@ export const housesRouter = createRouter({
       if (!fromHouse || !toHouse) throw new Error("House not found");
       const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.houseId, input.fromId));
       const photoRows = await db.select({ id: attachments.id }).from(attachments).where(eq(attachments.houseId, input.fromId));
-      await db.update(items).set({ houseId: input.toId }).where(eq(items.houseId, input.fromId));
-      await db.update(attachments).set({ houseId: input.toId }).where(eq(attachments.houseId, input.fromId));
-      await logEvent({
-        entityType: "house",
-        entityId: input.toId,
-        action: "merged",
-        summary: `Moved ${itemRows.length} item(s) and ${photoRows.length} photo(s) from "${fromHouse.name}" to "${toHouse.name}"`,
+      await db.transaction(async (tx) => {
+        await tx.update(items).set({ houseId: input.toId }).where(eq(items.houseId, input.fromId));
+        await tx.update(attachments).set({ houseId: input.toId }).where(eq(attachments.houseId, input.fromId));
+        await tx.update(rooms).set({ houseId: input.toId }).where(eq(rooms.houseId, input.fromId));
+        await logEvent(
+          {
+            entityType: "house",
+            entityId: input.toId,
+            action: "merged",
+            summary: `Moved ${itemRows.length} item(s) and ${photoRows.length} photo(s) from "${fromHouse.name}" to "${toHouse.name}"`,
+          },
+          tx,
+        );
       });
       return { itemCount: itemRows.length, photoCount: photoRows.length };
     }),
 
-  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
-    await db.update(items).set({ houseId: null }).where(eq(items.houseId, input.id));
-    await db.delete(houses).where(eq(houses.id, input.id));
-    await logEvent({
-      entityType: "house",
-      entityId: input.id,
-      action: "deleted",
-      summary: `House #${input.id} deleted (items unassigned)`,
+    await db.transaction(async (tx) => {
+      const roomRows = await tx.select({ id: rooms.id }).from(rooms).where(eq(rooms.houseId, input.id));
+      const roomIds = roomRows.map((r) => r.id);
+      if (roomIds.length) {
+        await tx.update(items).set({ roomId: null }).where(inArray(items.roomId, roomIds));
+        await tx.update(attachments).set({ roomId: null }).where(inArray(attachments.roomId, roomIds));
+        await tx.delete(rooms).where(inArray(rooms.id, roomIds));
+      }
+      await tx.update(items).set({ houseId: null }).where(eq(items.houseId, input.id));
+      await tx.update(attachments).set({ houseId: null }).where(eq(attachments.houseId, input.id));
+      await tx.delete(houses).where(eq(houses.id, input.id));
+      await logEvent(
+        {
+          entityType: "house",
+          entityId: input.id,
+          action: "deleted",
+          summary: `House #${input.id} deleted (items unassigned, ${roomIds.length} room scan(s) removed)`,
+        },
+        tx,
+      );
     });
     return { ok: true };
   }),

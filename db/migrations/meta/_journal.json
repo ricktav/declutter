@@ -8,6 +8,13 @@
       "when": 1790935652529,
       "tag": "0000_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1790936533287,
+      "tag": "0001_events_entity_index",
+      "breakpoints": true
     }
   ]
 }

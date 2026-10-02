@@ -10,7 +10,8 @@ import { RoomPicker } from "@/components/RoomPicker";
 import { RecropDialog } from "@/components/RecropDialog";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
-import { fileToBase64, timeAgo } from "@/lib/format";
+import { timeAgo } from "@/lib/format";
+import { uploadFile } from "@/lib/upload";
 import {
   Sparkles,
   Archive,
@@ -282,17 +283,22 @@ export default function ItemDetail() {
     setEditingLoc(false);
   };
 
-  const uploadFile = async (f: File) => {
-    const contentBase64 = await fileToBase64(f);
-    addAttachment.mutate({
-      itemId,
-      areaId: it.areaId,
-      kind: f.type.startsWith("image/") ? "image" : "file",
-      title: f.name,
-      fileName: f.name,
-      contentBase64,
-      mimeType: f.type,
-    });
+  const uploadAttachment = async (f: File) => {
+    setUploadError(null);
+    try {
+      const up = await uploadFile(f, "attachments");
+      addAttachment.mutate({
+        itemId,
+        areaId: it.areaId,
+        kind: up.mimeType.startsWith("image/") ? "image" : "file",
+        title: f.name,
+        fileName: up.fileName,
+        storageKey: up.key,
+        mimeType: up.mimeType,
+      });
+    } catch (e) {
+      setUploadError((e as Error).message);
+    }
   };
 
   return (
@@ -437,7 +443,7 @@ export default function ItemDetail() {
             e.preventDefault();
             setDragOver(false);
             const f = e.dataTransfer.files?.[0];
-            if (f) uploadFile(f);
+            if (f) uploadAttachment(f);
             else {
               const t = e.dataTransfer.getData("text");
               if (t) addAttachment.mutate({ itemId, areaId: it.areaId, kind: "link", url: t, title: t });
@@ -450,13 +456,13 @@ export default function ItemDetail() {
             <input ref={fileRef} type="file" className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) uploadFile(f);
+                if (f) uploadAttachment(f);
                 e.target.value = "";
               }} />
             <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) uploadFile(f);
+                if (f) uploadAttachment(f);
                 e.target.value = "";
               }} />
             <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto"

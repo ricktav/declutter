@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { generateText } from "ai";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { areas, items, attachments, relations, wikiPages, type Area, type Item } from "@db/schema";
 import { getModel } from "../lib/ai";
@@ -121,16 +121,16 @@ async function buildPages() {
 }
 
 export const wikiRouter = createRouter({
-  list: publicQuery.query(async () => {
+  list: procedure.query(async () => {
     return getDb().select().from(wikiPages).orderBy(desc(wikiPages.generatedAt));
   }),
 
-  get: publicQuery.input(z.object({ slug: z.string() })).query(({ input }) =>
+  get: procedure.input(z.object({ slug: z.string() })).query(({ input }) =>
     getDb().query.wikiPages.findFirst({ where: eq(wikiPages.slug, input.slug) }),
   ),
 
   /** deterministic regeneration from live data — no AI required */
-  generate: publicQuery.mutation(async () => {
+  generate: procedure.mutation(async () => {
     const db = getDb();
     const pages = await buildPages();
     let written = 0;
@@ -153,7 +153,7 @@ export const wikiRouter = createRouter({
   }),
 
   /** optional AI polish for one page */
-  enhance: publicQuery.input(z.object({ slug: z.string() })).mutation(async ({ input }) => {
+  enhance: procedure.input(z.object({ slug: z.string() })).mutation(async ({ input }) => {
     const db = getDb();
     const page = await db.query.wikiPages.findFirst({ where: eq(wikiPages.slug, input.slug) });
     if (!page) throw new Error("page not found — generate the wiki first");
@@ -181,7 +181,7 @@ export const wikiRouter = createRouter({
   }),
 
   /** single-file context pack to paste into any LLM */
-  exportPack: publicQuery.query(async () => {
+  exportPack: procedure.query(async () => {
     const db = getDb();
     let pages = await db.select().from(wikiPages);
     if (!pages.length) {

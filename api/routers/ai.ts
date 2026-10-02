@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { eq, asc, desc } from "drizzle-orm";
+import { eq, asc, desc, and } from "drizzle-orm";
 import { generateText } from "ai";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { areas, items, attachments, chatMessages } from "@db/schema";
 import { getModel } from "../lib/ai";
@@ -62,7 +62,7 @@ async function buildContext(scope: "global" | "area" | "item", scopeId: number):
 }
 
 export const aiRouter = createRouter({
-  chat: publicQuery
+  chat: procedure
     .input(
       z.object({
         scope: z.enum(["global", "area", "item"]).default("global"),
@@ -72,25 +72,18 @@ export const aiRouter = createRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      await db.insert(chatMessages).values({
-        scope: input.scope,
-        scopeId: input.scopeId,
-        role: "user",
-        content: input.message,
-      });
-
       try {
         const context = await buildContext(input.scope, input.scopeId);
         const history = await db
           .select()
           .from(chatMessages)
-          .where(eq(chatMessages.scope, input.scope))
+          .where(and(eq(chatMessages.scope, input.scope), eq(chatMessages.scopeId, input.scopeId)))
           .orderBy(desc(chatMessages.createdAt))
           .limit(40);
         const scoped = history
-          .filter((m) => m.scopeId === input.scopeId)
           .reverse()
           .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+        scoped.push({ role: "user", content: input.message });
 
         const model = await getModel();
         const { text } = await generateText({
@@ -99,12 +92,11 @@ export const aiRouter = createRouter({
           messages: scoped,
         });
 
-        await db.insert(chatMessages).values({
-          scope: input.scope,
-          scopeId: input.scopeId,
-          role: "assistant",
-          content: text,
-        });
+        // both turns land together, so a failed call leaves no orphan user row
+        await db.insert(chatMessages).values([
+          { scope: input.scope, scopeId: input.scopeId, role: "user", content: input.message },
+          { scope: input.scope, scopeId: input.scopeId, role: "assistant", content: text },
+        ]);
         return { ok: true as const, text };
       } catch (err) {
         const classified = classifyAiError(err);
@@ -112,7 +104,7 @@ export const aiRouter = createRouter({
       }
     }),
 
-  history: publicQuery
+  history: procedure
     .input(
       z.object({
         scope: z.enum(["global", "area", "item"]).default("global"),
@@ -123,13 +115,13 @@ export const aiRouter = createRouter({
       const rows = await getDb()
         .select()
         .from(chatMessages)
-        .where(eq(chatMessages.scope, input.scope))
+        .where(and(eq(chatMessages.scope, input.scope), eq(chatMessages.scopeId, input.scopeId)))
         .orderBy(asc(chatMessages.createdAt))
         .limit(200);
-      return rows.filter((m) => m.scopeId === input.scopeId);
+      return rows;
     }),
 
-  clearHistory: publicQuery
+  clearHistory: procedure
     .input(
       z.object({
         scope: z.enum(["global", "area", "item"]).default("global"),
@@ -138,13 +130,9 @@ export const aiRouter = createRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      const rows = await db
-        .select()
-        .from(chatMessages)
-        .where(eq(chatMessages.scope, input.scope));
-      for (const m of rows.filter((r) => r.scopeId === input.scopeId)) {
-        await db.delete(chatMessages).where(eq(chatMessages.id, m.id));
-      }
+      await db
+        .delete(chatMessages)
+        .where(and(eq(chatMessages.scope, input.scope), eq(chatMessages.scopeId, input.scopeId)));
       await logEvent({
         entityType: "chat",
         entityId: input.scopeId,

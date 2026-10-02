@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { eq, and, desc } from "drizzle-orm";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { measurements } from "@db/schema";
 import { logEvent } from "../lib/events";
@@ -11,7 +11,7 @@ import { logEvent } from "../lib/events";
  * never a silent overwrite of the scan-derived value.
  */
 export const measurementsRouter = createRouter({
-  listForTarget: publicQuery
+  listForTarget: procedure
     .input(z.object({ targetType: z.enum(["room", "item"]), targetId: z.number() }))
     .query(async ({ input }) => {
       return getDb()
@@ -23,7 +23,7 @@ export const measurementsRouter = createRouter({
         .orderBy(desc(measurements.createdAt));
     }),
 
-  record: publicQuery
+  record: procedure
     .input(
       z.object({
         targetType: z.enum(["room", "item"]),
@@ -57,7 +57,7 @@ export const measurementsRouter = createRouter({
       return { id };
     }),
 
-  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     await getDb().delete(measurements).where(eq(measurements.id, input.id));
     return { ok: true };
   }),

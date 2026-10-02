@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
-import { fileToBase64 } from "@/lib/format";
+import { uploadFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { AreaPicker } from "@/components/AreaPicker";
 import { ItemPicker } from "@/components/ItemPicker";
@@ -139,6 +139,7 @@ function PinCaptureButton({
 function MobileCameraButton() {
   const utils = trpc.useUtils();
   const photoRef = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const create = trpc.inbox.create.useMutation({
     onSuccess: () => utils.inbox.list.invalidate(),
   });
@@ -154,13 +155,17 @@ function MobileCameraButton() {
           const f = e.target.files?.[0];
           e.target.value = "";
           if (!f) return;
-          const contentBase64 = await fileToBase64(f);
-          create.mutate({
-            kind: "image",
-            fileName: f.name || `snap-${Date.now()}.jpg`,
-            contentBase64,
-            mimeType: f.type || "image/jpeg",
-          });
+          try {
+            const up = await uploadFile(f, "inbox");
+            create.mutate({
+              kind: "image",
+              fileName: up.fileName || `snap-${Date.now()}.jpg`,
+              storageKey: up.key,
+              mimeType: up.mimeType,
+            });
+          } catch (err) {
+            setUploadError((err as Error).message);
+          }
         }}
       />
       <button
@@ -175,6 +180,7 @@ function MobileCameraButton() {
         )}
         <span className="text-[14px] font-semibold">Take photo</span>
       </button>
+      {uploadError && <div className="mt-2 text-[12px] text-destructive">{uploadError}</div>}
     </div>
   );
 }

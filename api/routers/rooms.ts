@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { eq, asc, and, isNull } from "drizzle-orm";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { rooms, items, type RoomGeometry, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
@@ -110,12 +110,12 @@ export const roomsRouter = createRouter({
   /** Every scanned room across every house - just enough to tell which
    * house+name combos already have a floor plan, without a per-house
    * round trip (used by the Inbox's "pick an unmapped location" picker). */
-  listAll: publicQuery.query(async () => {
+  listAll: procedure.query(async () => {
     const db = getDb();
     return db.select({ id: rooms.id, houseId: rooms.houseId, name: rooms.name }).from(rooms);
   }),
 
-  listByHouse: publicQuery
+  listByHouse: procedure
     .input(z.object({ houseId: z.number() }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -132,7 +132,7 @@ export const roomsRouter = createRouter({
       return all.map((r) => ({ ...r, itemCount: countMap.get(r.id) ?? 0 }));
     }),
 
-  get: publicQuery.input(z.object({ id: z.number() })).query(async ({ input }) => {
+  get: procedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const room = await db.query.rooms.findFirst({ where: eq(rooms.id, input.id) });
     if (!room) return null;
@@ -148,7 +148,7 @@ export const roomsRouter = createRouter({
    * the same export updates the existing room instead of duplicating it,
    * so a rescan doesn't orphan already-placed items.
    */
-  upsertFromScan: publicQuery
+  upsertFromScan: procedure
     .input(
       z.object({
         houseId: z.number(),
@@ -163,10 +163,9 @@ export const roomsRouter = createRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      const existing = await db.query.rooms.findFirst({
-        where: eq(rooms.houseId, input.houseId),
+      const match = await db.query.rooms.findFirst({
+        where: and(eq(rooms.houseId, input.houseId), eq(rooms.name, input.name)),
       });
-      const match = existing?.name === input.name ? existing : undefined;
 
       const values = {
         houseId: input.houseId,
@@ -203,7 +202,7 @@ export const roomsRouter = createRouter({
       return { id, created: true };
     }),
 
-  update: publicQuery
+  update: procedure
     .input(
       z.object({
         id: z.number(),
@@ -228,41 +227,53 @@ export const roomsRouter = createRouter({
    * back to - they're orphaned (roomId null), which is why the frontend
    * asks harder before allowing that case.
    */
-  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const room = await db.query.rooms.findFirst({ where: eq(rooms.id, input.id) });
     if (!room) return { ok: true };
 
     if (room.parentRoomId != null) {
       const ox = room.offsetXM ?? 0, oy = room.offsetYM ?? 0;
-      const roomItems = await db.select().from(items).where(eq(items.roomId, input.id));
-      for (const it of roomItems) {
-        const p = it.pos as ItemPos | null;
-        await db
-          .update(items)
-          .set({
-            roomId: room.parentRoomId,
-            pos: p ? { ...p, xM: +(p.xM + ox).toFixed(2), yM: +(p.yM + oy).toFixed(2) } : p,
-          })
-          .where(eq(items.id, it.id));
-      }
-      await db.delete(rooms).where(eq(rooms.id, input.id));
-      await logEvent({
-        entityType: "room",
-        entityId: input.id,
-        action: "deleted",
-        summary: `Room "${room.name}" deleted, ${roomItems.length} item(s) moved back to parent room #${room.parentRoomId}`,
+      const parentId = room.parentRoomId;
+      const moved = await db.transaction(async (tx) => {
+        const roomItems = await tx.select().from(items).where(eq(items.roomId, input.id));
+        for (const it of roomItems) {
+          const p = it.pos as ItemPos | null;
+          await tx
+            .update(items)
+            .set({
+              roomId: parentId,
+              pos: p ? { ...p, xM: +(p.xM + ox).toFixed(2), yM: +(p.yM + oy).toFixed(2) } : p,
+            })
+            .where(eq(items.id, it.id));
+        }
+        await tx.delete(rooms).where(eq(rooms.id, input.id));
+        await logEvent(
+          {
+            entityType: "room",
+            entityId: input.id,
+            action: "deleted",
+            summary: `Room "${room.name}" deleted, ${roomItems.length} item(s) moved back to parent room #${parentId}`,
+          },
+          tx,
+        );
+        return roomItems.length;
       });
-      return { ok: true };
+      return { ok: true, moved };
     }
 
-    await db.update(items).set({ roomId: null }).where(eq(items.roomId, input.id));
-    await db.delete(rooms).where(eq(rooms.id, input.id));
-    await logEvent({
-      entityType: "room",
-      entityId: input.id,
-      action: "deleted",
-      summary: `Room "${room.name}" deleted (no parent - items unassigned)`,
+    await db.transaction(async (tx) => {
+      await tx.update(items).set({ roomId: null }).where(eq(items.roomId, input.id));
+      await tx.delete(rooms).where(eq(rooms.id, input.id));
+      await logEvent(
+        {
+          entityType: "room",
+          entityId: input.id,
+          action: "deleted",
+          summary: `Room "${room.name}" deleted (no parent - items unassigned)`,
+        },
+        tx,
+      );
     });
     return { ok: true };
   }),
@@ -274,7 +285,7 @@ export const roomsRouter = createRouter({
    * whole-floor scan, so cut rooms reuse the vocabulary already in use
    * instead of inventing new names.
    */
-  unlinkedLocations: publicQuery.input(z.object({ houseId: z.number() })).query(async ({ input }) => {
+  unlinkedLocations: procedure.input(z.object({ houseId: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const itemRows = await db.select({ room: items.room }).from(items).where(eq(items.houseId, input.houseId));
     const existing = new Set(
@@ -298,7 +309,7 @@ export const roomsRouter = createRouter({
    * linked to any room get linked too, landing "unplaced" (pos stays null)
    * until someone drags them onto the new plan.
    */
-  cutFromRoom: publicQuery
+  cutFromRoom: procedure
     .input(
       z.object({
         sourceRoomId: z.number(),
@@ -327,7 +338,8 @@ export const roomsRouter = createRouter({
         }
       }
 
-      const [{ id: newRoomId }] = await db
+      const { newRoomId, moved } = await db.transaction(async (tx) => {
+      const [{ id: newRoomId }] = await tx
         .insert(rooms)
         .values({
           houseId: source.houseId,
@@ -345,14 +357,14 @@ export const roomsRouter = createRouter({
         })
         .$returningId();
 
-      const sourceItems = await db.select().from(items).where(eq(items.roomId, input.sourceRoomId));
+      const sourceItems = await tx.select().from(items).where(eq(items.roomId, input.sourceRoomId));
       let moved = 0;
       for (const it of sourceItems) {
         if (!it.pos) continue;
         const p = it.pos as ItemPos;
         const cx = p.xM + p.wM / 2, cy = p.yM + p.dM / 2;
         if (cx < bx || cx > bx + bw || cy < by || cy > by + bd) continue;
-        await db
+        await tx
           .update(items)
           .set({
             roomId: newRoomId,
@@ -363,16 +375,21 @@ export const roomsRouter = createRouter({
         moved++;
       }
 
-      await db
+      await tx
         .update(items)
         .set({ roomId: newRoomId })
         .where(and(eq(items.houseId, source.houseId), eq(items.room, input.name), isNull(items.roomId)));
 
-      await logEvent({
-        entityType: "room",
-        entityId: newRoomId,
-        action: "cut",
-        summary: `Room "${input.name}" cut from room #${input.sourceRoomId} (${moved} placed item${moved === 1 ? "" : "s"})`,
+      await logEvent(
+        {
+          entityType: "room",
+          entityId: newRoomId,
+          action: "cut",
+          summary: `Room "${input.name}" cut from room #${input.sourceRoomId} (${moved} placed item${moved === 1 ? "" : "s"})`,
+        },
+        tx,
+      );
+      return { newRoomId, moved };
       });
 
       return { id: newRoomId, itemsMoved: moved };

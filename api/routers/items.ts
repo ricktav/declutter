@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { eq, desc, or, and, asc } from "drizzle-orm";
 import { generateObject } from "ai";
-import { createRouter, publicQuery } from "../middleware";
+import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { areas, items, attachments, relations, tasks, ideaItems, ideas, events, houses, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
+import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { getModel } from "../lib/ai";
 
 /** crude name-similarity: shared significant tokens */
@@ -25,7 +26,7 @@ function nameScore(a: string, b: string): number {
 }
 
 export const itemsRouter = createRouter({
-  listByArea: publicQuery
+  listByArea: procedure
     .input(z.object({ areaId: z.number(), includeArchived: z.boolean().default(false) }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -50,7 +51,7 @@ export const itemsRouter = createRouter({
     }),
 
   /** Every active item across every area, for the cross-area browser (search/sort by area or location). */
-  listAll: publicQuery
+  listAll: procedure
     .input(z.object({ includeArchived: z.boolean().default(false) }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -74,7 +75,7 @@ export const itemsRouter = createRouter({
       }));
     }),
 
-  get: publicQuery.input(z.object({ id: z.number() })).query(async ({ input }) => {
+  get: procedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
     if (!item) return null;
@@ -149,7 +150,7 @@ export const itemsRouter = createRouter({
     };
   }),
 
-  create: publicQuery
+  create: procedure
     .input(
       z.object({
         areaId: z.number(),
@@ -280,7 +281,7 @@ export const itemsRouter = createRouter({
       return { id, suggestedRelations: suggestions.length, suggestedLinks };
     }),
 
-  update: publicQuery
+  update: procedure
     .input(
       z.object({
         id: z.number(),
@@ -353,7 +354,7 @@ export const itemsRouter = createRouter({
    * origin/status pattern. Separate from setArchived's lifecycle status —
    * an item can be confirmed-and-archived, or detected-and-active.
    */
-  setVerification: publicQuery
+  setVerification: procedure
     .input(
       z.object({
         id: z.number(),
@@ -376,7 +377,7 @@ export const itemsRouter = createRouter({
       return { ok: true };
     }),
 
-  setArchived: publicQuery
+  setArchived: procedure
     .input(z.object({ id: z.number(), archived: z.boolean() }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -396,7 +397,7 @@ export const itemsRouter = createRouter({
       return { ok: true };
     }),
 
-  remove: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
     const children = await db
@@ -409,24 +410,13 @@ export const itemsRouter = createRouter({
         error: `Cannot delete "${item?.name ?? "item"}" — ${children.length} sub-object(s) are attached to it. Delete or move those first.`,
       };
     }
-    await db.update(items).set({ parentId: null }).where(eq(items.parentId, input.id));
-    await db.delete(relations).where(
-      or(eq(relations.fromItemId, input.id), eq(relations.toItemId, input.id)),
-    );
-    await db.delete(attachments).where(eq(attachments.itemId, input.id));
-    await db.delete(ideaItems).where(eq(ideaItems.itemId, input.id));
-    await db.delete(items).where(eq(items.id, input.id));
-    await logEvent({
-      entityType: "item",
-      entityId: input.id,
-      action: "deleted",
-      summary: `Item "${item?.name ?? input.id}" deleted`,
-    });
+    const files = await db.transaction((tx) => deleteItemTx(tx, input.id));
+    await releaseStoredFiles(db, files);
     return { ok: true as const };
   }),
 
   /** attach/detach a sub-object (set → mouse, cupboard → shelf) */
-  setParent: publicQuery
+  setParent: procedure
     .input(z.object({ id: z.number(), parentId: z.number().nullable() }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -459,7 +449,7 @@ export const itemsRouter = createRouter({
     }),
 
   // ---- relations ----
-  addRelation: publicQuery
+  addRelation: procedure
     .input(
       z.object({
         fromItemId: z.number(),
@@ -482,7 +472,7 @@ export const itemsRouter = createRouter({
       return { id };
     }),
 
-  resolveRelation: publicQuery
+  resolveRelation: procedure
     .input(z.object({ id: z.number(), confirm: z.boolean() }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -500,7 +490,7 @@ export const itemsRouter = createRouter({
       return { ok: true };
     }),
 
-  removeRelation: publicQuery.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  removeRelation: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     await db.delete(relations).where(eq(relations.id, input.id));
     await logEvent({
@@ -513,7 +503,7 @@ export const itemsRouter = createRouter({
   }),
 
   /** lightweight search for pickers / auto-linking */
-  search: publicQuery.input(z.object({ q: z.string() })).query(async ({ input }) => {
+  search: procedure.input(z.object({ q: z.string() })).query(async ({ input }) => {
     const db = getDb();
     const all = await db.select().from(items).where(eq(items.status, "active"));
     const q = input.q.toLowerCase();
