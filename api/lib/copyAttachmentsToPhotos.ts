@@ -21,6 +21,8 @@ export interface CopyPlan {
   pins: number;
   /** image attachments with no storageKey: NOT copied (photos.storageKey is NOT NULL) */
   imagesWithoutFile: number[];
+  /** image attachments carrying content (e.g. a caption) or a url: copied as photos, but photos has no such columns, so the text is dropped */
+  imagesWithText: number[];
   /** a kind outside image/link/note/file: NOT copied */
   unknownKind: number[];
   /** link/note/file rows that carry a roomId: copied, but item_links has no roomId */
@@ -64,14 +66,15 @@ function jsonOrNull(v: unknown): string | null {
 }
 
 export async function planCopy(c: Connection): Promise<CopyPlan> {
-  const plan: CopyPlan = { images: 0, links: 0, pins: 0, imagesWithoutFile: [], unknownKind: [], nonImageWithRoom: [], orphanPins: [] };
+  const plan: CopyPlan = { images: 0, links: 0, pins: 0, imagesWithoutFile: [], imagesWithText: [], unknownKind: [], nonImageWithRoom: [], orphanPins: [] };
   const copyable = new Set<number>();
-  for (const a of await rows(c, "select id, kind, storageKey, roomId from attachments order by id")) {
+  for (const a of await rows(c, "select id, kind, storageKey, roomId, content, url from attachments order by id")) {
     const id = Number(a.id);
     if (a.kind === "image") {
       if (hasFile(a.storageKey)) {
         plan.images++;
         copyable.add(id);
+        if ((typeof a.content === "string" && a.content !== "") || a.url != null) plan.imagesWithText.push(id);
       } else {
         plan.imagesWithoutFile.push(id);
       }
@@ -90,7 +93,7 @@ export async function planCopy(c: Connection): Promise<CopyPlan> {
 }
 
 export function blockingIds(plan: CopyPlan): number[] {
-  return [...plan.imagesWithoutFile, ...plan.unknownKind, ...plan.nonImageWithRoom];
+  return [...plan.imagesWithoutFile, ...plan.imagesWithText, ...plan.unknownKind, ...plan.nonImageWithRoom];
 }
 
 export async function copyAttachmentsToPhotos(c: Connection): Promise<CopyResult> {

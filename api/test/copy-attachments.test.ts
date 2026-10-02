@@ -112,4 +112,19 @@ describe("copyAttachmentsToPhotos", () => {
     const [{ id: fresh }] = await db.insert(photos).values({ storageKey: "local/test-fake-fresh.jpg" }).$returningId();
     expect(fresh).toBeGreaterThan(51);
   });
+
+describe("images that carry text", () => {
+  it("reports an image with content as blocking, still copies the photo (text dropped), and re-runs copy nothing", async () => {
+    const db = getTestDb();
+    await db.insert(attachments).values({ id: 60, itemId: 1, kind: "image", storageKey: "local/test-fake-cap.jpg", content: "caption" });
+    const plan = await planCopy(conn);
+    expect(plan.imagesWithText).toEqual([60]);
+    expect(plan.images).toBe(1);
+    expect(blockingIds(plan)).toEqual([60]); // the CLI refuses --copy on this unless --accept-losses
+    expect(await copyAttachmentsToPhotos(conn)).toEqual({ photosCreated: 1, itemLinksCreated: 0, pinsCreated: 0 });
+    expect((await db.select().from(photos)).map((p) => p.id)).toEqual([60]);
+    expect(await copyAttachmentsToPhotos(conn)).toEqual({ photosCreated: 0, itemLinksCreated: 0, pinsCreated: 0 });
+    expect((await verifyCopy(conn)).ok).toBe(true);
+  });
+});
 });

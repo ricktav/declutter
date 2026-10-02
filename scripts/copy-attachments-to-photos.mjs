@@ -43,6 +43,7 @@ try {
     process.exitCode = 2;
   } else {
     console.log("copied", await copyAttachmentsToPhotos(c));
+    console.log("note: if this run did not print `verify`, re-run `--copy` (the AUTO_INCREMENT bump is idempotent)");
     const v = await verifyCopy(c);
     console.log("verify", v);
     process.exitCode = v.ok ? 0 : 3;
