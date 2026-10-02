@@ -107,6 +107,14 @@ function rollupItem(
 }
 
 export const roomsRouter = createRouter({
+  /** Every scanned room across every house - just enough to tell which
+   * house+name combos already have a floor plan, without a per-house
+   * round trip (used by the Inbox's "pick an unmapped location" picker). */
+  listAll: publicQuery.query(async () => {
+    const db = getDb();
+    return db.select({ id: rooms.id, houseId: rooms.houseId, name: rooms.name }).from(rooms);
+  }),
+
   listByHouse: publicQuery
     .input(z.object({ houseId: z.number() }))
     .query(async ({ input }) => {

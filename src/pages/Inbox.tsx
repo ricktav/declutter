@@ -414,7 +414,19 @@ function TriageCard({
   const [aiError, setAiError] = useState<string | null>(null);
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [detectOpen, setDetectOpen] = useState(false);
-  const houses = trpc.houses.list.useQuery(undefined, { enabled: isGeojsonFile(capture.storageKey) || capture.kind === "scan" });
+  const isGeojson = isGeojsonFile(capture.storageKey) || capture.kind === "scan";
+  const houses = trpc.houses.list.useQuery(undefined, { enabled: isGeojson });
+  const allLocations = trpc.map.listLocations.useQuery(undefined, { enabled: isGeojson });
+  const allRooms = trpc.rooms.listAll.useQuery(undefined, { enabled: isGeojson });
+  // locations that already have items filed there but no scanned floor plan
+  // yet - the natural candidates for "this geojson is probably that room"
+  const unmappedLocations = (allLocations.data ?? []).filter(
+    (l) =>
+      l.houseId != null &&
+      !(allRooms.data ?? []).some(
+        (r) => r.houseId === l.houseId && r.name.trim().toLowerCase() === l.room.trim().toLowerCase(),
+      ),
+  );
   const [geoHouseId, setGeoHouseId] = useState<number | "">(() => getLastLocation().houseId ?? "");
   const [geoRoomName, setGeoRoomName] = useState("");
   const [geoError, setGeoError] = useState<string | null>(null);
@@ -491,6 +503,25 @@ function TriageCard({
                 <GeojsonThumb storageKey={capture.storageKey} />
               </div>
               <div className="flex flex-col gap-1.5 flex-1 max-w-xs">
+                {unmappedLocations.length > 0 && (
+                  <select
+                    className="rounded-md border border-input px-2 py-1.5 text-[12px] bg-white"
+                    value=""
+                    onChange={(e) => {
+                      const loc = unmappedLocations[Number(e.target.value)];
+                      if (!loc?.houseId) return;
+                      setGeoHouseId(loc.houseId);
+                      setGeoRoomName(loc.room);
+                    }}
+                  >
+                    <option value="">Pick an unmapped location…</option>
+                    {unmappedLocations.map((l, i) => (
+                      <option key={`${l.houseId}-${l.room}`} value={i}>
+                        {l.houseName} · {l.room} ({l.count} item{l.count === 1 ? "" : "s"})
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <select
                   className="rounded-md border border-input px-2 py-1.5 text-[12px] bg-white"
                   value={geoHouseId}
