@@ -42,7 +42,7 @@ export default function MapPage() {
     }
   };
 
-  const photos = trpc.map.photosForLocation.useQuery(
+  const photos = trpc.photos.forRoom.useQuery(
     { roomId: selected?.id ?? 0 },
     { enabled: !!selected },
   );
@@ -124,16 +124,15 @@ export default function MapPage() {
 
 /**
  * One photo in the pool. The pool is keyed by *capture* id (the original
- * source photo), but the pin canvas at /annotate works on an *attachment*
- * id - a capture isn't pinnable until it's also an attachment. Materialize
- * one on demand (find-or-create, so repeat visits reuse the same row)
- * before navigating in.
+ * source photo), but the pin canvas at /annotate works on a *photo* id - a
+ * capture isn't pinnable until it also has a photo. Make one on demand
+ * (find-or-create, so repeat visits reuse the same row) before navigating in.
  */
 function PhotoCard({ storageKey, captureId, roomId }: { storageKey: string; captureId: number; roomId: number }) {
-  const url = trpc.attachments.url.useQuery({ key: storageKey });
+  const url = trpc.photos.url.useQuery({ key: storageKey });
   const navigate = useNavigate();
-  const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
-    onSuccess: (res) => navigate(`/annotate/${res.attachmentId}`),
+  const ensure = trpc.photos.ensureForCapture.useMutation({
+    onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
   });
 
   return (

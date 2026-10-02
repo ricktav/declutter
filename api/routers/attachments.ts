@@ -1,21 +1,17 @@
+// api/routers/attachments.ts
+// DEPRECATED aliases, kept for one release (AGENTS.md section 2). Flow
+// (src/flow/ui.tsx) and the Computer Lab adapter call attachments.url/add/
+// remove/unlink/listAllImages/listForItem; their inputs and outputs are unchanged.
+// Storage moved to photos (images) and item_links (link/note/file). Rows from
+// item_links carry a NEGATED id so a number never means both a photo and a
+// link; pass ids back to attachments.remove exactly as received.
+// New code calls photos.*, itemLinks.* and pins.*.
 import { z } from "zod";
-import { eq, and, or, desc, isNotNull } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { attachments, photoAnnotations, captures, items, areas, type CropBox } from "@db/schema";
-import { putFile, readFileBytes, urlForKey } from "../lib/filestore";
-import { releaseStoredFiles } from "../lib/entities";
-import { sniffMime } from "../lib/sniff";
-import { cropPercent } from "../lib/crop";
-import { logEvent } from "../lib/events";
-import { roomSummary } from "../lib/location";
-
-const cropBoxInput = z.object({
-  xPct: z.number().min(0).max(100),
-  yPct: z.number().min(0).max(100),
-  wPct: z.number().min(1).max(100),
-  hPct: z.number().min(1).max(100),
-});
+import { urlForKey } from "../lib/filestore";
+import { addItemLink, addPhoto, legacyAttachmentsForItem, listPhotoCatalog, removeItemLink, removePhoto, unlinkPhoto } from "../lib/photos";
 
 export const attachmentsRouter = createRouter({
   add: procedure
@@ -33,325 +29,39 @@ export const attachmentsRouter = createRouter({
         mimeType: z.string().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input }): Promise<{ id: number; storageKey: string | null }> => {
       const db = getDb();
-      let storageKey: string | null = null;
-      let size: number | null = null;
-      let mimeType = input.mimeType ?? null;
-
-      if ((input.kind === "image" || input.kind === "file") && input.storageKey) {
-        const bytes = await readFileBytes(input.storageKey);
-        mimeType = await sniffMime(bytes, input.fileName);
-        storageKey = input.storageKey;
-        size = bytes.byteLength;
-      }
-
-      const [{ id }] = await db
-        .insert(attachments)
-        .values({
-          itemId: input.itemId ?? null,
-          areaId: input.areaId ?? null,
-          kind: input.kind,
-          title: input.title ?? null,
-          content: input.content ?? null,
-          url: input.url ?? null,
-          storageKey,
-          mimeType,
-          size,
-        })
-        .$returningId();
-      await logEvent({
-        entityType: "attachment",
-        entityId: id,
-        action: "created",
-        summary: `${input.kind} attachment "${input.title ?? input.fileName ?? input.url ?? "note"}" added${input.itemId ? ` to item #${input.itemId}` : ""}`,
-        payload: { itemId: input.itemId, areaId: input.areaId, kind: input.kind },
-      });
-      return { id, storageKey };
-    }),
-
-  remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    const db = getDb();
-    const row = await db.query.attachments.findFirst({ where: eq(attachments.id, input.id) });
-    await db.transaction(async (tx) => {
-      await tx.delete(photoAnnotations).where(eq(photoAnnotations.attachmentId, input.id));
-      await tx.delete(attachments).where(eq(attachments.id, input.id));
-      await logEvent(
-        {
-          entityType: "attachment",
-          entityId: input.id,
-          action: "deleted",
-          summary: `Attachment "${row?.title ?? input.id}" removed`,
-        },
-        tx,
-      );
-    });
-    // the file goes only if no capture or other attachment still uses it
-    if (row?.storageKey) await releaseStoredFiles(db, [row.storageKey]);
-    return { ok: true };
-  }),
-
-  /** Un-pin a photo from an item without deleting it - the file and any
-   * location context it has stay put, it just goes back into the general
-   * Photos pool instead of being removed outright. The room it
-   * belonged to (via its item) is copied onto the attachment itself first,
-   * since that currently only exists through the item link we're about to
-   * drop - otherwise the photo would lose its location when unlinked. */
-  unlink: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
-    const db = getDb();
-    const att = await db.query.attachments.findFirst({ where: eq(attachments.id, input.id) });
-    if (!att) throw new Error("attachment not found");
-    const item = att.itemId ? await db.query.items.findFirst({ where: eq(items.id, att.itemId) }) : null;
-    await db
-      .update(attachments)
-      .set({ itemId: null, roomId: att.roomId ?? item?.roomId ?? null })
-      .where(eq(attachments.id, input.id));
-    await logEvent({
-      entityType: "attachment",
-      entityId: input.id,
-      action: "unlinked",
-      summary: `Photo "${att.title ?? input.id}" unlinked from item #${att.itemId} - back in the photo pool`,
-    });
-    return { ok: true };
-  }),
-
-  url: procedure.input(z.object({ key: z.string() })).query(async ({ input }) => {
-    return { url: await urlForKey(input.key) };
-  }),
-
-  urlForAttachment: procedure
-    .input(z.object({ attachmentId: z.number() }))
-    .query(async ({ input }) => {
-      const db = getDb();
-      const att = await db.query.attachments.findFirst({
-        where: eq(attachments.id, input.attachmentId),
-      });
-      if (!att) return { attachment: null, url: null };
-      if (!att.storageKey) return { attachment: att, url: null };
-      return { attachment: att, url: await urlForKey(att.storageKey) };
-    }),
-
-  listForItem: procedure.input(z.object({ itemId: z.number() })).query(({ input }) =>
-    getDb()
-      .select()
-      .from(attachments)
-      .where(eq(attachments.itemId, input.itemId))
-      .orderBy(desc(attachments.createdAt)),
-  ),
-
-  /** The original photo a cutout was cropped from, plus its current box — for a re-crop UI. */
-  sourcePhoto: procedure
-    .input(z.object({ attachmentId: z.number() }))
-    .query(async ({ input }) => {
-      const db = getDb();
-      const att = await db.query.attachments.findFirst({ where: eq(attachments.id, input.attachmentId) });
-      if (!att?.sourceCaptureId) return { available: false as const };
-      const cap = await db.query.captures.findFirst({ where: eq(captures.id, att.sourceCaptureId) });
-      if (!cap?.storageKey) return { available: false as const };
-      return {
-        available: true as const,
-        url: await urlForKey(cap.storageKey),
-        cropBox: att.cropBox as CropBox | null,
-      };
-    }),
-
-  /** Re-crop a cutout from its original source photo with a new box — replaces the image in place. */
-  recrop: procedure
-    .input(z.object({ attachmentId: z.number(), box: cropBoxInput }))
-    .mutation(async ({ input }) => {
-      const db = getDb();
-      const att = await db.query.attachments.findFirst({ where: eq(attachments.id, input.attachmentId) });
-      if (!att?.sourceCaptureId) throw new Error("This cutout has no source photo to re-crop from.");
-      const cap = await db.query.captures.findFirst({ where: eq(captures.id, att.sourceCaptureId) });
-      if (!cap?.storageKey) throw new Error("Source photo is no longer available.");
-
-      const bytes = await readFileBytes(cap.storageKey);
-      const cropped = await cropPercent(bytes, input.box);
-      const saved = await putFile({
-        bytes: new Uint8Array(cropped),
-        fileName: `items/${att.itemId ?? "attachment"}/cutout-${Date.now()}.jpg`,
-        contentType: "image/jpeg",
-      });
-      const oldKey = att.storageKey;
-      await db.transaction(async (tx) => {
-        await tx
-          .update(attachments)
-          .set({ storageKey: saved.key, size: saved.size, cropBox: input.box })
-          .where(eq(attachments.id, input.attachmentId));
-        await logEvent(
-          {
-            entityType: "attachment",
-            entityId: input.attachmentId,
-            action: "recropped",
-            summary: `Cutout "${att.title ?? input.attachmentId}" re-cropped from its source photo`,
-          },
-          tx,
-        );
-      });
-      if (oldKey) await releaseStoredFiles(db, [oldKey]);
-      return { ok: true, storageKey: saved.key };
-    }),
-
-  /** Give a freshly-created item its first photo: crop a box out of the
-   * attachment being annotated (its original source capture when it has
-   * one, otherwise the attachment's own image) so pinning a new object
-   * doesn't leave it imageless. */
-  createCutoutFromAttachment: procedure
-    .input(
-      z.object({
-        itemId: z.number(),
-        sourceAttachmentId: z.number(),
-        box: cropBoxInput,
-        photoSize: z.enum(["small", "medium", "big"]).default("big"),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const db = getDb();
-      const source = await db.query.attachments.findFirst({ where: eq(attachments.id, input.sourceAttachmentId) });
-      if (!source) throw new Error("Source photo not found.");
-
-      let bytes: Uint8Array;
-      let sourceCaptureId: number | null = null;
-      if (source.sourceCaptureId) {
-        const cap = await db.query.captures.findFirst({ where: eq(captures.id, source.sourceCaptureId) });
-        if (!cap?.storageKey) throw new Error("Source photo is no longer available.");
-        bytes = await readFileBytes(cap.storageKey);
-        sourceCaptureId = cap.id;
-      } else if (source.storageKey) {
-        bytes = await readFileBytes(source.storageKey);
-      } else {
-        throw new Error("Source photo is no longer available.");
-      }
-
-      // this item already has a photo from this same original photo (e.g.
-      // pinning it again, or re-saving an edit) - don't pile up duplicates
-      if (sourceCaptureId) {
-        const dup = await db.query.attachments.findFirst({
-          where: and(eq(attachments.itemId, input.itemId), eq(attachments.sourceCaptureId, sourceCaptureId)),
-        });
-        if (dup) return { id: dup.id, storageKey: dup.storageKey, created: false as const };
-      }
-
-      const maxDim = { small: 480, medium: 900, big: undefined }[input.photoSize];
-      const cropped = await cropPercent(bytes, input.box, maxDim);
-      const saved = await putFile({
-        bytes: new Uint8Array(cropped),
-        fileName: `items/${input.itemId}/cutout-${Date.now()}.jpg`,
-        contentType: "image/jpeg",
-      });
-      const [{ id }] = await db
-        .insert(attachments)
-        .values({
+      if (input.kind === "image") {
+        if (!input.storageKey) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "An image needs a storageKey from POST /api/upload." });
+        }
+        return addPhoto(db, {
           itemId: input.itemId,
-          kind: "image",
-          storageKey: saved.key,
-          mimeType: "image/jpeg",
-          size: saved.size,
-          sourceCaptureId,
-          cropBox: input.box,
-          title: "Photo",
-        })
-        .$returningId();
-      await logEvent({
-        entityType: "attachment",
-        entityId: id,
-        action: "created",
-        summary: `Photo cropped from pin location and added to item #${input.itemId}`,
-      });
-      return { id, storageKey: saved.key, created: true as const };
+          areaId: input.areaId,
+          title: input.title,
+          storageKey: input.storageKey,
+          fileName: input.fileName,
+        });
+      }
+      const link = await addItemLink(db, { ...input, kind: input.kind });
+      return { id: -link.id, storageKey: link.storageKey };
     }),
 
-  /** Every photo attached to an item, across the whole inventory - the
-   * "photo catalog" (Photos page), groupable/filterable by location since
-   * that's what actually varies photo to photo, not the item's other
-   * attributes. */
-  listAllImages: procedure.query(async () => {
+  remove: procedure.input(z.object({ id: z.number() })).mutation(({ input }) => {
     const db = getDb();
-    // every image attachment, whatever state it's in: an item's own photo, a
-    // photo whose location was confirmed before any item existed (Inbox's
-    // pending-item "Pin" flow), or a bare one materialized just to make a
-    // capture pinnable (Map/Photos' "pin objects on this photo") that has
-    // neither an item nor a location yet. Filtering on itemId/room here used
-    // to silently drop that last case the moment it was created - it has an
-    // attachment now, so the raw-capture branch below stops surfacing it,
-    // but this filter also refused to show it as an attachment, so the
-    // photo just vanished from the catalog.
-    const atts = await db
-      .select()
-      .from(attachments)
-      .where(eq(attachments.kind, "image"))
-      .orderBy(desc(attachments.createdAt));
-    const itemIds = [...new Set(atts.map((a) => a.itemId).filter((id): id is number => id != null))];
-    const allItems = itemIds.length
-      ? await db.select().from(items).where(or(...itemIds.map((id) => eq(items.id, id))))
-      : [];
-    const itemById = new Map(allItems.map((i) => [i.id, i]));
-    const allAreas = await db.select().from(areas);
-    const areaById = new Map(allAreas.map((a) => [a.id, a]));
-    const roomsById = await roomSummary(
-      db,
-      [...allItems.map((i) => i.roomId), ...atts.map((a) => a.roomId)].filter((x): x is number => x != null),
-    );
-
-    const attachmentRows = atts.map((a) => {
-      const it = a.itemId != null ? itemById.get(a.itemId) : undefined;
-      return {
-        source: "attachment" as const,
-        id: a.id,
-        captureId: null as number | null,
-        storageKey: a.storageKey,
-        createdAt: a.createdAt,
-        itemId: a.itemId ?? null,
-        itemName: it?.name ?? null,
-        itemStatus: it?.status ?? null,
-        captureStatus: null as string | null,
-        roomId: it?.roomId ?? a.roomId ?? null,
-        roomName: roomsById.get(it?.roomId ?? a.roomId ?? -1)?.name ?? null,
-        floor: roomsById.get(it?.roomId ?? a.roomId ?? -1)?.floor ?? null,
-        houseId: roomsById.get(it?.roomId ?? a.roomId ?? -1)?.houseId ?? it?.houseId ?? null,
-        areaName: it ? (areaById.get(it.areaId)?.name ?? null) : null,
-      };
-    });
-
-    // every other inbox photo - pending, triaged, dismissed, whatever -
-    // that's never been pinned to a location or item at all, so it has no
-    // attachment of its own yet. Without this the catalog only ever showed
-    // the minority of photos someone had already acted on.
-    const attachedCaptureIds = new Set(
-      (
-        await db
-          .select({ captureId: attachments.sourceCaptureId })
-          .from(attachments)
-          .where(isNotNull(attachments.sourceCaptureId))
-      )
-        .map((r) => r.captureId)
-        .filter((id): id is number => id != null),
-    );
-    const allCaptures = await db
-      .select()
-      .from(captures)
-      .where(eq(captures.kind, "image"))
-      .orderBy(desc(captures.createdAt));
-    const captureRows = allCaptures
-      .filter((c) => !attachedCaptureIds.has(c.id))
-      .map((c) => ({
-        source: "capture" as const,
-        id: c.id,
-        captureId: c.id,
-        storageKey: c.storageKey,
-        createdAt: c.createdAt,
-        itemId: null,
-        itemName: null,
-        itemStatus: null,
-        captureStatus: c.status,
-        roomId: null,
-        roomName: null,
-        floor: null,
-        houseId: null,
-        areaName: null,
-        isItemCover: false,
-      }));
-
-    return [...attachmentRows, ...captureRows].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+    return input.id < 0 ? removeItemLink(db, -input.id) : removePhoto(db, input.id);
   }),
+
+  unlink: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    if (input.id < 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Only a photo can be unlinked; remove a link or note with attachments.remove." });
+    return unlinkPhoto(getDb(), input.id);
+  }),
+
+  url: procedure.input(z.object({ key: z.string() })).query(async ({ input }) => ({ url: await urlForKey(input.key) })),
+
+  listForItem: procedure.input(z.object({ itemId: z.number() })).query(({ input }) => legacyAttachmentsForItem(getDb(), input.itemId)),
+
+  listAllImages: procedure.query(async () =>
+    (await listPhotoCatalog(getDb())).map((r) => ({ ...r, source: r.source === "photo" ? ("attachment" as const) : ("capture" as const) })),
+  ),
 });

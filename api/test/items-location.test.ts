@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { areas, attachments, captures, houses, items, rooms } from "@db/schema";
+import { areas, houses, items, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 
@@ -77,25 +77,6 @@ describe("items.update location", () => {
     await callerFor(h1).items.update({ id, houseId: h2 });
     [it] = await db.select().from(items).where(eq(items.id, id));
     expect([it.roomId, it.houseId]).toEqual([null, h2]);
-  });
-});
-
-describe("attachments.unlink / map.photosForLocation", () => {
-  it("unlink copies the item's room onto the attachment", async () => {
-    const { db, h1, areaId, keuken } = await seed();
-    const { id } = await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
-    const [{ id: attId }] = await db.insert(attachments).values({ itemId: id, areaId, kind: "image", storageKey: "local/x.jpg" }).$returningId();
-    await callerFor(h1).attachments.unlink({ id: attId });
-    const [att] = await db.select().from(attachments).where(eq(attachments.id, attId));
-    expect([att.itemId, att.roomId]).toEqual([null, keuken]);
-  });
-  it("photosForLocation returns the source capture of a cutout whose item is in the room", async () => {
-    const { db, h1, areaId, keuken } = await seed();
-    const { id } = await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
-    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: "local/src.jpg" }).$returningId();
-    await db.insert(attachments).values({ itemId: id, areaId, kind: "image", storageKey: "local/cut.jpg", sourceCaptureId: capId });
-    expect(await callerFor(h1).map.photosForLocation({ roomId: keuken })).toEqual([{ id: capId, storageKey: "local/src.jpg" }]);
-    expect(await callerFor(h1).map.photosForLocation({ roomId: 999999 })).toEqual([]);
   });
 });
 

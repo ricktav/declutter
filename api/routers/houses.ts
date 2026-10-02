@@ -3,20 +3,20 @@ import { eq, asc, inArray, or, and, ne } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { houses, items, attachments, rooms } from "@db/schema";
+import { houses, items, photos, rooms } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { setItemLocation } from "../lib/location";
 
-/** Photos of a house: attachments in one of its rooms, or on one of its items. */
+/** Photos of a house: photos in one of its rooms, or on one of its items. */
 async function photosOfHouse(db: ReturnType<typeof getDb>, houseId: number) {
   const roomIds = (await db.select({ id: rooms.id }).from(rooms).where(eq(rooms.houseId, houseId))).map((r) => r.id);
   const itemIds = (await db.select({ id: items.id }).from(items).where(eq(items.houseId, houseId))).map((r) => r.id);
   const conds = [
-    roomIds.length ? inArray(attachments.roomId, roomIds) : undefined,
-    itemIds.length ? inArray(attachments.itemId, itemIds) : undefined,
+    roomIds.length ? inArray(photos.roomId, roomIds) : undefined,
+    itemIds.length ? inArray(photos.itemId, itemIds) : undefined,
   ].filter((c) => c !== undefined);
   if (!conds.length) return [];
-  return db.select({ id: attachments.id }).from(attachments).where(or(...conds));
+  return db.select({ id: photos.id }).from(photos).where(or(...conds));
 }
 
 export const housesRouter = createRouter({
@@ -137,7 +137,7 @@ export const housesRouter = createRouter({
         for (const { s, t } of pairs) {
           const moved = await tx.select({ id: items.id }).from(items).where(eq(items.roomId, s.id));
           for (const it of moved) await setItemLocation(tx, it.id, { roomId: t.id });
-          await tx.update(attachments).set({ roomId: t.id }).where(eq(attachments.roomId, s.id));
+          await tx.update(photos).set({ roomId: t.id }).where(eq(photos.roomId, s.id));
           await tx.update(rooms).set({ parentRoomId: t.id }).where(and(eq(rooms.parentRoomId, s.id), ne(rooms.id, t.id)));
           if (s.walls && !t.walls) {
             await tx
@@ -180,7 +180,7 @@ export const housesRouter = createRouter({
       const roomIds = roomRows.map((r) => r.id);
       if (roomIds.length) {
         await tx.update(items).set({ roomId: null }).where(inArray(items.roomId, roomIds));
-        await tx.update(attachments).set({ roomId: null }).where(inArray(attachments.roomId, roomIds));
+        await tx.update(photos).set({ roomId: null }).where(inArray(photos.roomId, roomIds));
         await tx.delete(rooms).where(inArray(rooms.id, roomIds));
       }
       await tx.update(items).set({ houseId: null }).where(eq(items.houseId, input.id));

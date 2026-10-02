@@ -86,10 +86,9 @@ async function main() {
         fileName: `items/${item.id}/cutout-${Date.now()}.jpg`,
         contentType: "image/jpeg",
       });
-      await db.insert(schema.attachments).values({
+      await db.insert(schema.photos).values({
         itemId: item.id,
         areaId: item.areaId,
-        kind: "image",
         title: `Cutout: ${item.name}`,
         storageKey: saved.key,
         mimeType: "image/jpeg",
@@ -113,10 +112,9 @@ async function main() {
         fileName: `items/${itemId}/cutout-${Date.now()}.jpg`,
         contentType: "image/jpeg",
       });
-      await db.insert(schema.attachments).values({
+      await db.insert(schema.photos).values({
         itemId,
         areaId,
-        kind: "image",
         title: `Cutout: ${d.claudeLabel}`,
         storageKey: saved.key,
         mimeType: "image/jpeg",

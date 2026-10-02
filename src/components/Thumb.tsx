@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 /** Small square thumbnail from an item's first image attachment. Falls back to a placeholder. */
 export function Thumb({ storageKey, size = "sm" }: { storageKey: string | null; size?: "sm" | "lg" }) {
   const dim = size === "sm" ? "h-9 w-9" : "aspect-square w-full";
-  const url = trpc.attachments.url.useQuery(
+  const url = trpc.photos.url.useQuery(
     { key: storageKey ?? "" },
     { enabled: !!storageKey },
   );

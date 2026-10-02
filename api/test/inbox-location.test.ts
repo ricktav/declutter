@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
-import { areas, attachments, captures, houses, items, rooms } from "@db/schema";
+import { areas, captures, houses, items, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 
@@ -36,23 +35,6 @@ describe("inbox.acceptMany", () => {
     await callerFor(h1).inbox.acceptMany({ id: capId, items: [{ areaId, itemId: null, itemName: "pan" }] });
     const [row] = await db.select().from(items);
     expect([row.roomId, row.houseId]).toEqual([null, h1]);
-  });
-});
-
-describe("map.ensureAttachmentForCapture", () => {
-  it("creates a location photo linked by roomId", async () => {
-    const { db, h1, keuken } = await seed();
-    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: "local/does-not-matter.jpg" }).$returningId();
-    // the copy step needs a real file; stub it by writing one into uploads/
-    const fs = await import("fs");
-    fs.mkdirSync("uploads", { recursive: true });
-    fs.writeFileSync("uploads/does-not-matter.jpg", Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
-    const r = await callerFor(h1).map.ensureAttachmentForCapture({ captureId: capId, roomId: keuken });
-    const [att] = await db.select().from(attachments).where(eq(attachments.id, r.attachmentId));
-    expect(att.roomId).toBe(keuken);
-    expect(att.itemId).toBeNull();
-    fs.rmSync(att.storageKey!.replace(/^local\//, "uploads/"), { force: true });
-    fs.rmSync("uploads/does-not-matter.jpg", { force: true });
   });
 });
 

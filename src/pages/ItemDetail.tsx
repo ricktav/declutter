@@ -37,8 +37,8 @@ import {
 import type { AttributeDef } from "@db/schema";
 
 /** Link to the original, uncropped photo a cutout came from — opens full-size in a new tab. */
-function SourceLink({ attachmentId }: { attachmentId: number }) {
-  const source = trpc.attachments.sourcePhoto.useQuery({ attachmentId });
+function SourceLink({ photoId }: { photoId: number }) {
+  const source = trpc.photos.sourcePhoto.useQuery({ photoId });
   if (!source.data?.available || !source.data.url) return null;
   return (
     <a
@@ -60,7 +60,7 @@ function AttachmentView({
   att: { id: number; kind: string; title: string | null; content: string | null; url: string | null; storageKey: string | null };
   onZoom?: (url: string) => void;
 }) {
-  const url = trpc.attachments.url.useQuery(
+  const url = trpc.photos.url.useQuery(
     { key: att.storageKey! },
     { enabled: !!att.storageKey && att.kind === "image" },
   );
@@ -194,17 +194,20 @@ export default function ItemDetail() {
       navigate(-1);
     },
   });
-  const addAttachment = trpc.attachments.add.useMutation({
+  const attachmentAdded = {
     onSuccess: () => {
       setNewNote("");
       setNewLink("");
       setUploadError(null);
       invalidate();
     },
-    onError: (e) => setUploadError(e.message),
-  });
-  const removeAttachment = trpc.attachments.remove.useMutation({ onSuccess: invalidate });
-  const unlinkAttachment = trpc.attachments.unlink.useMutation({ onSuccess: invalidate });
+    onError: (e: { message: string }) => setUploadError(e.message),
+  };
+  const addPhoto = trpc.photos.add.useMutation(attachmentAdded);
+  const addLink = trpc.itemLinks.add.useMutation(attachmentAdded);
+  const addingAttachment = addPhoto.isPending || addLink.isPending;
+  const removeLink = trpc.itemLinks.remove.useMutation({ onSuccess: invalidate });
+  const unlinkPhoto = trpc.photos.unlink.useMutation({ onSuccess: invalidate });
   const addRelation = trpc.items.addRelation.useMutation({ onSuccess: invalidate });
   const resolveRelation = trpc.items.resolveRelation.useMutation({
     onSuccess: () => {
@@ -237,6 +240,32 @@ export default function ItemDetail() {
   const defs = (it.area?.attributeDefs as AttributeDef[] | null) ?? [];
   const suggested = it.relations.filter((r) => r.status === "suggested");
   const confirmed = it.relations.filter((r) => r.status === "confirmed");
+  // photos and links/notes/files live in two tables now; the list shows
+  // them together, newest first, as it always did
+  const entries = [
+    ...it.photos.map((p) => ({
+      entry: "photo" as const,
+      id: p.id,
+      kind: "image" as const,
+      title: p.title,
+      content: null,
+      url: null,
+      storageKey: p.storageKey as string | null,
+      sourceCaptureId: p.sourceCaptureId,
+      createdAt: p.createdAt,
+    })),
+    ...it.links.map((l) => ({
+      entry: "link" as const,
+      id: l.id,
+      kind: l.kind,
+      title: l.title,
+      content: l.content,
+      url: l.url,
+      storageKey: l.storageKey,
+      sourceCaptureId: l.sourceCaptureId,
+      createdAt: l.createdAt,
+    })),
+  ].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
 
   const startEditAttrs = () => {
     const draft: Record<string, string> = {};
@@ -279,15 +308,11 @@ export default function ItemDetail() {
     setUploadError(null);
     try {
       const up = await uploadFile(f, "attachments");
-      addAttachment.mutate({
-        itemId,
-        areaId: it.areaId,
-        kind: up.mimeType.startsWith("image/") ? "image" : "file",
-        title: f.name,
-        fileName: up.fileName,
-        storageKey: up.key,
-        mimeType: up.mimeType,
-      });
+      if (up.mimeType.startsWith("image/")) {
+        addPhoto.mutate({ itemId, areaId: it.areaId, title: f.name, fileName: up.fileName, storageKey: up.key });
+      } else {
+        addLink.mutate({ itemId, areaId: it.areaId, kind: "file", title: f.name, fileName: up.fileName, storageKey: up.key, mimeType: up.mimeType });
+      }
     } catch (e) {
       setUploadError((e as Error).message);
     }
@@ -438,7 +463,7 @@ export default function ItemDetail() {
             if (f) uploadAttachment(f);
             else {
               const t = e.dataTransfer.getData("text");
-              if (t) addAttachment.mutate({ itemId, areaId: it.areaId, kind: "link", url: t, title: t });
+              if (t) addLink.mutate({ itemId, areaId: it.areaId, kind: "link", url: t, title: t });
             }
           }}
         >
@@ -459,15 +484,15 @@ export default function ItemDetail() {
               }} />
             <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto"
               onClick={() => cameraRef.current?.click()}
-              disabled={addAttachment.isPending}
+              disabled={addingAttachment}
               title="Take a photo — another angle, a label, a serial number">
               <Camera className="h-3 w-3 mr-1" />
               snap
             </Button>
             <Button size="sm" variant="ghost" className="h-6 text-[11px]"
               onClick={() => fileRef.current?.click()}
-              disabled={addAttachment.isPending}>
-              {addAttachment.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <ImagePlus className="h-3 w-3 mr-1" />}
+              disabled={addingAttachment}>
+              {addingAttachment ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <ImagePlus className="h-3 w-3 mr-1" />}
               file
             </Button>
             <Button size="sm" variant="ghost" className="h-6 text-[11px]"
@@ -483,20 +508,20 @@ export default function ItemDetail() {
             </div>
           )}
           <div className="space-y-2.5">
-            {it.attachments.length === 0 && (
+            {entries.length === 0 && (
               <div className="text-[13px] text-muted-foreground">
                 Nothing attached. Drop a photo, paste a link or write a note.
               </div>
             )}
-            {it.attachments.map((a) => (
-              <div key={a.id} className="group flex items-start gap-2">
+            {entries.map((a) => (
+              <div key={`${a.entry}-${a.id}`} className="group flex items-start gap-2">
                 <div className="flex-1 min-w-0">
                   <AttachmentView att={a} onZoom={setLightboxUrl} />
                   <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
                 </div>
                 {a.kind === "image" && a.sourceCaptureId && (
                   <>
-                    <SourceLink attachmentId={a.id} />
+                    <SourceLink photoId={a.id} />
                     <button
                       className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
                       title="Re-crop from original photo"
@@ -506,12 +531,12 @@ export default function ItemDetail() {
                     </button>
                   </>
                 )}
-                {a.kind === "image" ? (
+                {a.entry === "photo" ? (
                   <button
                     className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive disabled:opacity-100"
                     title="Unlink this photo from the item - it stays in the Photos pool"
-                    disabled={unlinkAttachment.isPending}
-                    onClick={() => unlinkAttachment.mutate({ id: a.id })}
+                    disabled={unlinkPhoto.isPending}
+                    onClick={() => unlinkPhoto.mutate({ id: a.id })}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -525,8 +550,8 @@ export default function ItemDetail() {
                     title={`Delete ${a.kind === "note" ? "note" : "link"}?`}
                     description="This will be permanently removed."
                     confirmLabel="Delete"
-                    pending={removeAttachment.isPending}
-                    onConfirm={() => removeAttachment.mutate({ id: a.id })}
+                    pending={removeLink.isPending}
+                    onConfirm={() => removeLink.mutate({ id: a.id })}
                   />
                 )}
               </div>
@@ -541,7 +566,7 @@ export default function ItemDetail() {
                 onChange={(e) => setNewNote(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && newNote.trim())
-                    addAttachment.mutate({ itemId, areaId: it.areaId, kind: "note", content: newNote.trim() });
+                    addLink.mutate({ itemId, areaId: it.areaId, kind: "note", content: newNote.trim() });
                 }} />
             </div>
             <div className="flex gap-2">
@@ -552,7 +577,7 @@ export default function ItemDetail() {
                 onChange={(e) => setNewLink(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && newLink.trim())
-                    addAttachment.mutate({ itemId, areaId: it.areaId, kind: "link", url: newLink.trim(), title: newLink.trim() });
+                    addLink.mutate({ itemId, areaId: it.areaId, kind: "link", url: newLink.trim(), title: newLink.trim() });
                 }} />
             </div>
           </div>
@@ -914,7 +939,7 @@ export default function ItemDetail() {
         </div>
       </section>
 
-      <RecropDialog attachmentId={recropId} open={recropId != null} onClose={() => setRecropId(null)} />
+      <RecropDialog photoId={recropId} open={recropId != null} onClose={() => setRecropId(null)} />
       <ChooseFromLibraryDialog itemId={itemId} open={libraryOpen} onClose={() => setLibraryOpen(false)} />
       <Dialog open={!!lightboxUrl} onOpenChange={(o) => !o && setLightboxUrl(null)}>
         <DialogContent className="max-w-4xl p-2 bg-black/95 border-none">
@@ -928,7 +953,7 @@ export default function ItemDetail() {
 }
 
 function PinnedInPhotos({ itemId }: { itemId: number }) {
-  const pins = trpc.annotations.listForItem.useQuery({ itemId });
+  const pins = trpc.pins.listForItem.useQuery({ itemId });
   const list = (pins.data ?? []).filter((p) => p.status === "confirmed");
   if (!pins.data) return null;
   return (
@@ -943,8 +968,8 @@ function PinnedInPhotos({ itemId }: { itemId: number }) {
         {list.map((p) => (
           <div key={p.id} className="text-[13px] flex items-center gap-2">
             <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <Link to={`/annotate/${p.attachmentId}`} className="text-primary hover:underline">
-              {p.attachment?.title ?? `photo #${p.attachmentId}`}
+            <Link to={`/annotate/${p.photoId}`} className="text-primary hover:underline">
+              {p.photo?.title ?? `photo #${p.photoId}`}
             </Link>
             {p.label && <span className="text-muted-foreground text-[11px]">as “{p.label}”</span>}
           </div>

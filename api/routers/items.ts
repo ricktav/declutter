@@ -1,13 +1,14 @@
 import { z } from "zod";
-import { eq, desc, or, and, asc, inArray } from "drizzle-orm";
+import { eq, desc, or, and, asc } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, attachments, relations, tasks, ideaItems, ideas, events, houses, ITEM_DECISIONS, type ItemPos } from "@db/schema";
+import { areas, items, photos, itemLinks, relations, tasks, ideaItems, ideas, events, houses, ITEM_DECISIONS, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { getModel } from "../lib/ai";
 import { roomSummary, setItemLocation } from "../lib/location";
+import { coverPhotos, linkAsLegacy, photoAsLegacy } from "../lib/photos";
 
 /** crude name-similarity: shared significant tokens */
 function nameScore(a: string, b: string): number {
@@ -40,15 +41,8 @@ export const itemsRouter = createRouter({
             : and(eq(items.areaId, input.areaId), eq(items.status, "active")),
         )
         .orderBy(desc(items.updatedAt));
-      const atts = await db
-        .select()
-        .from(attachments)
-        .where(eq(attachments.kind, "image"));
-      const imgMap = new Map<number, string>();
-      for (const a of atts) {
-        if (a.itemId && a.storageKey && !imgMap.has(a.itemId)) imgMap.set(a.itemId, a.storageKey);
-      }
-      return rows.map((r) => ({ ...r, imageKey: imgMap.get(r.id) ?? null }));
+      const covers = await coverPhotos(db, rows.map((r) => r.id));
+      return rows.map((r) => ({ ...r, imageKey: covers.get(r.id)?.storageKey ?? null }));
     }),
 
   /** Every active item across every area, for the cross-area browser (search/sort by area or location). */
@@ -77,15 +71,10 @@ export const itemsRouter = createRouter({
       const allAreas = await db.select().from(areas);
       const areaById = new Map(allAreas.map((a) => [a.id, a]));
       const roomsById = await roomSummary(db, rows.map((r) => r.roomId).filter((x): x is number => x != null));
-      const ids = rows.map((r) => r.id);
-      const atts = ids.length
-        ? await db.select().from(attachments).where(and(eq(attachments.kind, "image"), inArray(attachments.itemId, ids)))
-        : [];
-      const imgMap = new Map<number, string>();
-      for (const a of atts) if (a.itemId && a.storageKey && !imgMap.has(a.itemId)) imgMap.set(a.itemId, a.storageKey);
+      const covers = await coverPhotos(db, rows.map((r) => r.id));
       return rows.map((r) => ({
         ...r,
-        imageKey: imgMap.get(r.id) ?? null,
+        imageKey: covers.get(r.id)?.storageKey ?? null,
         areaName: areaById.get(r.areaId)?.name ?? null,
         areaSlug: areaById.get(r.areaId)?.slug ?? null,
         room: r.roomId != null ? (roomsById.get(r.roomId) ?? null) : null,
@@ -101,11 +90,8 @@ export const itemsRouter = createRouter({
       ? await db.query.houses.findFirst({ where: eq(houses.id, item.houseId) })
       : null;
     const room = item.roomId != null ? ((await roomSummary(db, [item.roomId])).get(item.roomId) ?? null) : null;
-    const atts = await db
-      .select()
-      .from(attachments)
-      .where(eq(attachments.itemId, item.id))
-      .orderBy(desc(attachments.createdAt));
+    const itemPhotos = await db.select().from(photos).where(eq(photos.itemId, item.id)).orderBy(desc(photos.createdAt));
+    const itemLinkRows = await db.select().from(itemLinks).where(eq(itemLinks.itemId, item.id)).orderBy(desc(itemLinks.createdAt));
     const rels = await db
       .select()
       .from(relations)
@@ -153,7 +139,9 @@ export const itemsRouter = createRouter({
       area,
       house,
       room,
-      attachments: atts,
+      photos: itemPhotos,
+      links: itemLinkRows,
+      attachments: [...itemPhotos.map(photoAsLegacy), ...itemLinkRows.map(linkAsLegacy)].sort((a, b) => +b.createdAt - +a.createdAt || b.id - a.id), // DEPRECATED alias field for external callers; link ids are negated
       relations: rels.map((r) => ({
         ...r,
         otherItemId: r.fromItemId === item.id ? r.toItemId : r.fromItemId,
@@ -377,7 +365,7 @@ export const itemsRouter = createRouter({
 
   /**
    * The verification gate: distinguishes an item a human actually looked at
-   * from one an AI/scan pipeline auto-filed. Mirrors photoAnnotations'
+   * from one an AI/scan pipeline auto-filed. Mirrors photoPins'
    * origin/status pattern. Separate from setArchived's lifecycle status —
    * an item can be confirmed-and-archived, or detected-and-active.
    */

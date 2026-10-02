@@ -56,7 +56,7 @@ const KIND_ICONS = {
  * grid cell (catalog style) rather than being a fixed small square. */
 function ProcessedThumb({ storageKey, kind }: { storageKey: string | null; kind: keyof typeof KIND_ICONS }) {
   const Icon = KIND_ICONS[kind];
-  const url = trpc.attachments.url.useQuery({ key: storageKey ?? "" }, { enabled: !!storageKey && kind === "image" });
+  const url = trpc.photos.url.useQuery({ key: storageKey ?? "" }, { enabled: !!storageKey && kind === "image" });
   if (kind === "image" && url.data?.url) {
     return (
       <div className="aspect-square w-full overflow-hidden rounded-md border border-border bg-muted/40">
@@ -90,8 +90,8 @@ function PinCaptureButton({
   iconOnly?: boolean;
 }) {
   const navigate = useNavigate();
-  const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
-    onSuccess: (res) => navigate(`/annotate/${res.attachmentId}`),
+  const ensure = trpc.photos.ensureForCapture.useMutation({
+    onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
   });
   if (iconOnly) {
     return (
@@ -195,7 +195,7 @@ type CompareSide = {
 type CompareResult = { a: CompareSide; b: CompareSide };
 
 function CaptureImage({ storageKey }: { storageKey: string }) {
-  const url = trpc.attachments.url.useQuery({ key: storageKey });
+  const url = trpc.photos.url.useQuery({ key: storageKey });
   if (!url.data?.url) return null;
   return (
     <img
@@ -224,10 +224,10 @@ function PinPendingButton({ captureId }: { captureId: number }) {
   const rooms = trpc.rooms.list.useQuery();
   const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "unset";
   const hasDefaultLocation = roomId != null;
-  const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
+  const ensure = trpc.photos.ensureForCapture.useMutation({
     onSuccess: (res) => {
       setLastRoomId(roomId);
-      navigate(`/annotate/${res.attachmentId}?roomId=${roomId ?? "none"}`);
+      navigate(`/annotate/${res.photoId}?roomId=${roomId ?? "none"}`);
     },
   });
 
@@ -770,7 +770,7 @@ export default function InboxPage() {
   const [lightbox, setLightbox] = useState<{ storageKey: string; captureId: number; isPending: boolean } | null>(
     null,
   );
-  const lightboxUrl = trpc.attachments.url.useQuery(
+  const lightboxUrl = trpc.photos.url.useQuery(
     { key: lightbox?.storageKey ?? "" },
     { enabled: !!lightbox },
   );

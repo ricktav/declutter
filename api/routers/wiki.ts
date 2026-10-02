@@ -3,7 +3,8 @@ import { eq, desc } from "drizzle-orm";
 import { generateText } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, attachments, relations, wikiPages, type Area, type Item } from "@db/schema";
+import { areas, items, itemLinks, photos, relations, wikiPages, type Area, type Item } from "@db/schema";
+import { linkAsLegacy, photoAsLegacy } from "../lib/photos";
 import { getModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
@@ -42,7 +43,10 @@ async function buildPages() {
   const db = getDb();
   const allAreas = await db.select().from(areas);
   const allItems = await db.select().from(items);
-  const allAtts = await db.select().from(attachments);
+  const allAtts = [
+    ...(await db.select().from(photos)).map(photoAsLegacy),
+    ...(await db.select().from(itemLinks)).map(linkAsLegacy),
+  ];
   const allRels = await db.select().from(relations);
   const itemMap = new Map(allItems.map((i) => [i.id, i]));
   const areaMap = new Map(allAreas.map((a) => [a.id, a]));

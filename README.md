@@ -38,7 +38,7 @@ local Ollama.
 | `/inbox` | Capture triage with AI suggestions |
 | `/areas/:slug` | Per-area inventory tables with typed attributes |
 | `/items/:id` | Item 360° — attributes, attachments, relations, tasks, history |
-| `/annotate/:attachmentId` | Photo pins, AI object detection |
+| `/annotate/:photoId` | Photo pins, AI object detection |
 | `/ideas` | Idea board with AI task breakdown |
 | `/tasks` | Kanban with timers and time logs |
 | `/wiki` | Auto-generated markdown wiki + LLM context pack export |

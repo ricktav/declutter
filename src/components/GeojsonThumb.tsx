@@ -14,7 +14,7 @@ const WALL_COLOR: Record<GeojsonWall["kind"], string> = {
  * uses the same projection math the eventual room import uses, so the
  * shape previewed here matches what you'd actually get. */
 export function GeojsonThumb({ storageKey }: { storageKey: string }) {
-  const url = trpc.attachments.url.useQuery({ key: storageKey });
+  const url = trpc.photos.url.useQuery({ key: storageKey });
   const [walls, setWalls] = useState<GeojsonWall[] | null>(null);
   const [dims, setDims] = useState<{ widthM: number; depthM: number } | null>(null);
   const [failed, setFailed] = useState(false);

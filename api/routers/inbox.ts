@@ -4,7 +4,7 @@ import { eq, desc, isNull, and, inArray, sql } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, areas, items, attachments, rooms, type TriageSuggestion, type RoomGeometry } from "@db/schema";
+import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type RoomGeometry } from "@db/schema";
 import { parseGeojsonFloor, FURNITURE_KIND_MAP } from "../lib/geojsonFloor";
 import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
@@ -15,6 +15,7 @@ import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 import { setItemLocation } from "../lib/location";
+import { coverPhotos } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -348,14 +349,7 @@ export const inboxRouter = createRouter({
       // reference photos let the model recognize a re-photographed item by
       // sight instead of guessing from name text alone (which misses
       // whenever it phrases the label differently the second time round)
-      const photoRows = await db
-        .select({ itemId: attachments.itemId, storageKey: attachments.storageKey })
-        .from(attachments)
-        .where(eq(attachments.kind, "image"));
-      const photoByItem = new Map<number, string>();
-      for (const p of photoRows) {
-        if (p.itemId && p.storageKey && !photoByItem.has(p.itemId)) photoByItem.set(p.itemId, p.storageKey);
-      }
+      const photoByItem = new Map([...(await coverPhotos(db))].map(([itemId, p]) => [itemId, p.storageKey] as const));
       const refItems = allItems.filter((it) => photoByItem.has(it.id)).slice(0, MAX_REFERENCE_PHOTOS);
       const refContent: Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }> = [];
       for (const it of refItems) {
@@ -495,7 +489,7 @@ export const inboxRouter = createRouter({
         });
       }
 
-      // cutout: crop the box from the ORIGINAL snap and store as an attachment
+      // cutout: crop the box from the ORIGINAL snap and store it as a photo
       const bytes = await readFileBytes(cap.storageKey);
       const cropped = await cropPercent(bytes, {
         xPct: input.xPct,
@@ -509,10 +503,9 @@ export const inboxRouter = createRouter({
         contentType: "image/jpeg",
       });
       const item = await db.query.items.findFirst({ where: eq(items.id, itemId) });
-      await db.insert(attachments).values({
+      await db.insert(photos).values({
         itemId,
         areaId: item?.areaId ?? input.areaId,
-        kind: "image",
         title: `Cutout: ${input.label}`,
         storageKey: saved.key,
         mimeType: "image/jpeg",
@@ -588,30 +581,34 @@ export const inboxRouter = createRouter({
             }, tx);
 
             if (cap.rawText || cap.url || cap.storageKey) {
-              // the item gets its own copy of the file: a capture and an
-              // attachment must never share one storage key (deleting one
+              // the item gets its own copy of the file: a capture and a
+              // photo/link must never share one storage key (deleting one
               // would delete the other's bytes)
               const copy = cap.storageKey
                 ? await copyStoredFile(cap.storageKey, `items/${itemId}/${cap.storageKey.split("/").pop() ?? "photo"}`)
                 : null;
-              await tx.insert(attachments).values({
-                itemId,
-                areaId: it.areaId,
-                kind:
-                  cap.kind === "link"
-                    ? "link"
-                    : cap.kind === "image" || cap.kind === "file"
-                      ? cap.kind
-                      : cap.storageKey
-                        ? "file"
-                        : "note",
-                title: cap.url ?? it.itemName,
-                content: cap.rawText ?? null,
-                url: cap.url ?? null,
-                storageKey: copy?.key ?? null,
-                size: copy?.size ?? null,
-                sourceCaptureId: cap.id,
-              });
+              if (cap.kind === "image" && copy) {
+                await tx.insert(photos).values({
+                  itemId,
+                  areaId: it.areaId,
+                  title: cap.url ?? it.itemName,
+                  storageKey: copy.key,
+                  size: copy.size,
+                  sourceCaptureId: cap.id,
+                });
+              } else {
+                await tx.insert(itemLinks).values({
+                  itemId,
+                  areaId: it.areaId,
+                  kind: cap.kind === "link" ? "link" : copy ? "file" : "note",
+                  title: cap.url ?? it.itemName,
+                  content: cap.rawText ?? null,
+                  url: cap.url ?? null,
+                  storageKey: copy?.key ?? null,
+                  size: copy?.size ?? null,
+                  sourceCaptureId: cap.id,
+                });
+              }
             }
           } else if (it.attributes && Object.keys(it.attributes).length) {
             const existing = await tx.query.items.findFirst({ where: eq(items.id, itemId) });
@@ -801,13 +798,11 @@ export const inboxRouter = createRouter({
 
     const allDupeIds = dupeGroups.flatMap((g) => g.map((c) => c.id));
     const pinned = new Set(
-      (
-        await db
-          .select({ sourceCaptureId: attachments.sourceCaptureId })
-          .from(attachments)
-          .where(inArray(attachments.sourceCaptureId, allDupeIds))
-      )
-        .map((a) => a.sourceCaptureId)
+      [
+        ...(await db.select({ c: photos.sourceCaptureId }).from(photos).where(inArray(photos.sourceCaptureId, allDupeIds))),
+        ...(await db.select({ c: itemLinks.sourceCaptureId }).from(itemLinks).where(inArray(itemLinks.sourceCaptureId, allDupeIds))),
+      ]
+        .map((r) => r.c)
         .filter((id): id is number => id != null),
     );
 

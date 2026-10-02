@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { areas, attachments, houses, items, rooms } from "@db/schema";
+import { areas, houses, items, photos, rooms } from "@db/schema";
 import { eq } from "drizzle-orm";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
@@ -16,8 +16,8 @@ describe("houses.impact / reassign count photos by room or item", () => {
     const [{ id: areaId }] = await db.insert(areas).values({ slug: "x", name: "X" }).$returningId();
     const [{ id: roomId }] = await db.insert(rooms).values({ houseId: h1, name: "Keuken", source: "manual" }).$returningId();
     const [{ id: itemId }] = await db.insert(items).values({ areaId, name: "pan", houseId: h1, roomId }).$returningId();
-    await db.insert(attachments).values({ itemId, areaId, kind: "image", storageKey: "local/a.jpg" });
-    await db.insert(attachments).values({ roomId, kind: "image", storageKey: "local/b.jpg" });
+    await db.insert(photos).values({ itemId, areaId, storageKey: "local/test-fake-a.jpg" });
+    await db.insert(photos).values({ roomId, storageKey: "local/test-fake-b.jpg" });
 
     const c = callerFor(h1);
     expect(await c.houses.impact({ id: h1 })).toEqual({ itemCount: 1, photoCount: 2 });

@@ -14,32 +14,32 @@ type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
 
 /** Re-crop a cutout from the original photo it came from. */
 export function RecropDialog({
-  attachmentId,
+  photoId,
   open,
   onClose,
 }: {
-  attachmentId: number | null;
+  photoId: number | null;
   open: boolean;
   onClose: () => void;
 }) {
   const utils = trpc.useUtils();
   const [box, setBox] = useState<CropBox>({ xPct: 50, yPct: 50, wPct: 30, hPct: 30 });
 
-  const source = trpc.attachments.sourcePhoto.useQuery(
-    { attachmentId: attachmentId ?? 0 },
-    { enabled: open && attachmentId != null },
+  const source = trpc.photos.sourcePhoto.useQuery(
+    { photoId: photoId ?? 0 },
+    { enabled: open && photoId != null },
   );
 
   useEffect(() => {
     if (source.data?.available && source.data.cropBox) setBox(source.data.cropBox);
   }, [source.data]);
 
-  const recrop = trpc.attachments.recrop.useMutation({
+  const recrop = trpc.photos.recrop.useMutation({
     onSuccess: () => {
-      utils.attachments.listForItem.invalidate();
-      utils.attachments.urlForAttachment.invalidate();
+      utils.photos.listForItem.invalidate();
+      utils.photos.get.invalidate();
       // ItemDetail reads its attachment list (and thumbnails) through
-      // items.get, not attachments.listForItem - without this the new
+      // items.get, not photos.listForItem - without this the new
       // storageKey never reaches the page and the old thumbnail lingers
       utils.items.get.invalidate();
       onClose();
@@ -78,7 +78,7 @@ export function RecropDialog({
               </Button>
               <Button
                 size="sm"
-                onClick={() => attachmentId != null && recrop.mutate({ attachmentId, box })}
+                onClick={() => photoId != null && recrop.mutate({ photoId, box })}
                 disabled={recrop.isPending}
               >
                 {recrop.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}

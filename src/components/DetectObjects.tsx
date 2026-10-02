@@ -126,7 +126,7 @@ export function DetectObjectsModal({
 
   const captureQuery = trpc.inbox.list.useQuery(undefined, { enabled: open });
   const capture = (captureQuery.data ?? []).find((c) => c.id === captureId) ?? null;
-  const imgUrl = trpc.attachments.url.useQuery(
+  const imgUrl = trpc.photos.url.useQuery(
     { key: captureKey ?? "" },
     { enabled: open && !!captureKey },
   );

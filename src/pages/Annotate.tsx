@@ -33,9 +33,9 @@ function LinkedItemChip({
   currentAttachmentId: number;
   onUnlink: () => void;
 }) {
-  const pins = trpc.annotations.listForItem.useQuery({ itemId: item.id });
+  const pins = trpc.pins.listForItem.useQuery({ itemId: item.id });
   const elsewhere = (pins.data ?? []).filter(
-    (p) => p.status === "confirmed" && p.attachmentId !== currentAttachmentId,
+    (p) => p.status === "confirmed" && p.photoId !== currentAttachmentId,
   );
   return (
     <div className="text-[12px] rounded bg-accent px-2 py-1 space-y-1">
@@ -129,8 +129,8 @@ type Pin = {
 };
 
 export default function AnnotatePage() {
-  const { attachmentId } = useParams<{ attachmentId: string }>();
-  const attId = Number(attachmentId);
+  const { photoId } = useParams<{ photoId: string }>();
+  const attId = Number(photoId);
   const navigate = useNavigate();
   const utils = trpc.useUtils();
   const imgRef = useRef<HTMLImageElement>(null);
@@ -142,8 +142,8 @@ export default function AnnotatePage() {
   const roomIdParam = searchParams.get("roomId");
   const confirmedRoomId = roomIdParam && roomIdParam !== "none" ? Number(roomIdParam) : null;
 
-  const pinsQuery = trpc.annotations.listForAttachment.useQuery({ attachmentId: attId });
-  const urlQuery = trpc.attachments.urlForAttachment.useQuery({ attachmentId: attId });
+  const pinsQuery = trpc.pins.listForPhoto.useQuery({ photoId: attId });
+  const urlQuery = trpc.photos.get.useQuery({ id: attId });
   const areas = trpc.areas.list.useQuery();
 
   const [pending, setPending] = useState<{ xPct: number; yPct: number; wPct?: number; hPct?: number } | null>(null);
@@ -175,24 +175,24 @@ export default function AnnotatePage() {
     bottom: number;
   } | null>(null);
 
-  const invalidate = () => utils.annotations.listForAttachment.invalidate({ attachmentId: attId });
+  const invalidate = () => utils.pins.listForPhoto.invalidate({ photoId: attId });
 
-  const addPin = trpc.annotations.add.useMutation({ onSuccess: invalidate });
-  const resolve = trpc.annotations.resolve.useMutation({
+  const addPin = trpc.pins.add.useMutation({ onSuccess: invalidate });
+  const resolve = trpc.pins.resolve.useMutation({
     onSuccess: () => {
       invalidate();
       utils.events.list.invalidate();
     },
   });
-  const removePin = trpc.annotations.remove.useMutation({ onSuccess: invalidate });
-  const reposition = trpc.annotations.update.useMutation({ onSuccess: invalidate });
+  const removePin = trpc.pins.remove.useMutation({ onSuccess: invalidate });
+  const reposition = trpc.pins.update.useMutation({ onSuccess: invalidate });
   const [dragPos, setDragPos] = useState<Record<number, { xPct: number; yPct: number }>>({});
   const dragging = useRef<number | null>(null);
   const createItem = trpc.items.create.useMutation();
-  const addItemPhoto = trpc.attachments.createCutoutFromAttachment.useMutation({
+  const addItemPhoto = trpc.photos.createCutout.useMutation({
     onSuccess: (res, vars) => {
       if (res.created) {
-        utils.attachments.listForItem.invalidate({ itemId: vars.itemId });
+        utils.photos.listForItem.invalidate({ itemId: vars.itemId });
         utils.items.get.invalidate({ id: vars.itemId });
       }
     },
@@ -201,9 +201,9 @@ export default function AnnotatePage() {
   // photo is now "seen in photos" for it too; quiet best-effort, the pin
   // itself is the action the user asked for, this is just a bonus
   const ensureItemPhoto = (itemId: number, box: CropBox) => {
-    addItemPhoto.mutate({ itemId, sourceAttachmentId: attId, box });
+    addItemPhoto.mutate({ itemId, sourcePhotoId: attId, box });
   };
-  const detect = trpc.annotations.detect.useMutation({
+  const detect = trpc.pins.detect.useMutation({
     onSuccess: (res) => {
       if (res.ok) {
         setAiError(null);
@@ -461,7 +461,7 @@ export default function AnnotatePage() {
     // description that found it
     const label = linkedItem ? linkedItem.name : pendingLabel.trim();
     await addPin.mutateAsync({
-      attachmentId: attId,
+      photoId: attId,
       xPct: pending.xPct,
       yPct: pending.yPct,
       wPct: pending.wPct,
@@ -472,7 +472,7 @@ export default function AnnotatePage() {
     setPending(null);
   };
 
-  const suggestForBox = trpc.annotations.suggestForBox.useMutation({
+  const suggestForBox = trpc.pins.suggestForBox.useMutation({
     onSuccess: (res) => {
       if (res.ok) {
         setAiError(null);
@@ -503,7 +503,7 @@ export default function AnnotatePage() {
           onClick={() => {
             setAiError(null);
             setDetectInfo(null);
-            detect.mutate({ attachmentId: attId });
+            detect.mutate({ photoId: attId });
           }}
         >
           {detect.isPending ? (
@@ -887,7 +887,7 @@ export default function AnnotatePage() {
                   disabled={suggestForBox.isPending}
                   onClick={() =>
                     suggestForBox.mutate({
-                      attachmentId: attId,
+                      photoId: attId,
                       xPct: pending.xPct,
                       yPct: pending.yPct,
                       wPct: pending.wPct!,
@@ -916,8 +916,8 @@ export default function AnnotatePage() {
                   // an item already pinned elsewhere is worth a second look
                   // before auto-adding - skip the instant-save and let the
                   // warning on the chip below surface first
-                  const existing = await utils.annotations.listForItem.fetch({ itemId: item.id });
-                  const elsewhere = existing.filter((p) => p.status === "confirmed" && p.attachmentId !== attId);
+                  const existing = await utils.pins.listForItem.fetch({ itemId: item.id });
+                  const elsewhere = existing.filter((p) => p.status === "confirmed" && p.photoId !== attId);
                   if (elsewhere.length === 0) savePending(item);
                 }}
                 allowCreate

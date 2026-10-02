@@ -8,7 +8,7 @@ import { usePersistedState } from "@/hooks/use-persisted-state";
 
 type SortBy = "location" | "recent" | "area";
 type Photo = {
-  source: "attachment" | "capture";
+  source: "photo" | "capture";
   id: number;
   captureId: number | null;
   storageKey: string | null;
@@ -30,8 +30,8 @@ type Photo = {
  * button does) before there's anywhere to navigate to. */
 function PhotoTile({ photo }: { photo: Photo }) {
   const navigate = useNavigate();
-  const ensure = trpc.map.ensureAttachmentForCapture.useMutation({
-    onSuccess: (res) => navigate(`/annotate/${res.attachmentId}`),
+  const ensure = trpc.photos.ensureForCapture.useMutation({
+    onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
   });
 
   const caption =
@@ -87,7 +87,7 @@ function PhotoTile({ photo }: { photo: Photo }) {
  * location by default, since that's usually how you'd go looking for "the
  * photo of that thing in the living room" rather than by item name. */
 export default function PhotosPage() {
-  const photos = trpc.attachments.listAllImages.useQuery();
+  const photos = trpc.photos.listAll.useQuery();
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = usePersistedState<SortBy>("photos.sortBy", "location");
   const [showObjects, setShowObjects] = usePersistedState("photos.showObjects", true);

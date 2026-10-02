@@ -3,7 +3,8 @@ import { eq, asc, desc, and } from "drizzle-orm";
 import { generateText } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, attachments, chatMessages } from "@db/schema";
+import { areas, items, chatMessages } from "@db/schema";
+import { legacyAttachmentsForItem } from "../lib/photos";
 import { getModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
@@ -14,7 +15,7 @@ async function buildContext(scope: "global" | "area" | "item", scopeId: number):
     const item = await db.query.items.findFirst({ where: eq(items.id, scopeId) });
     if (!item) return "No item context.";
     const area = await db.query.areas.findFirst({ where: eq(areas.id, item.areaId) });
-    const atts = await db.select().from(attachments).where(eq(attachments.itemId, item.id));
+    const atts = await legacyAttachmentsForItem(db, item.id);
     return [
       `CURRENT ITEM: ${item.name} (area: ${area?.name ?? "?"})`,
       item.description ? `Description: ${item.description}` : "",

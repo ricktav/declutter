@@ -8,12 +8,10 @@ import { attachmentsRouter } from "./routers/attachments";
 import { aiRouter } from "./routers/ai";
 import { wikiRouter } from "./routers/wiki";
 import { eventsRouter } from "./routers/events";
-import { annotationsRouter } from "./routers/annotations";
 import { settingsRouter } from "./routers/settings";
 import { housesRouter } from "./routers/houses";
 import { roomsRouter } from "./routers/rooms";
 import { measurementsRouter } from "./routers/measurements";
-import { mapRouter } from "./routers/map";
 import { photosRouter } from "./routers/photos";
 import { pinsRouter } from "./routers/pins";
 import { itemLinksRouter } from "./routers/itemLinks";
@@ -29,12 +27,10 @@ export const appRouter = createRouter({
   ai: aiRouter,
   wiki: wikiRouter,
   events: eventsRouter,
-  annotations: annotationsRouter,
   settings: settingsRouter,
   houses: housesRouter,
   rooms: roomsRouter,
   measurements: measurementsRouter,
-  map: mapRouter,
   photos: photosRouter,
   pins: pinsRouter,
   itemLinks: itemLinksRouter,

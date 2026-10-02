@@ -4,7 +4,7 @@
 // aliases all go through these, so each table is written one way.
 import { asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { areas, captures, itemLinks, items, photoPins, photos } from "@db/schema";
+import { areas, captures, itemLinks, items, photoPins, photos, type CropBox, type ItemLink, type Photo } from "@db/schema";
 import type { getDb } from "../queries/connection";
 import { readFileBytes } from "./filestore";
 import { sniffMime } from "./sniff";
@@ -227,4 +227,70 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
     }));
 
   return [...photoRows, ...captureRows].sort((a, b) => +b.createdAt - +a.createdAt);
+}
+
+/** One row in the pre-consolidation `attachments` shape, for the deprecated
+ * attachments.* aliases, the wiki and the AI context. item_links ids are
+ * NEGATED so a number never means both a photo and a link. */
+export interface LegacyAttachment {
+  id: number;
+  itemId: number | null;
+  areaId: number | null;
+  roomId: number | null;
+  kind: "image" | ItemLinkKind;
+  title: string | null;
+  content: string | null;
+  url: string | null;
+  storageKey: string | null;
+  mimeType: string | null;
+  size: number | null;
+  sourceCaptureId: number | null;
+  cropBox: CropBox | null;
+  createdAt: Date;
+}
+
+export function photoAsLegacy(p: Photo): LegacyAttachment {
+  return {
+    id: p.id,
+    itemId: p.itemId,
+    areaId: p.areaId,
+    roomId: p.roomId,
+    kind: "image",
+    title: p.title,
+    content: null,
+    url: null,
+    storageKey: p.storageKey,
+    mimeType: p.mimeType,
+    size: p.size,
+    sourceCaptureId: p.sourceCaptureId,
+    cropBox: p.cropBox ?? null,
+    createdAt: p.createdAt,
+  };
+}
+
+export function linkAsLegacy(l: ItemLink): LegacyAttachment {
+  return {
+    id: -l.id,
+    itemId: l.itemId,
+    areaId: l.areaId,
+    roomId: null,
+    kind: l.kind,
+    title: l.title,
+    content: l.content,
+    url: l.url,
+    storageKey: l.storageKey,
+    mimeType: l.mimeType,
+    size: l.size,
+    sourceCaptureId: l.sourceCaptureId,
+    cropBox: null,
+    createdAt: l.createdAt,
+  };
+}
+
+export async function legacyAttachmentsForItem(db: Db, itemId: number): Promise<LegacyAttachment[]> {
+  const pics = await db.select().from(photos).where(eq(photos.itemId, itemId));
+  const links = await db.select().from(itemLinks).where(eq(itemLinks.itemId, itemId));
+  return [...pics.map(photoAsLegacy), ...links.map(linkAsLegacy)].sort(
+    (a, b) => +b.createdAt - +a.createdAt || b.id - a.id,
+  );
 }

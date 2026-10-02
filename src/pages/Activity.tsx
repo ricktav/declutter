@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { timeAgo } from "@/lib/format";
 
-const ENTITY_TYPES = ["all", "item", "area", "task", "idea", "capture", "attachment", "relation", "wiki", "chat"];
+const ENTITY_TYPES = ["all", "item", "area", "task", "idea", "capture", "photo", "item_link", "pin", "attachment", "relation", "wiki", "chat"];
 // display only - the underlying entityType stored on events is still "area"
 const ENTITY_LABELS: Record<string, string> = { area: "topic" };
 

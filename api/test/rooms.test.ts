@@ -1,7 +1,7 @@
 // api/test/rooms.test.ts
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { areas, attachments, houses, items, rooms } from "@db/schema";
+import { areas, houses, items, photos, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 
@@ -82,7 +82,7 @@ describe("rooms.update duplicate", () => {
 describe("rooms.merge", () => {
   it("moves items and location photos, then deletes the source", async () => {
     const { db, h1, keuken, zolder } = await seed();
-    await db.insert(attachments).values({ kind: "image", roomId: zolder, title: "photo" });
+    await db.insert(photos).values({ roomId: zolder, title: "photo", storageKey: "local/test-fake-merge.jpg" });
     const r = await callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken });
     expect(r).toEqual({ ok: true, itemsMoved: 1, photosMoved: 1 });
     expect(await db.select().from(rooms)).toHaveLength(2);

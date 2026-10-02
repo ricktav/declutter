@@ -19,7 +19,7 @@ const SIZE_OPTIONS: { value: PhotoSize; label: string }[] = [
 ];
 
 function LibraryThumb({ storageKey, onPick }: { storageKey: string; onPick: () => void }) {
-  const url = trpc.attachments.url.useQuery({ key: storageKey });
+  const url = trpc.photos.url.useQuery({ key: storageKey });
   return (
     <button
       onClick={onPick}
@@ -49,18 +49,18 @@ export function ChooseFromLibraryDialog({
   );
 
   const [pickedCaptureId, setPickedCaptureId] = useState<number | null>(null);
-  const [sourceAttachmentId, setSourceAttachmentId] = useState<number | null>(null);
+  const [sourcePhotoId, setSourcePhotoId] = useState<number | null>(null);
   const [box, setBox] = useState<CropBox>({ xPct: 50, yPct: 50, wPct: 40, hPct: 40 });
   const [photoSize, setPhotoSize] = useState<PhotoSize>("big");
 
-  const ensure = trpc.map.ensureAttachmentForCapture.useMutation();
-  const photoUrl = trpc.attachments.urlForAttachment.useQuery(
-    { attachmentId: sourceAttachmentId ?? 0 },
-    { enabled: sourceAttachmentId != null },
+  const ensure = trpc.photos.ensureForCapture.useMutation();
+  const photoUrl = trpc.photos.get.useQuery(
+    { id: sourcePhotoId ?? 0 },
+    { enabled: sourcePhotoId != null },
   );
-  const create = trpc.attachments.createCutoutFromAttachment.useMutation({
+  const create = trpc.photos.createCutout.useMutation({
     onSuccess: () => {
-      utils.attachments.listForItem.invalidate({ itemId });
+      utils.photos.listForItem.invalidate({ itemId });
       utils.items.get.invalidate({ id: itemId });
       utils.items.listAll.invalidate();
       reset();
@@ -70,7 +70,7 @@ export function ChooseFromLibraryDialog({
 
   const reset = () => {
     setPickedCaptureId(null);
-    setSourceAttachmentId(null);
+    setSourcePhotoId(null);
     setBox({ xPct: 50, yPct: 50, wPct: 40, hPct: 40 });
     setPhotoSize("big");
   };
@@ -78,7 +78,7 @@ export function ChooseFromLibraryDialog({
   const pick = async (captureId: number) => {
     setPickedCaptureId(captureId);
     const res = await ensure.mutateAsync({ captureId });
-    setSourceAttachmentId(res.attachmentId);
+    setSourcePhotoId(res.photoId);
   };
 
   return (
@@ -96,7 +96,7 @@ export function ChooseFromLibraryDialog({
           <DialogTitle>Choose a photo from the library</DialogTitle>
         </DialogHeader>
 
-        {!sourceAttachmentId ? (
+        {!sourcePhotoId ? (
           <>
             <p className="text-[12px] text-muted-foreground -mt-2">
               Pick any photo that's already come through the inbox — crop the part that's this item.
@@ -157,7 +157,7 @@ export function ChooseFromLibraryDialog({
               </Button>
               <Button
                 size="sm"
-                onClick={() => create.mutate({ itemId, sourceAttachmentId, box, photoSize })}
+                onClick={() => create.mutate({ itemId, sourcePhotoId, box, photoSize })}
                 disabled={create.isPending}
               >
                 {create.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}

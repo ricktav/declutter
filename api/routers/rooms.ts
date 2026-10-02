@@ -3,7 +3,7 @@ import { eq, and, ne, sql, isNotNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { rooms, items, attachments, type RoomGeometry, type ItemPos } from "@db/schema";
+import { rooms, items, photos, type RoomGeometry, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { ensureRoom, setItemLocation } from "../lib/location";
 
@@ -234,8 +234,8 @@ export const roomsRouter = createRouter({
               : null;
           if (p) await tx.update(items).set({ pos: newPos }).where(eq(items.id, it.id));
         }
-        const movedPhotos = await tx.select({ id: attachments.id }).from(attachments).where(eq(attachments.roomId, from.id));
-        if (movedPhotos.length) await tx.update(attachments).set({ roomId: to.id }).where(eq(attachments.roomId, from.id));
+        const movedPhotos = await tx.select({ id: photos.id }).from(photos).where(eq(photos.roomId, from.id));
+        if (movedPhotos.length) await tx.update(photos).set({ roomId: to.id }).where(eq(photos.roomId, from.id));
         await tx.update(rooms).set({ parentRoomId: to.id }).where(and(eq(rooms.parentRoomId, from.id), ne(rooms.id, to.id)));
         if (from.walls && !to.walls) {
           await tx
@@ -360,7 +360,7 @@ export const roomsRouter = createRouter({
               .set({ roomId: parentId, pos: p ? { ...p, xM: +(p.xM + ox).toFixed(2), yM: +(p.yM + oy).toFixed(2) } : p })
               .where(eq(items.id, it.id));
           }
-          await tx.update(attachments).set({ roomId: parentId }).where(eq(attachments.roomId, input.id));
+          await tx.update(photos).set({ roomId: parentId }).where(eq(photos.roomId, input.id));
           await tx.delete(rooms).where(eq(rooms.id, input.id));
           await logEvent(
             { entityType: "room", entityId: input.id, action: "deleted", summary: `Room "${room.name}" deleted, ${roomItems.length} item(s) moved back to parent room #${parentId}` },
@@ -381,7 +381,7 @@ export const roomsRouter = createRouter({
           await setItemLocation(tx, it.id, { roomId: null, houseId: room.houseId });
           if (it.pos) await tx.update(items).set({ pos: null }).where(eq(items.id, it.id));
         }
-        await tx.update(attachments).set({ roomId: null }).where(eq(attachments.roomId, input.id));
+        await tx.update(photos).set({ roomId: null }).where(eq(photos.roomId, input.id));
         await tx.update(rooms).set({ parentRoomId: null }).where(eq(rooms.parentRoomId, input.id));
         await tx.delete(rooms).where(eq(rooms.id, input.id));
         await logEvent(

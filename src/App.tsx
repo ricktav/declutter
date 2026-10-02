@@ -38,7 +38,7 @@ export default function App() {
             <Route path="/items" element={<AllItems />} />
             <Route path="/items/:id" element={<ItemDetail />} />
             <Route path="/photos" element={<PhotosPage />} />
-            <Route path="/annotate/:attachmentId" element={<AnnotatePage />} />
+            <Route path="/annotate/:photoId" element={<AnnotatePage />} />
             <Route path="/map" element={<MapPage />} />
             <Route path="/rooms" element={<RoomsPage />} />
             <Route path="/rooms/:roomId" element={<RoomPlanPage />} />
