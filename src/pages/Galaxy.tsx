@@ -152,6 +152,36 @@ function settle(nodes: SimNode[], opts: { charge: number; collidePad: number; cx
   return nodes;
 }
 
+/** Custom d3-force: keeps every node strictly outside a circle (the
+ * reference mindmap never lets a page dot sit on top of its own category
+ * disc - they always surround it), by nudging velocity radially outward
+ * whenever a node drifts inside `radius(n) + n.r + pad`. */
+function forceAvoidCircle<N extends d3.SimulationNodeDatum & { r: number }>(
+  center: (n: N) => { x: number; y: number },
+  radius: (n: N) => number,
+  pad = 4,
+) {
+  let nodes: N[] = [];
+  function force(alpha: number) {
+    for (const n of nodes) {
+      const c = center(n);
+      const minDist = radius(n) + n.r + pad;
+      const dx = (n.x ?? 0) - c.x;
+      const dy = (n.y ?? 0) - c.y;
+      const dist = Math.hypot(dx, dy) || 0.001;
+      if (dist < minDist) {
+        const k = ((minDist - dist) / dist) * alpha;
+        n.vx = (n.vx ?? 0) + dx * k;
+        n.vy = (n.vy ?? 0) + dy * k;
+      }
+    }
+  }
+  force.initialize = (_nodes: N[]) => {
+    nodes = _nodes;
+  };
+  return force;
+}
+
 export default function GalaxyPage() {
   const navigate = useNavigate();
   const items = trpc.items.listAll.useQuery({});
@@ -224,21 +254,37 @@ export default function GalaxyPage() {
     settle(l1Nodes, { charge: -900, collidePad: 24, cx: W / 2, cy: H / 2, strength: 0.06 });
     const l1Pos = new Map(l1Nodes.map((n) => [n.id.slice(2), n]));
 
-    // 2. within each level-1, lay out level-2 sub-centers around its center
+    // 2. place level-2 sub-centers OUTSIDE their level-1 circle, spread
+    // evenly around it - anchoring items to a point already clear of the
+    // disc, rather than fighting a separate "stay outside" force against a
+    // centering pull toward a point near/inside it
     const l2Nodes: SimNode[] = [];
     for (const g1 of l1List) {
       const parent = l1Pos.get(g1.key)!;
-      const subs: SimNode[] = [...g1.l2.values()].map((g2) => ({
-        id: `2:${g1.key}:${g2.key}`,
-        r: 6 + Math.sqrt(g2.items.length) * 3,
-        kind: "level2",
-        color: g1.color,
-        label: g2.label,
-        parentId: g1.key,
-        x: (parent.x ?? W / 2) + (Math.random() - 0.5) * 10,
-        y: (parent.y ?? H / 2) + (Math.random() - 0.5) * 10,
-      }));
-      settle(subs, { charge: -40, collidePad: 6, cx: parent.x ?? W / 2, cy: parent.y ?? H / 2, strength: 0.3 });
+      const subsArr = [...g1.l2.values()];
+      const subs: SimNode[] = subsArr.map((g2, i) => {
+        const r2 = 6 + Math.sqrt(g2.items.length) * 3;
+        const angle = (i / subsArr.length) * Math.PI * 2 + Math.random() * 0.4;
+        const dist = (parent.r ?? 20) + r2 + 16;
+        return {
+          id: `2:${g1.key}:${g2.key}`,
+          r: r2,
+          kind: "level2",
+          color: g1.color,
+          label: g2.label,
+          parentId: g1.key,
+          x: (parent.x ?? W / 2) + Math.cos(angle) * dist,
+          y: (parent.y ?? H / 2) + Math.sin(angle) * dist,
+        };
+      });
+      // de-overlap siblings without a centering force, so they stay on
+      // their ring outside the disc instead of drifting back toward it
+      const relax = d3
+        .forceSimulation(subs)
+        .force("charge", d3.forceManyBody().strength(-15))
+        .force("collide", d3.forceCollide<SimNode>((n) => n.r + 5))
+        .stop();
+      for (let i = 0; i < 120; i++) relax.tick();
       l2Nodes.push(...subs);
     }
     const l2Pos = new Map(l2Nodes.map((n) => [n.id, n]));
@@ -263,25 +309,7 @@ export default function GalaxyPage() {
         }
       }
     }
-    const centerOf = (id: string) => l2Pos.get(id)!;
-    const sim = d3
-      .forceSimulation(itemNodes)
-      // repulsion dominates the weak center pull below, so dots fan out into
-      // an airy scatter instead of packing into a tight hex-like disc
-      .force("charge", d3.forceManyBody().strength(-14))
-      .force("collide", d3.forceCollide<SimNode>((n) => n.r + 1.5))
-      .force(
-        "x",
-        d3.forceX<SimNode>((n) => centerOf(n.parentId!).x ?? W / 2).strength(0.045),
-      )
-      .force(
-        "y",
-        d3.forceY<SimNode>((n) => centerOf(n.parentId!).y ?? H / 2).strength(0.045),
-      )
-      .stop();
-    for (let i = 0; i < 400; i++) sim.tick();
-
-    return { l1Nodes, l2Nodes, itemNodes, l1List };
+    return { l1Nodes, l2Nodes, itemNodes, l1List, l1Pos, l2Pos };
   }, [ready, items.data, areas.data, houses.data, groupingId, houseFilter]);
 
   // one-time zoom behavior setup
@@ -298,8 +326,11 @@ export default function GalaxyPage() {
   }, []);
 
   // imperative render of the current layout into the svg <g>
+  const simRef = useRef<d3.Simulation<SimNode, undefined> | null>(null);
+
   useEffect(() => {
     if (!built || !gRef.current) return;
+    simRef.current?.stop();
     const g = select(gRef.current);
     g.selectAll("*").remove();
 
@@ -349,23 +380,6 @@ export default function GalaxyPage() {
       })
       .on("click", (_ev: MouseEvent, d) => navigate(`/items/${d.item!.id}`));
 
-    itemSel.call(
-      drag<SVGCircleElement, SimNode>()
-        .on("start", (ev) => {
-          ev.subject.fx = ev.subject.x;
-          ev.subject.fy = ev.subject.y;
-        })
-        .on("drag", (ev) => {
-          ev.subject.fx = ev.x;
-          ev.subject.fy = ev.y;
-          select(ev.sourceEvent.target as SVGCircleElement).attr("cx", ev.x).attr("cy", ev.y);
-        })
-        .on("end", (ev) => {
-          ev.subject.fx = null;
-          ev.subject.fy = null;
-        }),
-    );
-
     const l1Sel = l1Layer
       .selectAll<SVGCircleElement, SimNode>("circle")
       .data(built.l1Nodes)
@@ -387,8 +401,8 @@ export default function GalaxyPage() {
       });
     void l1Sel;
 
-    labelLayer
-      .selectAll("text")
+    const labelSel = labelLayer
+      .selectAll<SVGTextElement, SimNode>("text")
       .data(built.l1Nodes)
       .join("text")
       .attr("x", (d) => d.x ?? 0)
@@ -401,6 +415,55 @@ export default function GalaxyPage() {
       .text((d) => d.label);
 
     void linkLayer;
+
+    // live, never-stopping simulation (alphaTarget keeps it above 0) so the
+    // scene has the reference mindmap's constant gentle bounce/jitter rather
+    // than freezing once settled; forceAvoidCircle keeps every item dot
+    // outside its own level-1 disc instead of drifting on top of it
+    const centerOf2 = (id: string) => built.l2Pos.get(id)!;
+    const l1Of = (item: SimNode) => built.l1Pos.get(built.l2Pos.get(item.parentId!)!.parentId!)!;
+    const sim = d3
+      .forceSimulation(built.itemNodes)
+      .force("charge", d3.forceManyBody().strength(-14))
+      .force("collide", d3.forceCollide<SimNode>((n) => n.r + 1.5))
+      .force("x", d3.forceX<SimNode>((n) => centerOf2(n.parentId!).x ?? W / 2).strength(0.045))
+      .force("y", d3.forceY<SimNode>((n) => centerOf2(n.parentId!).y ?? H / 2).strength(0.045))
+      .force(
+        "avoidL1",
+        forceAvoidCircle<SimNode>(
+          (n) => ({ x: l1Of(n).x ?? W / 2, y: l1Of(n).y ?? H / 2 }),
+          (n) => l1Of(n).r,
+          3,
+        ),
+      )
+      .alphaTarget(0.015)
+      .on("tick", () => {
+        itemSel.attr("cx", (d) => d.x ?? 0).attr("cy", (d) => d.y ?? 0);
+      });
+    simRef.current = sim;
+
+    itemSel.call(
+      drag<SVGCircleElement, SimNode>()
+        .on("start", (ev) => {
+          if (!ev.active) sim.alphaTarget(0.3).restart();
+          ev.subject.fx = ev.subject.x;
+          ev.subject.fy = ev.subject.y;
+        })
+        .on("drag", (ev) => {
+          ev.subject.fx = ev.x;
+          ev.subject.fy = ev.y;
+        })
+        .on("end", (ev) => {
+          if (!ev.active) sim.alphaTarget(0.015);
+          ev.subject.fx = null;
+          ev.subject.fy = null;
+        }),
+    );
+
+    void labelSel;
+    return () => {
+      sim.stop();
+    };
   }, [built, navigate]);
 
   const totalItems = built?.itemNodes.length ?? 0;
