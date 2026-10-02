@@ -668,7 +668,7 @@ In `package.json` `scripts`, after `"db:adopt": "node db/adopt-migrations.mjs"`,
 - [ ] **Step 6: Prove the CLI runs (the `.mjs` → `.ts` import) against the test database**
 
 ```bash
-TEST_URL="$(node -e 'require("dotenv").config(); process.stdout.write(process.env.TEST_DATABASE_URL)')"
+TEST_URL="$(node -e 'require("dotenv").config({ quiet: true }); process.stdout.write(process.env.TEST_DATABASE_URL)')"
 DATABASE_URL="$TEST_URL" npm run db:copy-photos -- --plan; echo "exit $?"
 DATABASE_URL="$TEST_URL" npm run db:copy-photos -- --verify; echo "exit $?"
 ```
@@ -2538,7 +2538,7 @@ Expected: all clean, with no errors under `src/flow/`.
 Then start the dev server **against the test database**. Never run `npm run dev` in this worktree with the default `.env`: its `DATABASE_URL` is production, which has no `photos` table until Task 6.
 
 ```bash
-TEST_URL="$(node -e 'require("dotenv").config(); process.stdout.write(process.env.TEST_DATABASE_URL)')"
+TEST_URL="$(node -e 'require("dotenv").config({ quiet: true }); process.stdout.write(process.env.TEST_DATABASE_URL)')"
 DATABASE_URL="$TEST_URL" npx vite --port 3002
 ```
 
