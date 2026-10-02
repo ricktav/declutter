@@ -155,7 +155,7 @@ export function LabFields({
 
 /** Link a device to the NAS, drive or server that holds its backup - or say it needs none. */
 export function BackupPicker({ item, onDone }: { item: FlowItem; onDone?: () => void }) {
-  const { items, backups, refresh } = useFlow();
+  const { items, allItems, backups, refresh } = useFlow();
   const [error, setError] = useState<string | null>(null);
   const opts = {
     onSuccess: () => {
@@ -171,7 +171,7 @@ export function BackupPicker({ item, onDone }: { item: FlowItem; onDone?: () => 
   const mine = backupsOf(item, backups);
   const linked = new Set(mine.map((r) => r.fromItemId));
   const targets = items.filter((t) => t.status === "active" && isReal(t) && t.id !== item.id && isBackupTarget(t) && !linked.has(t.id));
-  const nameOf = (id: number) => items.find((t) => t.id === id)?.name ?? `#${id}`;
+  const nameOf = (id: number) => allItems.find((t) => t.id === id)?.name ?? `#${id}`;
   const busy = add.isPending || patch.isPending || remove.isPending;
 
   return (

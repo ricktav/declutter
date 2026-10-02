@@ -25,6 +25,7 @@ Do not remove or rename these. Do not change their inputs or outputs in a way th
 - Location:
   - A place is a room: Flow's `Place = { roomId }`. Items, captures and photos locate by `roomId`; the room carries its house and floor.
   - The `x-house-id` header is the session house. Without the header (null), lists cover all houses; `rooms.ensure` and `rooms.create` require a house.
+  - `items.update`, `items.create`, `inbox.acceptMany` and `inbox.fileObject` take `roomId` (and `houseId` for an unplaced item); the old `floor`/`room` inputs are ignored by validation, not rejected.
 - Data meaning:
   - `items.decision` is `keep`, `sell`, `donate`, `toss` or `later`. `items.decidedAt` is the time of the decision.
   - "Gone" is `items.status = "archived"` on an item with a decision. Do not add a second status for this.

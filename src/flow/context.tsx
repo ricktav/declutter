@@ -9,6 +9,8 @@ import { BACKS_UP, getLens, storeLens, type LensKey, type Rel } from "./lenses";
 type FlowState = {
   ready: boolean;
   items: FlowItem[];
+  /** every house's things - only for backup links and their names, never for lists */
+  allItems: FlowItem[];
   captures: FlowCapture[];
   areas: FlowArea[];
   locations: FlowLocation[];
@@ -28,6 +30,9 @@ export function FlowProvider({ children }: { children: ReactNode }) {
   const utils = trpc.useUtils();
   // includeArchived: things marked gone stay counted in a sprint's progress
   const items = trpc.items.listAll.useQuery({ includeArchived: true });
+  // unscoped on purpose: a device's backup NAS may stand in another house, and
+  // that link must still count (backupState, safeToGo) and show its name
+  const allItems = trpc.items.listAll.useQuery({ includeArchived: true, houseId: null });
   const captures = trpc.inbox.list.useQuery();
   const areas = trpc.areas.list.useQuery();
   const locations = trpc.rooms.list.useQuery();
@@ -58,13 +63,14 @@ export function FlowProvider({ children }: { children: ReactNode }) {
   const [lens, setLensState] = useState<LensKey | null>(() => getLens());
 
   const backups = useMemo(() => {
-    const active = new Set((items.data ?? []).filter((it) => it.status === "active").map((it) => it.id));
+    const active = new Set((allItems.data ?? []).filter((it) => it.status === "active").map((it) => it.id));
     return (rels.data ?? []).filter((r) => r.status === "confirmed" && active.has(r.fromItemId));
-  }, [items.data, rels.data]);
+  }, [allItems.data, rels.data]);
 
   const value: FlowState = {
     ready: !!(items.data && captures.data && areas.data),
     items: items.data ?? [],
+    allItems: allItems.data ?? [],
     captures: captures.data ?? [],
     areas: areas.data ?? [],
     locations: locations.data ?? [],
