@@ -17,6 +17,7 @@ import RoomPlanPage from "@/pages/RoomPlan";
 import PhotosPage from "@/pages/Photos";
 import SettingsPage from "@/pages/Settings";
 import SessieOverzicht from "@/pages/SessieOverzicht";
+import GalaxyPage from "@/pages/Galaxy";
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/map" element={<MapPage />} />
           <Route path="/rooms" element={<RoomsPage />} />
           <Route path="/rooms/:roomId" element={<RoomPlanPage />} />
+          <Route path="/galaxy" element={<GalaxyPage />} />
           <Route path="/ideas" element={<IdeasPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/wiki" element={<WikiPage />} />
