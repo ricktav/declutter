@@ -29,6 +29,13 @@
       "when": 1790947214251,
       "tag": "0003_rooms_floor",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1790951390386,
+      "tag": "0004_drop_location_strings",
+      "breakpoints": true
     }
   ]
 }

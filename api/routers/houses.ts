@@ -40,7 +40,6 @@ export const housesRouter = createRouter({
         bagId: z.string().optional(),
         parcelId: z.string().optional(),
         parcelAreaM2: z.number().optional(),
-        floors: z.array(z.string()).optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -56,11 +55,6 @@ export const housesRouter = createRouter({
           bagId: input.bagId ?? null,
           parcelId: input.parcelId ?? null,
           parcelAreaM2: input.parcelAreaM2 ?? null,
-          // an explicit empty array (vs. the field being omitted) means "this
-          // building has no floors" - distinct from "not customized yet",
-          // which falls back to the generic default list - so don't coerce
-          // [] to null here
-          floors: input.floors !== undefined ? input.floors : null,
         })
         .$returningId();
       await logEvent({
@@ -81,7 +75,6 @@ export const housesRouter = createRouter({
         lat: z.number().min(-90).max(90).nullable().optional(),
         lng: z.number().min(-180).max(180).nullable().optional(),
         notes: z.string().nullable().optional(),
-        floors: z.array(z.string()).nullable().optional(),
         bagId: z.string().nullable().optional(),
         parcelId: z.string().nullable().optional(),
         parcelAreaM2: z.number().nullable().optional(),

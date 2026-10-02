@@ -16,7 +16,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:adopt": "node db/adopt-migrations.mjs",
-    "db:backfill-rooms": "tsx scripts/backfill-rooms.mjs"
+    "db:backfill-rooms": "node scripts/backfill-rooms.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "2.0.78",

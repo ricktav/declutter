@@ -45,9 +45,6 @@ export const houses = mysqlTable("houses", {
   lat: double("lat"),
   lng: double("lng"),
   notes: text("notes"),
-  // this house's own floor labels (ordered) - RoomPicker falls back to a
-  // generic default list when a house hasn't customized this
-  floors: json("floors").$type<string[] | null>(),
   // from PDOK BAG/BRK lookup when the address was picked via the PDOK
   // autocomplete, used to link out to the kadastrale-kaart viewer and show
   // parcel size
@@ -74,8 +71,6 @@ export const items = mysqlTable(
       .default("confirmed"),
     attributes: json("attributes").$type<Record<string, string | number>>(),
     pos: json("pos").$type<ItemPos>(),
-    floor: varchar("floor", { length: 32 }),
-    room: varchar("room", { length: 128 }),
     // what happens to the thing - null until someone decides; "later"
     // parks it for another pass instead of forcing an answer now
     decision: varchar("decision", { length: 16 }).$type<ItemDecision>(),
@@ -174,13 +169,7 @@ export const attachments = mysqlTable(
     id: serial("id").primaryKey(),
     itemId: bigint("itemId", { mode: "number", unsigned: true }),
     areaId: bigint("areaId", { mode: "number", unsigned: true }),
-    houseId: bigint("houseId", { mode: "number", unsigned: true }),
     roomId: bigint("roomId", { mode: "number", unsigned: true }),
-    // free-text location, same convention as items.floor/items.room - set
-    // when a location is confirmed before an item exists yet (Inbox's
-    // pending-item "Pin" flow), so that photo still groups by location
-    floor: varchar("floor", { length: 32 }),
-    room: varchar("room", { length: 128 }),
     kind: varchar("kind", { length: 32 }).$type<"image" | "link" | "note" | "file">().notNull(),
     title: varchar("title", { length: 255 }),
     content: text("content"),
@@ -196,7 +185,6 @@ export const attachments = mysqlTable(
   },
   (t) => [
     index("att_item_idx").on(t.itemId),
-    index("att_house_idx").on(t.houseId),
     index("att_room_idx").on(t.roomId),
     index("att_source_capture_idx").on(t.sourceCaptureId),
   ],
