@@ -121,7 +121,9 @@ export async function resolveSuggestion(object: z.infer<typeof triageSchema>, ho
       .limit(1);
     roomId = hit?.id ?? null;
   } else if (!room) {
-    const withRoom = matched.find((i) => i.roomId != null);
+    // only a matched item in the session house may supply a room: ids from
+    // another house would not be in the picker's list
+    const withRoom = houseId != null ? matched.find((i) => i.roomId != null && i.houseId === houseId) : undefined;
     roomId = withRoom?.roomId ?? null;
   }
 

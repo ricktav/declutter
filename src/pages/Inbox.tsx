@@ -411,9 +411,13 @@ function TriageCard({
 
   const [rows, setRows] = useState<TriageRow[]>(() => (s ? buildTriageRows(s, areas.data) : []));
   const lastRoomId = useLastRoomId();
-  const [roomId, setRoomIdRaw] = useState<number | null>(() => s?.roomId ?? null);
+  // a suggested room id is only usable if it is one of the session house's rooms
+  const houseRooms = trpc.rooms.list.useQuery();
+  const inHouse = (id: number | null | undefined): id is number =>
+    id != null && !!houseRooms.data?.some((r) => r.id === id);
+  const [roomIdRaw, setRoomIdRaw] = useState<number | null>(null);
   const [roomTouched, setRoomTouched] = useState(false);
-  if (!roomTouched && roomId == null && lastRoomId != null) setRoomIdRaw(lastRoomId);
+  const roomId = roomTouched ? roomIdRaw : (roomIdRaw ?? (inHouse(s?.roomId) ? s.roomId : null) ?? lastRoomId ?? null);
   const setRoomId = (id: number | null) => {
     setRoomTouched(true);
     setRoomIdRaw(id);
@@ -429,7 +433,7 @@ function TriageCard({
       if (res.ok) {
         utils.inbox.list.invalidate();
         setRows(buildTriageRows(res.suggestion, areas.data));
-        if (res.suggestion.roomId != null) setRoomId(res.suggestion.roomId);
+        if (inHouse(res.suggestion.roomId)) setRoomId(res.suggestion.roomId);
       } else setAiError(res.error);
     },
     onError: (e) => setAiError(e.message),
@@ -606,7 +610,7 @@ function TriageCard({
         onUse={(side) => {
           if (!side.suggestion) return;
           setRows(buildTriageRows(side.suggestion, areas.data));
-          if (side.suggestion.roomId != null) setRoomId(side.suggestion.roomId);
+          if (inHouse(side.suggestion.roomId)) setRoomId(side.suggestion.roomId);
           setCompareResult(null);
         }}
       />

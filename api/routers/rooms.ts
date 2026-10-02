@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, sql, isNotNull } from "drizzle-orm";
+import { eq, and, ne, sql, isNotNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -213,12 +213,30 @@ export const roomsRouter = createRouter({
       if (from.walls && to.walls) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Both rooms have scanned geometry; merging would drop one scan. Delete or cut rooms on the plan instead." });
       }
+      // refuse merging a room into one of its own descendants (its cut sub-rooms)
+      for (let cur = to, hops = 0; cur.parentRoomId != null && hops < 50; hops++) {
+        if (cur.parentRoomId === from.id) {
+          throw new TRPCError({ code: "CONFLICT", message: "You cannot merge a room into its own cut." });
+        }
+        const next = await db.query.rooms.findFirst({ where: eq(rooms.id, cur.parentRoomId) });
+        if (!next) break;
+        cur = next;
+      }
       return db.transaction(async (tx) => {
-        const movedItems = await tx.select({ id: items.id }).from(items).where(eq(items.roomId, from.id));
-        for (const it of movedItems) await setItemLocation(tx, it.id, { roomId: to.id });
+        const movedItems = await tx.select().from(items).where(eq(items.roomId, from.id));
+        for (const it of movedItems) {
+          await setItemLocation(tx, it.id, { roomId: to.id });
+          // pos is in the source room's frame: rebase into a parent, else drop it
+          const p = it.pos as ItemPos | null;
+          const newPos =
+            p && from.parentRoomId === to.id
+              ? { ...p, xM: +(p.xM + (from.offsetXM ?? 0)).toFixed(2), yM: +(p.yM + (from.offsetYM ?? 0)).toFixed(2) }
+              : null;
+          if (p) await tx.update(items).set({ pos: newPos }).where(eq(items.id, it.id));
+        }
         const movedPhotos = await tx.select({ id: attachments.id }).from(attachments).where(eq(attachments.roomId, from.id));
         if (movedPhotos.length) await tx.update(attachments).set({ roomId: to.id }).where(eq(attachments.roomId, from.id));
-        await tx.update(rooms).set({ parentRoomId: to.id }).where(eq(rooms.parentRoomId, from.id));
+        await tx.update(rooms).set({ parentRoomId: to.id }).where(and(eq(rooms.parentRoomId, from.id), ne(rooms.id, to.id)));
         if (from.walls && !to.walls) {
           await tx
             .update(rooms)
@@ -359,7 +377,10 @@ export const roomsRouter = createRouter({
         });
       }
       await db.transaction(async (tx) => {
-        for (const it of roomItems) await setItemLocation(tx, it.id, { roomId: null, houseId: room.houseId });
+        for (const it of roomItems) {
+          await setItemLocation(tx, it.id, { roomId: null, houseId: room.houseId });
+          if (it.pos) await tx.update(items).set({ pos: null }).where(eq(items.id, it.id));
+        }
         await tx.update(attachments).set({ roomId: null }).where(eq(attachments.roomId, input.id));
         await tx.update(rooms).set({ parentRoomId: null }).where(eq(rooms.parentRoomId, input.id));
         await tx.delete(rooms).where(eq(rooms.id, input.id));
@@ -413,6 +434,9 @@ export const roomsRouter = createRouter({
         .from(rooms)
         .where(and(eq(rooms.houseId, source.houseId), sql`lower(${rooms.name}) = ${name.toLowerCase()}`))
         .limit(1);
+      if (existing && existing.id === source.id) {
+        throw new TRPCError({ code: "CONFLICT", message: "A cut needs a different name from the room it is cut from." });
+      }
       if (existing?.walls) {
         throw new TRPCError({ code: "CONFLICT", message: `A room called "${name}" already has a plan in this house.` });
       }

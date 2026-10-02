@@ -1,9 +1,11 @@
 import { z } from "zod";
-import { eq, asc, inArray, or } from "drizzle-orm";
+import { eq, asc, inArray, or, and, ne } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { houses, items, attachments, rooms } from "@db/schema";
 import { logEvent } from "../lib/events";
+import { setItemLocation } from "../lib/location";
 
 /** Photos of a house: attachments in one of its rooms, or on one of its items. */
 async function photosOfHouse(db: ReturnType<typeof getDb>, houseId: number) {
@@ -98,11 +100,13 @@ export const housesRouter = createRouter({
     return { itemCount: itemRows.length, photoCount: photoRows.length };
   }),
 
-  /** Move every item and location-linked photo from one house to another -
-   * the "replace a building" flow: re-point everything at the new address,
-   * then the old (now-empty) house can be deleted with nothing lost. Floor/
-   * room text is left as-is; it's freeform, so it still displays fine even
-   * if the target house has a different floor list. */
+  /** Move every item, room and location-linked photo from one house to
+   * another - the "replace a building" flow: re-point everything at the new
+   * address, then the old (now-empty) house can be deleted with nothing lost.
+   * Rooms are unique by name per house, so a source room whose name already
+   * exists in the target is merged into it (items, photos and child rooms
+   * move; a plan moves too if only the source has one). If both have a plan
+   * the call is refused before anything is written. */
   reassign: procedure
     .input(z.object({ fromId: z.number(), toId: z.number() }))
     .mutation(async ({ input }) => {
@@ -114,6 +118,46 @@ export const housesRouter = createRouter({
       const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.houseId, input.fromId));
       const photoRows = await photosOfHouse(db, input.fromId);
       await db.transaction(async (tx) => {
+        const srcRooms = await tx.select().from(rooms).where(eq(rooms.houseId, input.fromId));
+        const dstRooms = await tx.select().from(rooms).where(eq(rooms.houseId, input.toId));
+        const norm = (n: string) => n.trim().toLowerCase();
+        const dstByName = new Map(dstRooms.map((r) => [norm(r.name), r]));
+        const pairs = srcRooms.flatMap((s) => {
+          const t = dstByName.get(norm(s.name));
+          return t ? [{ s, t }] : [];
+        });
+        for (const { s, t } of pairs) {
+          if (s.walls && t.walls) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: `Both houses have a room called "${s.name.trim()}" with a plan; merge or rename one first.`,
+            });
+          }
+        }
+        for (const { s, t } of pairs) {
+          const moved = await tx.select({ id: items.id }).from(items).where(eq(items.roomId, s.id));
+          for (const it of moved) await setItemLocation(tx, it.id, { roomId: t.id });
+          await tx.update(attachments).set({ roomId: t.id }).where(eq(attachments.roomId, s.id));
+          await tx.update(rooms).set({ parentRoomId: t.id }).where(and(eq(rooms.parentRoomId, s.id), ne(rooms.id, t.id)));
+          if (s.walls && !t.walls) {
+            await tx
+              .update(rooms)
+              .set({
+                walls: s.walls,
+                openings: s.openings,
+                widthM: s.widthM,
+                depthM: s.depthM,
+                wallHeightM: s.wallHeightM,
+                source: s.source,
+                scanDate: s.scanDate,
+                floor: t.floor ?? s.floor,
+              })
+              .where(eq(rooms.id, t.id));
+          } else if (!t.floor && s.floor) {
+            await tx.update(rooms).set({ floor: s.floor }).where(eq(rooms.id, t.id));
+          }
+          await tx.delete(rooms).where(eq(rooms.id, s.id));
+        }
         await tx.update(items).set({ houseId: input.toId }).where(eq(items.houseId, input.fromId));
         await tx.update(rooms).set({ houseId: input.toId }).where(eq(rooms.houseId, input.fromId));
         await logEvent(

@@ -98,3 +98,32 @@ describe("attachments.unlink / map.photosForLocation", () => {
     expect(await callerFor(h1).map.photosForLocation({ roomId: 999999 })).toEqual([]);
   });
 });
+
+describe("items.update pos on room change", () => {
+  const pos = { xM: 1, yM: 1, wM: 1, dM: 1, rotDeg: 0 };
+  async function placed() {
+    const s = await seed();
+    const [{ id: zolder }] = await s.db.insert(rooms).values({ houseId: s.h1, name: "Zolder", source: "manual" }).$returningId();
+    const [{ id }] = await s.db.insert(items).values({ areaId: s.areaId, name: "pan", houseId: s.h1, roomId: s.keuken, pos }).$returningId();
+    return { ...s, zolder, id };
+  }
+  it("clears pos when the room changes", async () => {
+    const { db, h1, zolder, id } = await placed();
+    await callerFor(h1).items.update({ id, roomId: zolder });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect(it.roomId).toBe(zolder);
+    expect(it.pos).toBeNull();
+  });
+  it("keeps an explicit pos given with the room change", async () => {
+    const { db, h1, zolder, id } = await placed();
+    await callerFor(h1).items.update({ id, roomId: zolder, pos: { ...pos, xM: 2 } });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect((it.pos as { xM: number }).xM).toBe(2);
+  });
+  it("keeps pos when the room is unchanged", async () => {
+    const { db, h1, keuken, id } = await placed();
+    await callerFor(h1).items.update({ id, roomId: keuken });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect(it.pos).not.toBeNull();
+  });
+});

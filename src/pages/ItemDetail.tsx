@@ -736,7 +736,7 @@ export default function ItemDetail() {
               </div>
             ) : (
               <div className="space-y-2">
-                <RoomPicker value={roomId} onChange={setRoomId} allowNone autoFocus />
+                <RoomPicker value={roomId} onChange={setRoomId} allowNone autoFocus houseId={it.houseId ?? undefined} />
                 <p className="text-[10px] text-muted-foreground">
                   Area = what the thing is (computers). This = where it physically is.
                 </p>

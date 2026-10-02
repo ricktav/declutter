@@ -339,11 +339,15 @@ export const itemsRouter = createRouter({
       // changed (e.g. "renamed from X to Y") instead of just listing which
       // field keys were touched
       const before = await db.query.items.findFirst({ where: eq(items.id, id) });
-      if (Object.keys(patch).length) await db.update(items).set(patch).where(eq(items.id, id));
-      if (roomId !== undefined || houseId !== undefined) {
-        if (roomId != null) await setItemLocation(db, id, { roomId });
-        else await setItemLocation(db, id, { roomId: null, houseId: houseId !== undefined ? houseId : (before?.houseId ?? null) });
-      }
+      // a position is in the old room's frame: meaningless once the item changes room
+      if (roomId !== undefined && roomId !== (before?.roomId ?? null) && pos === undefined) patch.pos = null;
+      await db.transaction(async (tx) => {
+        if (Object.keys(patch).length) await tx.update(items).set(patch).where(eq(items.id, id));
+        if (roomId !== undefined || houseId !== undefined) {
+          if (roomId != null) await setItemLocation(tx, id, { roomId });
+          else await setItemLocation(tx, id, { roomId: null, houseId: houseId !== undefined ? houseId : (before?.houseId ?? null) });
+        }
+      });
 
       const subject = before?.name ?? `#${id}`;
       const parts: string[] = [];

@@ -1,3 +1,4 @@
+// HISTORICAL — ran once on production on 2026-10-02 before migration 0004; needs the pre-0004 columns and cannot run against the current schema
 // scripts/backfill-rooms.mjs — plain SQL version of the former api/lib/backfillRooms.ts
 // Usage: node scripts/backfill-rooms.mjs   (reads DATABASE_URL from .env)
 // Runs between migrations 0003 and 0004, while items/attachments still have floor/room.

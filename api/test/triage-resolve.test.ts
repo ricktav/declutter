@@ -37,3 +37,15 @@ describe("resolveSuggestion roomId", () => {
     expect((await resolveSuggestion(obj(null, id), h1)).roomId).toBe(keuken);
   });
 });
+
+describe("resolveSuggestion roomId is house-scoped", () => {
+  it("does not take a room from a matched item in another house", async () => {
+    const { db, h1, areaId } = await seed();
+    const [{ id: h2 }] = await db.insert(houses).values({ name: "B" }).$returningId();
+    const [{ id: hal }] = await db.insert(rooms).values({ houseId: h2, name: "Hal", source: "manual" }).$returningId();
+    const [{ id }] = await db.insert(items).values({ areaId, name: "pan", houseId: h2, roomId: hal }).$returningId();
+    expect((await resolveSuggestion(obj(null, id), h1)).roomId).toBeNull();
+    expect((await resolveSuggestion(obj(null, id), null)).roomId).toBeNull();
+    expect((await resolveSuggestion(obj(null, id), h2)).roomId).toBe(hal);
+  });
+});

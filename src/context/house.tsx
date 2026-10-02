@@ -53,6 +53,17 @@ export function HouseProvider({ children }: { children: ReactNode }) {
     utils.invalidate();
   }, [houseId, chosen, utils]);
 
+  // another tab switched house: follow it, and refetch everything scoped by it
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== HOUSE_STORAGE_KEY) return;
+      setState(getStoredHouseId());
+      utils.invalidate();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [utils]);
+
   const setHouseId = useCallback(
     (id: number | null) => {
       setState(id);

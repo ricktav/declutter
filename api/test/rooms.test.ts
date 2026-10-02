@@ -118,6 +118,40 @@ describe("rooms.remove", () => {
   });
 });
 
+describe("rooms.merge pos and self-parent guards", () => {
+  const pos = { xM: 1, yM: 1, wM: 1, dM: 1, rotDeg: 0 };
+  it("rebases pos when a cut child is merged into its parent", async () => {
+    const { db, h1, zolder, keuken, areaId } = await seed();
+    await db.update(rooms).set({ parentRoomId: keuken, offsetXM: 2, offsetYM: 3 }).where(eq(rooms.id, zolder));
+    const [{ id }] = await db.insert(items).values({ areaId, name: "kist", houseId: h1, roomId: zolder, pos }).$returningId();
+    await callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect(it.roomId).toBe(keuken);
+    expect(it.pos).toMatchObject({ xM: 3, yM: 4 });
+  });
+  it("clears pos when an unrelated room is merged", async () => {
+    const { db, h1, zolder, keuken, areaId } = await seed();
+    const [{ id }] = await db.insert(items).values({ areaId, name: "kist", houseId: h1, roomId: zolder, pos }).$returningId();
+    await callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect(it.pos).toBeNull();
+  });
+  it("forced remove clears pos on the unplaced items", async () => {
+    const { db, h1, zolder, areaId } = await seed();
+    const [{ id }] = await db.insert(items).values({ areaId, name: "kist", houseId: h1, roomId: zolder, pos }).$returningId();
+    await callerFor(h1).rooms.remove({ id: zolder, force: true });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect(it.roomId).toBeNull();
+    expect(it.pos).toBeNull();
+  });
+  it("refuses merging a room into one of its own cuts, and re-parents other children only", async () => {
+    const { db, h1, zolder, keuken } = await seed();
+    await db.update(rooms).set({ parentRoomId: zolder }).where(eq(rooms.id, keuken));
+    await expect(callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken })).rejects.toThrow(/own cut/);
+    expect(await db.select().from(rooms)).toHaveLength(3);
+  });
+});
+
 describe("rooms.cutFromRoom", () => {
   async function seedSource() {
     const s = await seed();
@@ -149,6 +183,10 @@ describe("rooms.cutFromRoom", () => {
     expect(room.walls).not.toBeNull();
     const [it] = await db.select().from(items).where(eq(items.id, itemId));
     expect(it.roomId).toBe(keuken);
+  });
+  it("refuses cutting a room under its own name", async () => {
+    const { h1, src } = await seedSource();
+    await expect(callerFor(h1).rooms.cutFromRoom({ sourceRoomId: src, name: "begane GROND", bounds })).rejects.toThrow(/different name/);
   });
   it("refuses a name whose room already has a plan", async () => {
     const { db, h1, src, keuken } = await seedSource();
