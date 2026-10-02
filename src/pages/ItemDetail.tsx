@@ -9,6 +9,7 @@ import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
 import { RecropDialog } from "@/components/RecropDialog";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
+import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { fileToBase64, timeAgo } from "@/lib/format";
 import {
   Sparkles,
@@ -29,6 +30,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Images,
+  ListTodo,
+  Lightbulb,
 } from "lucide-react";
 import type { AttributeDef } from "@db/schema";
 
@@ -157,6 +160,10 @@ export default function ItemDetail() {
   const [newLink, setNewLink] = useState("");
   const [relType, setRelType] = useState("related-to");
   const [newTask, setNewTask] = useState("");
+  const [addingTask, setAddingTask] = useState(false);
+  const [newIdea, setNewIdea] = useState("");
+  const [addingIdea, setAddingIdea] = useState(false);
+  const [addingRelation, setAddingRelation] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -216,6 +223,14 @@ export default function ItemDetail() {
       utils.tasks.list.invalidate();
     },
   });
+  const createIdea = trpc.ideas.create.useMutation({
+    onSuccess: () => {
+      setNewIdea("");
+      setAddingIdea(false);
+      invalidate();
+      utils.ideas.list.invalidate();
+    },
+  });
   const setParent = trpc.items.setParent.useMutation({ onSuccess: invalidate });
   const createChild = trpc.items.create.useMutation({ onSuccess: invalidate });
 
@@ -241,6 +256,19 @@ export default function ItemDetail() {
   };
 
   const startEditLoc = () => {
+    if (it.houseId == null && !it.floor && !it.room) {
+      // nothing set yet - default to wherever the adjacent item (same area,
+      // one filed just before/after this one) landed, since items are
+      // usually filed room-by-room in a batch
+      const adjacent = [prevId, nextId]
+        .map((sid) => (siblings.data ?? []).find((s) => s.id === sid))
+        .find((s) => s && (s.houseId != null || s.floor || s.room));
+      if (adjacent) {
+        setLoc({ houseId: adjacent.houseId ?? null, floor: adjacent.floor ?? "", room: adjacent.room ?? "" });
+        setEditingLoc(true);
+        return;
+      }
+    }
     setLoc({ houseId: it.houseId ?? null, floor: it.floor ?? "", room: it.room ?? "" });
     setEditingLoc(true);
   };
@@ -399,147 +427,288 @@ export default function ItemDetail() {
         </div>
       )}
 
+      {/* lead: pictures first, then where it sits in the room (if placed) */}
+      <div className="grid md:grid-cols-[1fr_260px] gap-6 mt-6 items-start">
+        <section
+          className={`rounded-lg border-2 bg-white p-4 transition-colors ${dragOver ? "border-primary border-dashed" : "border-border"}`}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            const f = e.dataTransfer.files?.[0];
+            if (f) uploadFile(f);
+            else {
+              const t = e.dataTransfer.getData("text");
+              if (t) addAttachment.mutate({ itemId, areaId: it.areaId, kind: "link", url: t, title: t });
+            }
+          }}
+        >
+          <div className="flex items-center mb-2">
+            <h2 className="micro-label text-muted-foreground">Documents & links</h2>
+            <span className="micro-label text-muted-foreground/60 ml-2">drop files here</span>
+            <input ref={fileRef} type="file" className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadFile(f);
+                e.target.value = "";
+              }} />
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadFile(f);
+                e.target.value = "";
+              }} />
+            <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto"
+              onClick={() => cameraRef.current?.click()}
+              disabled={addAttachment.isPending}
+              title="Take a photo — another angle, a label, a serial number">
+              <Camera className="h-3 w-3 mr-1" />
+              snap
+            </Button>
+            <Button size="sm" variant="ghost" className="h-6 text-[11px]"
+              onClick={() => fileRef.current?.click()}
+              disabled={addAttachment.isPending}>
+              {addAttachment.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <ImagePlus className="h-3 w-3 mr-1" />}
+              file
+            </Button>
+            <Button size="sm" variant="ghost" className="h-6 text-[11px]"
+              onClick={() => setLibraryOpen(true)}
+              title="Crop a photo already in the inbox">
+              <Images className="h-3 w-3 mr-1" />
+              library
+            </Button>
+          </div>
+          {uploadError && (
+            <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
+              {uploadError}
+            </div>
+          )}
+          <div className="space-y-2.5">
+            {it.attachments.length === 0 && (
+              <div className="text-[13px] text-muted-foreground">
+                Nothing attached. Drop a photo, paste a link or write a note.
+              </div>
+            )}
+            {it.attachments.map((a) => (
+              <div key={a.id} className="group flex items-start gap-2">
+                <div className="flex-1 min-w-0">
+                  <AttachmentView att={a} onZoom={setLightboxUrl} />
+                  <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
+                </div>
+                {a.kind === "image" && a.sourceCaptureId && (
+                  <>
+                    <SourceLink attachmentId={a.id} />
+                    <button
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
+                      title="Re-crop from original photo"
+                      onClick={() => setRecropId(a.id)}
+                    >
+                      <Crop className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                )}
+                {a.kind === "image" ? (
+                  <button
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive disabled:opacity-100"
+                    title="Unlink this photo from the item - it stays in the Photos pool"
+                    disabled={unlinkAttachment.isPending}
+                    onClick={() => unlinkAttachment.mutate({ id: a.id })}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <ConfirmDelete
+                    trigger={
+                      <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    }
+                    title={`Delete ${a.kind === "note" ? "note" : "link"}?`}
+                    description="This will be permanently removed."
+                    confirmLabel="Delete"
+                    pending={removeAttachment.isPending}
+                    onConfirm={() => removeAttachment.mutate({ id: a.id })}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 space-y-2">
+            <div className="flex gap-2">
+              <StickyNote className="h-4 w-4 text-muted-foreground mt-1.5 shrink-0" />
+              <input className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
+                placeholder="quick note… (Enter to save)"
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newNote.trim())
+                    addAttachment.mutate({ itemId, areaId: it.areaId, kind: "note", content: newNote.trim() });
+                }} />
+            </div>
+            <div className="flex gap-2">
+              <Link2 className="h-4 w-4 text-muted-foreground mt-1.5 shrink-0" />
+              <input className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
+                placeholder="https://… (Enter to save)"
+                value={newLink}
+                onChange={(e) => setNewLink(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newLink.trim())
+                    addAttachment.mutate({ itemId, areaId: it.areaId, kind: "link", url: newLink.trim(), title: newLink.trim() });
+                }} />
+            </div>
+          </div>
+        </section>
+
+        {it.roomId != null && it.pos != null && <ItemRoomPreview roomId={it.roomId} itemId={it.id} />}
+      </div>
+
       <div className="grid md:grid-cols-2 gap-6 mt-6">
         {/* left column */}
         <div className="space-y-6">
-          {/* attributes */}
-          <section className="rounded-lg border border-border bg-white p-4">
-            <div className="flex items-center mb-2">
-              <h2 className="micro-label text-muted-foreground">Attributes</h2>
-              {!editingAttrs ? (
-                <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto" onClick={startEditAttrs}>
-                  Edit
-                </Button>
-              ) : (
-                <div className="ml-auto flex gap-1">
-                  <Button size="sm" className="h-6 text-[11px]" onClick={saveAttrs}>Save</Button>
-                  <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => setEditingAttrs(false)}>
-                    Cancel
+          {/* attributes - collapses to a single add-button when empty */}
+          {Object.entries(it.attributes ?? {}).length === 0 && !editingAttrs ? (
+            <button
+              type="button"
+              className="w-full rounded-lg border border-dashed border-border px-4 py-2 flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground hover:border-foreground/30"
+              onClick={startEditAttrs}
+            >
+              <Plus className="h-3.5 w-3.5" /> Add attribute
+            </button>
+          ) : (
+            <section className="rounded-lg border border-border bg-white p-4">
+              <div className="flex items-center mb-2">
+                <h2 className="micro-label text-muted-foreground">Attributes</h2>
+                {!editingAttrs ? (
+                  <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto" onClick={startEditAttrs}>
+                    Edit
                   </Button>
+                ) : (
+                  <div className="ml-auto flex gap-1">
+                    <Button size="sm" className="h-6 text-[11px]" onClick={saveAttrs}>Save</Button>
+                    <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => setEditingAttrs(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+              </div>
+              {!editingAttrs ? (
+                <div className="divide-y divide-border">
+                  {Object.entries(it.attributes ?? {}).map(([k, v]) => (
+                    <div key={k} className="flex py-1.5 text-[13px]">
+                      <span className="w-36 shrink-0 text-muted-foreground">
+                        {defs.find((d) => d.key === k)?.label ?? k}
+                      </span>
+                      <span className="font-data">{String(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {Object.entries(attrDraft).map(([k, v]) => (
+                    <div key={k} className="flex items-center gap-2">
+                      <span className="w-36 shrink-0 text-[12px] text-muted-foreground truncate">
+                        {defs.find((d) => d.key === k)?.label ?? k}
+                      </span>
+                      <input
+                        className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
+                        value={v}
+                        onChange={(e) => setAttrDraft((d) => ({ ...d, [k]: e.target.value }))}
+                      />
+                      <button className="text-muted-foreground hover:text-destructive"
+                        onClick={() =>
+                          setAttrDraft((d) => {
+                            const c = { ...d };
+                            delete c[k];
+                            return c;
+                          })
+                        }>
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      className="w-36 rounded border border-input px-2 py-1 text-[13px]"
+                      placeholder="new key"
+                      value={newAttrKey}
+                      onChange={(e) => setNewAttrKey(e.target.value)}
+                    />
+                    <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                      disabled={!newAttrKey.trim() || newAttrKey in attrDraft}
+                      onClick={() => {
+                        setAttrDraft((d) => ({ ...d, [newAttrKey.trim()]: "" }));
+                        setNewAttrKey("");
+                      }}>
+                      <Plus className="h-3 w-3 mr-0.5" /> field
+                    </Button>
+                  </div>
                 </div>
               )}
-            </div>
-            {!editingAttrs ? (
-              <div className="divide-y divide-border">
-                {Object.entries(it.attributes ?? {}).length === 0 && (
-                  <div className="text-[13px] text-muted-foreground py-2">No attributes yet.</div>
+            </section>
+          )}
+
+          {/* relations - collapses to a single add-button when empty */}
+          {confirmed.length === 0 && !addingRelation ? (
+            <button
+              type="button"
+              className="w-full rounded-lg border border-dashed border-border px-4 py-2 flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground hover:border-foreground/30"
+              onClick={() => setAddingRelation(true)}
+            >
+              <Link2 className="h-3.5 w-3.5" /> Add relation
+            </button>
+          ) : (
+            <section className="rounded-lg border border-border bg-white p-4">
+              <div className="flex items-center mb-2">
+                <h2 className="micro-label text-muted-foreground">Relations</h2>
+                {confirmed.length === 0 && (
+                  <button
+                    className="ml-auto text-muted-foreground hover:text-foreground"
+                    onClick={() => setAddingRelation(false)}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 )}
-                {Object.entries(it.attributes ?? {}).map(([k, v]) => (
-                  <div key={k} className="flex py-1.5 text-[13px]">
-                    <span className="w-36 shrink-0 text-muted-foreground">
-                      {defs.find((d) => d.key === k)?.label ?? k}
-                    </span>
-                    <span className="font-data">{String(v)}</span>
-                  </div>
-                ))}
               </div>
-            ) : (
               <div className="space-y-1.5">
-                {Object.entries(attrDraft).map(([k, v]) => (
-                  <div key={k} className="flex items-center gap-2">
-                    <span className="w-36 shrink-0 text-[12px] text-muted-foreground truncate">
-                      {defs.find((d) => d.key === k)?.label ?? k}
-                    </span>
-                    <input
-                      className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
-                      value={v}
-                      onChange={(e) => setAttrDraft((d) => ({ ...d, [k]: e.target.value }))}
-                    />
-                    <button className="text-muted-foreground hover:text-destructive"
-                      onClick={() =>
-                        setAttrDraft((d) => {
-                          const c = { ...d };
-                          delete c[k];
-                          return c;
-                        })
-                      }>
+                {confirmed.map((r) => (
+                  <div key={r.id} className="flex items-center gap-2 text-[13px]">
+                    <span className="font-data text-[11px] rounded bg-muted px-1.5 py-0.5">{r.type}</span>
+                    <span className="text-muted-foreground">{r.direction === "out" ? "→" : "←"}</span>
+                    <Link to={`/items/${r.otherItemId}`} className="text-primary hover:underline">
+                      {r.otherItemName}
+                    </Link>
+                    <button className="ml-auto text-muted-foreground hover:text-destructive"
+                      onClick={() => removeRelation.mutate({ id: r.id })}>
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    className="w-36 rounded border border-input px-2 py-1 text-[13px]"
-                    placeholder="new key"
-                    value={newAttrKey}
-                    onChange={(e) => setNewAttrKey(e.target.value)}
+              </div>
+              <div className="flex gap-2 mt-3">
+                <select
+                  className="rounded-md border border-input px-2 py-1.5 text-[12px] bg-white"
+                  value={relType}
+                  onChange={(e) => setRelType(e.target.value)}
+                >
+                  {["related-to", "belongs-to", "installed-on", "part-of", "cable-for", "backs-up", "replaces"].map(
+                    (t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ),
+                  )}
+                </select>
+                <div className="flex-1">
+                  <ItemPicker
+                    excludeId={it.id}
+                    placeholder="link to item…"
+                    onSelect={(sel) =>
+                      addRelation.mutate({ fromItemId: it.id, toItemId: sel.id, type: relType })
+                    }
                   />
-                  <Button size="sm" variant="outline" className="h-7 text-[11px]"
-                    disabled={!newAttrKey.trim() || newAttrKey in attrDraft}
-                    onClick={() => {
-                      setAttrDraft((d) => ({ ...d, [newAttrKey.trim()]: "" }));
-                      setNewAttrKey("");
-                    }}>
-                    <Plus className="h-3 w-3 mr-0.5" /> field
-                  </Button>
                 </div>
               </div>
-            )}
-          </section>
-
-          {/* relations */}
-          <section className="rounded-lg border border-border bg-white p-4">
-            <h2 className="micro-label text-muted-foreground mb-2">Relations</h2>
-            <div className="space-y-1.5">
-              {confirmed.length === 0 && (
-                <div className="text-[13px] text-muted-foreground">No confirmed relations yet.</div>
-              )}
-              {confirmed.map((r) => (
-                <div key={r.id} className="flex items-center gap-2 text-[13px]">
-                  <span className="font-data text-[11px] rounded bg-muted px-1.5 py-0.5">{r.type}</span>
-                  <span className="text-muted-foreground">{r.direction === "out" ? "→" : "←"}</span>
-                  <Link to={`/items/${r.otherItemId}`} className="text-primary hover:underline">
-                    {r.otherItemName}
-                  </Link>
-                  <button className="ml-auto text-muted-foreground hover:text-destructive"
-                    onClick={() => removeRelation.mutate({ id: r.id })}>
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2 mt-3">
-              <select
-                className="rounded-md border border-input px-2 py-1.5 text-[12px] bg-white"
-                value={relType}
-                onChange={(e) => setRelType(e.target.value)}
-              >
-                {["related-to", "belongs-to", "installed-on", "part-of", "cable-for", "backs-up", "replaces"].map(
-                  (t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ),
-                )}
-              </select>
-              <div className="flex-1">
-                <ItemPicker
-                  excludeId={it.id}
-                  placeholder="link to item…"
-                  onSelect={(sel) =>
-                    addRelation.mutate({ fromItemId: it.id, toItemId: sel.id, type: relType })
-                  }
-                />
-              </div>
-            </div>
-          </section>
-
-          {/* history */}
-          <section className="rounded-lg border border-border bg-white p-4">
-            <h2 className="micro-label text-muted-foreground mb-2">History</h2>
-            <div className="space-y-1">
-              {(history.data ?? []).length === 0 && (
-                <div className="text-[13px] text-muted-foreground">No recorded events.</div>
-              )}
-              {(history.data ?? []).map((e) => (
-                <div key={e.id} className="flex items-baseline gap-2 text-[12px]">
-                  <span className={`micro-label shrink-0 ${e.actor === "ai" ? "text-violet-600" : "text-muted-foreground"}`}>
-                    {e.actor}
-                  </span>
-                  <span className="flex-1">{e.summary}</span>
-                  <span className="font-data text-[11px] text-muted-foreground shrink-0">{timeAgo(e.createdAt)}</span>
-                </div>
-              ))}
-            </div>
-          </section>
+            </section>
+          )}
 
           {/* location: house → floor → room (areas are the topic, not the place) */}
           <section className="rounded-lg border border-border bg-white p-4">
@@ -649,189 +818,109 @@ export default function ItemDetail() {
 
         {/* right column */}
         <div className="space-y-6">
-          {/* attachments */}
-          <section
-            className={`rounded-lg border-2 bg-white p-4 transition-colors ${dragOver ? "border-primary border-dashed" : "border-border"}`}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              const f = e.dataTransfer.files?.[0];
-              if (f) uploadFile(f);
-              else {
-                const t = e.dataTransfer.getData("text");
-                if (t) addAttachment.mutate({ itemId, areaId: it.areaId, kind: "link", url: t, title: t });
-              }
-            }}
-          >
-            <div className="flex items-center mb-2">
-              <h2 className="micro-label text-muted-foreground">Documents & links</h2>
-              <span className="micro-label text-muted-foreground/60 ml-2">drop files here</span>
-              <input ref={fileRef} type="file" className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) uploadFile(f);
-                  e.target.value = "";
-                }} />
-              <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) uploadFile(f);
-                  e.target.value = "";
-                }} />
-              <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto"
-                onClick={() => cameraRef.current?.click()}
-                disabled={addAttachment.isPending}
-                title="Take a photo — another angle, a label, a serial number">
-                <Camera className="h-3 w-3 mr-1" />
-                snap
-              </Button>
-              <Button size="sm" variant="ghost" className="h-6 text-[11px]"
-                onClick={() => fileRef.current?.click()}
-                disabled={addAttachment.isPending}>
-                {addAttachment.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <ImagePlus className="h-3 w-3 mr-1" />}
-                file
-              </Button>
-              <Button size="sm" variant="ghost" className="h-6 text-[11px]"
-                onClick={() => setLibraryOpen(true)}
-                title="Crop a photo already in the inbox">
-                <Images className="h-3 w-3 mr-1" />
-                library
-              </Button>
-            </div>
-            {uploadError && (
-              <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
-                {uploadError}
-              </div>
-            )}
-            <div className="space-y-2.5">
-              {it.attachments.length === 0 && (
-                <div className="text-[13px] text-muted-foreground">
-                  Nothing attached. Drop a photo, paste a link or write a note.
-                </div>
-              )}
-              {it.attachments.map((a) => (
-                <div key={a.id} className="group flex items-start gap-2">
-                  <div className="flex-1 min-w-0">
-                    <AttachmentView att={a} onZoom={setLightboxUrl} />
-                    <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
+          {/* tasks - collapses to a single add-button when empty, to avoid a
+              permanently-empty card taking up space on most items */}
+          {it.tasks.length === 0 && !addingTask ? (
+            <button
+              type="button"
+              className="w-full rounded-lg border border-dashed border-border px-4 py-2 flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground hover:border-foreground/30"
+              onClick={() => setAddingTask(true)}
+            >
+              <ListTodo className="h-3.5 w-3.5" /> Add task
+            </button>
+          ) : (
+            <section className="rounded-lg border border-border bg-white p-4">
+              <h2 className="micro-label text-muted-foreground mb-2">Tasks</h2>
+              <div className="space-y-1">
+                {it.tasks.map((t) => (
+                  <div key={t.id} className="flex items-center gap-2 text-[13px]">
+                    <span className={`h-2 w-2 rounded-full shrink-0 ${
+                      t.status === "done" ? "bg-emerald-500" : t.status === "doing" ? "bg-amber-500" : "bg-muted-foreground/40"
+                    }`} />
+                    <span className={t.status === "done" ? "line-through text-muted-foreground flex-1" : "flex-1"}>
+                      {t.title}
+                    </span>
+                    <span className="font-data text-[10px] text-muted-foreground">{timeAgo(t.createdAt)}</span>
                   </div>
-                  {a.kind === "image" && a.sourceCaptureId && (
-                    <>
-                      <SourceLink attachmentId={a.id} />
-                      <button
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
-                        title="Re-crop from original photo"
-                        onClick={() => setRecropId(a.id)}
-                      >
-                        <Crop className="h-3.5 w-3.5" />
-                      </button>
-                    </>
-                  )}
-                  {a.kind === "image" ? (
-                    <button
-                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive disabled:opacity-100"
-                      title="Unlink this photo from the item - it stays in the Photos pool"
-                      disabled={unlinkAttachment.isPending}
-                      onClick={() => unlinkAttachment.mutate({ id: a.id })}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  ) : (
-                    <ConfirmDelete
-                      trigger={
-                        <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      }
-                      title={`Delete ${a.kind === "note" ? "note" : "link"}?`}
-                      description="This will be permanently removed."
-                      confirmLabel="Delete"
-                      pending={removeAttachment.isPending}
-                      onConfirm={() => removeAttachment.mutate({ id: a.id })}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 space-y-2">
-              <div className="flex gap-2">
-                <StickyNote className="h-4 w-4 text-muted-foreground mt-1.5 shrink-0" />
+                ))}
+              </div>
+              <div className="flex gap-2 mt-3">
                 <input className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
-                  placeholder="quick note… (Enter to save)"
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
+                  placeholder="add a task for this item…"
+                  autoFocus={addingTask && it.tasks.length === 0}
+                  value={newTask}
+                  onChange={(e) => setNewTask(e.target.value)}
+                  onBlur={() => { if (!newTask.trim() && it.tasks.length === 0) setAddingTask(false); }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && newNote.trim())
-                      addAttachment.mutate({ itemId, areaId: it.areaId, kind: "note", content: newNote.trim() });
+                    if (e.key === "Enter" && newTask.trim())
+                      createTask.mutate({ title: newTask.trim(), itemId: it.id, areaId: it.areaId });
                   }} />
               </div>
-              <div className="flex gap-2">
-                <Link2 className="h-4 w-4 text-muted-foreground mt-1.5 shrink-0" />
+            </section>
+          )}
+
+          {/* ideas - same collapse pattern; "add" here quick-creates a new
+              idea already linked to this item (linking an *existing* idea
+              is done from the Ideas page itself) */}
+          {it.ideas.length === 0 && !addingIdea ? (
+            <button
+              type="button"
+              className="w-full rounded-lg border border-dashed border-border px-4 py-2 flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground hover:border-foreground/30"
+              onClick={() => setAddingIdea(true)}
+            >
+              <Lightbulb className="h-3.5 w-3.5" /> Add idea
+            </button>
+          ) : (
+            <section className="rounded-lg border border-border bg-white p-4">
+              <h2 className="micro-label text-muted-foreground mb-2">Linked ideas</h2>
+              <div className="space-y-1">
+                {it.ideas.map((idea) => (
+                  <div key={idea.id} className="text-[13px]">
+                    <Link to="/ideas" className="text-primary hover:underline">{idea.title}</Link>
+                    <span className="micro-label text-muted-foreground ml-2">{idea.status}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 mt-3">
                 <input className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
-                  placeholder="https://… (Enter to save)"
-                  value={newLink}
-                  onChange={(e) => setNewLink(e.target.value)}
+                  placeholder="capture an idea about this item…"
+                  autoFocus={addingIdea && it.ideas.length === 0}
+                  value={newIdea}
+                  onChange={(e) => setNewIdea(e.target.value)}
+                  onBlur={() => { if (!newIdea.trim() && it.ideas.length === 0) setAddingIdea(false); }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && newLink.trim())
-                      addAttachment.mutate({ itemId, areaId: it.areaId, kind: "link", url: newLink.trim(), title: newLink.trim() });
+                    if (e.key === "Enter" && newIdea.trim())
+                      createIdea.mutate({ title: newIdea.trim(), areaId: it.areaId, itemIds: [it.id] });
                   }} />
               </div>
-            </div>
-          </section>
-
-          {/* tasks */}
-          <section className="rounded-lg border border-border bg-white p-4">
-            <h2 className="micro-label text-muted-foreground mb-2">Tasks</h2>
-            <div className="space-y-1">
-              {it.tasks.length === 0 && (
-                <div className="text-[13px] text-muted-foreground">No tasks for this item.</div>
-              )}
-              {it.tasks.map((t) => (
-                <div key={t.id} className="flex items-center gap-2 text-[13px]">
-                  <span className={`h-2 w-2 rounded-full shrink-0 ${
-                    t.status === "done" ? "bg-emerald-500" : t.status === "doing" ? "bg-amber-500" : "bg-muted-foreground/40"
-                  }`} />
-                  <span className={t.status === "done" ? "line-through text-muted-foreground flex-1" : "flex-1"}>
-                    {t.title}
-                  </span>
-                  <span className="font-data text-[10px] text-muted-foreground">{timeAgo(t.createdAt)}</span>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2 mt-3">
-              <input className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
-                placeholder="add a task for this item…"
-                value={newTask}
-                onChange={(e) => setNewTask(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && newTask.trim())
-                    createTask.mutate({ title: newTask.trim(), itemId: it.id, areaId: it.areaId });
-                }} />
-            </div>
-          </section>
-
-          {/* ideas */}
-          <section className="rounded-lg border border-border bg-white p-4">
-            <h2 className="micro-label text-muted-foreground mb-2">Linked ideas</h2>
-            <div className="space-y-1">
-              {it.ideas.length === 0 && (
-                <div className="text-[13px] text-muted-foreground">No ideas reference this item yet.</div>
-              )}
-              {it.ideas.map((idea) => (
-                <div key={idea.id} className="text-[13px]">
-                  <Link to="/ideas" className="text-primary hover:underline">{idea.title}</Link>
-                  <span className="micro-label text-muted-foreground ml-2">{idea.status}</span>
-                </div>
-              ))}
-            </div>
-          </section>
+            </section>
+          )}
 
           {/* pinned in photos */}
           <PinnedInPhotos itemId={it.id} />
         </div>
       </div>
+
+      {/* history - at the bottom; useful for audit, not something you need
+          while actively working on an item */}
+      <section className="mt-6 rounded-lg border border-border bg-white p-4">
+        <h2 className="micro-label text-muted-foreground mb-2">History</h2>
+        <div className="space-y-1">
+          {(history.data ?? []).length === 0 && (
+            <div className="text-[13px] text-muted-foreground">No recorded events.</div>
+          )}
+          {(history.data ?? []).map((e) => (
+            <div key={e.id} className="flex items-baseline gap-2 text-[12px]">
+              <span className={`micro-label shrink-0 ${e.actor === "ai" ? "text-violet-600" : "text-muted-foreground"}`}>
+                {e.actor}
+              </span>
+              <span className="flex-1">{e.summary}</span>
+              <span className="font-data text-[11px] text-muted-foreground shrink-0">{timeAgo(e.createdAt)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <RecropDialog attachmentId={recropId} open={recropId != null} onClose={() => setRecropId(null)} />
       <ChooseFromLibraryDialog itemId={itemId} open={libraryOpen} onClose={() => setLibraryOpen(false)} />
       <Dialog open={!!lightboxUrl} onOpenChange={(o) => !o && setLightboxUrl(null)}>
