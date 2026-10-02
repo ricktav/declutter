@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { trpc } from "@/providers/trpc";
+import { getLastLocation } from "@/lib/lastLocation";
 
 const AREA_ICONS: Record<string, LucideIcon> = {
   laptop: Laptop,
@@ -158,6 +159,10 @@ export default function GalaxyPage() {
   const houses = trpc.houses.list.useQuery();
   const [groupingId, setGroupingId] = useState(GROUPINGS[0].id);
   const grouping = GROUPINGS.find((g) => g.id === groupingId)!;
+  // default to whatever house the rest of the app currently has "in
+  // context" (the last one used in a location picker), not every house
+  // mixed together - pick "all" explicitly to see the full inventory
+  const [houseFilter, setHouseFilter] = useState<number | "all">(() => getLastLocation().houseId ?? "all");
 
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
@@ -168,9 +173,11 @@ export default function GalaxyPage() {
 
   const built = useMemo(() => {
     if (!ready) return null;
-    const allItems = items.data! as Item[];
     const areaList = areas.data! as Area[];
     const houseList = houses.data! as House[];
+    const allItems = (items.data! as Item[]).filter(
+      (it) => houseFilter === "all" || it.houseId === houseFilter,
+    );
 
     type L2 = { key: string; label: string; items: Item[] };
     type L1 = {
@@ -259,21 +266,23 @@ export default function GalaxyPage() {
     const centerOf = (id: string) => l2Pos.get(id)!;
     const sim = d3
       .forceSimulation(itemNodes)
-      .force("charge", d3.forceManyBody().strength(-1.5))
-      .force("collide", d3.forceCollide<SimNode>((n) => n.r + 1))
+      // repulsion dominates the weak center pull below, so dots fan out into
+      // an airy scatter instead of packing into a tight hex-like disc
+      .force("charge", d3.forceManyBody().strength(-14))
+      .force("collide", d3.forceCollide<SimNode>((n) => n.r + 1.5))
       .force(
         "x",
-        d3.forceX<SimNode>((n) => centerOf(n.parentId!).x ?? W / 2).strength(0.18),
+        d3.forceX<SimNode>((n) => centerOf(n.parentId!).x ?? W / 2).strength(0.045),
       )
       .force(
         "y",
-        d3.forceY<SimNode>((n) => centerOf(n.parentId!).y ?? H / 2).strength(0.18),
+        d3.forceY<SimNode>((n) => centerOf(n.parentId!).y ?? H / 2).strength(0.045),
       )
       .stop();
-    for (let i = 0; i < 220; i++) sim.tick();
+    for (let i = 0; i < 400; i++) sim.tick();
 
     return { l1Nodes, l2Nodes, itemNodes, l1List };
-  }, [ready, items.data, areas.data, houses.data, groupingId]);
+  }, [ready, items.data, areas.data, houses.data, groupingId, houseFilter]);
 
   // one-time zoom behavior setup
   useEffect(() => {
@@ -414,6 +423,16 @@ export default function GalaxyPage() {
             </button>
           ))}
         </div>
+        <select
+          className="rounded-full bg-white/5 border border-white/10 px-3 py-1.5 text-[12px] text-[#e0e0d0]"
+          value={houseFilter}
+          onChange={(e) => setHouseFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+        >
+          <option value="all">All houses</option>
+          {(houses.data ?? []).map((h) => (
+            <option key={h.id} value={h.id}>{h.name}</option>
+          ))}
+        </select>
         <div className="ml-auto flex items-center gap-4 font-data text-[12px] text-[#b4b8a5]">
           <span><span className="text-[#d2ff00] font-semibold">{totalItems}</span> items</span>
           <span><span className="text-[#d2ff00] font-semibold">{totalGroups}</span> groups</span>
