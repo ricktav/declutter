@@ -1,6 +1,7 @@
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
 import type { ItemDecision, TriageSuggestion } from "@db/schema";
+import { DEFAULT_FLOORS } from "@/components/RoomPicker";
 
 type Out = inferRouterOutputs<AppRouter>;
 export type FlowItem = Out["items"]["listAll"][number];
@@ -91,4 +92,14 @@ export function setSnapPlace(captureId: number, place: Place) {
   } catch {
     // storage unavailable - the Sort card just falls back to "here"
   }
+}
+
+/** Floors in building order: the default floors first in their own order
+ * (basement, ground, 1, 2, 3, attic), anything else after them by name. */
+export function sortFloors(floors: string[]): string[] {
+  const rank = (f: string) => {
+    const i = DEFAULT_FLOORS.indexOf(f.toLowerCase());
+    return i === -1 ? DEFAULT_FLOORS.length : i;
+  };
+  return [...new Set(floors)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }

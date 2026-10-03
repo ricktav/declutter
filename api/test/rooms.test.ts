@@ -194,3 +194,19 @@ describe("rooms.cutFromRoom", () => {
     await expect(callerFor(h1).rooms.cutFromRoom({ sourceRoomId: src, name: "Keuken", bounds })).rejects.toThrow(/already has a plan/);
   });
 });
+
+describe("rooms.list dimensions", () => {
+  it("carries each room's width and depth for the Rooms page", async () => {
+    const db = getTestDb();
+    const [{ id: h }] = await db.insert(houses).values({ name: "Dims" }).$returningId();
+    await db.insert(rooms).values([
+      { houseId: h, name: "Keuken", source: "manual", widthM: 3.2, depthM: 4.1 },
+      { houseId: h, name: "Hal", source: "manual" },
+    ]);
+    const rows = await callerFor(h).rooms.list();
+    expect(rows.map((r) => [r.name, r.widthM, r.depthM])).toEqual([
+      ["Hal", null, null],
+      ["Keuken", 3.2, 4.1],
+    ]);
+  });
+});

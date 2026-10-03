@@ -121,6 +121,8 @@ export const roomsRouter = createRouter({
           houseId: rooms.houseId,
           name: rooms.name,
           floor: rooms.floor,
+          widthM: rooms.widthM,
+          depthM: rooms.depthM,
           parentRoomId: rooms.parentRoomId,
           hasGeometry: isNotNull(rooms.walls),
           itemCount: sql<number>`(select count(*) from items i where i.roomId = rooms.id and i.status = 'active')`,

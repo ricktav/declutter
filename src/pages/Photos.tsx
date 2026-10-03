@@ -88,6 +88,7 @@ function PhotoTile({ photo }: { photo: Photo }) {
  * photo of that thing in the living room" rather than by item name. */
 export default function PhotosPage() {
   const photos = trpc.photos.listAll.useQuery();
+  const houses = trpc.houses.list.useQuery();
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = usePersistedState<SortBy>("photos.sortBy", "location");
   const [showObjects, setShowObjects] = usePersistedState("photos.showObjects", true);
@@ -106,27 +107,29 @@ export default function PhotosPage() {
     });
   }, [photos.data, q, showObjects]);
 
-  const groupOf = (p: (typeof filtered)[number]) => {
-    if (sortBy === "area") return p.areaName ?? "(no topic)";
-    if (sortBy === "location") return p.roomName ?? "(no room)";
-    return "All photos";
-  };
-
   const groups = useMemo(() => {
     if (sortBy === "recent") {
       const sorted = [...filtered].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
-      return [{ label: "Most recent first", rows: sorted }];
+      return [{ key: "recent", label: "Most recent first", rows: sorted }];
     }
-    const map = new Map<string, typeof filtered>();
+    const houseName = new Map((houses.data ?? []).map((h) => [h.id, h.name]));
+    const manyHouses = (houses.data?.length ?? 0) > 1;
+    // group by room id, not name: two houses can each have a "Keuken"
+    const groupOf = (p: (typeof filtered)[number]): { key: string; label: string } => {
+      if (sortBy === "area") return { key: `area:${p.areaName ?? ""}`, label: p.areaName ?? "(no topic)" };
+      if (p.roomId == null) return { key: "room:none", label: "(no room)" };
+      const name = p.roomName ?? `Room #${p.roomId}`;
+      const house = p.houseId != null ? houseName.get(p.houseId) : undefined;
+      return { key: `room:${p.roomId}`, label: manyHouses && house ? `${name} · ${house}` : name };
+    };
+    const map = new Map<string, { key: string; label: string; rows: typeof filtered }>();
     for (const p of filtered) {
-      const key = groupOf(p);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(p);
+      const g = groupOf(p);
+      if (!map.has(g.key)) map.set(g.key, { ...g, rows: [] });
+      map.get(g.key)!.rows.push(p);
     }
-    return [...map.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([label, rows]) => ({ label, rows }));
-  }, [filtered, sortBy]);
+    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [filtered, sortBy, houses.data]);
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
@@ -177,7 +180,7 @@ export default function PhotosPage() {
 
       <div className="mt-5 space-y-7">
         {groups.map((g) => (
-          <div key={g.label}>
+          <div key={g.key}>
             <div className="micro-label text-muted-foreground mb-2 flex items-center gap-2">
               {g.label}
               <span className="font-data text-[11px] opacity-60">{g.rows.length}</span>

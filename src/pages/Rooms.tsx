@@ -53,6 +53,7 @@ export default function RoomsPage() {
                       {r.floor && <span className="ml-2 rounded bg-muted px-1.5 text-[10px] font-normal text-muted-foreground">{r.floor}</span>}
                     </span>
                     <span className="block text-[12px] text-muted-foreground">
+                      {r.widthM != null && r.depthM != null ? `${r.widthM}×${r.depthM} m · ` : ""}
                       {r.itemCount} item{r.itemCount === 1 ? "" : "s"} · {scanned ? "open plan" : "no scan yet"}
                     </span>
                   </span>

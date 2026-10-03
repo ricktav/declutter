@@ -76,7 +76,7 @@ export function ActTab() {
             onClick={() => setRoom(r)}
             className={cn("shrink-0 rounded-full border px-3 py-1 text-[12px]", room === r ? "border-[#3C5D41] bg-[#3C5D41]/10" : "border-border bg-white")}
           >
-            {r === NO_ROOM ? "Unplaced" : (inHouse.find((it) => it.roomId === r)?.room?.name ?? locations.find((l) => l.id === r)?.name ?? "")} <span className="font-data opacity-60">{n}</span>
+            {r === NO_ROOM ? "Unplaced" : (inHouse.find((it) => it.roomId === r)?.room?.name ?? locations.find((l) => l.id === r)?.name ?? `Room #${r}`)} <span className="font-data opacity-60">{n}</span>
           </button>
         ))}
       </div>

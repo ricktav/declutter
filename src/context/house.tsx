@@ -46,12 +46,16 @@ export function HouseProvider({ children }: { children: ReactNode }) {
   const valid = houses.data ? chosen != null && houses.data.some((h) => h.id === chosen) : true;
   const houseId = valid ? chosen : (houses.data?.[0]?.id ?? null);
 
-  // persist the fallback so the header carries it, then refetch scoped lists
+  // settle on the fallback: adopt it as the choice (a guarded state update
+  // during render), so the next render has houseId === chosen and stops here
+  if (houses.data && houseId !== chosen) setState(houseId);
+
+  // persist the house so the header carries it, then refetch scoped lists once
   useEffect(() => {
-    if (houseId === chosen) return;
+    if (getStoredHouseId() === houseId) return;
     storeHouseId(houseId);
     utils.invalidate();
-  }, [houseId, chosen, utils]);
+  }, [houseId, utils]);
 
   // another tab switched house: follow it, and refetch everything scoped by it
   useEffect(() => {

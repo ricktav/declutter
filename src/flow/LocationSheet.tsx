@@ -5,7 +5,7 @@ import { trpc } from "@/providers/trpc";
 import { cn } from "@/lib/utils";
 import { useFlow } from "./context";
 import { ErrorLine, Sheet } from "./ui";
-import type { Place } from "./data";
+import { sortFloors, type Place } from "./data";
 
 /**
  * Pick a place: tap a room of the current house, or name a new one.
@@ -33,7 +33,7 @@ export function LocationSheet({
 
   const known = useMemo(() => [...locations].sort((a, b) => b.itemCount - a.itemCount), [locations]);
   const floors = useMemo(() => {
-    const distinct = [...new Set(locations.map((l) => l.floor).filter((f): f is string => !!f))];
+    const distinct = sortFloors(locations.map((l) => l.floor).filter((f): f is string => !!f));
     return distinct.length > 0 ? distinct : DEFAULT_FLOORS;
   }, [locations]);
 

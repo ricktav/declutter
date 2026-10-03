@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { HousesMap } from "@/components/HousesMap";
@@ -24,17 +24,25 @@ export default function MapPage() {
   const locations = trpc.rooms.list.useQuery({ houseId: null }); // every house: this is the cross-house view
   const houses = trpc.houses.list.useQuery();
   const houseName = (id: number) => houses.data?.find((h) => h.id === id)?.name ?? null;
-  const [selected, setSelected] = useState<Location | null>(null);
-
-  useEffect(() => {
-    if (selected || !locations.data || locations.data.length === 0) return;
-    const lastKey = sessionStorage.getItem(SESSION_KEY);
-    const match = lastKey ? locations.data.find((l) => locationKey(l) === lastKey) : null;
-    setSelected(match ?? locations.data[0]);
-  }, [locations.data, selected]);
+  // The selected room by id, looked up in the live list: a rename shows the
+  // new name, and a merged-away room falls back instead of lingering.
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selected = useMemo(() => {
+    const list = locations.data ?? [];
+    if (list.length === 0) return null;
+    const byId = selectedId != null ? list.find((l) => l.id === selectedId) : undefined;
+    if (byId) return byId;
+    let lastKey: string | null = null;
+    try {
+      lastKey = sessionStorage.getItem(SESSION_KEY);
+    } catch {
+      // storage unavailable: start at the first room
+    }
+    return list.find((l) => locationKey(l) === lastKey) ?? list[0];
+  }, [locations.data, selectedId]);
 
   const selectLocation = (l: Location) => {
-    setSelected(l);
+    setSelectedId(l.id);
     try {
       sessionStorage.setItem(SESSION_KEY, locationKey(l));
     } catch {

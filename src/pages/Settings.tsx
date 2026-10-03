@@ -640,7 +640,7 @@ function MoveHouseDialog({
   );
 }
 
-function HouseRow({ house, allHouses }: { house: HouseRowData; allHouses: { id: number; name: string }[] }) {
+function HouseRow({ house, allHouses, roomCount }: { house: HouseRowData; allHouses: { id: number; name: string }[]; roomCount: number }) {
   const utils = trpc.useUtils();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(house.name);
@@ -651,7 +651,6 @@ function HouseRow({ house, allHouses }: { house: HouseRowData; allHouses: { id: 
   const [parcel, setParcel] = useState<{ parcelId: string; parcelAreaM2: number | null } | null>(
     house.parcelId ? { parcelId: house.parcelId, parcelAreaM2: house.parcelAreaM2 ?? null } : null,
   );
-  const roomsOfHouse = trpc.rooms.list.useQuery({ houseId: house.id });
   const otherHousesCount = allHouses.filter((h) => h.id !== house.id).length;
 
   const update = trpc.houses.update.useMutation({
@@ -756,7 +755,7 @@ function HouseRow({ house, allHouses }: { house: HouseRowData; allHouses: { id: 
           </a>
         )}
         <div className="font-data text-[11px] text-muted-foreground mt-0.5">
-          {`${roomsOfHouse.data?.length ?? 0} rooms`}
+          {`${roomCount} room${roomCount === 1 ? "" : "s"}`}
         </div>
       </div>
       <button
@@ -790,6 +789,7 @@ function HouseRow({ house, allHouses }: { house: HouseRowData; allHouses: { id: 
 function HousesSection() {
   const utils = trpc.useUtils();
   const houses = trpc.houses.list.useQuery();
+  const allRooms = trpc.rooms.list.useQuery({ houseId: null });
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [lat, setLat] = useState("");
@@ -804,7 +804,7 @@ function HousesSection() {
   return (
     <>
       {(houses.data ?? []).map((h) => (
-        <HouseRow key={h.id} house={h} allHouses={houses.data ?? []} />
+        <HouseRow key={h.id} house={h} allHouses={houses.data ?? []} roomCount={(allRooms.data ?? []).filter((r) => r.houseId === h.id).length} />
       ))}
       <div className="grid sm:grid-cols-2 gap-2">
         <input

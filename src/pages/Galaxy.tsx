@@ -68,6 +68,10 @@ function paletteColor(index: number) {
   return PALETTE[index % PALETTE.length];
 }
 
+// group by room id, not name: two houses can each have a "Keuken"
+const roomKey = (it: Item) => (it.room ? `${it.room.id}:${it.room.name.trim()}` : "none");
+const roomKeyLabel = (key: string) => (key === "none" ? "No room" : key.slice(key.indexOf(":") + 1));
+
 const GROUPINGS: Grouping[] = [
   {
     id: "house-floor",
@@ -127,15 +131,15 @@ const GROUPINGS: Grouping[] = [
       const a = areas.find((a) => String(a.id) === key);
       return a ? (AREA_ICONS[a.icon] ?? Box) : null;
     },
-    level2: (it) => it.room?.name?.trim() || "No room",
-    level2Label: (key) => key,
+    level2: roomKey,
+    level2Label: roomKeyLabel,
   },
   {
     id: "room-topic",
     label: "Room → Topic",
     shortLabel: "Room",
-    level1: (it) => it.room?.name?.trim() || "No room",
-    level1Label: (key) => key,
+    level1: roomKey,
+    level1Label: (key) => roomKeyLabel(key),
     level1Color: (_key, index) => paletteColor(index),
     level1Nav: () => null,
     level1Icon: () => null,
@@ -228,6 +232,13 @@ export default function GalaxyPage() {
   // house mixed together - pick "all" explicitly to see the full inventory
   const { houseId: ctxHouseId } = useHouse();
   const [houseFilter, setHouseFilter] = useState<number | "all">(() => ctxHouseId ?? "all");
+  // follow the header switcher: a house switch (or the provider's first
+  // fallback) re-seeds the filter; picking a value here still overrides it
+  const [seededFor, setSeededFor] = useState(ctxHouseId);
+  if (seededFor !== ctxHouseId) {
+    setSeededFor(ctxHouseId);
+    setHouseFilter(ctxHouseId ?? "all");
+  }
   const items = trpc.items.listAll.useQuery({ houseId: houseFilter === "all" ? null : houseFilter });
 
   const svgRef = useRef<SVGSVGElement>(null);

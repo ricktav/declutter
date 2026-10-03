@@ -668,7 +668,8 @@ function TriageCard({
                 : newCount > 0
                   ? `File ${newCount} new item${newCount === 1 ? "" : "s"}`
                   : "Confirm"}
-            </Button>          </div>
+            </Button>
+          </div>
           {acceptMany.error && (
             <div className="mt-2 flex gap-2 items-start rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
               <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
