@@ -10,7 +10,7 @@ import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
-import { putFile, readFileBytes, copyStoredFile } from "../lib/filestore";
+import { readFileBytes, copyStoredFile, deleteStoredFile, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
@@ -439,7 +439,7 @@ export const inboxRouter = createRouter({
     }
   }),
 
-  /** File one detected object: create/link item + cutout attachment cropped from the original snap */
+  /** File one detected object: create/link item + a cutout photo cropped from the original snap */
   fileObject: procedure
     .input(
       z.object({
@@ -497,30 +497,36 @@ export const inboxRouter = createRouter({
         wPct: input.wPct,
         hPct: input.hPct,
       });
-      const saved = await putFile({
-        bytes: new Uint8Array(cropped),
-        fileName: `items/${itemId}/cutout-${Date.now()}.jpg`,
-        contentType: "image/jpeg",
-      });
-      const item = await db.query.items.findFirst({ where: eq(items.id, itemId) });
-      await db.insert(photos).values({
-        itemId,
-        areaId: item?.areaId ?? input.areaId,
-        title: `Cutout: ${input.label}`,
-        storageKey: saved.key,
-        mimeType: "image/jpeg",
-        size: saved.size,
-        sourceCaptureId: cap.id,
-        cropBox: { xPct: input.xPct, yPct: input.yPct, wPct: input.wPct, hPct: input.hPct },
-      });
-      await logEvent({
-        entityType: "item",
-        entityId: itemId,
-        action: "cutout-added",
-        summary: `Cutout "${input.label}" added to item #${itemId} from capture #${input.id}`,
-        actor: "ai",
-        payload: { box: { xPct: input.xPct, yPct: input.yPct, wPct: input.wPct, hPct: input.hPct } },
-      });
+      const targetId: number = itemId;
+      const item = await db.query.items.findFirst({ where: eq(items.id, targetId) });
+      const box = { xPct: input.xPct, yPct: input.yPct, wPct: input.wPct, hPct: input.hPct };
+      await withNewFile(
+        { bytes: new Uint8Array(cropped), fileName: `items/${targetId}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
+        (saved) =>
+          db.transaction(async (tx) => {
+            await tx.insert(photos).values({
+              itemId: targetId,
+              areaId: item?.areaId ?? input.areaId,
+              title: `Cutout: ${input.label}`,
+              storageKey: saved.key,
+              mimeType: "image/jpeg",
+              size: saved.size,
+              sourceCaptureId: cap.id,
+              cropBox: box,
+            });
+            await logEvent(
+              {
+                entityType: "item",
+                entityId: targetId,
+                action: "cutout-added",
+                summary: `Cutout "${input.label}" added to item #${targetId} from capture #${input.id}`,
+                actor: "ai",
+                payload: { box },
+              },
+              tx,
+            );
+          }),
+      );
       if (input.markProcessed) {
         await db.update(captures).set({ status: "processed" }).where(eq(captures.id, input.id));
       }
@@ -552,80 +558,88 @@ export const inboxRouter = createRouter({
     )
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
-      return db.transaction(async (tx) => {
-        const cap = await tx.query.captures.findFirst({ where: eq(captures.id, input.id) });
-        if (!cap) throw new Error("capture not found");
+      // file copies made inside the transaction: deleted again if it rolls back
+      const copies: string[] = [];
+      try {
+        return await db.transaction(async (tx) => {
+          const cap = await tx.query.captures.findFirst({ where: eq(captures.id, input.id) });
+          if (!cap) throw new Error("capture not found");
 
-        let created = 0;
-        for (const it of input.items) {
-          let itemId = it.itemId;
-          if (!itemId) {
-            const [{ id: newId }] = await tx
-              .insert(items)
-              .values({
-                areaId: it.areaId,
-                name: it.itemName,
-                description: cap.rawText?.slice(0, 500) ?? null,
-                attributes: it.attributes ?? null,
-                houseId: input.houseId ?? ctx.houseId ?? null,
-              })
-              .$returningId();
-            itemId = newId;
-            if (input.roomId != null) await setItemLocation(tx, itemId, { roomId: input.roomId });
-            created++;
-            await logEvent({
-              entityType: "item",
-              entityId: itemId,
-              action: "created",
-              summary: `Item "${it.itemName}" created from inbox capture`,
-            }, tx);
+          let created = 0;
+          for (const it of input.items) {
+            let itemId = it.itemId;
+            if (!itemId) {
+              const [{ id: newId }] = await tx
+                .insert(items)
+                .values({
+                  areaId: it.areaId,
+                  name: it.itemName,
+                  description: cap.rawText?.slice(0, 500) ?? null,
+                  attributes: it.attributes ?? null,
+                  houseId: input.houseId ?? ctx.houseId ?? null,
+                })
+                .$returningId();
+              itemId = newId;
+              if (input.roomId != null) await setItemLocation(tx, itemId, { roomId: input.roomId });
+              created++;
+              await logEvent({
+                entityType: "item",
+                entityId: itemId,
+                action: "created",
+                summary: `Item "${it.itemName}" created from inbox capture`,
+              }, tx);
 
-            if (cap.rawText || cap.url || cap.storageKey) {
-              // the item gets its own copy of the file: a capture and a
-              // photo/link must never share one storage key (deleting one
-              // would delete the other's bytes)
-              const copy = cap.storageKey
-                ? await copyStoredFile(cap.storageKey, `items/${itemId}/${cap.storageKey.split("/").pop() ?? "photo"}`)
-                : null;
-              if (cap.kind === "image" && copy) {
-                await tx.insert(photos).values({
-                  itemId,
-                  areaId: it.areaId,
-                  title: cap.url ?? it.itemName,
-                  storageKey: copy.key,
-                  size: copy.size,
-                  sourceCaptureId: cap.id,
-                });
-              } else {
-                await tx.insert(itemLinks).values({
-                  itemId,
-                  areaId: it.areaId,
-                  kind: cap.kind === "link" ? "link" : copy ? "file" : "note",
-                  title: cap.url ?? it.itemName,
-                  content: cap.rawText ?? null,
-                  url: cap.url ?? null,
-                  storageKey: copy?.key ?? null,
-                  size: copy?.size ?? null,
-                  sourceCaptureId: cap.id,
-                });
+              if (cap.rawText || cap.url || cap.storageKey) {
+                // the item gets its own copy of the file: a capture and a
+                // photo/link must never share one storage key (deleting one
+                // would delete the other's bytes)
+                const copy = cap.storageKey
+                  ? await copyStoredFile(cap.storageKey, `items/${itemId}/${cap.storageKey.split("/").pop() ?? "photo"}`)
+                  : null;
+                if (copy) copies.push(copy.key);
+                if (cap.kind === "image" && copy) {
+                  await tx.insert(photos).values({
+                    itemId,
+                    areaId: it.areaId,
+                    title: cap.url ?? it.itemName,
+                    storageKey: copy.key,
+                    size: copy.size,
+                    sourceCaptureId: cap.id,
+                  });
+                } else {
+                  await tx.insert(itemLinks).values({
+                    itemId,
+                    areaId: it.areaId,
+                    kind: cap.kind === "link" ? "link" : copy ? "file" : "note",
+                    title: cap.url ?? it.itemName,
+                    content: cap.rawText ?? null,
+                    url: cap.url ?? null,
+                    storageKey: copy?.key ?? null,
+                    size: copy?.size ?? null,
+                    sourceCaptureId: cap.id,
+                  });
+                }
               }
+            } else if (it.attributes && Object.keys(it.attributes).length) {
+              const existing = await tx.query.items.findFirst({ where: eq(items.id, itemId) });
+              const merged = { ...(existing?.attributes ?? {}), ...it.attributes };
+              await tx.update(items).set({ attributes: merged }).where(eq(items.id, itemId));
             }
-          } else if (it.attributes && Object.keys(it.attributes).length) {
-            const existing = await tx.query.items.findFirst({ where: eq(items.id, itemId) });
-            const merged = { ...(existing?.attributes ?? {}), ...it.attributes };
-            await tx.update(items).set({ attributes: merged }).where(eq(items.id, itemId));
           }
-        }
 
-        await tx.update(captures).set({ status: "triaged" }).where(eq(captures.id, input.id));
-        await logEvent({
-          entityType: "capture",
-          entityId: input.id,
-          action: "accepted",
-          summary: `Capture accepted → ${input.items.length} item(s) filed (${created} new)`,
-        }, tx);
-        return { ok: true, created };
-      });
+          await tx.update(captures).set({ status: "triaged" }).where(eq(captures.id, input.id));
+          await logEvent({
+            entityType: "capture",
+            entityId: input.id,
+            action: "accepted",
+            summary: `Capture accepted → ${input.items.length} item(s) filed (${created} new)`,
+          }, tx);
+          return { ok: true, created };
+        });
+      } catch (err) {
+        for (const k of copies) await deleteStoredFile(k).catch(() => {});
+        throw err;
+      }
     }),
 
   /** Parse a pending .geojson capture's floor scan into a room (geometry +
@@ -763,7 +777,7 @@ export const inboxRouter = createRouter({
    * leaving a "dismissed" row that would still clutter Processed).
    * Backfills a hash for any image capture that doesn't have one yet
    * (pre-dates content-hash dedup on create), then merges by hash. Skips
-   * any duplicate that's already been turned into an attachment (pinned),
+   * any duplicate that's already been turned into a photo or item link (pinned),
    * since deleting that capture would break the pin. */
   mergeDuplicates: procedure.mutation(async () => {
     const db = getDb();
@@ -814,7 +828,7 @@ export const inboxRouter = createRouter({
       for (const c of rest) {
         if (pinned.has(c.id)) {
           // can't delete the row - its storageKey may be the exact file an
-          // attachment still points to - but it's still a duplicate, so hide
+          // photo or item link still points to - but it's still a duplicate, so hide
           // it from Processed the same way dismissing anything else does
           if (c.status !== "dismissed") {
             await db.update(captures).set({ status: "dismissed" }).where(eq(captures.id, c.id));
@@ -823,7 +837,7 @@ export const inboxRouter = createRouter({
           continue;
         }
         await db.delete(captures).where(eq(captures.id, c.id));
-        // only removes the bytes when no attachment still points at them
+        // only removes the bytes when no photo, item link or capture still points at them
         if (c.storageKey) await releaseStoredFiles(db, [c.storageKey]);
         merged++;
       }

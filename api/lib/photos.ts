@@ -153,6 +153,7 @@ export interface CatalogRow {
   id: number;
   captureId: number | null;
   storageKey: string | null;
+  title: string | null;
   createdAt: Date;
   itemId: number | null;
   itemName: string | null;
@@ -190,6 +191,7 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
       id: p.id,
       captureId: null,
       storageKey: p.storageKey,
+      title: p.title ?? null,
       createdAt: p.createdAt,
       itemId: p.itemId ?? null,
       itemName: it?.name ?? null,
@@ -213,6 +215,7 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
       id: c.id,
       captureId: c.id,
       storageKey: c.storageKey,
+      title: null,
       createdAt: c.createdAt,
       itemId: null,
       itemName: null,

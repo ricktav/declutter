@@ -327,13 +327,19 @@ export const itemsRouter = createRouter({
       // changed (e.g. "renamed from X to Y") instead of just listing which
       // field keys were touched
       const before = await db.query.items.findFirst({ where: eq(items.id, id) });
-      // a position is in the old room's frame: meaningless once the item changes room
-      if (roomId !== undefined && roomId !== (before?.roomId ?? null) && pos === undefined) patch.pos = null;
+      const beforeRoomId = before?.roomId ?? null;
+      const beforeHouseId = before?.houseId ?? null;
+      // houseId alone moves the item, unplaced, into ANOTHER house; for the
+      // house it is already in it changes nothing (it does not unplace it)
+      const moves = roomId !== undefined || (houseId !== undefined && houseId !== beforeHouseId);
+      const nextRoomId = roomId !== undefined ? roomId : moves ? null : beforeRoomId;
+      // a position is in the old room's frame: meaningless once the item leaves that room
+      if (nextRoomId !== beforeRoomId && pos === undefined) patch.pos = null;
       await db.transaction(async (tx) => {
         if (Object.keys(patch).length) await tx.update(items).set(patch).where(eq(items.id, id));
-        if (roomId !== undefined || houseId !== undefined) {
+        if (moves) {
           if (roomId != null) await setItemLocation(tx, id, { roomId });
-          else await setItemLocation(tx, id, { roomId: null, houseId: houseId !== undefined ? houseId : (before?.houseId ?? null) });
+          else await setItemLocation(tx, id, { roomId: null, houseId: houseId !== undefined ? houseId : beforeHouseId });
         }
       });
 
@@ -342,7 +348,7 @@ export const itemsRouter = createRouter({
       if (patch.name !== undefined && patch.name !== before?.name) {
         parts.push(`renamed from "${before?.name ?? "?"}" to "${patch.name}"`);
       }
-      if (roomId !== undefined || houseId !== undefined) {
+      if (moves) {
         const after = await db.query.items.findFirst({ where: eq(items.id, id) });
         const label = after?.roomId != null ? ((await roomSummary(db, [after.roomId])).get(after.roomId)?.name ?? `room #${after.roomId}`) : after?.houseId != null ? "unplaced in house" : "none";
         if (after?.roomId !== before?.roomId || after?.houseId !== before?.houseId) parts.push(`location set to ${label}`);

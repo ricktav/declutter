@@ -5,7 +5,7 @@ import crypto from "crypto";
 /**
  * File storage: local disk under ./uploads, served at /uploads/<name>.
  *
- * Keys are persisted on capture/attachment rows as "local/<name>". A bare
+ * Keys are persisted on capture, photo and item_link rows as "local/<name>". A bare
  * key (no prefix, optionally "uploads/<name>") is accepted on read for rows
  * written before the prefix existed.
  */
@@ -36,6 +36,13 @@ function pathOf(key: string): string {
   return abs;
 }
 
+let putObserver: ((key: string) => void) | null = null;
+
+/** Tests only (api/test/setup.ts): be told the key of every file putFile() writes. */
+export function observePutFile(fn: ((key: string) => void) | null): void {
+  putObserver = fn;
+}
+
 export async function putFile(opts: {
   bytes: Uint8Array;
   fileName: string;
@@ -45,7 +52,27 @@ export async function putFile(opts: {
   const id = crypto.randomBytes(6).toString("hex");
   const rel = `${id}-${sanitizeName(opts.fileName)}`;
   fs.writeFileSync(path.join(UPLOAD_DIR, rel), Buffer.from(opts.bytes));
-  return { key: `local/${rel}`, size: opts.bytes.byteLength };
+  const key = `local/${rel}`;
+  putObserver?.(key);
+  return { key, size: opts.bytes.byteLength };
+}
+
+/**
+ * Write a new file, then run the row write that refers to it. When that
+ * write throws (a failed insert, a rolled-back transaction), the file is
+ * deleted again, so a failed create never leaves an orphan in uploads/.
+ */
+export async function withNewFile<T>(
+  file: { bytes: Uint8Array; fileName: string; contentType?: string },
+  write: (saved: { key: string; size: number }) => Promise<T>,
+): Promise<T> {
+  const saved = await putFile(file);
+  try {
+    return await write(saved);
+  } catch (err) {
+    await deleteStoredFile(saved.key).catch(() => {});
+    throw err;
+  }
 }
 
 export async function readFileBytes(key: string): Promise<Uint8Array> {

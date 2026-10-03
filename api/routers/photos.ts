@@ -1,6 +1,6 @@
 // api/routers/photos.ts
 // Images: an item's photos, location photos, cutouts and the catalog.
-// Absorbs the image half of api/routers/attachments.ts and the two photo
+// Took over the image half of the old attachments router and the two photo
 // procedures of api/routers/map.ts.
 import { z } from "zod";
 import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
@@ -8,16 +8,13 @@ import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { captures, items, photos } from "@db/schema";
-import { putFile, readFileBytes, urlForKey } from "../lib/filestore";
+import { readFileBytes, urlForKey, withNewFile } from "../lib/filestore";
+import { sniffMime } from "../lib/sniff";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
 import { logEvent } from "../lib/events";
 import { addPhoto, listPhotoCatalog, removePhoto, unlinkPhoto } from "../lib/photos";
 
-// `photos.unlink` delegates to `unlinkPhoto` in api/lib/photos.ts (Step 5), so
-// the deprecated attachments.unlink alias (Task 4) shares one implementation.
-// Drop any import above (`items`, `logEvent`, `TRPCError`, `eq`...) that no
-// other procedure in this file still uses; `npx eslint api` flags them.
 const cropBoxInput = z.object({
   xPct: z.number().min(0).max(100),
   yPct: z.number().min(0).max(100),
@@ -87,23 +84,24 @@ export const photosRouter = createRouter({
     const cap = await db.query.captures.findFirst({ where: eq(captures.id, photo.sourceCaptureId) });
     if (!cap?.storageKey) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
     const cropped = await cropPercent(await readSourceBytes(cap.storageKey), input.box);
-    const saved = await putFile({
-      bytes: new Uint8Array(cropped),
-      fileName: `items/${photo.itemId ?? "photo"}/cutout-${Date.now()}.jpg`,
-      contentType: "image/jpeg",
-    });
-    await db.transaction(async (tx) => {
-      await tx.update(photos).set({ storageKey: saved.key, size: saved.size, cropBox: input.box }).where(eq(photos.id, input.photoId));
-      await logEvent(
-        {
-          entityType: "photo",
-          entityId: input.photoId,
-          action: "recropped",
-          summary: `Cutout "${photo.title ?? input.photoId}" re-cropped from its source photo`,
-        },
-        tx,
-      );
-    });
+    const saved = await withNewFile(
+      { bytes: new Uint8Array(cropped), fileName: `items/${photo.itemId ?? "photo"}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
+      async (file) => {
+        await db.transaction(async (tx) => {
+          await tx.update(photos).set({ storageKey: file.key, size: file.size, cropBox: input.box }).where(eq(photos.id, input.photoId));
+          await logEvent(
+            {
+              entityType: "photo",
+              entityId: input.photoId,
+              action: "recropped",
+              summary: `Cutout "${photo.title ?? input.photoId}" re-cropped from its source photo`,
+            },
+            tx,
+          );
+        });
+        return file;
+      },
+    );
     await releaseStoredFiles(db, [photo.storageKey]);
     return { ok: true, storageKey: saved.key };
   }),
@@ -145,30 +143,34 @@ export const photosRouter = createRouter({
 
       const maxDim = { small: 480, medium: 900, big: undefined }[input.photoSize];
       const cropped = await cropPercent(bytes, input.box, maxDim);
-      const saved = await putFile({
-        bytes: new Uint8Array(cropped),
-        fileName: `items/${input.itemId}/cutout-${Date.now()}.jpg`,
-        contentType: "image/jpeg",
-      });
-      const [{ id }] = await db
-        .insert(photos)
-        .values({
-          itemId: input.itemId,
-          storageKey: saved.key,
-          mimeType: "image/jpeg",
-          size: saved.size,
-          sourceCaptureId,
-          cropBox: input.box,
-          title: "Photo",
-        })
-        .$returningId();
-      await logEvent({
-        entityType: "photo",
-        entityId: id,
-        action: "created",
-        summary: `Photo cropped from pin location and added to item #${input.itemId}`,
-      });
-      return { id, storageKey: saved.key, created: true as const };
+      return withNewFile(
+        { bytes: new Uint8Array(cropped), fileName: `items/${input.itemId}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
+        (saved) =>
+          db.transaction(async (tx) => {
+            const [{ id }] = await tx
+              .insert(photos)
+              .values({
+                itemId: input.itemId,
+                storageKey: saved.key,
+                mimeType: "image/jpeg",
+                size: saved.size,
+                sourceCaptureId,
+                cropBox: input.box,
+                title: "Photo",
+              })
+              .$returningId();
+            await logEvent(
+              {
+                entityType: "photo",
+                entityId: id,
+                action: "created",
+                summary: `Photo cropped from pin location and added to item #${input.itemId}`,
+              },
+              tx,
+            );
+            return { id, storageKey: saved.key, created: true as const };
+          }),
+      );
     }),
 
   listAll: procedure.query(() => listPhotoCatalog(getDb())),
@@ -200,39 +202,46 @@ export const photosRouter = createRouter({
    * photo per capture (reused on repeat visits) so it becomes pinnable. */
   ensureForCapture: procedure
     .input(z.object({ captureId: z.number(), roomId: z.number().nullable().optional() }))
-    .mutation(async ({ input }) => {
-      const db = getDb();
-      // itemId IS NULL: a cutout carries the same sourceCaptureId but is a crop, not the full photo
-      const existing = await db.query.photos.findFirst({
-        where: and(eq(photos.sourceCaptureId, input.captureId), isNull(photos.itemId)),
-      });
-      if (existing) {
-        // a room confirmed just now (Inbox's pending-item "Pin" flow) is worth keeping
-        if (input.roomId != null && existing.roomId == null) {
-          await db.update(photos).set({ roomId: input.roomId }).where(eq(photos.id, existing.id));
+    .mutation(({ input }) =>
+      getDb().transaction(async (tx) => {
+        // Lock the capture row first: a second call for the same capture (a
+        // double tap, two tabs) waits here. Its plain read below runs after
+        // the first call committed, so it finds that photo instead of making
+        // another one.
+        const [cap] = await tx.select().from(captures).where(eq(captures.id, input.captureId)).for("update");
+        // itemId IS NULL: a cutout carries the same sourceCaptureId but is a crop, not the full photo
+        const existing = await tx.query.photos.findFirst({
+          where: and(eq(photos.sourceCaptureId, input.captureId), isNull(photos.itemId)),
+        });
+        if (existing) {
+          // a room confirmed just now (Inbox's pending-item "Pin" flow) is worth keeping
+          if (input.roomId != null && existing.roomId == null) {
+            await tx.update(photos).set({ roomId: input.roomId }).where(eq(photos.id, existing.id));
+          }
+          return { photoId: existing.id };
         }
-        return { photoId: existing.id };
-      }
-      const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.captureId) });
-      if (!cap?.storageKey) throw new TRPCError({ code: "NOT_FOUND", message: "Capture has no stored photo." });
-      // own copy of the bytes: a capture and a photo never share a key
-      const copy = await putFile({
-        bytes: await readSourceBytes(cap.storageKey),
-        fileName: `locations/${cap.storageKey.split("/").pop() ?? "photo"}`,
-        contentType: "image/jpeg",
-      });
-      const [{ id }] = await db
-        .insert(photos)
-        .values({
-          storageKey: copy.key,
-          size: copy.size,
-          mimeType: "image/jpeg",
-          sourceCaptureId: cap.id,
-          roomId: input.roomId ?? null,
-          title: "Location photo",
-        })
-        .$returningId();
-      await logEvent({ entityType: "photo", entityId: id, action: "created", summary: `Location photo created from capture #${cap.id}` });
-      return { photoId: id };
-    }),
+        if (!cap?.storageKey) throw new TRPCError({ code: "NOT_FOUND", message: "Capture has no stored photo." });
+        const bytes = await readSourceBytes(cap.storageKey);
+        const mimeType = await sniffMime(bytes, cap.storageKey);
+        // own copy of the bytes: a capture and a photo never share a key
+        return withNewFile(
+          { bytes, fileName: `locations/${cap.storageKey.split("/").pop() ?? "photo"}`, contentType: mimeType },
+          async (copy) => {
+            const [{ id }] = await tx
+              .insert(photos)
+              .values({
+                storageKey: copy.key,
+                size: copy.size,
+                mimeType,
+                sourceCaptureId: cap.id,
+                roomId: input.roomId ?? null,
+                title: "Location photo",
+              })
+              .$returningId();
+            await logEvent({ entityType: "photo", entityId: id, action: "created", summary: `Location photo created from capture #${cap.id}` }, tx);
+            return { photoId: id };
+          },
+        );
+      }),
+    ),
 });

@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { areas, captures, houses, itemLinks, items, photoPins, photos, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
-import { keyPath, removeTestUploads, writeTestJpeg } from "./fixtures";
+import { keyPath, removeTestUploads, writeTestJpeg, writeTestPng } from "./fixtures";
 import { releaseStoredFiles } from "../lib/entities";
 
 beforeEach(async () => {
@@ -200,5 +200,38 @@ describe("releaseStoredFiles", () => {
     await db.insert(itemLinks).values({ kind: "file", storageKey: byLink });
     expect(await releaseStoredFiles(db, [byPhoto, byLink, loose])).toBe(1);
     expect([byPhoto, byLink, loose].map((k) => fs.existsSync(keyPath(k)))).toEqual([true, true, false]);
+  });
+});
+
+describe("photos.ensureForCapture (find-or-create)", () => {
+  it("records the capture's real file type", async () => {
+    const { db, h1 } = await seed();
+    const key = await writeTestPng();
+    const [{ id: captureId }] = await db.insert(captures).values({ kind: "image", storageKey: key }).$returningId();
+    const { photoId } = await callerFor(h1).photos.ensureForCapture({ captureId });
+    const [row] = await db.select().from(photos).where(eq(photos.id, photoId));
+    expect(row.mimeType).toBe("image/png");
+    expect(fs.existsSync(keyPath(row.storageKey))).toBe(true);
+  });
+
+  it("two calls at once make one photo", async () => {
+    const { db, h1 } = await seed();
+    const key = await writeTestJpeg();
+    const [{ id: captureId }] = await db.insert(captures).values({ kind: "image", storageKey: key }).$returningId();
+    const [a, b] = await Promise.all([
+      callerFor(h1).photos.ensureForCapture({ captureId }),
+      callerFor(h1).photos.ensureForCapture({ captureId }),
+    ]);
+    expect(a.photoId).toBe(b.photoId);
+    expect(await db.select().from(photos)).toHaveLength(1);
+  });
+});
+
+describe("photos.listAll titles", () => {
+  it("listAll and the deprecated listAllImages carry each photo's title (the lab shows it as a caption)", async () => {
+    const { db, h1, itemId } = await seed();
+    await db.insert(photos).values({ itemId, storageKey: "local/test-fake-title.jpg", title: "front view" });
+    expect((await callerFor(h1).photos.listAll()).map((r) => r.title)).toEqual(["front view"]);
+    expect((await callerFor(h1).attachments.listAllImages()).map((r) => r.title)).toEqual(["front view"]);
   });
 });

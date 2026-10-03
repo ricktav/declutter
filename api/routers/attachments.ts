@@ -1,7 +1,8 @@
 // api/routers/attachments.ts
 // DEPRECATED aliases, kept for one release (AGENTS.md section 2). Flow
 // (src/flow/ui.tsx) and the Computer Lab adapter call attachments.url/add/
-// remove/unlink/listAllImages/listForItem; their inputs and outputs are unchanged.
+// remove/unlink/listAllImages/listForItem; AGENTS.md section 2 lists the few
+// changes (add needs a storageKey for an image; outputs only gained fields).
 // Storage moved to photos (images) and item_links (link/note/file). Rows from
 // item_links carry a NEGATED id so a number never means both a photo and a
 // link; pass ids back to attachments.remove exactly as received.

@@ -2,7 +2,7 @@ import { trpc } from "@/providers/trpc";
 import { ImageOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** Small square thumbnail from an item's first image attachment. Falls back to a placeholder. */
+/** Small square thumbnail from an item's cover photo (its first photo). Falls back to a placeholder. */
 export function Thumb({ storageKey, size = "sm" }: { storageKey: string | null; size?: "sm" | "lg" }) {
   const dim = size === "sm" ? "h-9 w-9" : "aspect-square w-full";
   const url = trpc.photos.url.useQuery(

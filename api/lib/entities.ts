@@ -55,8 +55,8 @@ export async function deleteItemTx(tx: Tx, id: number, opts: { summary?: string 
 
 /**
  * Delete stored files only when no other row still points at them. Rows
- * written before phase 1 can share one file between a capture and an
- * attachment, so a plain delete would take the inbox photo with it.
+ * written before phase 1 can share one file between a capture and a
+ * photo, so a plain delete would take the inbox photo with it.
  */
 export async function releaseStoredFiles(db: Db, keys: string[]): Promise<number> {
   const unique = [...new Set(keys)];

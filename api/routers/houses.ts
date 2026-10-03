@@ -135,8 +135,13 @@ export const housesRouter = createRouter({
           }
         }
         for (const { s, t } of pairs) {
-          const moved = await tx.select({ id: items.id }).from(items).where(eq(items.roomId, s.id));
+          const moved = await tx.select({ id: items.id, pos: items.pos }).from(items).where(eq(items.roomId, s.id));
           for (const it of moved) await setItemLocation(tx, it.id, { roomId: t.id });
+          // a pos is in its room's frame: it survives only when the source's
+          // plan moves over to the target; otherwise the target keeps its own
+          const planMoves = !!s.walls && !t.walls;
+          const withPos = moved.filter((it) => it.pos != null).map((it) => it.id);
+          if (!planMoves && withPos.length) await tx.update(items).set({ pos: null }).where(inArray(items.id, withPos));
           await tx.update(photos).set({ roomId: t.id }).where(eq(photos.roomId, s.id));
           await tx.update(rooms).set({ parentRoomId: t.id }).where(and(eq(rooms.parentRoomId, s.id), ne(rooms.id, t.id)));
           if (s.walls && !t.walls) {

@@ -108,3 +108,23 @@ describe("items.update pos on room change", () => {
     expect(it.pos).not.toBeNull();
   });
 });
+
+describe("items.update with houseId only", () => {
+  const pos = { xM: 1, yM: 1, wM: 1, dM: 1, rotDeg: 0 };
+
+  it("another house unplaces the item and clears its pos", async () => {
+    const { db, h1, h2, areaId, keuken } = await seed();
+    const [{ id }] = await db.insert(items).values({ areaId, name: "pan", houseId: h1, roomId: keuken, pos }).$returningId();
+    await callerFor(h1).items.update({ id, houseId: h2 });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect([it.roomId, it.houseId, it.pos]).toEqual([null, h2, null]);
+  });
+
+  it("its own house changes nothing: room and pos stay", async () => {
+    const { db, h1, areaId, keuken } = await seed();
+    const [{ id }] = await db.insert(items).values({ areaId, name: "pan", houseId: h1, roomId: keuken, pos }).$returningId();
+    await callerFor(h1).items.update({ id, houseId: h1 });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect([it.roomId, it.houseId, it.pos]).toEqual([keuken, h1, pos]);
+  });
+});

@@ -1,7 +1,7 @@
 import "dotenv/config";
 import mysql from "mysql2/promise";
 import { drizzle, type MySql2Database } from "drizzle-orm/mysql2";
-import { is, sql, getTableName } from "drizzle-orm";
+import { is, getTableName } from "drizzle-orm";
 import { MySqlTable } from "drizzle-orm/mysql-core";
 import * as schema from "@db/schema";
 
@@ -79,15 +79,30 @@ export function schemaTables(): MySqlTable[] {
   return Object.values(schema as Record<string, unknown>).filter((v): v is MySqlTable => is(v, MySqlTable));
 }
 
+/**
+ * TRUNCATE the given tables on ONE pooled connection with foreign key checks
+ * off, and always switch them back on before that connection returns to the
+ * pool: a failing TRUNCATE must not leave FOREIGN_KEY_CHECKS = 0 behind for
+ * whichever test borrows the connection next. One round trip for the
+ * truncates (multipleStatements is on for this pool only): per-table round
+ * trips to a remote DB timed out db.smoke at 20+ tables.
+ */
+export async function truncateTables(names: string[]): Promise<void> {
+  getTestDb();
+  const conn = await pool!.getConnection();
+  try {
+    await conn.query(`SET FOREIGN_KEY_CHECKS = 0; ${names.map((n) => `TRUNCATE TABLE \`${n}\`;`).join(" ")}`);
+  } finally {
+    try {
+      await conn.query("SET FOREIGN_KEY_CHECKS = 1");
+    } finally {
+      conn.release();
+    }
+  }
+}
+
 export async function resetTestDb(): Promise<void> {
-  const db = getTestDb();
-  // One round trip (multipleStatements is on for this pool only): per-table
-  // round trips to a remote DB timed out db.smoke at 20+ tables. A single
-  // query also keeps the session-scoped FOREIGN_KEY_CHECKS on one connection.
-  const truncates = schemaTables().map((t) => `TRUNCATE TABLE \`${getTableName(t)}\`;`);
-  await db.execute(
-    sql.raw(`SET FOREIGN_KEY_CHECKS = 0; ${truncates.join(" ")} SET FOREIGN_KEY_CHECKS = 1;`),
-  );
+  await truncateTables(schemaTables().map((t) => getTableName(t)));
 }
 
 export async function closeTestDb(): Promise<void> {

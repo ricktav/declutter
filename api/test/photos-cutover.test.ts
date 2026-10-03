@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { areas, captures, houses, itemLinks, items, photoPins, photos, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
-import { keyPath, removeTestUploads, writeTestJpeg } from "./fixtures";
+import { keyPath, removeTestUploads, trackedUploads, writeTestJpeg } from "./fixtures";
 import { addPhoto } from "../lib/photos";
 
 beforeEach(async () => {
@@ -82,6 +82,27 @@ describe("inbox.acceptMany after the cutover", () => {
     ).rejects.toThrow();
     expect(await db.select().from(items)).toHaveLength(1); // only the seeded "pan"
     expect(await db.select().from(photos)).toHaveLength(0);
+  });
+
+  it("a failed filing deletes the file copies it made for rolled-back items", async () => {
+    const { db, h1, areaId } = await seed();
+    const capKey = await writeTestJpeg();
+    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: capKey }).$returningId();
+    await expect(
+      callerFor(h1).inbox.acceptMany({
+        id: capId,
+        items: [
+          { areaId, itemId: null, itemName: "One" },
+          // longer than items.name (varchar 255): the second insert fails, the transaction rolls back
+          { areaId, itemId: null, itemName: "x".repeat(300) },
+        ],
+      }),
+    ).rejects.toThrow();
+    const copies = trackedUploads().filter((k) => k.includes("-items_"));
+    expect(copies).toHaveLength(1);
+    expect(copies.filter((k) => fs.existsSync(keyPath(k)))).toEqual([]);
+    expect(fs.existsSync(keyPath(capKey))).toBe(true);
+    expect(await db.select().from(items)).toHaveLength(1); // only the seeded "pan"
   });
 });
 
@@ -188,5 +209,18 @@ describe("deprecated attachments.* aliases", () => {
     expect(await callerFor(h1).attachments.url({ key })).toEqual({ url: expect.stringMatching(/^\/uploads\/test-/) });
     await callerFor(h1).attachments.remove({ id: img.id });
     expect(fs.existsSync(keyPath(key))).toBe(false);
+  });
+});
+
+describe("items.get deprecated attachments field", () => {
+  it("lists photos with their id and links with a negated id, newest first, and the ids round-trip", async () => {
+    const { db, h1, itemId } = await seed();
+    await db.insert(photos).values({ id: 5, itemId, storageKey: "local/test-fake-five.jpg", createdAt: new Date("2026-01-01T00:00:00Z") });
+    await db.insert(itemLinks).values({ id: 5, itemId, kind: "link", url: "https://example.org", createdAt: new Date("2026-01-02T00:00:00Z") });
+    const got = await callerFor(h1).items.get({ id: itemId });
+    expect(got!.attachments.map((a) => [a.id, a.kind])).toEqual([[-5, "link"], [5, "image"]]);
+    await callerFor(h1).attachments.remove({ id: got!.attachments[0].id });
+    expect(await db.select().from(itemLinks)).toHaveLength(0);
+    expect((await db.select().from(photos)).map((p) => p.id)).toEqual([5]);
   });
 });

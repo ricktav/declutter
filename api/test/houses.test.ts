@@ -66,4 +66,23 @@ describe("houses.reassign with same-named rooms", () => {
     expect(r.walls).toHaveLength(1);
     expect(r.widthM).toBe(2);
   });
+  it("clears pos of items moved into a same-named room that keeps its own plan", async () => {
+    const { db, h1, h2, k1, k2 } = await two();
+    const pos = { xM: 1, yM: 2, wM: 1, dM: 1, rotDeg: 0 };
+    await db.update(rooms).set({ walls: [{ points: [[0, 0], [3, 0]] }] }).where(eq(rooms.id, k2));
+    await db.update(items).set({ pos }).where(eq(items.roomId, k1));
+    await callerFor(h1).houses.reassign({ fromId: h1, toId: h2 });
+    const [pan] = await db.select().from(items).where(eq(items.name, "pan"));
+    expect([pan.roomId, pan.pos]).toEqual([k2, null]);
+  });
+
+  it("keeps pos when the source room's plan moves over to the target", async () => {
+    const { db, h1, h2, k1, k2 } = await two();
+    const pos = { xM: 1, yM: 2, wM: 1, dM: 1, rotDeg: 0 };
+    await db.update(rooms).set({ walls: [{ points: [[0, 0], [3, 0]] }] }).where(eq(rooms.id, k1));
+    await db.update(items).set({ pos }).where(eq(items.roomId, k1));
+    await callerFor(h1).houses.reassign({ fromId: h1, toId: h2 });
+    const [pan] = await db.select().from(items).where(eq(items.name, "pan"));
+    expect([pan.roomId, pan.pos]).toEqual([k2, pos]);
+  });
 });
