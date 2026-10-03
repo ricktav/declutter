@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "../index.css";
 import { TRPCProvider } from "@/providers/trpc";
-import { AuthGate } from "@/components/AuthGate"
+import { AuthGate } from "@/components/AuthGate";
 import { HouseProvider } from "@/context/house";
 import { FlowApp } from "./FlowApp";
 

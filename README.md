@@ -19,6 +19,22 @@ npm run dev            # http://localhost:3000 (LAN-accessible)
 
 Production-style: `npm run build && npm start`.
 
+## Two front ends, one API
+
+| Front end | URL | Entry | What it is |
+|---|---|---|---|
+| Workbench | `/` | `index.html` → `src/main.tsx` | Desktop inventory OS: inbox triage, item pages, photos and pins, rooms and plans, galaxy, ideas, tasks, wiki. Uses `react-router`. |
+| Flow | `/flow/` | `flow/index.html` → `src/flow/main.tsx` | Phone-first loop: Snap → Sort → Act → Gone. Own shell and tab state, no router, no Workbench pages. |
+
+Both are built by one `vite build` (two `rollupOptions.input` entries in `vite.config.ts`) and talk to the same
+tRPC API and database. In development `npm run dev` serves both on one port (`/` and `/flow/`). In production
+`node dist/boot.js` serves `dist/public/`, and any HTML request under `/flow` that is not a file gets
+`dist/public/flow/index.html` (`api/lib/vite.ts`), so Flow deep links never land in the Workbench.
+Production runs on port 3001 (`PORT=3001 NODE_ENV=production node dist/boot.js`).
+
+Other clients of the same API: the native iOS app in `ios/` and the Computer Lab adapter
+(`/Volumes/T7/computer-lab-ssot`, `server-ssot.js`). AGENTS.md §2 lists the procedures each one depends on.
+
 ## Configuration
 
 See `.env.example`. The app works without an LLM configured — AI buttons show a

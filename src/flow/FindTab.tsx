@@ -85,7 +85,7 @@ export function FindTab() {
 }
 
 function ThingSheet({ item, onClose }: { item: FlowItem; onClose: () => void }) {
-  const { locations, lens, refresh } = useFlow();
+  const { allItems, locations, lens, refresh } = useFlow();
   const setDecision = trpc.items.setDecision.useMutation({ onSuccess: refresh });
   return (
     <Sheet title={item.name} onClose={onClose}>
@@ -104,7 +104,18 @@ function ThingSheet({ item, onClose }: { item: FlowItem; onClose: () => void }) 
             {holdsData(item) && (
               <>
                 <span className="micro-label mt-1 text-muted-foreground">Backup</span>
-                <BackupPicker item={item} />
+                {item.parentId != null ? (
+                  // an internal drive is covered by its computer: no backup question of its own
+                  <p className="text-[13px]">
+                    Backed up (with its computer)
+                    {(() => {
+                      const parent = allItems.find((t) => t.id === item.parentId);
+                      return parent ? ` · ${parent.name}` : "";
+                    })()}
+                  </p>
+                ) : (
+                  <BackupPicker item={item} />
+                )}
               </>
             )}
           </div>
