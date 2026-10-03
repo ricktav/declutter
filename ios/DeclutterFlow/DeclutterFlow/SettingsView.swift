@@ -20,7 +20,7 @@ struct SettingsView: View {
                     Text("Server base URL")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(FlowTheme.muted)
-                    TextField("http://10.50.0.10:3001", text: $settings.baseURLString)
+                    TextField("http://10.50.0.102:3001", text: $settings.baseURLString)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -83,7 +83,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Cleartext HTTP")
                         .font(.system(size: 13, weight: .semibold))
-                    Text("This app allows arbitrary HTTP so it can reach a LAN server such as http://10.50.0.10:3001. iOS will also ask to use the local network. Prefer HTTPS if you expose HomeBase beyond your LAN.")
+                    Text("This app allows arbitrary HTTP so it can reach a LAN server such as http://10.50.0.102:3001. iOS will also ask to use the local network. Prefer HTTPS if you expose HomeBase beyond your LAN.")
                         .font(.system(size: 12))
                         .foregroundStyle(FlowTheme.muted)
                 }

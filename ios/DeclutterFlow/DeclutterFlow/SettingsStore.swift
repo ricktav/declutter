@@ -5,7 +5,7 @@ import Combine
 final class SettingsStore: ObservableObject {
     private static let urlKey = "declutter.baseURL"
     private static let houseKey = "declutter.houseId"
-    static let defaultBaseURL = "http://10.50.0.10:3001"
+    static let defaultBaseURL = "http://10.50.0.102:3001"
 
     @Published var baseURLString: String
     @Published var token: String

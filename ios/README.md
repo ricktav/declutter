@@ -32,10 +32,10 @@ Launch arguments for screenshots: `-flow.initialTab snap|sort|act|find`, `-flow.
 
 ## Point the app at your LAN server
 
-1. Production HomeBase runs on `http://10.50.0.10:3001` (`node dist/boot.js`, Workbench at `/`, Flow at `/flow/`). For a test run, start a dev server on the test database in a worktree: `DATABASE_URL="$TEST_URL" npx vite --port 3002` and use `http://<that Mac>:3002`.
+1. Production HomeBase runs on `http://10.50.0.102:3001` (`node dist/boot.js`, Workbench at `/`, Flow at `/flow/`). For a test run, start a dev server on the test database in a worktree: `DATABASE_URL="$TEST_URL" npx vite --port 3002` and use `http://<that Mac>:3002`.
 
 2. In the iOS app, tap the gear → **Settings**.
-3. **Server base URL** — example: `http://10.50.0.10:3001` (no trailing path).
+3. **Server base URL** — example: `http://10.50.0.102:3001` (no trailing path).
 4. **APP_TOKEN** — the same value as `APP_TOKEN` in the server `.env`. Stored in the Keychain, sent as `Authorization: Bearer`.
 5. Tap **Save and ping**. You should see “Server is up.”
 
