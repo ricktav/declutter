@@ -3,7 +3,8 @@ import fs from "fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { areas, captures, houses, itemLinks, items, photoPins, photos, rooms } from "@db/schema";
-import { getTestDb, resetTestDb } from "./db";
+import mysql from "mysql2/promise";
+import { getTestDb, requireTestDatabaseUrl, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 import { keyPath, removeTestUploads, writeTestJpeg, writeTestPng } from "./fixtures";
 import { releaseStoredFiles } from "../lib/entities";
@@ -224,6 +225,54 @@ describe("photos.ensureForCapture (find-or-create)", () => {
     ]);
     expect(a.photoId).toBe(b.photoId);
     expect(await db.select().from(photos)).toHaveLength(1);
+  });
+
+  // The Promise.all test above also passed before the lock existed (the two
+  // calls rarely interleave), so it guards nothing. This one forces the race:
+  // a second connection holds the capture row lock and makes the photo while
+  // the call waits. With the lock the call reads after that commit and returns
+  // the same photo; without it the call finds nothing, makes its own, and
+  // resolves while the lock is still held.
+  it("waits on the capture row lock, then returns the photo made meanwhile", async () => {
+    const { db, h1, keuken } = await seed();
+    const key = await writeTestJpeg();
+    const [{ id: captureId }] = await db.insert(captures).values({ kind: "image", storageKey: key }).$returningId();
+    const conn = await mysql.createConnection(requireTestDatabaseUrl());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("lock test timed out")), 15_000);
+    });
+    try {
+      const run = async () => {
+        await conn.beginTransaction();
+        await conn.query("SELECT id FROM captures WHERE id = ? FOR UPDATE", [captureId]);
+        const call = callerFor(h1).photos.ensureForCapture({ captureId, roomId: keuken });
+        // settle-or-not probe: never let the pending call reject unobserved
+        let settled = false;
+        call.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        await new Promise((r) => setTimeout(r, 300));
+        expect(settled, "ensureForCapture resolved while another transaction held the capture lock").toBe(false);
+        const [res] = await conn.query<mysql.ResultSetHeader>(
+          "INSERT INTO photos (storageKey, mimeType, sourceCaptureId, roomId, title) VALUES (?, ?, ?, ?, ?)",
+          [key, "image/jpeg", captureId, keuken, "Location photo"],
+        );
+        await conn.commit();
+        const { photoId } = await call;
+        expect(photoId).toBe(res.insertId);
+        expect(await db.select().from(photos).where(eq(photos.sourceCaptureId, captureId))).toHaveLength(1);
+      };
+      await Promise.race([run(), timeout]);
+    } finally {
+      clearTimeout(timer);
+      try {
+        await conn.rollback();
+      } finally {
+        await conn.end();
+      }
+    }
   });
 });
 

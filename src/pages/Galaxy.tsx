@@ -56,21 +56,29 @@ type Grouping = {
    * available as the tab's title tooltip. */
   shortLabel: string;
   level1: (it: Item) => string;
-  level1Label: (key: string, areas: Area[], houses: House[]) => string;
+  level1Label: (key: string, areas: Area[], houses: House[], showHouse: boolean) => string;
   level1Color: (key: string, index: number, areas: Area[]) => string;
   level1Nav: (key: string, areas: Area[]) => string | null;
   level1Icon: (key: string, areas: Area[]) => LucideIcon | null;
   level2: (it: Item) => string;
-  level2Label: (key: string) => string;
+  level2Label: (key: string, houses: House[], showHouse: boolean) => string;
 };
 
 function paletteColor(index: number) {
   return PALETTE[index % PALETTE.length];
 }
 
-// group by room id, not name: two houses can each have a "Keuken"
-const roomKey = (it: Item) => (it.room ? `${it.room.id}:${it.room.name.trim()}` : "none");
-const roomKeyLabel = (key: string) => (key === "none" ? "No room" : key.slice(key.indexOf(":") + 1));
+// group by room id, not name: two houses can each have a "Keuken".
+// Key: "<roomId>:<houseId>:<name>" (house id empty when unknown).
+const roomKey = (it: Item) => (it.room ? `${it.room.id}:${it.houseId ?? ""}:${it.room.name.trim()}` : "none");
+/** "Keuken", or "Keuken · Thuis" when several houses share the view (as Photos labels its room groups). */
+const roomKeyLabel = (key: string, houses: House[], showHouse: boolean) => {
+  if (key === "none") return "No room";
+  const [, houseId] = key.split(":", 2);
+  const name = key.slice(key.indexOf(":", key.indexOf(":") + 1) + 1);
+  const house = showHouse && houseId ? houses.find((h) => String(h.id) === houseId)?.name : undefined;
+  return house ? `${name} · ${house}` : name;
+};
 
 const GROUPINGS: Grouping[] = [
   {
@@ -139,7 +147,7 @@ const GROUPINGS: Grouping[] = [
     label: "Room → Topic",
     shortLabel: "Room",
     level1: roomKey,
-    level1Label: (key) => roomKeyLabel(key),
+    level1Label: (key, _areas, houses, showHouse) => roomKeyLabel(key, houses, showHouse),
     level1Color: (_key, index) => paletteColor(index),
     level1Nav: () => null,
     level1Icon: () => null,
@@ -253,6 +261,8 @@ export default function GalaxyPage() {
     const areaList = areas.data! as Area[];
     const houseList = houses.data! as House[];
     const allItems = items.data! as Item[];
+    // name the house on room bubbles only when several houses are on screen
+    const showHouse = houseFilter === "all" && houseList.length > 1;
 
     type L2 = { key: string; label: string; items: Item[] };
     type L1 = {
@@ -274,7 +284,7 @@ export default function GalaxyPage() {
       const k2 = grouping.level2(it);
       let g2 = g1.l2.get(k2);
       if (!g2) {
-        g2 = { key: k2, label: grouping.level2Label(k2), items: [] };
+        g2 = { key: k2, label: grouping.level2Label(k2, houseList, showHouse), items: [] };
         g1.l2.set(k2, g2);
       }
       g2.items.push(it);
@@ -285,7 +295,7 @@ export default function GalaxyPage() {
       return bn - an;
     });
     l1List.forEach((g1, i) => {
-      g1.label = grouping.level1Label(g1.key, areaList, houseList);
+      g1.label = grouping.level1Label(g1.key, areaList, houseList, showHouse);
       g1.color = grouping.level1Color(g1.key, i, areaList);
       g1.nav = grouping.level1Nav(g1.key, areaList);
       g1.icon = grouping.level1Icon(g1.key, areaList);
@@ -359,7 +369,7 @@ export default function GalaxyPage() {
       }
     }
     return { l1Nodes, itemNodes, l1List, l1Pos };
-  }, [ready, items.data, areas.data, houses.data, groupingId]);
+  }, [ready, items.data, areas.data, houses.data, groupingId, houseFilter]);
 
   // one-time zoom behavior setup
   useEffect(() => {

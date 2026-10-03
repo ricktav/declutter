@@ -2,9 +2,12 @@ import SwiftUI
 
 struct ActView: View {
     @EnvironmentObject private var session: FlowSession
+    @EnvironmentObject private var settings: SettingsStore
 
     @State private var houseId: Int?
     @State private var allHouses = true
+    /// The default house is applied once; after that the chips are the user's.
+    @State private var houseDefaulted = false
     @State private var room: String?
     @State private var skipped: [Int] = []
     @State private var last: (id: Int, prev: ItemDecision?, name: String)?
@@ -162,8 +165,12 @@ struct ActView: View {
             .padding(.vertical, 4)
         }
         .onAppear {
-            if houseId == nil, let here = session.here.houseId {
-                houseId = here
+            // open on the Settings house (the one the API sends as x-house-id),
+            // else the house of the current Place, else all houses
+            guard !houseDefaulted else { return }
+            houseDefaulted = true
+            if let start = settings.houseId ?? session.here.houseId {
+                houseId = start
                 allHouses = false
             }
         }
