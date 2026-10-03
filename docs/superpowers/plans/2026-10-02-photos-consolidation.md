@@ -2887,3 +2887,14 @@ Out of scope by design: image-kind `captures` into `photos` (P2), drag-and-drop,
 **3. Type consistency.** `coverPhotos(db, itemIds?)` returns `Map<number, { id; storageKey }>` and is used that way in `listPhotoCatalog`, `pins.ts`, `inbox.detectObjects` and `items.listByArea/listAll`. `photos.ensureForCapture` returns `{ photoId }` and every consumer reads `res.photoId`. `pins.listForItem` rows expose `photoId` and `photo`, read as `p.photoId` and `p.photo?.title` in ItemDetail and Annotate. `addPhoto`/`addItemLink`/`removePhoto`/`removeItemLink` have one signature each, shared by the routers and the aliases. `LegacyAttachment.id` is negative exactly for `item_links` rows, and `attachments.remove` decodes it with `input.id < 0`. `CopyPlan`/`CopyResult`/`VerifyResult` field names match between the library, the CLI and the tests.
 
 **4. Review Focus coverage.** (1) identical notes and file-less images → Task 2 tests 2 and 3. (2) source file gone → Task 3 test "a source photo that is gone from disk…". (3) item deleted after cutover → Task 4 test "items.remove removes photos, pins on them, links and their files…". (4) alias id collision → Task 4 test "never confuse a photo and a link that share a numeric id". (5) catalog keeps un-filed inbox photos without duplicates → Task 3 test "lists filed photos with room, topic and cover flag, plus inbox photos that have no photo yet". Inputs already covered by task tests and so not listed in Review Focus: new filings visible everywhere (Task 4 first test), a file shared between a photo and a capture (Task 3), and two runs of the copy (Task 2).
+
+---
+
+## Rollout executed 2026-10-03 (Task 6)
+
+- Backup `~/declutter-before-photos-20261003-1307.sql` (17 tables, 1,112 rows).
+- `--plan` on production: images 115, links 1, pins 44, no blocking rows. Baseline from the old server: items.get(1) 3 attachments; listAllImages 144 (115 attachment + 29 capture); listForItem(1) 3.
+- 0005 applied from a worktree pinned at 5a9d47d. Writers stopped: production server (pid 61857) and the two Vite dev servers in the serving tree; the Flow session had already stopped its lab adapter.
+- `--copy`: photosCreated 115, itemLinksCreated 1, pinsCreated 44; verify 0 missing / 0 mismatched; AUTO_INCREMENT photos 134, item_links 134, photo_pins 87.
+- Serving tree switched to the branch (worktree removed), built, production restarted on :3001 (pid 43905); smoke equal to the baseline; `attachments.url` alias serves uploads.
+- Rick's go, then 0006 applied: tables now 18, `attachments`/`photo_annotations` gone, `__drizzle_migrations` 5 rows; post-drop smoke 200 and identical counts.
