@@ -319,7 +319,7 @@ private struct DecisionListSheet: View {
         do {
             try await api.itemsSetArchived(id: it.id, archived: true)
             await session.refresh()
-        } catch { error = error.localizedDescription }
+        } catch { self.error = error.localizedDescription }
     }
 
     private func clear(_ it: FlowItem) async {
@@ -327,7 +327,7 @@ private struct DecisionListSheet: View {
         do {
             try await api.itemsSetDecision(id: it.id, decision: nil)
             await session.refresh()
-        } catch { error = error.localizedDescription }
+        } catch { self.error = error.localizedDescription }
     }
 
     private func restore(_ it: FlowItem) async {
@@ -335,6 +335,6 @@ private struct DecisionListSheet: View {
         do {
             try await api.itemsSetArchived(id: it.id, archived: false)
             await session.refresh()
-        } catch { error = error.localizedDescription }
+        } catch { self.error = error.localizedDescription }
     }
 }

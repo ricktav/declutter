@@ -92,6 +92,15 @@ struct FindView: View {
             ThingSheet(item: item)
                 .environmentObject(session)
         }
+        .onAppear { openFromLaunchArgument() }
+        .onChange(of: session.ready) { _, _ in openFromLaunchArgument() }
+    }
+
+    /// `-flow.openItemId <id>` (launch argument) opens that Thing once the list is loaded; used for Simulator screenshots.
+    private func openFromLaunchArgument() {
+        let id = UserDefaults.standard.integer(forKey: "flow.openItemId")
+        guard session.ready, id > 0, open == nil else { return }
+        open = session.items.first(where: { $0.id == id })
     }
 }
 

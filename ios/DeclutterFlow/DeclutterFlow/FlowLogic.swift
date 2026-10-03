@@ -18,8 +18,14 @@ enum FlowLogic {
     }
 
     static func hasPlace(_ item: FlowItem) -> Bool {
-        let room = item.room?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return !room.isEmpty || item.roomId != nil
+        item.roomId != nil
+    }
+
+    /// Floors in building order: the default floors in their own order, then the rest by name.
+    static func sortFloors(_ floors: [String]) -> [String] {
+        let order = FlowTheme.defaultFloors
+        func rank(_ f: String) -> Int { order.firstIndex(of: f.lowercased()) ?? order.count }
+        return Array(Set(floors)).sorted { rank($0) != rank($1) ? rank($0) < rank($1) : $0 < $1 }
     }
 
     static func needsDecision(_ item: FlowItem) -> Bool {

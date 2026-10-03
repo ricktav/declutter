@@ -58,7 +58,7 @@ struct RemotePhoto: View {
             return
         }
         do {
-            let result = try await api.attachmentsURL(key: storageKey)
+            let result = try await api.photosURL(key: storageKey)
             guard let rel = result.url, let url = await api.resolvePhotoURL(rel) else {
                 failed = true
                 return

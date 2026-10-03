@@ -40,18 +40,20 @@ enum APIError: LocalizedError {
 actor TRPCClient {
     private let baseURL: URL
     private let token: String
+    private let houseId: Int?
     private let session: URLSession
 
-    init(baseURL: URL, token: String, session: URLSession = .shared) {
+    init(baseURL: URL, token: String, houseId: Int? = nil, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.token = token
+        self.houseId = houseId
         self.session = session
     }
 
-    func query<T: Decodable>(_ path: String, input: (any Encodable)? = nil, as type: T.Type = T.self) async throws -> T {
+    func query<T: Decodable>(_ path: String, input: (any Encodable)? = nil, keepNulls: Bool = false, as type: T.Type = T.self) async throws -> T {
         var components = URLComponents(url: trpcURL(path), resolvingAgainstBaseURL: false)
         if let input {
-            let wrapped = try Self.encodeSuperJSON(input)
+            let wrapped = try Self.encodeSuperJSON(input, stripNulls: !keepNulls)
             components?.queryItems = [URLQueryItem(name: "input", value: String(data: wrapped, encoding: .utf8))]
         }
         guard let url = components?.url else { throw APIError.invalidURL }
@@ -126,6 +128,10 @@ actor TRPCClient {
     private func applyAuth(_ request: inout URLRequest) {
         if !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        // the session house (AGENTS.md: x-house-id); without it, lists cover every house
+        if let houseId {
+            request.setValue(String(houseId), forHTTPHeaderField: "x-house-id")
         }
     }
 

@@ -1,15 +1,26 @@
 import Foundation
 
+/// Encodes nil as JSON `null`. Synthesized Encodable leaves a nil Optional out,
+/// and the server then reads "missing" instead of "clear it".
+struct Nullable<Wrapped: Encodable>: Encodable {
+    let value: Wrapped?
+    init(_ value: Wrapped?) { self.value = value }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        if let value { try c.encode(value) } else { try c.encodeNil() }
+    }
+}
+
 /// Typed HomeBase calls used by Flow. Shapes match `api/routers/*`.
 actor HomeBaseAPI {
     private let client: TRPCClient
     let baseURL: URL
     let token: String
 
-    init(baseURL: URL, token: String) {
+    init(baseURL: URL, token: String, houseId: Int?) {
         self.baseURL = baseURL
         self.token = token
-        self.client = TRPCClient(baseURL: baseURL, token: token)
+        self.client = TRPCClient(baseURL: baseURL, token: token, houseId: houseId)
     }
 
     func ping() async throws -> PingResult {
@@ -41,17 +52,15 @@ actor HomeBaseAPI {
         return try await client.mutation("inbox.triage", input: Input(id: id), as: TriageResult.self)
     }
 
-    func inboxAcceptMany(id: Int, houseId: Int?, floor: String?, room: String?, items: [AcceptItemInput]) async throws -> AcceptManyResult {
+    func inboxAcceptMany(id: Int, roomId: Int?, items: [AcceptItemInput]) async throws -> AcceptManyResult {
         struct Input: Encodable {
             var id: Int
-            var houseId: Int?
-            var floor: String?
-            var room: String?
+            var roomId: Int?
             var items: [AcceptItemInput]
         }
         return try await client.mutationKeepingNulls(
             "inbox.acceptMany",
-            input: Input(id: id, houseId: houseId, floor: floor, room: room, items: items),
+            input: Input(id: id, roomId: roomId, items: items),
             as: AcceptManyResult.self
         )
     }
@@ -66,18 +75,13 @@ actor HomeBaseAPI {
         return try await client.query("items.listAll", input: Input(includeArchived: includeArchived), as: [FlowItem].self)
     }
 
-    func itemsUpdate(id: Int, houseId: Int?, floor: String?, room: String?) async throws {
+    /// Put a Thing in a room; nil unplaces it within its house.
+    func itemsUpdate(id: Int, roomId: Int?) async throws {
         struct Input: Encodable {
             var id: Int
-            var houseId: Int?
-            var floor: String?
-            var room: String?
+            var roomId: Nullable<Int>
         }
-        _ = try await client.mutation(
-            "items.update",
-            input: Input(id: id, houseId: houseId, floor: floor, room: room),
-            as: OkResult.self
-        )
+        _ = try await client.mutationKeepingNulls("items.update", input: Input(id: id, roomId: Nullable(roomId)), as: OkResult.self)
     }
 
     func itemsSetVerification(id: Int, status: VerificationStatus) async throws {
@@ -103,11 +107,11 @@ actor HomeBaseAPI {
     func itemsSetDecision(id: Int, decision: ItemDecision?) async throws {
         struct Input: Encodable {
             var id: Int
-            var decision: String?
+            var decision: Nullable<String>
         }
         _ = try await client.mutationKeepingNulls(
             "items.setDecision",
-            input: Input(id: id, decision: decision?.rawValue),
+            input: Input(id: id, decision: Nullable(decision?.rawValue)),
             as: OkResult.self
         )
     }
@@ -128,13 +132,25 @@ actor HomeBaseAPI {
         try await client.query("areas.list", as: [FlowArea].self)
     }
 
-    func mapListLocations() async throws -> [FlowLocation] {
-        try await client.query("map.listLocations", as: [FlowLocation].self)
+    /// Every house's rooms: the picker shows house chips, and labels need rooms of every house.
+    func roomsList() async throws -> [FlowRoom] {
+        struct Input: Encodable { var houseId: Nullable<Int> }
+        return try await client.query("rooms.list", input: Input(houseId: Nullable<Int>(nil)), keepNulls: true, as: [FlowRoom].self)
     }
 
-    func attachmentsURL(key: String) async throws -> AttachmentURL {
+    /// Find-or-create a room by name in a house.
+    func roomsEnsure(name: String, floor: String?, houseId: Int) async throws -> EnsureRoomResult {
+        struct Input: Encodable {
+            var name: String
+            var floor: String?
+            var houseId: Int
+        }
+        return try await client.mutation("rooms.ensure", input: Input(name: name, floor: floor, houseId: houseId), as: EnsureRoomResult.self)
+    }
+
+    func photosURL(key: String) async throws -> PhotoURL {
         struct Input: Encodable { var key: String }
-        return try await client.query("attachments.url", input: Input(key: key), as: AttachmentURL.self)
+        return try await client.query("photos.url", input: Input(key: key), as: PhotoURL.self)
     }
 
     func roomsGet(id: Int) async throws -> RoomInfo? {

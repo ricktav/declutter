@@ -289,7 +289,9 @@ private struct CaptureCard: View {
                 title: "Where is it?",
                 value: place,
                 houses: session.houses,
-                locations: session.locations,
+                rooms: session.rooms,
+                defaultHouseId: session.here.houseId,
+                onCreate: { name, floor, houseId in try await session.ensureRoom(name: name, floor: floor, houseId: houseId) },
                 onPick: { place = $0 },
                 onClose: { placeOpen = false }
             )
@@ -323,8 +325,8 @@ private struct CaptureCard: View {
         seedRowsFromSuggestion()
         if let snapped = SnapPlaceStore.get(capture.id) {
             place = snapped
-        } else if let s = suggestion, let room = s.room, !room.isEmpty {
-            place = Place(houseId: session.here.houseId, floor: s.floor ?? "", room: room)
+        } else if let rid = suggestion?.roomId, let r = session.rooms.first(where: { $0.id == rid }) {
+            place = Place(room: r)
         } else {
             place = session.here
         }
@@ -368,9 +370,7 @@ private struct CaptureCard: View {
         do {
             _ = try await api.inboxAcceptMany(
                 id: capture.id,
-                houseId: place.houseId,
-                floor: place.floor.isEmpty ? nil : place.floor,
-                room: place.room.isEmpty ? nil : place.room,
+                roomId: place.roomId,
                 items: chosen.map {
                     AcceptItemInput(areaId: $0.areaId!, itemId: nil, itemName: $0.name.trimmingCharacters(in: .whitespaces), attributes: $0.attributes)
                 }
@@ -506,7 +506,9 @@ private struct PlaceCard: View {
                 title: "Where is it?",
                 value: session.here,
                 houses: session.houses,
-                locations: session.locations,
+                rooms: session.rooms,
+                defaultHouseId: session.here.houseId,
+                onCreate: { name, floor, houseId in try await session.ensureRoom(name: name, floor: floor, houseId: houseId) },
                 onPick: { p in Task { await put(p) } },
                 onClose: { open = false }
             )
@@ -514,15 +516,10 @@ private struct PlaceCard: View {
     }
 
     private func put(_ p: Place) async {
-        guard let api = session.api else { return }
+        guard let api = session.api, p.hasRoom else { return }
         busy = true
         do {
-            try await api.itemsUpdate(
-                id: item.id,
-                houseId: p.houseId,
-                floor: p.floor.isEmpty ? nil : p.floor,
-                room: p.room.isEmpty ? nil : p.room
-            )
+            try await api.itemsUpdate(id: item.id, roomId: p.roomId)
             await session.refresh()
         } catch {
             busy = false

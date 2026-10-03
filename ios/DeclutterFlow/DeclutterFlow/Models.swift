@@ -21,21 +21,29 @@ enum CaptureStatus: String, Codable {
     case pending, triaged, dismissed, processed
 }
 
+/// A place is a room (AGENTS.md: Flow's `Place = { roomId }`). `houseId`, `floor`
+/// and `room` are display copies taken from `rooms.list` when the place was picked.
 struct Place: Codable, Hashable, Equatable {
+    var roomId: Int?
     var houseId: Int?
     var floor: String
     var room: String
 
-    static let empty = Place(houseId: nil, floor: "", room: "")
+    static let empty = Place(roomId: nil, houseId: nil, floor: "", room: "")
 
-    var hasRoom: Bool { !room.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var hasRoom: Bool { roomId != nil }
+}
+
+extension Place {
+    init(room r: FlowRoom) {
+        self.init(roomId: r.id, houseId: r.houseId, floor: r.floor ?? "", room: r.name)
+    }
 }
 
 struct FlowHouse: Codable, Identifiable, Hashable {
     let id: Int
     var name: String
     var address: String?
-    var floors: [String]?
     var itemCount: Int?
 }
 
@@ -49,14 +57,31 @@ struct FlowArea: Codable, Identifiable, Hashable {
     var itemCount: Int?
 }
 
-struct FlowLocation: Codable, Hashable, Identifiable {
-    var houseId: Int?
+/// A row of `rooms.list`.
+struct FlowRoom: Codable, Identifiable, Hashable {
+    let id: Int
+    var houseId: Int
+    var name: String
     var floor: String?
-    var room: String
-    var count: Int
-    var houseName: String?
+    var parentRoomId: Int?
+    var hasGeometry: Bool
+    var itemCount: Int
+    var widthM: Double?
+    var depthM: Double?
+}
 
-    var id: String { "\(houseId ?? 0)|\(floor ?? "")|\(room)" }
+/// The room `items.listAll` joins onto each Thing.
+struct FlowRoomRef: Codable, Hashable {
+    let id: Int
+    var name: String
+    var floor: String?
+    var houseId: Int
+    var hasGeometry: Bool?
+}
+
+struct EnsureRoomResult: Codable {
+    var id: Int
+    var created: Bool
 }
 
 struct FlowItem: Codable, Identifiable, Hashable {
@@ -70,8 +95,8 @@ struct FlowItem: Codable, Identifiable, Hashable {
     var status: ItemStatus
     var verificationStatus: VerificationStatus
     var attributes: [String: AttributeValue]?
-    var floor: String?
-    var room: String?
+    /// `items.listAll` sends the room as an object, `room: {id, name, floor, houseId, hasGeometry}`.
+    var roomRef: FlowRoomRef?
     var decision: ItemDecision?
     var decidedAt: Date?
     var createdAt: Date?
@@ -80,6 +105,16 @@ struct FlowItem: Codable, Identifiable, Hashable {
     var imageKey: String?
     var areaName: String?
     var areaSlug: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, areaId, houseId, roomId, parentId, name, description, status, verificationStatus, attributes
+        case roomRef = "room"
+        case decision, decidedAt, createdAt, updatedAt, archivedAt, imageKey, areaName, areaSlug
+    }
+
+    /// Room name and floor for labels and search.
+    var room: String? { roomRef?.name }
+    var floor: String? { roomRef?.floor }
 }
 
 enum AttributeValue: Codable, Hashable {
@@ -137,15 +172,18 @@ struct TriageSuggestion: Codable, Hashable {
     var note: String?
     var floor: String?
     var room: String?
+    /// The suggested room resolved within the session house (`x-house-id`); nil when there is no such room yet.
+    var roomId: Int?
     var items: [TriageSpottedItem] = []
 
-    enum CodingKeys: String, CodingKey { case note, floor, room, items }
+    enum CodingKeys: String, CodingKey { case note, floor, room, roomId, items }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         note = try c.decodeIfPresent(String.self, forKey: .note)
         floor = try c.decodeIfPresent(String.self, forKey: .floor)
         room = try c.decodeIfPresent(String.self, forKey: .room)
+        roomId = try c.decodeIfPresent(Int.self, forKey: .roomId)
         items = try c.decodeIfPresent([TriageSpottedItem].self, forKey: .items) ?? []
     }
 }
@@ -194,9 +232,7 @@ struct OkResult: Codable {
     var ok: Bool
 }
 
-struct AttachmentURL: Codable {
-    var url: String?
-}
+struct PhotoURL: Codable { var url: String? }
 
 struct RoomInfo: Codable, Identifiable {
     var id: Int
@@ -215,6 +251,18 @@ struct AcceptItemInput: Encodable {
     var itemId: Int?
     var itemName: String
     var attributes: [String: String]?
+
+    enum CodingKeys: String, CodingKey { case areaId, itemId, itemName, attributes }
+
+    /// The server requires `itemId` and accepts null (null = a new Thing). Synthesized
+    /// Encodable would leave a nil out, which the server rejects as "Required".
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(areaId, forKey: .areaId)
+        try c.encode(itemId, forKey: .itemId)
+        try c.encode(itemName, forKey: .itemName)
+        try c.encodeIfPresent(attributes, forKey: .attributes)
+    }
 }
 
 enum SellKeys {

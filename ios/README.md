@@ -6,7 +6,7 @@ Product words: **Thing**, **Place**, **Photo**, **Decision**, **Lens**.
 
 Gone is `items.status = "archived"` on a Thing that already has a Decision. There is no second gone status. Rejected detections (`verificationStatus = rejected`) never appear.
 
-This folder was written on Linux. **Open it on a Mac.** This environment has no Xcode and no iOS Simulator.
+Built and run on 2026-10-03 with Xcode 26.6 in the iOS Simulator (see `docs/status-2026-10-03.md`).
 
 ## Open in Xcode
 
@@ -17,18 +17,25 @@ This folder was written on Linux. **Open it on a Mac.** This environment has no 
 5. Pick an iPhone simulator or a plugged-in device.
 6. Run (⌘R).
 
+## Build and run from the command line
+
+```bash
+UDID=<an available iPhone simulator id from `xcrun simctl list devices available`>
+xcodebuild -project ios/DeclutterFlow/DeclutterFlow.xcodeproj -scheme DeclutterFlow \
+  -destination "platform=iOS Simulator,id=$UDID" -derivedDataPath ~/declutter-ios-dd CODE_SIGNING_ALLOWED=NO build
+xcrun simctl boot "$UDID"; open -a Simulator
+xcrun simctl install "$UDID" ~/declutter-ios-dd/Build/Products/Debug-iphonesimulator/DeclutterFlow.app
+xcrun simctl launch "$UDID" com.homebase.DeclutterFlow -flow.initialTab find
+```
+
+Launch arguments for screenshots: `-flow.initialTab snap|sort|act|find`, `-flow.openItemId <id>`.
+
 ## Point the app at your LAN server
 
-1. Start HomeBase on the machine that already runs it:
-
-   ```bash
-   npm run dev
-   ```
-
-   Default: `http://<that-machine>:3000` (Workbench at `/`, Flow at `/flow/`).
+1. Production HomeBase runs on `http://10.50.0.10:3001` (`node dist/boot.js`, Workbench at `/`, Flow at `/flow/`). For a test run, start a dev server on the test database in a worktree: `DATABASE_URL="$TEST_URL" npx vite --port 3002` and use `http://<that Mac>:3002`.
 
 2. In the iOS app, tap the gear → **Settings**.
-3. **Server base URL** — example: `http://10.50.0.10:3000` (no trailing path).
+3. **Server base URL** — example: `http://10.50.0.10:3001` (no trailing path).
 4. **APP_TOKEN** — the same value as `APP_TOKEN` in the server `.env`. Stored in the Keychain, sent as `Authorization: Bearer`.
 5. Tap **Save and ping**. You should see “Server is up.”
 
@@ -61,13 +68,13 @@ The phone and the server must be on the same network (or a VPN). A `localhost` U
 
 | Tab | Behavior |
 |---|---|
-| **Settings** | Base URL + APP_TOKEN (Keychain) + `ping` |
+| **Settings** | Base URL + APP_TOKEN (Keychain) + House (sent as `x-house-id`) + `ping` |
 | **Snap** | Camera / library → `POST /api/upload` (`file`, `scope=inbox`) → `inbox.create`. Optional Place (“where you are”). Notes and links. |
-| **Sort** | Inbox Photos: AI triage, name / kind, Place, file (`inbox.acceptMany`) or dismiss. Check (`items.setVerification`). Place (`items.update`). |
+| **Sort** | Inbox Photos: AI triage, name / kind, Place, file (`inbox.acceptMany`) or dismiss. Check (`items.setVerification`). Place (`items.update` with `roomId`). |
 | **Act** | Keep / sell / donate / toss / later (`items.setDecision`). Sell list / donate box / toss run. **Gone** (`items.setArchived`). Later returns after 7 days. |
 | **Find** | Search Things by name, Place, or kind. Decision on the Thing sheet. `rooms.get` when a room plan exists. |
 
-Tabs match web Flow. Photos load through `attachments.url` plus the same Bearer token (the relative `/uploads/…` URL is not enough on its own).
+Tabs match web Flow. Photos load through `photos.url` plus the same Bearer token (the relative `/uploads/…` URL is not enough on its own).
 
 ## Known gaps vs web Flow
 
@@ -78,10 +85,15 @@ Tabs match web Flow. Photos load through `attachments.url` plus the same Bearer 
 - No “open in Workbench” in-app browser.
 - App icon is a placeholder (empty 1024pt slot).
 
-## API it uses (unchanged)
+## API it uses
 
-tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany`, `inbox.dismiss`, `items.listAll`, `items.update`, `items.setVerification`, `items.setArchived`, `items.setDecision`, `items.patchAttributes` (client ready, unused in V1 UI), `houses.list`, `areas.list`, `map.listLocations`, `attachments.url`, `rooms.get`.
+tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany` (`roomId`), `inbox.dismiss`, `items.listAll`,
+`items.update` (`roomId`), `items.setVerification`, `items.setArchived`, `items.setDecision`, `items.patchAttributes`
+(client ready, unused in V1 UI), `houses.list`, `areas.list`, `rooms.list`, `rooms.ensure`, `rooms.get`, `photos.url`.
+Header `x-house-id` from Settings.
 
 HTTP: `POST /api/upload`.
+
+A Place is a room: the app sends `roomId`, never floor or room strings.
 
 Do not edit `flow/` or `src/flow/` from this app.

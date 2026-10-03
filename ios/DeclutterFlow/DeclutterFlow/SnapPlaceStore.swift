@@ -1,5 +1,26 @@
 import Foundation
 
+/// Place <-> a UserDefaults dictionary. A place saved before rooms had ids has
+/// no `roomId`, so it loads as "no place" and the room is picked once more.
+enum PlaceCoding {
+    static func row(_ place: Place) -> [String: Any] {
+        var row: [String: Any] = ["floor": place.floor, "room": place.room]
+        if let id = place.roomId { row["roomId"] = id }
+        if let id = place.houseId { row["houseId"] = id }
+        return row
+    }
+
+    static func place(_ row: [String: Any]) -> Place {
+        guard let roomId = row["roomId"] as? Int else { return .empty }
+        return Place(
+            roomId: roomId,
+            houseId: row["houseId"] as? Int,
+            floor: row["floor"] as? String ?? "",
+            room: row["room"] as? String ?? ""
+        )
+    }
+}
+
 /// Device-only default Place for a capture, matching `flow.snapPlace` in `src/flow/data.ts`.
 enum SnapPlaceStore {
     private static let key = "flow.snapPlace"
@@ -8,17 +29,13 @@ enum SnapPlaceStore {
         guard let raw = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: Any]],
               let row = raw[String(captureId)]
         else { return nil }
-        let houseId = row["houseId"] as? Int
-        let floor = row["floor"] as? String ?? ""
-        let room = row["room"] as? String ?? ""
-        return Place(houseId: houseId, floor: floor, room: room)
+        let place = PlaceCoding.place(row)
+        return place.hasRoom ? place : nil
     }
 
     static func set(_ captureId: Int, place: Place) {
         var all = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: Any]] ?? [:]
-        var row: [String: Any] = ["floor": place.floor, "room": place.room]
-        if let id = place.houseId { row["houseId"] = id }
-        all[String(captureId)] = row
+        all[String(captureId)] = PlaceCoding.row(place)
         UserDefaults.standard.set(all, forKey: key)
     }
 }
@@ -28,16 +45,10 @@ enum HereStore {
 
     static func load() -> Place {
         guard let raw = UserDefaults.standard.dictionary(forKey: key) else { return .empty }
-        return Place(
-            houseId: raw["houseId"] as? Int,
-            floor: raw["floor"] as? String ?? "",
-            room: raw["room"] as? String ?? ""
-        )
+        return PlaceCoding.place(raw)
     }
 
     static func save(_ place: Place) {
-        var row: [String: Any] = ["floor": place.floor, "room": place.room]
-        if let id = place.houseId { row["houseId"] = id }
-        UserDefaults.standard.set(row, forKey: key)
+        UserDefaults.standard.set(PlaceCoding.row(place), forKey: key)
     }
 }

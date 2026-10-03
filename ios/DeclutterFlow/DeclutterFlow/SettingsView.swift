@@ -20,7 +20,7 @@ struct SettingsView: View {
                     Text("Server base URL")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(FlowTheme.muted)
-                    TextField("http://10.50.0.10:3000", text: $settings.baseURLString)
+                    TextField("http://10.50.0.10:3001", text: $settings.baseURLString)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -37,6 +37,24 @@ struct SettingsView: View {
                         .padding(12)
                         .background(Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     Text("Sent as Authorization: Bearer. Leave empty only if the server has no APP_TOKEN.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(FlowTheme.muted)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("House")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(FlowTheme.muted)
+                    Picker("House", selection: $settings.houseId) {
+                        Text("All houses").tag(Int?.none)
+                        ForEach(session.houses) { h in
+                            Text(h.name).tag(Int?.some(h.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .padding(10)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    Text("Sent as x-house-id, like the house switcher in web Flow: Sort, Act and Find show this house. Saved with Save and ping.")
                         .font(.system(size: 11))
                         .foregroundStyle(FlowTheme.muted)
                 }
@@ -65,7 +83,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Cleartext HTTP")
                         .font(.system(size: 13, weight: .semibold))
-                    Text("This app allows arbitrary HTTP so it can reach a LAN server such as http://10.50.0.10:3000. iOS will also ask to use the local network. Prefer HTTPS if you expose HomeBase beyond your LAN.")
+                    Text("This app allows arbitrary HTTP so it can reach a LAN server such as http://10.50.0.10:3001. iOS will also ask to use the local network. Prefer HTTPS if you expose HomeBase beyond your LAN.")
                         .font(.system(size: 12))
                         .foregroundStyle(FlowTheme.muted)
                 }

@@ -7,7 +7,7 @@ final class FlowSession: ObservableObject {
     @Published var captures: [FlowCapture] = []
     @Published var houses: [FlowHouse] = []
     @Published var areas: [FlowArea] = []
-    @Published var locations: [FlowLocation] = []
+    @Published var rooms: [FlowRoom] = []
     @Published var here: Place = HereStore.load()
     @Published var ready = false
     @Published var loading = false
@@ -35,6 +35,15 @@ final class FlowSession: ObservableObject {
         HereStore.save(place)
     }
 
+    /// Find-or-create a room (`rooms.ensure`), then reload rooms so pickers and labels see it.
+    func ensureRoom(name: String, floor: String?, houseId: Int) async throws -> Place {
+        guard let api else { throw APIError.message("Set a server address in Settings.") }
+        let res = try await api.roomsEnsure(name: name, floor: floor, houseId: houseId)
+        rooms = try await api.roomsList()
+        if let r = rooms.first(where: { $0.id == res.id }) { return Place(room: r) }
+        return Place(roomId: res.id, houseId: houseId, floor: floor ?? "", room: name)
+    }
+
     func attach(settings: SettingsStore) {
         do {
             api = try settings.makeAPI()
@@ -58,12 +67,12 @@ final class FlowSession: ObservableObject {
             async let capturesTask = api.inboxList()
             async let housesTask = api.housesList()
             async let areasTask = api.areasList()
-            async let locationsTask = api.mapListLocations()
+            async let roomsTask = api.roomsList()
             items = try await itemsTask
             captures = try await capturesTask
             houses = try await housesTask
             areas = try await areasTask
-            locations = try await locationsTask
+            rooms = try await roomsTask
             ready = true
         } catch let err as APIError {
             if err.isUnauthorized {

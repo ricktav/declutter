@@ -4,17 +4,21 @@ import Combine
 @MainActor
 final class SettingsStore: ObservableObject {
     private static let urlKey = "declutter.baseURL"
-    static let defaultBaseURL = "http://10.50.0.10:3000"
+    private static let houseKey = "declutter.houseId"
+    static let defaultBaseURL = "http://10.50.0.10:3001"
 
     @Published var baseURLString: String
     @Published var token: String
     @Published var lastPing: String?
+    @Published var houseId: Int?
 
     init() {
         let saved = UserDefaults.standard.string(forKey: Self.urlKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         baseURLString = (saved?.isEmpty == false) ? saved! : Self.defaultBaseURL
         token = KeychainStore.readToken() ?? ""
+        let savedHouse = UserDefaults.standard.integer(forKey: Self.houseKey)
+        houseId = savedHouse > 0 ? savedHouse : nil
     }
 
     var baseURL: URL? {
@@ -33,6 +37,11 @@ final class SettingsStore: ObservableObject {
         KeychainStore.writeToken(token.trimmingCharacters(in: .whitespacesAndNewlines))
         token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         baseURLString = url
+        if let houseId {
+            UserDefaults.standard.set(houseId, forKey: Self.houseKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.houseKey)
+        }
         objectWillChange.send()
     }
 
@@ -40,6 +49,6 @@ final class SettingsStore: ObservableObject {
         guard let url = baseURL else {
             throw APIError.invalidURL
         }
-        return HomeBaseAPI(baseURL: url, token: token.trimmingCharacters(in: .whitespacesAndNewlines))
+        return HomeBaseAPI(baseURL: url, token: token.trimmingCharacters(in: .whitespacesAndNewlines), houseId: houseId)
     }
 }

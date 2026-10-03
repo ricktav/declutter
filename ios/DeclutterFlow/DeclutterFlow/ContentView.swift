@@ -27,7 +27,8 @@ struct ContentView: View {
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var session: FlowSession
 
-    @State private var tab: FlowTab = .snap
+    // `-flow.initialTab find` (launch argument) opens on that tab; used for Simulator screenshots
+    @State private var tab: FlowTab = FlowTab(rawValue: UserDefaults.standard.string(forKey: "flow.initialTab") ?? "") ?? .snap
     @State private var showHere = false
     @State private var showSettings = false
 
@@ -63,7 +64,9 @@ struct ContentView: View {
                 value: session.here,
                 allowClear: true,
                 houses: session.houses,
-                locations: session.locations,
+                rooms: session.rooms,
+                defaultHouseId: settings.houseId,
+                onCreate: { name, floor, houseId in try await session.ensureRoom(name: name, floor: floor, houseId: houseId) },
                 onPick: { session.setHere($0) },
                 onClose: { showHere = false }
             )
