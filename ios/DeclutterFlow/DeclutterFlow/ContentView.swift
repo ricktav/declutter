@@ -157,8 +157,9 @@ struct ContentView: View {
         .overlay(alignment: .top) { Divider() }
     }
 
+    /// Attach and load without saving: launch-argument values (`-declutter.baseURL`,
+    /// `-declutter.houseId`) stay in the argument domain; only "Save and ping" persists Settings.
     private func boot() async {
-        settings.save()
         session.attach(settings: settings)
         await session.refresh()
         if session.needsAuth || !session.ready {

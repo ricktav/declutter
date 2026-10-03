@@ -140,6 +140,7 @@ private struct DraftRow: Identifiable {
 
 private struct CaptureCard: View {
     @EnvironmentObject private var session: FlowSession
+    @EnvironmentObject private var settings: SettingsStore
     let capture: FlowCapture
     var onSkip: () -> Void
 
@@ -290,7 +291,7 @@ private struct CaptureCard: View {
                 value: place,
                 houses: session.houses,
                 rooms: session.rooms,
-                defaultHouseId: session.here.houseId,
+                defaultHouseId: session.here.houseId ?? settings.houseId,
                 onCreate: { name, floor, houseId in try await session.ensureRoom(name: name, floor: floor, houseId: houseId) },
                 onPick: { place = $0 },
                 onClose: { placeOpen = false }
@@ -461,6 +462,7 @@ private struct CheckCard: View {
 
 private struct PlaceCard: View {
     @EnvironmentObject private var session: FlowSession
+    @EnvironmentObject private var settings: SettingsStore
     let item: FlowItem
     var onSkip: () -> Void
     @State private var open = false
@@ -507,7 +509,7 @@ private struct PlaceCard: View {
                 value: session.here,
                 houses: session.houses,
                 rooms: session.rooms,
-                defaultHouseId: session.here.houseId,
+                defaultHouseId: session.here.houseId ?? settings.houseId,
                 onCreate: { name, floor, houseId in try await session.ensureRoom(name: name, floor: floor, houseId: houseId) },
                 onPick: { p in Task { await put(p) } },
                 onClose: { open = false }

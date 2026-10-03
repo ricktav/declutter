@@ -55,6 +55,9 @@ actor TRPCClient {
         if let input {
             let wrapped = try Self.encodeSuperJSON(input, stripNulls: !keepNulls)
             components?.queryItems = [URLQueryItem(name: "input", value: String(data: wrapped, encoding: .utf8))]
+            // queryItems leaves "+" as is, and the server reads it as a space (a storage key may contain "+")
+            let encoded = components?.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+            components?.percentEncodedQuery = encoded
         }
         guard let url = components?.url else { throw APIError.invalidURL }
         var request = URLRequest(url: url)
