@@ -53,7 +53,12 @@ local Ollama.
 | `/snap` | Phone-first capture (camera → inbox) |
 | `/inbox` | Capture triage with AI suggestions |
 | `/areas/:slug` | Per-area inventory tables with typed attributes |
-| `/items/:id` | Item 360° — attributes, attachments, relations, tasks, history |
+| `/flow/` | Flow: phone-first Snap → Sort → Act → Gone (separate front end, see above) |
+| `/items/:id` | Item 360° — attributes, photos, links and notes, relations, tasks, history |
+| `/photos` | Every photo, grouped by room or topic |
+| `/map` | A room's photo pool and pins |
+| `/rooms` | Rooms of the current house; scanned rooms open their plan |
+| `/galaxy` | Bubble view of the inventory by house, floor, room or topic |
 | `/annotate/:photoId` | Photo pins, AI object detection |
 | `/ideas` | Idea board with AI task breakdown |
 | `/tasks` | Kanban with timers and time logs |
