@@ -4,11 +4,13 @@
 // cutout (a photo with itemId, sourceCaptureId and cropBox) this adds a
 // confirmed pin for the item on the capture's location photo (same
 // sourceCaptureId, no itemId), with the cutout's box and the item's name.
-// A (photo, item) pair that already has a pin is left alone, so a second run
-// changes nothing. Cutouts whose capture has no location photo are only counted.
+// A (photo, item) pair that already has a pin gets no second one; a
+// `suggested` pin there is confirmed (as ensurePinForCutout does), so a second
+// run changes nothing. Cutouts whose capture has no location photo are only
+// counted. Writes pins only: no events rows.
 //
 // Usage:
-//   node scripts/backfill-pins-from-cutouts.mjs                 dry run on DATABASE_URL (reads only)
+//   node scripts/backfill-pins-from-cutouts.mjs                 dry run on DATABASE_URL (reads only, writes nothing)
 //   node scripts/backfill-pins-from-cutouts.mjs --apply         write the pins
 //   node scripts/backfill-pins-from-cutouts.mjs --url <mysql url> [--apply]   another database
 import "dotenv/config";
@@ -37,10 +39,13 @@ try {
   // the oldest location photo of a capture is the one the pin canvas opens
   const locationByCapture = new Map();
   for (const l of locations) if (!locationByCapture.has(l.sourceCaptureId)) locationByCapture.set(l.sourceCaptureId, l.id);
-  const [pins] = await c.query("select photoId, itemId from photo_pins where itemId is not null");
+  const [pins] = await c.query("select id, photoId, itemId, status from photo_pins where itemId is not null order by id");
   const pinned = new Set(pins.map((p) => `${p.photoId}|${p.itemId}`));
+  const suggestedByKey = new Map();
+  for (const p of pins) if (p.status === "suggested") suggestedByKey.set(`${p.photoId}|${p.itemId}`, p.id);
 
   let created = 0;
+  let confirmed = 0;
   let withoutLocation = 0;
   let badBox = 0;
   for (const cut of cutouts) {
@@ -50,7 +55,15 @@ try {
       continue;
     }
     const key = `${photoId}|${cut.itemId}`;
-    if (pinned.has(key)) continue;
+    if (pinned.has(key)) {
+      const suggestedId = suggestedByKey.get(key);
+      if (suggestedId != null) {
+        suggestedByKey.delete(key);
+        confirmed++;
+        if (apply) await c.query("update photo_pins set status = 'confirmed' where id = ?", [suggestedId]);
+      }
+      continue;
+    }
     const box = typeof cut.cropBox === "string" ? JSON.parse(cut.cropBox) : cut.cropBox;
     if (![box?.xPct, box?.yPct, box?.wPct, box?.hPct].every((n) => typeof n === "number")) {
       badBox++;
@@ -70,7 +83,7 @@ try {
   const db = new URL(url).pathname.slice(1);
   console.log(
     `${apply ? "Applied" : "Dry run"} on ${db}: ${cutouts.length} cutouts, ${created} pins ${apply ? "created" : "to create"}, ` +
-      `${withoutLocation} without a location photo${badBox ? `, ${badBox} with an unreadable box` : ""}`,
+      `${confirmed} suggested pins ${apply ? "confirmed" : "to confirm"}, ${withoutLocation} without a location photo${badBox ? `, ${badBox} with an unreadable box` : ""}`,
   );
 } finally {
   await c.end();

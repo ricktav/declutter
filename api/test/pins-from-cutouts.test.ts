@@ -43,7 +43,7 @@ describe("inbox.fileObject", () => {
 
     const pins = await db.select().from(photoPins);
     expect(pins).toHaveLength(1);
-    expect(pins[0]).toMatchObject({ photoId: location.id, itemId, ...box, label: "kettle", status: "confirmed", origin: "user" });
+    expect(pins[0]).toMatchObject({ photoId: location.id, itemId, ...box, label: "Kettle", status: "confirmed", origin: "user" });
     const seen = await callerFor(h1).pins.listForItem({ itemId });
     expect(seen.filter((p) => p.status === "confirmed").map((p) => p.photo?.id)).toEqual([location.id]);
 
@@ -121,18 +121,22 @@ describe("scripts/backfill-pins-from-cutouts.mjs", () => {
       { itemId: itemB, storageKey: "local/test-fake-cut-b.jpg", sourceCaptureId: capId, cropBox: boxB },
       { itemId: itemC, storageKey: "local/test-fake-cut-c.jpg", sourceCaptureId: lonelyCap, cropBox: box },
     ]);
-    // B already pinned: left as is
-    await db.insert(photoPins).values({ photoId: location, itemId: itemB, xPct: 1, yPct: 1, label: "old" });
+    // B already has an AI suggestion there: confirmed, box and label kept, no second pin
+    await db
+      .insert(photoPins)
+      .values({ photoId: location, itemId: itemB, xPct: 1, yPct: 1, label: "old", origin: "ai", status: "suggested" });
 
-    expect(await backfill()).toMatch(/Dry run on \w+_test: 3 cutouts, 1 pins to create, 1 without a location photo/);
-    expect(await db.select().from(photoPins)).toHaveLength(1);
+    expect(await backfill()).toMatch(/Dry run on \w+_test: 3 cutouts, 1 pins to create, 1 suggested pins to confirm, 1 without a location photo/);
+    expect(await db.select().from(photoPins)).toMatchObject([{ status: "suggested" }]);
 
-    expect(await backfill("--apply")).toMatch(/Applied on \w+_test: 3 cutouts, 1 pins created, 1 without a location photo/);
+    expect(await backfill("--apply")).toMatch(/Applied on \w+_test: 3 cutouts, 1 pins created, 1 suggested pins confirmed, 1 without a location photo/);
     const [pinA] = await db.select().from(photoPins).where(eq(photoPins.itemId, itemA));
     expect(pinA).toMatchObject({ photoId: location, ...box, label: "Kettle", status: "confirmed", origin: "user" });
     expect((await callerFor(h1).pins.listForItem({ itemId: itemA })).map((p) => p.photo?.id)).toEqual([location]);
 
-    expect(await backfill("--apply")).toMatch(/3 cutouts, 0 pins created, 1 without a location photo/);
+    expect(await backfill("--apply")).toMatch(/3 cutouts, 0 pins created, 0 suggested pins confirmed, 1 without a location photo/);
     expect(await db.select().from(photoPins).where(isNotNull(photoPins.itemId))).toHaveLength(2);
+    const [pinB] = await db.select().from(photoPins).where(eq(photoPins.itemId, itemB));
+    expect(pinB).toMatchObject({ xPct: 1, label: "old", status: "confirmed" });
   });
 });

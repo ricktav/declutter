@@ -528,7 +528,7 @@ export const inboxRouter = createRouter({
               },
               tx,
             );
-            await ensurePinForCutout(tx, { sourcePhotoId: locationPhotoId, itemId: targetId, box, label: input.label });
+            await ensurePinForCutout(tx, { sourcePhotoId: locationPhotoId, itemId: targetId, box, label: item?.name ?? input.itemName });
           }),
       );
       if (input.markProcessed) {

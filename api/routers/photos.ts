@@ -135,7 +135,8 @@ export const photosRouter = createRouter({
       // the cutout's item is in the source photo: pin it there too, so the
       // item's "Seen in photos" shows that photo
       const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
-      const pinFor = { sourcePhotoId: source.id, itemId: input.itemId, box: input.box, label: item?.name ?? "" };
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
+      const pinFor = { sourcePhotoId: source.id, itemId: input.itemId, box: input.box, label: item.name };
 
       // one cutout per item and original photo: pinning again or re-saving does not pile up copies
       if (sourceCaptureId) {
