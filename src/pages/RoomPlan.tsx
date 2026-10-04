@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useParams, Link, useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { useParams, useSearchParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
 import { RoomPlan3D } from "@/components/RoomPlan3D";
@@ -104,6 +104,82 @@ export default function RoomPlanPage() {
   const createItem = trpc.items.create.useMutation();
   const [pinning, setPinning] = useState(false);
 
+  // Place mode: put an existing, unplaced Thing of this room on the plan.
+  // Entered from the unplaced list's "Place" button or `?placeItem=<id>`
+  // (the item view's "Place on the plan"). The param is only honoured for
+  // a Thing of this room without a position - anything else gets a notice
+  // and nothing is written.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const placeParam = Number(searchParams.get("placeItem"));
+  const placeParamId = Number.isInteger(placeParam) && placeParam > 0 ? placeParam : null;
+  const placeParamItem = placeParamId != null ? room.data?.items.find((it) => it.id === placeParamId) : undefined;
+  const placeParamOk = placeParamItem != null && placeParamItem.ownerRoomId === id && !placeParamItem.pos;
+  const placeNotice =
+    placeParamId == null || !room.data || placeParamOk
+      ? null
+      : !placeParamItem || placeParamItem.ownerRoomId !== id
+        ? `That Thing is not in ${room.data.name}, so it was not placed here.`
+        : `${placeParamItem.name} is already placed on the plan.`;
+  const [placingManual, setPlacingManual] = useState<{ id: number; name: string } | null>(null);
+  const placing =
+    placingManual ?? (placeParamOk && placeParamItem ? { id: placeParamItem.id, name: placeParamItem.name } : null);
+  const [placingBusy, setPlacingBusy] = useState(false);
+
+  const dropPlaceParam = () => {
+    if (!searchParams.has("placeItem")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("placeItem");
+    setSearchParams(next, { replace: true });
+  };
+  const startPlace = (item: { id: number; name: string }) => {
+    dropPlaceParam();
+    setPlacingManual(item);
+    setPinMode(false);
+    setPendingPin(null);
+    setCutMode(false);
+    setPendingCut(null);
+    setSelectedId(null);
+  };
+  const cancelPlace = () => {
+    setPlacingManual(null);
+    dropPlaceParam();
+  };
+  /** Same footprint and stacking as a new pin, but for a Thing that
+   * already exists. */
+  const placeAt = async (at: { xM: number; yM: number }) => {
+    if (!placing || placingBusy) return;
+    const target = placing;
+    setPlacingBusy(true);
+    try {
+      const basePos = { xM: at.xM, yM: at.yM, wM: 0.5, dM: 0.5, rotDeg: 0 };
+      await updatePos.mutateAsync({ id: target.id, pos: applyStacking(target.id, basePos, planItems) });
+      utils.items.get.invalidate({ id: target.id });
+      utils.items.placement.invalidate({ itemId: target.id });
+      cancelPlace();
+      setSelectedId(target.id);
+    } finally {
+      setPlacingBusy(false);
+    }
+  };
+  const onPlanClick = (pos: { xM: number; yM: number }) => {
+    if (placing) {
+      placeAt(pos);
+      return;
+    }
+    setPendingPin(pos);
+    setPinName("");
+    setPinAreaId(null);
+  };
+
+  useEffect(() => {
+    if (!placing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancelPlace();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   /** Shared by both the 2D plan and the 3D twin - pinning a point creates a
    * real item at that footprint, status "confirmed" (a human just placed it
    * by hand, there's nothing to verify), default 0.5x0.5m (resize after). */
@@ -183,6 +259,7 @@ export default function RoomPlanPage() {
                     variant={pinMode ? "default" : "outline"}
                     className="h-7 text-[12px]"
                     onClick={() => {
+                      cancelPlace();
                       setPinMode((v) => !v);
                       setPendingPin(null);
                       setCutMode(false);
@@ -198,6 +275,7 @@ export default function RoomPlanPage() {
                       variant={cutMode ? "default" : "outline"}
                       className="h-7 text-[12px]"
                       onClick={() => {
+                        cancelPlace();
                         setCutMode((v) => !v);
                         setPendingCut(null);
                         setPinMode(false);
@@ -259,6 +337,26 @@ export default function RoomPlanPage() {
               {pinMode && (
                 <p className="mb-1.5 text-[11px] text-amber-700">Click anywhere on the floor to pin a new item there.</p>
               )}
+              {placing && (
+                <div className="mb-1.5 flex items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-[12px] text-sky-900">
+                  {placingBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
+                  <span>
+                    Click where <b>{placing.name}</b> stands
+                  </span>
+                  <span className="text-muted-foreground">· Esc cancels</span>
+                  <Button size="sm" variant="outline" className="h-6 text-[11px] ml-auto" onClick={cancelPlace}>
+                    Cancel
+                  </Button>
+                </div>
+              )}
+              {placeNotice && (
+                <div className="mb-1.5 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[12px] text-amber-900">
+                  <span>{placeNotice}</span>
+                  <button className="ml-auto" title="Dismiss" onClick={dropPlaceParam}>
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
               {/* Both views stay mounted - toggling via `hidden` instead of
                   conditional JSX - so switching tabs doesn't tear down and
                   recreate the 3D view's WebGL context every time (React
@@ -281,12 +379,8 @@ export default function RoomPlanPage() {
                     setPendingCut(bounds);
                     setCutName("");
                   }}
-                  pinMode={pinMode}
-                  onPinPlace={(pos) => {
-                    setPendingPin(pos);
-                    setPinName("");
-                    setPinAreaId(null);
-                  }}
+                  pinMode={pinMode || placing != null}
+                  onPinPlace={onPlanClick}
                 />
               </div>
               <div hidden={view !== "3d"}>
@@ -299,12 +393,8 @@ export default function RoomPlanPage() {
                   selectedId={selectedId}
                   onSelect={selectItem}
                   active={view === "3d"}
-                  pinMode={pinMode}
-                  onPinPlace={(pos) => {
-                    setPendingPin(pos);
-                    setPinName("");
-                    setPinAreaId(null);
-                  }}
+                  pinMode={pinMode || placing != null}
+                  onPinPlace={onPlanClick}
                 />
               </div>
               <p className="mt-2 text-[11px] text-muted-foreground">
@@ -313,9 +403,41 @@ export default function RoomPlanPage() {
                   : "Drag to orbit · scroll to zoom · click an item to select it."}
               </p>
               {room.data.items.filter((it) => !it.pos).length > 0 && (
-                <p className="mt-3 text-[12px] text-muted-foreground">
-                  Unplaced: {room.data.items.filter((it) => !it.pos).map((it) => it.name).join(", ")}
-                </p>
+                <div className="mt-3 text-[12px] text-muted-foreground">
+                  <p>Unplaced:</p>
+                  <ul className="mt-1 flex flex-wrap gap-1.5">
+                    {room.data.items
+                      .filter((it) => !it.pos)
+                      .map((it) => (
+                        <li
+                          key={it.id}
+                          className="flex items-center gap-1 rounded border border-border bg-white pl-2 pr-0.5 py-0.5"
+                        >
+                          <Link to={`/items/${it.id}`} className="text-foreground hover:underline">
+                            {it.name}
+                          </Link>
+                          {it.ownerRoomId === id ? (
+                            <Button
+                              size="sm"
+                              variant={placing?.id === it.id ? "default" : "outline"}
+                              className="h-5 px-1.5 text-[11px]"
+                              title={`Place ${it.name} on the plan`}
+                              onClick={() => (placing?.id === it.id ? cancelPlace() : startPlace({ id: it.id, name: it.name }))}
+                            >
+                              <MapPin className="h-3 w-3 mr-0.5" /> Place
+                            </Button>
+                          ) : (
+                            <Link
+                              to={`/rooms/${it.ownerRoomId}?placeItem=${it.id}`}
+                              className="px-1 text-[11px] text-primary hover:underline"
+                            >
+                              in {it.ownerRoomName} →
+                            </Link>
+                          )}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
               )}
             </div>
 
@@ -400,7 +522,9 @@ export default function RoomPlanPage() {
                 <p className="text-[13px] text-muted-foreground">
                   {cutMode
                     ? "Drag a rectangle on the plan to mark the room's area."
-                    : pinMode
+                    : placing
+                      ? `Click the plan where ${placing.name} stands.`
+                      : pinMode
                       ? "Click the plan to pin a new item there."
                       : "Select an item on the plan to review it."}
                 </p>

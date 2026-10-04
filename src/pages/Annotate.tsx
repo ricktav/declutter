@@ -141,6 +141,18 @@ export default function AnnotatePage() {
   const [searchParams] = useSearchParams();
   const roomIdParam = searchParams.get("roomId");
   const confirmedRoomId = roomIdParam && roomIdParam !== "none" ? Number(roomIdParam) : null;
+  // a Thing chosen before coming here (the item view's "Pin in a photo"):
+  // the next box drawn is linked to it; `back=item` returns to its page
+  // once the pin is saved
+  const itemIdParam = Number(searchParams.get("itemId"));
+  const preselectId = Number.isInteger(itemIdParam) && itemIdParam > 0 ? itemIdParam : null;
+  const backToItem = searchParams.get("back") === "item";
+  const preselectQuery = trpc.items.get.useQuery({ id: preselectId ?? -1 }, { enabled: preselectId != null });
+  const [preselectCleared, setPreselectCleared] = useState(false);
+  const preselected =
+    !preselectCleared && preselectId != null && preselectQuery.data
+      ? { id: preselectQuery.data.id, name: preselectQuery.data.name }
+      : null;
 
   const pinsQuery = trpc.pins.listForPhoto.useQuery({ photoId: attId });
   const urlQuery = trpc.photos.get.useQuery({ id: attId });
@@ -423,8 +435,8 @@ export default function AnnotatePage() {
         : { xPct: start.xPct, yPct: start.yPct },
     );
     setDrawingBox(null);
-    setPendingLabel("");
-    setPendingItem(null);
+    setPendingLabel(preselected?.name ?? "");
+    setPendingItem(preselected);
     setEditingPinId(null);
     setSelectedPinId(null);
     setSelectedSuggestionId(null);
@@ -475,10 +487,33 @@ export default function AnnotatePage() {
     // whether brand-new or existing, the drawn/adjusted box is already the
     // confirmed photo - no separate "now pick a crop" step. After the pin:
     // createCutout finds it and does not add a second one
-    if (itemId) {
+    const leavingForItem = backToItem && preselected != null && itemId === preselected.id;
+    if (itemId && leavingForItem) {
+      // the item page is next: let its photo land first so "Seen in
+      // photos" is current there; a failed cutout still leaves the pin
+      await addItemPhoto.mutateAsync({ itemId, sourcePhotoId: attId, box }).catch(() => undefined);
+    } else if (itemId) {
       ensureItemPhoto(itemId, box);
     }
     setPending(null);
+    if (preselected && itemId === preselected.id) {
+      if (leavingForItem) {
+        utils.pins.listForItem.invalidate({ itemId: preselected.id });
+        utils.items.placement.invalidate({ itemId: preselected.id });
+        navigate(`/items/${preselected.id}`);
+        return;
+      }
+      // pinned once; the next box is a free choice again
+      setPreselectCleared(true);
+    }
+  };
+
+  const cancelPreselect = () => {
+    setPreselectCleared(true);
+    if (preselected && pendingItem?.id === preselected.id) {
+      setPendingItem(null);
+      setPendingLabel("");
+    }
   };
 
   const suggestForBox = trpc.pins.suggestForBox.useMutation({
@@ -524,6 +559,16 @@ export default function AnnotatePage() {
         </Button>
       </div>
 
+      {preselected && (
+        <div className="mt-3 flex items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-[12px] text-sky-900">
+          <span>
+            Pinning: <b>{preselected.name}</b> · draw a box on the photo
+          </span>
+          <Button size="sm" variant="outline" className="h-6 text-[11px] ml-auto" onClick={cancelPreselect}>
+            Cancel
+          </Button>
+        </div>
+      )}
       {aiError && (
         <div className="mt-3 flex gap-2 items-start rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> {aiError}
