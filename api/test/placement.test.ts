@@ -53,6 +53,10 @@ describe("photos.attachToItem", () => {
     const ev = await db.select().from(events).where(and(eq(events.entityType, "item"), eq(events.action, "photo.attached")));
     expect(ev).toHaveLength(1);
     expect(ev[0].entityId).toBe(kettle);
+
+    // attaching again to the same Thing is a no-op: same answer, no second event
+    expect(await api.photos.attachToItem({ photoId: p, itemId: kettle })).toEqual({ photoId: p, itemId: kettle, roomId: keuken });
+    expect(await db.select().from(events).where(eq(events.action, "photo.attached"))).toHaveLength(1);
   });
 
   it("keeps the photo's own room; the Thing's room is not changed", async () => {
@@ -128,7 +132,12 @@ describe("items.placement", () => {
     });
     expect(pl.pins).toEqual([{ pinId: expect.any(Number), photoId: kitchenShot, title: "Kitchen", label: "kettle" }]);
     expect(new Set(pl.roomPhotos.map((p) => p.photoId))).toEqual(new Set([kitchenShot, locationShot, toasterCut]));
-    expect(pl.roomPhotos.map((p) => p.photoId)).toEqual([...pl.roomPhotos.map((p) => p.photoId)].sort((a, b) => b - a));
+    // full images first (newest first), cutouts last
+    expect(pl.roomPhotos.map((p) => [p.photoId, p.isCutout])).toEqual([
+      [locationShot, false],
+      [kitchenShot, false],
+      [toasterCut, true],
+    ]);
     expect(pl.roomPhotos.find((p) => p.photoId === kitchenShot)?.hasPinForItem).toBe(true);
     expect(pl.roomPhotos.find((p) => p.photoId === locationShot)?.hasPinForItem).toBe(false);
   });
@@ -171,10 +180,10 @@ describe("items.placementSummary", () => {
       { photoId: p1, itemId: b, xPct: 1, yPct: 1, status: "confirmed" },
       { photoId: p2, itemId: b, xPct: 1, yPct: 1, origin: "ai", status: "suggested" },
     ]);
-    expect(await api.items.placementSummary({ itemIds: [a, b, c] })).toEqual([
+    expect(await api.items.placementSummary({ itemIds: [c, a, b] })).toEqual([
+      { itemId: c, pinCount: 0, onPlan: false },
       { itemId: a, pinCount: 2, onPlan: true },
       { itemId: b, pinCount: 1, onPlan: false },
-      { itemId: c, pinCount: 0, onPlan: false },
     ]);
   });
 });

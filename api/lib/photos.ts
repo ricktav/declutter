@@ -2,7 +2,7 @@
 // Shared reads and writes for photos (images) and item_links (link, note,
 // file). The photos/pins/itemLinks routers and the deprecated attachments.*
 // aliases all go through these, so each table is written one way.
-import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { areas, captures, itemLinks, items, photoPins, photos, type CropBox, type ItemLink, type Photo } from "@db/schema";
 import type { getDb } from "../queries/connection";
@@ -427,7 +427,16 @@ export async function attachPhotoToItem(
   }
   const roomId = photo.roomId ?? item.roomId ?? null;
   await db.transaction(async (tx) => {
-    await tx.update(photos).set({ itemId: item.id, roomId }).where(eq(photos.id, photo.id));
+    // without force, only a photo that is still free (or already ours) is
+    // taken: of two attaches racing for the same photo, one wins and the
+    // other gets CONFLICT instead of silently moving it
+    const where = input.force
+      ? eq(photos.id, photo.id)
+      : and(eq(photos.id, photo.id), or(isNull(photos.itemId), eq(photos.itemId, item.id)));
+    const [res] = await tx.update(photos).set({ itemId: item.id, roomId }).where(where);
+    if (!input.force && res.affectedRows === 0) {
+      throw new TRPCError({ code: "CONFLICT", message: "Photo was just attached to another Thing." });
+    }
     await logEvent(
       {
         entityType: "item",
