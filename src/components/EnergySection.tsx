@@ -6,6 +6,7 @@ const EUR = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR",
 export function EnergySection({ itemId }: { itemId: number }) {
   const q = trpc.energy.forItem.useQuery({ itemId });
   const e = q.data;
+  if (q.isError) return <p className="text-[13px] text-muted-foreground">Energy: could not load ({q.error.message})</p>;
   if (!e || !e.plug) return null;
   const s = e.summary;
   return (

@@ -91,6 +91,7 @@ const dec = (v: number | undefined) => (v == null ? null : v.toFixed(6));
 /**
  * Upsert one meter's months, keyed by (itemId, month), in one transaction.
  * The meter must be an active item with role "meter" and a known meter_kind.
+ * A re-reported month replaces the whole row: a field left out becomes NULL (it is not kept from an earlier report).
  * Never deletes; writes no item event (a report is a measurement, not an edit).
  */
 export async function applyEnergyReport(db: Db, input: { itemId: number; source: string; months: ReportMonth[] }, now = new Date()): Promise<{ months: number }> {
@@ -406,7 +407,9 @@ export async function energyOverview(db: Db, houseId: number | null, now = new D
       netCost += cost(g, t)! - exp * (t.feedIn - t.feedInCost) + f;
     }
   }
-  const baselineW = plugs.reduce((s, p) => s + (p.baseW ?? 0), 0);
+  // the house baseline is the house block's plugs only, so it matches the other house figures
+  const blockPlugIds = new Set(blockPlugs.map((p) => p.id));
+  const baselineW = plugs.filter((p) => blockPlugIds.has(p.itemId)).reduce((s, p) => s + (p.baseW ?? 0), 0);
   return {
     months,
     tariff,

@@ -73,6 +73,20 @@ describe("energy.report", () => {
     expect(await getTestDb().select().from(energyMonths)).toEqual([]);
   });
 
+  it("a refused report at the router is BAD_REQUEST", async () => {
+    const { houseId, tv } = await seedMeters();
+    await expect(callerFor(houseId).energy.report({ itemId: tv, source: "t", months: [{ month: "2025-01", kwhNormal: 1, kwhOffpeak: 1 }] })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("re-reporting a plug month without baseW leaves baseW NULL (replace semantics)", async () => {
+    const { houseId, fridgePlug } = await seedMeters();
+    const c = callerFor(houseId);
+    await c.energy.report({ itemId: fridgePlug, source: "t", months: [{ month: "2025-01", kwhNormal: 10, kwhOffpeak: 5, baseW: 18.2 }] });
+    await c.energy.report({ itemId: fridgePlug, source: "t", months: [{ month: "2025-01", kwhNormal: 10, kwhOffpeak: 5 }] });
+    const [row] = await getTestDb().select().from(energyMonths).where(eq(energyMonths.itemId, fridgePlug));
+    expect(row.baseW).toBeNull();
+  });
+
   it("refuses an archived meter", async () => {
     const { houseId, fridgePlug } = await seedMeters();
     await getTestDb().update(items).set({ status: "archived" }).where(eq(items.id, fridgePlug));
@@ -201,6 +215,19 @@ describe("energy.overview", () => {
     expect(o.house.netCostEur).toBeCloseTo(11 * (100 * 0.25 + 80 * 0.2 - 60 * (0.06 - 0.04)) + o.house.fixedEur!, 2);
   });
 
+  it("a month with solar and plug rows but no grid row is not counted and unmeasured never goes negative", async () => {
+    const s = await seedMeters();
+    const db = getTestDb();
+    await applyEnergyReport(db, { itemId: s.grid, source: "t", months: [{ month: "2026-08", kwhNormal: 100, kwhOffpeak: 50, kwhReturnedNormal: 0, kwhReturnedOffpeak: 0 }] }, NOW);
+    await applyEnergyReport(db, { itemId: s.solar, source: "t", months: [{ month: "2026-08", kwhProduced: 10 }, { month: "2026-09", kwhProduced: 500 }] }, NOW);
+    await applyEnergyReport(db, { itemId: s.fridgePlug, source: "t", months: [{ month: "2026-08", kwhNormal: 5, kwhOffpeak: 5 }, { month: "2026-09", kwhNormal: 400, kwhOffpeak: 400 }] }, NOW);
+    const o = await energyOverview(db, s.houseId, NOW);
+    expect(o.house.monthsCounted).toBe(1); // only 2026-08 has a grid row
+    expect(o.house.useKwh).toBeCloseTo(160, 3);
+    expect(o.house.unmeasuredKwh!).toBeGreaterThanOrEqual(0);
+    expect(o.house.unmeasuredKwh).toBeCloseTo(150, 3);
+  });
+
   it("gives null house figures and euros when nothing can be counted or priced", async () => {
     const s = await seedMeters();
     await getTestDb().delete(energyTariffs);
@@ -245,8 +272,10 @@ describe("energy.overview", () => {
     await applyEnergyReport(db, { itemId: grid2, source: "t", months: [{ month: "2026-08", kwhNormal: 1, kwhOffpeak: 1, kwhReturnedNormal: 0, kwhReturnedOffpeak: 0 }] }, NOW);
     const all = await energyOverview(db, null, NOW);
     expect(all.house).toMatchObject({ useKwh: null, producedKwh: null, importKwh: null, exportKwh: null, unmeasuredKwh: null, netCostEur: null, fixedEur: null, monthsCounted: 0 });
-    expect(all.house.baselineW).toBe(62.5); // still over all plugs
-    expect((await energyOverview(db, s.houseId, NOW)).house.monthsCounted).toBe(11);
+    expect(all.house.baselineW).toBe(0); // the block is empty, so are its plugs
+    const one = await energyOverview(db, s.houseId, NOW);
+    expect(one.house.monthsCounted).toBe(11);
+    expect(one.house.baselineW).toBe(62.5); // the block house's plugs only
   });
 });
 
