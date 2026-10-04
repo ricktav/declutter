@@ -199,6 +199,7 @@ export default function AnnotatePage() {
       if (before != null) ids.add(before);
     }
     for (const i of ids) utils.items.placement.invalidate({ itemId: i });
+    utils.items.placementSummary.invalidate();
     invalidate();
   };
 
@@ -513,6 +514,7 @@ export default function AnnotatePage() {
       if (leavingForItem) {
         utils.pins.listForItem.invalidate({ itemId: preselected.id });
         utils.items.placement.invalidate({ itemId: preselected.id });
+        utils.items.placementSummary.invalidate();
         navigate(`/items/${preselected.id}`);
         return;
       }

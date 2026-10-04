@@ -63,6 +63,9 @@ export function ChooseFromLibraryDialog({
       utils.photos.listForItem.invalidate({ itemId });
       utils.items.get.invalidate({ id: itemId });
       utils.items.listAll.invalidate();
+      // the cutout adds a pin in the source photo: the Placement pane and badges change
+      utils.items.placement.invalidate({ itemId });
+      utils.items.placementSummary.invalidate();
       reset();
       onClose();
     },

@@ -113,19 +113,23 @@ export default function RoomPlanPage() {
   const placeParam = Number(searchParams.get("placeItem"));
   const placeParamId = Number.isInteger(placeParam) && placeParam > 0 ? placeParam : null;
   const placeParamItem = placeParamId != null ? room.data?.items.find((it) => it.id === placeParamId) : undefined;
-  // A room with neither walls nor a width and depth has a 0x0 plan: there
-  // is nowhere to click, so place mode is never entered for it.
-  const roomSized =
-    room.data != null && (room.data.walls != null || (room.data.widthM != null && room.data.depthM != null));
+  // The 2D plan is width x depth: without both (walls alone draw no plan)
+  // there is nowhere to click, so place mode is never entered. The notice
+  // above the plan carries a form to give the room a size.
+  const roomSized = (room.data?.widthM ?? 0) > 0 && (room.data?.depthM ?? 0) > 0;
   const sizeNotice = room.data ? `Give ${room.data.name} a size or a scan first, then place Things on its plan.` : "";
   /** A Thing inside another Thing (a drawer's content) has no box of its
    * own: the host says where it is. */
   const hostNameOf = (parentId: number | null | undefined) =>
     parentId == null ? null : (room.data?.items.find((it) => it.id === parentId)?.name ?? "another Thing");
   const insideTitle = (parentId: number | null | undefined) => `Inside ${hostNameOf(parentId)}: placed with it`;
+  /** Gone (archived) and rejected Things are not placed: they are not in the room any more. */
+  const placeable = (it: { status: string; verificationStatus: string }) =>
+    it.status === "active" && it.verificationStatus !== "rejected";
   const placeParamOk =
     roomSized &&
     placeParamItem != null &&
+    placeable(placeParamItem) &&
     placeParamItem.ownerRoomId === id &&
     !placeParamItem.pos &&
     placeParamItem.parentId == null;
@@ -134,11 +138,13 @@ export default function RoomPlanPage() {
       ? null
       : !placeParamItem || placeParamItem.ownerRoomId !== id
         ? `That Thing is not in ${room.data.name}, so it was not placed here.`
-        : placeParamItem.pos
-          ? `${placeParamItem.name} is already placed on the plan.`
-          : placeParamItem.parentId != null
-            ? `${insideTitle(placeParamItem.parentId)}.`
-            : sizeNotice;
+        : !placeable(placeParamItem)
+          ? `${placeParamItem.name} is gone or rejected, so it is not placed.`
+          : placeParamItem.pos
+            ? `${placeParamItem.name} is already placed on the plan.`
+            : placeParamItem.parentId != null
+              ? `${insideTitle(placeParamItem.parentId)}.`
+              : null; // unsized: the size notice above the plan says it (and place mode starts once sized)
   const [placingManual, setPlacingManual] = useState<{ id: number; name: string } | null>(null);
   const placeParamTarget = placeParamOk && placeParamItem ? placeParamItem : null;
   const placing = useMemo(
@@ -187,6 +193,7 @@ export default function RoomPlanPage() {
       await updatePos.mutateAsync({ id: target.id, pos: applyStacking(target.id, basePos, planItems) });
       utils.items.get.invalidate({ id: target.id });
       utils.items.placement.invalidate({ itemId: target.id });
+      utils.items.placementSummary.invalidate();
       cancelPlace();
       setSelectedId(target.id);
     } catch (e) {
@@ -386,6 +393,12 @@ export default function RoomPlanPage() {
                   </Button>
                 </div>
               )}
+              {!roomSized && (
+                <div className="mb-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
+                  <p>{sizeNotice}</p>
+                  <RoomSizeForm roomId={id} widthM={room.data.widthM} depthM={room.data.depthM} />
+                </div>
+              )}
               {placeNotice && (
                 <div className="mb-1.5 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[12px] text-amber-900">
                   <span>{placeNotice}</span>
@@ -439,12 +452,12 @@ export default function RoomPlanPage() {
                   ? "Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize. The ⟲/⟳ buttons above only rotate the view, not the data."
                   : "Drag to orbit · scroll to zoom · click an item to select it."}
               </p>
-              {room.data.items.filter((it) => !it.pos).length > 0 && (
+              {room.data.items.some((it) => !it.pos && placeable(it)) && (
                 <div className="mt-3 text-[12px] text-muted-foreground">
-                  <p>Unplaced:{!roomSized && <span className="ml-1 text-amber-700">{sizeNotice}</span>}</p>
+                  <p>Unplaced:{!roomSized && <span className="ml-1 text-amber-700">size the room above first.</span>}</p>
                   <ul className="mt-1 flex flex-wrap gap-1.5">
                     {room.data.items
-                      .filter((it) => !it.pos)
+                      .filter((it) => !it.pos && placeable(it))
                       .map((it) => (
                         <li
                           key={it.id}
@@ -683,5 +696,55 @@ export default function RoomPlanPage() {
         </>
       )}
     </div>
+  );
+}
+
+/** Width x depth for a room without a plan; saving gives the room its 2D
+ * plan (and a box in 3D), so Things can be placed on it. */
+function RoomSizeForm({ roomId, widthM, depthM }: { roomId: number; widthM: number | null; depthM: number | null }) {
+  const utils = trpc.useUtils();
+  const [w, setW] = useState(widthM != null && widthM > 0 ? String(widthM) : "");
+  const [d, setD] = useState(depthM != null && depthM > 0 ? String(depthM) : "");
+  const update = trpc.rooms.update.useMutation({
+    onSuccess: () => {
+      void utils.rooms.get.invalidate({ id: roomId });
+      void utils.rooms.list.invalidate();
+      void utils.items.placement.invalidate();
+    },
+  });
+  const wn = Number(w.replace(",", "."));
+  const dn = Number(d.replace(",", "."));
+  const ok = w !== "" && d !== "" && wn > 0 && dn > 0 && wn <= 100 && dn <= 100;
+  return (
+    <form
+      className="mt-1.5 flex flex-wrap items-center gap-1.5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ok) update.mutate({ id: roomId, widthM: wn, depthM: dn });
+      }}
+    >
+      <input
+        aria-label="Width in metres"
+        inputMode="decimal"
+        placeholder="Width"
+        value={w}
+        onChange={(e) => setW(e.target.value)}
+        className="h-6 w-16 rounded border border-border bg-white px-1.5 text-[12px] text-foreground"
+      />
+      <span>×</span>
+      <input
+        aria-label="Depth in metres"
+        inputMode="decimal"
+        placeholder="Depth"
+        value={d}
+        onChange={(e) => setD(e.target.value)}
+        className="h-6 w-16 rounded border border-border bg-white px-1.5 text-[12px] text-foreground"
+      />
+      <span>m ·</span>
+      <Button type="submit" size="sm" className="h-6 px-2 text-[11px]" disabled={!ok || update.isPending}>
+        {update.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
+      </Button>
+      {update.error && <span className="text-destructive">{update.error.message}</span>}
+    </form>
   );
 }

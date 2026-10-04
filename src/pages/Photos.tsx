@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { keepPreviousData } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { timeAgo } from "@/lib/format";
-import { Search, Loader2, MapPin, LayoutGrid, Link2 } from "lucide-react";
+import { Search, Loader2, MapPin, LayoutGrid, Link2, X } from "lucide-react";
 import { usePersistedState } from "@/hooks/use-persisted-state";
 import { AttachPhotoDialog, type AttachTarget } from "@/components/AttachPhotoDialog";
 import { cn } from "@/lib/utils";
@@ -140,8 +140,11 @@ function PhotoTile({
       {tile}
       {placement && photo.itemId != null && <PlacementBadges placement={placement} />}
       {inBucket && (
-        // visible on hover or keyboard focus; always on touch screens, which cannot hover
-        <div className="mt-1 flex gap-1 opacity-0 transition-opacity group-hover/tile:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+        // visible on hover or while focus is in the tile (Tab onto the tile
+        // shows the row, the next Tab reaches its buttons); always on touch
+        // screens, which cannot hover. invisible rather than opacity-0, so a
+        // hidden button cannot be clicked by accident
+        <div className="invisible mt-1 flex gap-1 group-hover/tile:visible group-focus-within/tile:visible [@media(hover:none)]:visible">
           <button
             type="button"
             className="flex-1 flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50"
@@ -205,6 +208,15 @@ export default function PhotosPage() {
   const [showObjects, setShowObjects] = usePersistedState("photos.showObjects", true);
   const [zoomed, setZoomed] = useState<Photo | null>(null);
   const [notPlaced, setNotPlaced] = useState(false);
+  // ?room=<id> (from an item's Placement pane): only that room's photos
+  const [searchParams, setSearchParams] = useSearchParams();
+  const roomParam = Number(searchParams.get("room"));
+  const roomFilter = Number.isInteger(roomParam) && roomParam > 0 ? roomParam : null;
+  const clearRoomFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("room");
+    setSearchParams(next, { replace: true });
+  };
   const [attachTarget, setAttachTarget] = useState<AttachTarget | null>(null);
 
   // One placementSummary call for every Thing on the page (never one per
@@ -230,10 +242,12 @@ export default function PhotosPage() {
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     return (photos.data ?? []).filter((p) => {
+      if (roomFilter != null && p.roomId !== roomFilter) return false;
       if (notPlaced) {
         // only Things that still lack a pin or a spot on the plan; this shows
-        // them even with "Items" off, since that is what the chip asks for
-        if (p.itemId == null) return false;
+        // them even with "Items" off, since that is what the chip asks for.
+        // A gone (archived) Thing is not placed any more, and does not need to be.
+        if (p.itemId == null || p.itemStatus === "archived") return false;
         const pl = placementOf.get(p.itemId);
         if (!pl || (pl.pinCount > 0 && pl.onPlan)) return false;
       } else if (!showObjects && p.itemId != null) return false;
@@ -245,7 +259,9 @@ export default function PhotosPage() {
         (p.areaName ?? "").toLowerCase().includes(query)
       );
     });
-  }, [photos.data, q, showObjects, notPlaced, placementOf]);
+  }, [photos.data, q, showObjects, notPlaced, placementOf, roomFilter]);
+  const roomFilterName =
+    roomFilter != null ? ((photos.data ?? []).find((p) => p.roomId === roomFilter)?.roomName ?? `Room #${roomFilter}`) : null;
 
   const groups = useMemo(() => {
     if (sortBy === "recent") {
@@ -331,6 +347,14 @@ export default function PhotosPage() {
         >
           Not placed
         </button>
+        {roomFilter != null && (
+          <span className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/5 px-2.5 py-1 text-[12px]">
+            {roomFilterName} · room filter ·
+            <button type="button" onClick={clearRoomFilter} className="flex items-center gap-0.5 text-primary hover:underline">
+              <X className="h-3 w-3" /> clear
+            </button>
+          </span>
+        )}
       </div>
 
       <div className="mt-5 space-y-7">
@@ -365,7 +389,9 @@ export default function PhotosPage() {
                     "Checking placement…"
                   : notPlaced && !q
                     ? "Every Thing with a photo is pinned and on its plan."
-                    : `No photos match "${q}".`}
+                    : !q && roomFilter != null
+                      ? `No photos of ${roomFilterName} here.`
+                      : `No photos match "${q}".`}
           </div>
         )}
       </div>

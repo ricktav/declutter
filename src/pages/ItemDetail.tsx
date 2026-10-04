@@ -1051,7 +1051,16 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
         <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-1">
           <MapPin className="h-3.5 w-3.5" /> 2D plan
         </div>
-        {p.roomId == null ? (
+        {p.parentId != null ? (
+          // a Thing inside another has no box of its own: the host says where it is
+          <div className="text-[13px]">
+            Inside{" "}
+            <Link to={`/items/${p.parentId}`} className={actionLink}>
+              {p.parentName ?? `Thing #${p.parentId}`}
+            </Link>{" "}
+            · placed with it
+          </div>
+        ) : p.roomId == null ? (
           <div className="text-[13px] text-muted-foreground">
             Give it a room first ·{" "}
             <button type="button" className={actionLink} onClick={onPickRoom}>Pick a room</button>
@@ -1061,8 +1070,9 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
             Placed on the plan of {room} ·{" "}
             <Link to={`/rooms/${p.roomId}`} className={actionLink}>Open plan</Link>
           </div>
-        ) : !p.roomHasGeometry && !p.roomHasDimensions ? (
-          // no walls and no width/depth: the plan is 0x0, nothing to click on
+        ) : !p.roomHasPlan ? (
+          // no width and depth: the 2D plan is 0x0, nothing to click on; the
+          // room page has the form to size it
           <div className="text-[13px] text-muted-foreground">
             Size or scan the room first ·{" "}
             <Link to={`/rooms/${p.roomId}`} className={actionLink}>Open {room}</Link>
@@ -1082,8 +1092,10 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
         <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-1">
           <Images className="h-3.5 w-3.5" /> 3D
         </div>
-        <div className={`text-[13px] ${in3d ? "" : "text-muted-foreground"}`}>
-          {in3d
+        <div className={`text-[13px] ${in3d || p.parentId != null ? "" : "text-muted-foreground"}`}>
+          {p.parentId != null
+            ? `With ${p.parentName ?? `Thing #${p.parentId}`}`
+            : in3d
             ? "Visible in 3D"
             : p.onPlan
               ? "Scan or size the room to see it in 3D"

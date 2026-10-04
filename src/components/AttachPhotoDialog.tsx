@@ -41,7 +41,9 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
   const [thing, setThing] = useState<Thing | null>(null);
   // the photo id once known: given for a photo, materialized for a capture
   const [photoId, setPhotoId] = useState<number | null>(target.source === "photo" ? target.photoId : null);
-  const [conflict, setConflict] = useState<string | null>(null);
+  // the owner the server named: its name for the question, its id so the
+  // move happens only from that owner (fromItemId)
+  const [conflict, setConflict] = useState<{ name: string; ownerId: number | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(false);
   const [done, setDone] = useState<Thing | null>(null);
@@ -50,7 +52,7 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
   const attach = trpc.photos.attachToItem.useMutation();
   const busy = ensure.isPending || attach.isPending;
 
-  const run = async (t: Thing, force: boolean) => {
+  const run = async (t: Thing, force: boolean, fromItemId?: number | null) => {
     setError(null);
     setRetry(false);
     setConflict(null);
@@ -66,17 +68,26 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
         photoId: id,
         itemId: t.id,
         ...(force ? { force: true } : {}),
+        ...(force && fromItemId != null ? { fromItemId } : {}),
       });
       await utils.photos.listAll.invalidate();
       void utils.items.placementSummary.invalidate();
+      // the Thing's photos and placement (and a moved photo's old owner's) changed
+      void utils.items.get.invalidate({ id: t.id });
+      if (fromItemId != null) void utils.items.get.invalidate({ id: fromItemId });
+      void utils.items.placement.invalidate();
       setDone(t);
     } catch (err) {
-      const e = err as { message?: string; data?: { code?: string } };
+      const e = err as { message?: string; data?: { code?: string; ownerId?: number } };
       // a capture that became a photo moves out of the inbox list either way
       void utils.photos.listAll.invalidate();
       const message = e.message ?? "";
       if (e.data?.code === "CONFLICT" && message.startsWith(OWNED_PREFIX)) {
-        setConflict(message.slice(OWNED_PREFIX.length));
+        setConflict({ name: message.slice(OWNED_PREFIX.length), ownerId: e.data.ownerId ?? null });
+      } else if (e.data?.code === "PRECONDITION_FAILED") {
+        // a scene with other Things pinned in it: never attached, no Move;
+        // the message says to pin the Thing in it instead
+        setError(message);
       } else if (e.data?.code === "CONFLICT") {
         // any other conflict (say, attached elsewhere a moment ago) is not a
         // move question: re-read and let the user try again without force
@@ -136,9 +147,9 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
         )}
         {conflict != null && thing && !busy && (
           <div className="mt-3 rounded-md border border-border bg-muted/40 p-3 text-[13px]">
-            <div>Move from {conflict}?</div>
+            <div>Move from {conflict.name}?</div>
             <div className="mt-2 flex gap-2">
-              <Button size="sm" onClick={() => void run(thing, true)}>
+              <Button size="sm" onClick={() => void run(thing, true, conflict.ownerId)}>
                 Move
               </Button>
               <Button size="sm" variant="outline" onClick={() => setConflict(null)}>
