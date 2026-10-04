@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
+import { ZoomOverlay } from "@/components/ZoomOverlay";
+import { useZoomable } from "@/hooks/use-zoomable";
 import { trpc } from "@/providers/trpc";
 import { HousesMap } from "@/components/HousesMap";
 import { Home, MapPin, ChevronRight, Loader2 } from "lucide-react";
@@ -142,11 +144,33 @@ function PhotoCard({ storageKey, captureId, roomId }: { storageKey: string; capt
   const ensure = trpc.photos.ensureForCapture.useMutation({
     onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
   });
+  const zoom = useZoomable();
 
   return (
-    <div className="rounded-lg border border-border bg-white p-2">
+    <div className="relative rounded-lg border border-border bg-white p-2">
+      {url.data?.url && (
+        <>
+          <button
+            type="button"
+            onClick={zoom.show}
+            className="absolute top-3 right-3 h-6 w-6 flex items-center justify-center rounded bg-white/85 text-[13px] leading-none text-muted-foreground hover:text-foreground shadow-sm"
+            title="Enlarge"
+            aria-label="Enlarge"
+          >
+            ⤢
+          </button>
+          <ZoomOverlay open={zoom.open} onClose={zoom.close}>
+            <img src={url.data.url} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
+          </ZoomOverlay>
+        </>
+      )}
       {url.data?.url ? (
-        <img src={url.data.url} alt="" className="w-full aspect-video object-cover rounded" />
+        <img
+          src={url.data.url}
+          alt=""
+          className="w-full aspect-video object-cover rounded cursor-zoom-in"
+          {...zoom.props}
+        />
       ) : (
         <div className="w-full aspect-video rounded bg-muted/40" />
       )}

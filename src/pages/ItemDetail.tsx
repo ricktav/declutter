@@ -3,13 +3,13 @@ import { useParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
 import { RecropDialog } from "@/components/RecropDialog";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
+import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
 import {
@@ -98,7 +98,8 @@ function AttachmentView({
           type="button"
           className="cursor-zoom-in block"
           onClick={() => onZoom?.(url.data!.url!)}
-          title="Click to zoom in"
+          onDoubleClick={() => onZoom?.(url.data!.url!)}
+          title="Click or double-click to enlarge"
         >
           <img
             src={url.data.url}
@@ -941,13 +942,11 @@ export default function ItemDetail() {
 
       <RecropDialog photoId={recropId} open={recropId != null} onClose={() => setRecropId(null)} />
       <ChooseFromLibraryDialog itemId={itemId} open={libraryOpen} onClose={() => setLibraryOpen(false)} />
-      <Dialog open={!!lightboxUrl} onOpenChange={(o) => !o && setLightboxUrl(null)}>
-        <DialogContent className="max-w-4xl p-2 bg-black/95 border-none">
-          {lightboxUrl && (
-            <img src={lightboxUrl} alt="" className="w-full h-auto max-h-[85vh] object-contain rounded" />
-          )}
-        </DialogContent>
-      </Dialog>
+      <ZoomOverlay open={!!lightboxUrl} onClose={() => setLightboxUrl(null)} title={it.name}>
+        {lightboxUrl && (
+          <img src={lightboxUrl} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
+        )}
+      </ZoomOverlay>
     </div>
   );
 }

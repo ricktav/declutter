@@ -12,6 +12,8 @@ import { useLastRoomId } from "@/hooks/use-last-room";
 import { AiProgressBar } from "@/components/AiProgressBar";
 import { DetectObjectsModal } from "@/components/DetectObjects";
 import { GeojsonThumb } from "@/components/GeojsonThumb";
+import { ZoomOverlay } from "@/components/ZoomOverlay";
+import { useZoomable } from "@/hooks/use-zoomable";
 import { isGeojsonFile } from "@/lib/geojsonFloor";
 import {
   Dialog,
@@ -193,6 +195,31 @@ type CompareSide = {
   ms: number;
 };
 type CompareResult = { a: CompareSide; b: CompareSide };
+
+/** A floor-scan outline in a triage card: double-click (or ⤢) opens it
+ * large in the pan/zoom overlay. */
+function ZoomableGeojson({ storageKey }: { storageKey: string }) {
+  const zoom = useZoomable();
+  return (
+    <div className="relative w-28 shrink-0 cursor-zoom-in" {...zoom.props}>
+      <GeojsonThumb storageKey={storageKey} />
+      <button
+        type="button"
+        onClick={zoom.show}
+        className="absolute top-1 right-1 h-5 w-5 flex items-center justify-center rounded bg-white/80 text-[12px] leading-none text-muted-foreground hover:text-foreground"
+        title="Enlarge"
+        aria-label="Enlarge"
+      >
+        ⤢
+      </button>
+      <ZoomOverlay open={zoom.open} onClose={zoom.close} title="Floor scan">
+        <div className="w-[min(90vw,calc(100dvh-6rem))] bg-white rounded-lg">
+          <GeojsonThumb storageKey={storageKey} />
+        </div>
+      </ZoomOverlay>
+    </div>
+  );
+}
 
 function CaptureImage({ storageKey }: { storageKey: string }) {
   const url = trpc.photos.url.useQuery({ key: storageKey });
@@ -494,9 +521,7 @@ function TriageCard({
           )}
           {capture.storageKey && (capture.kind === "scan" || isGeojsonFile(capture.storageKey)) && (
             <div className="mt-2 flex items-start gap-3">
-              <div className="w-28 shrink-0">
-                <GeojsonThumb storageKey={capture.storageKey} />
-              </div>
+              <ZoomableGeojson storageKey={capture.storageKey} />
               <div className="flex flex-col gap-1.5 flex-1 max-w-xs">
                 <RoomPicker value={geoRoomId} onChange={setGeoRoomId} />
                 <div className="text-[11px] text-muted-foreground">
@@ -517,7 +542,12 @@ function TriageCard({
           )}
           {capture.storageKey && capture.kind === "image" && (
             <div className="mt-2 flex items-start gap-3">
-              <button title="Click to view full size" className="cursor-zoom-in" onClick={() => onZoom(capture.storageKey!, capture.id, true)}>
+              <button
+                title="Click or double-click to enlarge"
+                className="cursor-zoom-in"
+                onClick={() => onZoom(capture.storageKey!, capture.id, true)}
+                onDoubleClick={() => onZoom(capture.storageKey!, capture.id, true)}
+              >
                 <CaptureImage storageKey={capture.storageKey} />
               </button>
               <div className="flex flex-col gap-1.5 pt-1">
@@ -860,8 +890,9 @@ export default function InboxPage() {
                   {c.kind === "image" && c.storageKey ? (
                     <button
                       className="cursor-zoom-in block w-full"
-                      title="Click to view full size"
+                      title="Click or double-click to enlarge"
                       onClick={() => openLightbox(c.storageKey!, c.id, false)}
+                      onDoubleClick={() => openLightbox(c.storageKey!, c.id, false)}
                     >
                       <ProcessedThumb storageKey={c.storageKey} kind={c.kind} />
                     </button>
@@ -879,23 +910,22 @@ export default function InboxPage() {
         </>
       )}
 
-      <Dialog open={!!lightbox} onOpenChange={(o) => !o && setLightbox(null)}>
-        <DialogContent className="max-w-4xl p-2 bg-black/95 border-none">
-          {lightbox && (
-            // top-left, well clear of the dialog's own close X at top-4 right-4
-            <div className="absolute top-3 left-3 z-10">
-              {lightbox.isPending ? (
-                <PinPendingButton captureId={lightbox.captureId} />
-              ) : (
-                <PinCaptureButton captureId={lightbox.captureId} />
-              )}
-            </div>
-          )}
-          {lightboxUrl.data?.url && (
-            <img src={lightboxUrl.data.url} alt="" className="w-full h-auto max-h-[85vh] object-contain rounded" />
-          )}
-        </DialogContent>
-      </Dialog>
+      <ZoomOverlay
+        open={!!lightbox}
+        onClose={() => setLightbox(null)}
+        toolbarExtra={
+          lightbox &&
+          (lightbox.isPending ? (
+            <PinPendingButton captureId={lightbox.captureId} />
+          ) : (
+            <PinCaptureButton captureId={lightbox.captureId} />
+          ))
+        }
+      >
+        {lightboxUrl.data?.url && (
+          <img src={lightboxUrl.data.url} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
+        )}
+      </ZoomOverlay>
     </div>
   );
 }

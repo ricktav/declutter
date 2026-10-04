@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
+import { ZoomOverlay } from "@/components/ZoomOverlay";
+import { useClickOrDoubleClick } from "@/hooks/use-zoomable";
 import { timeAgo } from "@/lib/format";
 import { Search, Loader2 } from "lucide-react";
 import { usePersistedState } from "@/hooks/use-persisted-state";
@@ -33,6 +35,18 @@ function PhotoTile({ photo }: { photo: Photo }) {
   const ensure = trpc.photos.ensureForCapture.useMutation({
     onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
   });
+  const [zoomOpen, setZoomOpen] = useState(false);
+  const href = photo.itemId ? `/items/${photo.itemId}` : `/annotate/${photo.id}`;
+  // single click keeps its job (open / pin); a double click enlarges instead
+  const clicks = useClickOrDoubleClick(
+    () => (photo.source === "capture" ? ensure.mutate({ captureId: photo.captureId! }) : navigate(href)),
+    () => photo.storageKey && setZoomOpen(true),
+  );
+  const zoom = photo.storageKey && (
+    <ZoomOverlay open={zoomOpen} onClose={() => setZoomOpen(false)} title={photo.itemName ?? undefined}>
+      <FullImage storageKey={photo.storageKey} />
+    </ZoomOverlay>
+  );
 
   const caption =
     photo.source === "capture"
@@ -54,11 +68,12 @@ function PhotoTile({ photo }: { photo: Photo }) {
 
   if (photo.source === "capture") {
     return (
+      <>
       <button
         className="group rounded-lg border border-border bg-white p-2 text-left hover:border-primary/50 disabled:opacity-60"
         disabled={ensure.isPending}
-        onClick={() => ensure.mutate({ captureId: photo.captureId! })}
-        title="Pin objects on this photo"
+        {...clicks}
+        title="Pin objects on this photo (double-click to enlarge)"
       >
         {ensure.isPending ? (
           <div className="aspect-square w-full flex items-center justify-center rounded-md border border-border bg-muted/40">
@@ -70,17 +85,31 @@ function PhotoTile({ photo }: { photo: Photo }) {
         <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{caption}</div>
         <div className="font-data text-[10px] text-muted-foreground">{timeAgo(photo.createdAt)}</div>
       </button>
+      {zoom}
+      </>
     );
   }
 
   return (
-    <Link
-      to={photo.itemId ? `/items/${photo.itemId}` : `/annotate/${photo.id}`}
-      className="group rounded-lg border border-border bg-white p-2 hover:border-primary/50"
-    >
-      {inner}
-    </Link>
+    <>
+      <Link
+        to={href}
+        className="group rounded-lg border border-border bg-white p-2 hover:border-primary/50"
+        title="Double-click to enlarge"
+        {...clicks}
+      >
+        {inner}
+      </Link>
+      {zoom}
+    </>
   );
+}
+
+/** The full-size photo behind a tile, for the zoom overlay. */
+function FullImage({ storageKey }: { storageKey: string }) {
+  const url = trpc.photos.url.useQuery({ key: storageKey });
+  if (!url.data?.url) return null;
+  return <img src={url.data.url} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />;
 }
 
 /** Every photo attached to an item, in one catalog - grouped/filtered by
