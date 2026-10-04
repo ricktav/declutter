@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { keepPreviousData } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
@@ -213,10 +214,14 @@ export default function PhotosPage() {
     () =>
       [...new Set((photos.data ?? []).flatMap((p) => (p.itemId != null ? [p.itemId] : [])))]
         .sort((a, b) => a - b)
-        .slice(0, 500),
+        .slice(0, 500), // placementSummary takes at most 500 ids; Things past that get no badge
     [photos.data]
   );
-  const summary = trpc.items.placementSummary.useQuery({ itemIds }, { enabled: itemIds.length > 0 });
+  const summary = trpc.items.placementSummary.useQuery(
+    { itemIds },
+    // keep the old badges while a new id list loads, so they do not blink after an attach
+    { enabled: itemIds.length > 0, placeholderData: keepPreviousData },
+  );
   const placementOf = useMemo(
     () => new Map((summary.data ?? []).map((s) => [s.itemId, { pinCount: s.pinCount, onPlan: s.onPlan }])),
     [summary.data]
@@ -310,6 +315,7 @@ export default function PhotosPage() {
             onChange={(e) => setShowObjects(e.target.checked)}
           />
           Items
+          {notPlaced && <span className="text-[11px] italic">(showing unplaced Things)</span>}
         </label>
         <button
           type="button"
@@ -351,9 +357,13 @@ export default function PhotosPage() {
           <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
             {photos.data?.length === 0
               ? "No photos yet — pin items on photos or add one from an item's page."
-              : notPlaced && !q
-                ? "Every Thing with a photo is pinned and on its plan."
-                : `No photos match "${q}".`}
+              : notPlaced && itemIds.length > 0 && summary.isError
+                ? `Could not check placement: ${summary.error.message}`
+                : notPlaced && itemIds.length > 0 && !summary.isSuccess
+                  ? "Checking placement…"
+                  : notPlaced && !q
+                    ? "Every Thing with a photo is pinned and on its plan."
+                    : `No photos match "${q}".`}
           </div>
         )}
       </div>

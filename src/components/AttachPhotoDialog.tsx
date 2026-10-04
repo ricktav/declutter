@@ -12,6 +12,9 @@ export type AttachTarget = { source: "photo"; photoId: number } | { source: "cap
 
 type Thing = { id: number; name: string };
 
+/** The server's CONFLICT message for a photo owned by another Thing; only this one asks to move it. */
+const OWNED_PREFIX = "Photo belongs to ";
+
 /** Attach a bucket photo (no Thing yet) to a Thing. When the photo already
  * belongs to another Thing the server answers CONFLICT and the dialog asks
  * before moving it (force). */
@@ -40,6 +43,7 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
   const [photoId, setPhotoId] = useState<number | null>(target.source === "photo" ? target.photoId : null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(false);
   const [done, setDone] = useState<Thing | null>(null);
 
   const ensure = trpc.photos.ensureForCapture.useMutation();
@@ -48,6 +52,7 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
 
   const run = async (t: Thing, force: boolean) => {
     setError(null);
+    setRetry(false);
     setConflict(null);
     try {
       let id = photoId;
@@ -69,8 +74,14 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
       const e = err as { message?: string; data?: { code?: string } };
       // a capture that became a photo moves out of the inbox list either way
       void utils.photos.listAll.invalidate();
-      if (e.data?.code === "CONFLICT") {
-        setConflict((e.message ?? "").replace(/^Photo belongs to /, ""));
+      const message = e.message ?? "";
+      if (e.data?.code === "CONFLICT" && message.startsWith(OWNED_PREFIX)) {
+        setConflict(message.slice(OWNED_PREFIX.length));
+      } else if (e.data?.code === "CONFLICT") {
+        // any other conflict (say, attached elsewhere a moment ago) is not a
+        // move question: re-read and let the user try again without force
+        setError(message || "The photo changed while attaching.");
+        setRetry(true);
       } else {
         setError(e.message ?? "Could not attach the photo.");
       }
@@ -136,7 +147,24 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
             </div>
           </div>
         )}
-        {error && !busy && <div className="mt-3 text-[13px] text-destructive">{error}</div>}
+        {error && !busy && (
+          <div className="mt-3 text-[13px] text-destructive">
+            {error}
+            {retry && thing && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-2"
+                onClick={() => {
+                  void utils.photos.listAll.invalidate();
+                  void run(thing, false);
+                }}
+              >
+                Try again
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     </>
   );
