@@ -456,6 +456,7 @@ export const storageVolumes = mysqlTable(
     label: varchar("label", { length: 128 }),
     fsType: varchar("fsType", { length: 32 }),
     device: varchar("device", { length: 128 }),
+    container: varchar("container", { length: 64 }), // volumes sharing a container share its capacity (APFS); null = its own container
     capacityBytes: bigint("capacityBytes", { mode: "number" }).notNull(),
     usedBytes: bigint("usedBytes", { mode: "number" }).notNull(),
     dataRole: varchar("dataRole", { length: 16 }).$type<DataRole>(),

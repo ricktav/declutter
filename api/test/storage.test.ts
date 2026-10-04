@@ -14,7 +14,7 @@ describe("storage tables", () => {
     )) as unknown as [{ t: string; c: string }[]];
     const by = (t: string) => cols.filter((r) => r.t === t).map((r) => r.c);
     expect(by("storage_volumes")).toEqual(
-      expect.arrayContaining(["id", "itemId", "mountPoint", "capacityBytes", "usedBytes", "dataRole", "measuredAt"]),
+      expect.arrayContaining(["id", "itemId", "mountPoint", "container", "capacityBytes", "usedBytes", "dataRole", "measuredAt"]),
     );
     expect(by("storage_dirs")).toEqual(expect.arrayContaining(["id", "volumeId", "path", "bytes", "measuredAt"]));
   });

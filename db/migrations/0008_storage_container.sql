@@ -1,0 +1,1 @@
+ALTER TABLE `storage_volumes` ADD `container` varchar(64);
