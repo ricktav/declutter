@@ -23,6 +23,7 @@ export default function StoragePage() {
   });
 
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const removeVolume = trpc.storage.removeVolume.useMutation({
     onSuccess: () => {
       select(null);
@@ -39,15 +40,50 @@ export default function StoragePage() {
   const select = (volumeId: number | null) => {
     setSelected(volumeId);
     setConfirmRemove(false);
+    setAttachError(null);
   };
 
   const o = overview.data;
   const maxBytes = useMemo(() => {
     if (!o) return 0;
-    const all = [...o.computers.flatMap((c) => [c, ...c.drives]), ...o.externals];
+    const all = [...o.computers.flatMap((c) => [c, ...c.drives, ...c.attached]), ...o.externals];
     return Math.max(0, ...all.map((d) => d.capacityBytes ?? 0));
   }, [o]);
   const totalUsed = o?.totals.reduce((s, t) => s + t.usedBytes, 0) ?? 0;
+  const barBytes = o ? Math.max(o.capacityBytes, totalUsed + Math.max(0, o.freeBytes)) : 0;
+
+  // the device that holds the selected volume, and where the overview draws it
+  const holder = (() => {
+    if (!o || selected == null) return null;
+    const has = (d: { volumes: { id: number }[] }) => d.volumes.some((v) => v.id === selected);
+    for (const c of o.computers) {
+      if (has(c)) return { device: c, hostId: null, attachable: false };
+      const drive = c.drives.find(has);
+      if (drive) return { device: drive, hostId: null, attachable: false };
+      const att = c.attached.find(has);
+      if (att) return { device: att, hostId: c.id, attachable: true };
+    }
+    const ext = o.externals.find(has);
+    return ext ? { device: ext, hostId: null, attachable: true } : null;
+  })();
+
+  const addRelation = trpc.items.addRelation.useMutation();
+  const removeRelation = trpc.items.removeRelation.useMutation();
+  const [attaching, setAttaching] = useState(false);
+  // drive → computer: drop the old attached-to relation first, then add the new one ("" = none)
+  const attachTo = async (deviceId: number, oldRelationId: number | null, value: string) => {
+    setAttaching(true);
+    setAttachError(null);
+    try {
+      if (oldRelationId != null) await removeRelation.mutateAsync({ id: oldRelationId });
+      if (value !== "") await addRelation.mutateAsync({ fromItemId: deviceId, toItemId: Number(value), type: "attached-to" });
+    } catch (e) {
+      setAttachError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAttaching(false);
+      await utils.storage.overview.invalidate();
+    }
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
@@ -55,7 +91,7 @@ export default function StoragePage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Storage</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Computers with their disks and volumes as blocks: width is capacity, fill is use, colour is the data role. Click a volume for its biggest directories.
+            Computers with their disks and volumes as blocks: width is capacity, each volume is a segment as wide as its use, colour is the data role, the light rest is free. Click a volume for its biggest directories.
           </p>
         </div>
         {houses.length > 1 && (
@@ -70,20 +106,21 @@ export default function StoragePage() {
           <div className="flex items-baseline justify-between">
             <h2 className="text-sm font-semibold">By data role</h2>
             <span className="text-[12px] text-muted-foreground">
-              {formatBytes(totalUsed)} used of {formatBytes(o.capacityBytes)} measured, every house
+              {formatBytes(totalUsed)} used of {formatBytes(o.capacityBytes)}, every house
               {o.unassignedVolumes > 0 && ` · ${o.unassignedVolumes} volume(s) without a role`}
             </span>
           </div>
           <div className="mt-2 flex h-6 w-full overflow-hidden rounded border border-border">
-            {o.totals.length === 0 && <div className="w-full bg-muted" />}
+            {barBytes === 0 && <div className="w-full bg-muted" />}
             {o.totals.map((t) => (
               <div
                 key={t.dataRole ?? "none"}
                 title={`${t.dataRole ?? "no role"}: ${formatBytes(t.usedBytes)} used in ${t.volumes} volume(s)`}
-                style={{ width: `${totalUsed > 0 ? (t.usedBytes / totalUsed) * 100 : 0}%`, background: t.dataRole ? ROLE_COLORS[t.dataRole] : "#9ca3af" }}
-                className="relative border-r border-white/70 last:border-r-0"
+                style={{ width: `${barBytes > 0 ? (t.usedBytes / barBytes) * 100 : 0}%`, background: t.dataRole ? ROLE_COLORS[t.dataRole] : "#9ca3af" }}
+                className="relative shrink-0 border-r border-white/70"
               />
             ))}
+            {barBytes > 0 && o.freeBytes > 0 && <div className="flex-1 bg-muted" title={`free: ${formatBytes(o.freeBytes)}`} />}
           </div>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
             {o.totals.map((t) => (
@@ -92,6 +129,12 @@ export default function StoragePage() {
                 {t.dataRole ?? "no role"} · {formatBytes(t.usedBytes)}
               </span>
             ))}
+            {o.freeBytes > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-2.5 rounded-sm border border-border bg-muted" />
+                free · {formatBytes(o.freeBytes)}
+              </span>
+            )}
           </div>
         </section>
       )}
@@ -114,6 +157,13 @@ export default function StoragePage() {
                   <DeviceBlock key={d.id} device={d} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={select} />
                 ))}
               </div>
+              {c.attached.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-start gap-4 border-t border-dashed border-border pt-3">
+                  {c.attached.map((d) => (
+                    <DeviceBlock key={d.id} device={d} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={select} tag="attached" />
+                  ))}
+                </div>
+              )}
             </section>
           ))}
           {o && o.externals.length > 0 && (
@@ -177,6 +227,30 @@ export default function StoragePage() {
                   ))}
                 </ul>
               </div>
+              {holder?.attachable && o && (
+                <div>
+                  <label className="micro-label text-muted-foreground" htmlFor="storage-attached-to">Attached to</label>
+                  <select
+                    id="storage-attached-to"
+                    className="mt-1 block w-full rounded border border-border bg-white px-2 py-1 text-[12px] disabled:opacity-50"
+                    disabled={attaching}
+                    value={holder.hostId != null ? String(holder.hostId) : holder.device.attachedRelationId != null ? "elsewhere" : ""}
+                    onChange={(e) => {
+                      if (e.target.value === "elsewhere") return;
+                      void attachTo(holder.device.id, holder.device.attachedRelationId, e.target.value);
+                    }}
+                  >
+                    <option value="">— none —</option>
+                    {holder.hostId == null && holder.device.attachedRelationId != null && (
+                      <option value="elsewhere" disabled>a computer not shown here</option>
+                    )}
+                    {o.computers.map((c) => (
+                      <option key={c.id} value={String(c.id)}>{c.name}</option>
+                    ))}
+                  </select>
+                  {attachError && <p className="mt-1 text-[12px] text-red-600">{attachError}</p>}
+                </div>
+              )}
               <div className="border-t border-border pt-2">
                 <button
                   type="button"

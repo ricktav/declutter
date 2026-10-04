@@ -2,17 +2,19 @@
 // Measure this machine's boot volume (df) and its biggest top-level directories
 // (du), and post one storage.report for one device item.
 // Default scope: the boot container only (the APFS container that holds "/" on
-// macOS, the filesystem of "/" on Linux). Everything else (/Volumes/*, simulator
-// runtimes, disk images, Time Machine volumes, other containers) is reported only
-// when named with --only, and an external drive is reported against its own item.
-// One volume per APFS container (mounts sharing diskN merge: label "A + B"); use is
-// container-level (capacity minus available); on macOS "/" lists the Data volume's
-// directories (/Users, /Applications, ...).
+// macOS, the filesystem of "/" on Linux), without its /System/Volumes/* helpers, so
+// "/" alone on a normal Mac. Everything else (/Volumes/*, simulator runtimes, disk
+// images, Time Machine volumes, other containers) is reported only when named with
+// --only, and an external drive is reported against its own item.
+// One volume per APFS volume: each reports its own use (df "Used") and the capacity
+// of its container (diskN), which it shares with the other volumes of that container;
+// naming one mount with --only reports every volume of its container. On macOS "/"
+// lists the Data volume's directories (/Users, /Applications, ...).
 //   node scripts/storage-report-local.mjs --item 205            # this Mac is item 205: its boot container
 //   node scripts/storage-report-local.mjs --item 205 --dry      # print the report, post nothing
-//   node scripts/storage-report-local.mjs --item <drive item id> --only /Volumes/T7   # an external drive, against its own item
+//   node scripts/storage-report-local.mjs --item <drive item id> --only /Volumes/T7   # an external drive (T7 and TM-T7 when they share a container), against its own item
 //   --base http://localhost:3001 (default)   --dirs 15 (top directories per volume, 1-100)
-//   --only /,/Volumes/T7   (mount points to report instead of the boot container; matches a container's chosen mount or any member mount)
+//   --only /,/Volumes/T7   (mount points to report instead of the boot container; each brings the other volumes of its container)
 // Reads APP_TOKEN from .env when the server has one. macOS and Linux (df -kP, du -xsk).
 import "dotenv/config";
 import { execFileSync } from "child_process";
@@ -28,44 +30,51 @@ const topN = Number.isNaN(dirsArg) ? 15 : Math.min(100, Math.max(1, dirsArg));
 const only = args.only ? String(args.only).split(",") : null;
 
 // df -k: Filesystem 1024-blocks Used Available Capacity [iused ifree %iused] Mounted on
-// Use is container-level: (blocks - available), so APFS volumes that share one
-// container are not under-counted. One reported volume per APFS container
-// (/dev/diskNsM mounts with the same diskN); other devices stay one volume per mount.
+// macOS: /dev/diskNsM mounts are APFS volumes of container diskN; each reports its own
+// "Used" and the container's blocks as capacity. Linux and other devices: no container,
+// use = blocks - available (reserved blocks count as used).
+const darwin = process.platform === "darwin";
 const lines = execFileSync("df", ["-kP"], { encoding: "utf8" }).trim().split("\n").slice(1);
 const rows = [];
 for (const line of lines) {
   const m = line.match(/^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+\S+\s+(.+)$/);
   if (!m) continue;
-  const [, device, blocks, , avail, mountPoint] = m;
+  const [, device, blocks, used, avail, mountPoint] = m;
   const local = device.startsWith("/dev/") && !/^\/(System(\/|$)|private\/var\/vm|dev(\/|$))/.test(mountPoint);
-  rows.push({ device, container: device.match(/^\/dev\/(disk\d+)s\d+/)?.[1] || null, mountPoint, local, capacityBytes: Number(blocks) * 1024, usedBytes: (Number(blocks) - Number(avail)) * 1024 });
-}
-const dataMount = rows.find((r) => r.mountPoint === "/System/Volumes/Data");
-const byMount = (a, b) => (a.mountPoint === "/" ? -1 : b.mountPoint === "/" ? 1 : a.mountPoint.localeCompare(b.mountPoint));
-const rootRow = rows.find((r) => r.mountPoint === "/");
-const rootKey = rootRow ? rootRow.container || rootRow.mountPoint : null;
-const groups = new Map();
-for (const r of rows.filter((r) => r.local || (only && only.includes(r.mountPoint))).sort(byMount)) {
-  const key = r.container || r.mountPoint;
-  if (!groups.has(key)) groups.set(key, []);
-  groups.get(key).push(r);
-}
-const volumes = [];
-for (const [key, members] of groups) {
-  // default: the boot container only; --only replaces it with the named mounts
-  if (only ? !members.some((r) => only.includes(r.mountPoint)) : key !== rootKey) continue;
-  const first = members[0];
-  const names = members.map((r) => path.basename(r.mountPoint)).filter(Boolean);
-  volumes.push({
-    device: (first.container || first.device.replace(/^\/dev\//, "")).slice(0, 128),
-    mountPoint: first.mountPoint,
-    label: names.length ? names.join(" + ").slice(0, 128) : null,
-    capacityBytes: first.capacityBytes,
-    usedBytes: first.usedBytes,
-    // du -x stops at APFS firmlinks: measure the Data volume of this container instead of the sealed system volume
-    root: first.mountPoint === "/" && dataMount && dataMount.container === key ? dataMount.mountPoint : first.mountPoint,
+  const container = darwin ? device.match(/^\/dev\/(disk\d+)s\d+/)?.[1] || null : null;
+  rows.push({
+    device: device.replace(/^\/dev\//, ""),
+    container,
+    mountPoint,
+    local,
+    capacityBytes: Number(blocks) * 1024,
+    usedBytes: (container ? Number(used) : Number(blocks) - Number(avail)) * 1024,
   });
 }
+// a "container" whose mounts disagree on size is plain partitions of one disk, not APFS: no shared capacity
+const sizes = new Map();
+for (const r of rows) if (r.container) sizes.set(r.container, [...(sizes.get(r.container) ?? []), r.capacityBytes]);
+for (const r of rows) if (r.container && new Set(sizes.get(r.container)).size > 1) r.container = null;
+
+const dataMount = rows.find((r) => r.mountPoint === "/System/Volumes/Data");
+const byMount = (a, b) => (a.mountPoint === "/" ? -1 : b.mountPoint === "/" ? 1 : a.mountPoint.localeCompare(b.mountPoint));
+const keyOf = (r) => r.container || r.mountPoint;
+// default: the boot container; --only: the containers of the named mounts
+const scope = new Set(only ? rows.filter((r) => only.includes(r.mountPoint)).map(keyOf) : rows.filter((r) => r.mountPoint === "/").map(keyOf));
+const volumes = rows
+  // a named mount always; its container's other volumes only when local (no /System/Volumes/*, snapshots or VM)
+  .filter((r) => scope.has(keyOf(r)) && (r.local || (only && only.includes(r.mountPoint))))
+  .sort(byMount)
+  .map((r) => ({
+    device: r.device.slice(0, 128),
+    container: r.container,
+    mountPoint: r.mountPoint,
+    label: path.basename(r.mountPoint).slice(0, 128) || null,
+    capacityBytes: r.capacityBytes,
+    usedBytes: Math.min(r.usedBytes, r.capacityBytes),
+    // du -x stops at APFS firmlinks: "/" measures the Data volume of its container instead of the sealed system volume
+    root: r.mountPoint === "/" && dataMount && dataMount.container && dataMount.container === r.container ? dataMount.mountPoint : r.mountPoint,
+  }));
 if (volumes.length === 0) { console.error(only ? `no mounted volume matches --only ${only.join(",")}` : "no boot volume found (use --only to name mount points)"); process.exit(1); }
 
 function topDirs(root) {

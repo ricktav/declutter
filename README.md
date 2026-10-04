@@ -72,7 +72,7 @@ local Ollama.
   apply). An existing database that was created with `db:push` is switched to migrations once with
   `npm run db:adopt 0002_item_decision` (the last tag it already matches); after that, only
   `npm run db:migrate`.
-- `node scripts/storage-report-local.mjs --item <id>` measures this machine's boot volume and its top directories and posts them to the Storage page (`/storage`). Other volumes are reported only when named with `--only`; an external drive is reported against its own item, e.g. `node scripts/storage-report-local.mjs --item <drive item id> --only /Volumes/T7`.
+- `node scripts/storage-report-local.mjs --item <id>` measures this machine's boot volume and its top directories and posts them to the Storage page (`/storage`). Other volumes are reported only when named with `--only`; an external drive is reported against its own item, e.g. `node scripts/storage-report-local.mjs --item <drive item id> --only /Volumes/T7`. Each APFS volume is its own row with its own use and data role; volumes of one container (for example `T7` and `TM-T7` on one disk) share its capacity, so `--only /Volumes/T7` reports both. Add `--dry` to print the report without posting it.
 - Photos and files are stored on local disk under `uploads/` and served at `/uploads/*`.
 - Access: set `APP_TOKEN` in `.env` and the app asks for it once per browser. Without it the
   API and photos are open to anyone who can reach the port, so only run that way on a
