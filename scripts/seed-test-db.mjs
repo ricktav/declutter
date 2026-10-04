@@ -43,6 +43,11 @@ const house = await ins("insert into areas (slug, name, icon, sortOrder) values 
 const room = (houseId, name, floor, w = null, d = null) =>
   ins("insert into rooms (houseId, name, floor, source, widthM, depthM) values (?, ?, ?, 'manual', ?, ?)", [houseId, name, floor, w, d]);
 const keuken = await room(thuis, "Keuken", "ground", 3.2, 4.1);
+const wall = (a, b) => ({ kind: "wall", points: [a, b] });
+await c.query("update rooms set walls = ? where id = ?", [
+  JSON.stringify([wall([0, 0], [3.2, 0]), wall([3.2, 0], [3.2, 4.1]), wall([3.2, 4.1], [0, 4.1]), wall([0, 4.1], [0, 0])]),
+  keuken,
+]);
 const zolder = await room(thuis, "Zolder", "attic");
 const kelder = await room(thuis, "Kelder", "basement");
 const zKeuken = await room(zomer, "Keuken", "ground");
@@ -65,8 +70,16 @@ for (const [itemId, rgb] of [[kettle, [200, 120, 40]], [toaster, [40, 120, 200]]
   const f = await jpeg(...rgb);
   await c.query("insert into photos (itemId, storageKey, mimeType, size, title) values (?, ?, 'image/jpeg', ?, 'seed photo')", [itemId, f.key, f.size]);
 }
+await c.query("update items set pos = ? where id = ?", [JSON.stringify({ xM: 0.4, yM: 0.5, wM: 0.3, dM: 0.3, rotDeg: 0 }), kettle]);
+await c.query("update items set pos = ? where id = ?", [JSON.stringify({ xM: 1.0, yM: 0.5, wM: 0.3, dM: 0.3, rotDeg: 0 }), toaster]);
+const overview = await jpeg(160, 140, 110);
+const keukenOverview = await ins("insert into photos (itemId, roomId, storageKey, mimeType, size, title) values (null, ?, ?, 'image/jpeg', ?, 'Keuken overview')", [keuken, overview.key, overview.size]);
+const kettlePin = await ins(
+  "insert into photo_pins (photoId, xPct, yPct, wPct, hPct, label, itemId, origin, status) values (?, 20, 30, 15, 15, 'Waterkoker', ?, 'user', 'confirmed')",
+  [keukenOverview, kettle],
+);
 const capture = await jpeg(230, 230, 200);
 await c.query("insert into captures (kind, storageKey, status) values ('image', ?, 'pending')", [capture.key]);
 
-console.log(JSON.stringify({ houses: { thuis, zomer }, rooms: { keuken, zolder, kelder, zKeuken }, items: { kettle, laptop } }));
+console.log(JSON.stringify({ houses: { thuis, zomer }, rooms: { keuken, zolder, kelder, zKeuken }, items: { kettle, laptop }, photos: { keukenOverview }, pins: { waterkoker: kettlePin } }));
 await c.end();
