@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { EnergyReportError, applyEnergyReport } from "../lib/energy";
+import { EnergyReportError, applyEnergyReport, energyOverview } from "../lib/energy";
 
 const n = z.number().nonnegative().finite();
 const reportMonth = z.object({
@@ -33,5 +33,12 @@ export const energyRouter = createRouter({
         if (e instanceof EnergyReportError) throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
         throw e;
       }
+    }),
+  /** Scoped like storage.overview: the houseId input, else the session house; null covers all houses. */
+  overview: procedure
+    .input(z.object({ houseId: z.number().nullable().optional() }).optional())
+    .query(async ({ input, ctx }) => {
+      const houseId = input?.houseId !== undefined ? input.houseId : ctx.houseId;
+      return energyOverview(getDb(), houseId);
     }),
 });

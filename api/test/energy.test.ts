@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { areas, events, houses, items, relations, energyMonths } from "@db/schema";
+import { areas, events, houses, items, relations, energyMonths, energyTariffs } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
-import { EnergyReportError, applyEnergyReport, currentMonth, meterKind } from "../lib/energy";
+import { EnergyReportError, applyEnergyReport, currentMonth, energyOverview, hoursIn, lastMonths, meterKind, tariffFor } from "../lib/energy";
 
 beforeEach(resetTestDb);
 
@@ -110,5 +110,120 @@ describe("energy.report", () => {
     expect(meterKind({ attributes: null })).toBeNull();
     expect(currentMonth(new Date(2026, 0, 1, 0, 30))).toBe("2026-01");
     expect(currentMonth(new Date(2025, 11, 31, 23, 59))).toBe("2025-12");
+  });
+});
+
+const NOW = new Date(2026, 9, 4, 12); // 4 Oct 2026, local time: last 12 = 2025-10..2026-09
+const T = { validFrom: "2015-01-01", normal: 0.25, offpeak: 0.2, feedIn: 0.06, feedInCost: 0.04, fixedPerDay: 1.5, note: null };
+
+describe("energy calculations", () => {
+  it("windows are complete months, oldest first", () => {
+    expect(lastMonths(3, NOW)).toEqual(["2026-07", "2026-08", "2026-09"]);
+    expect(lastMonths(12, NOW)[0]).toBe("2025-10");
+    expect(lastMonths(2, new Date(2026, 0, 15))).toEqual(["2025-11", "2025-12"]);
+    expect(hoursIn("2026-02")).toBe(28 * 24);
+    expect(hoursIn("2028-02")).toBe(29 * 24);
+  });
+  it("picks the price valid on the month's first day", () => {
+    const ts = [T, { ...T, validFrom: "2026-03-15", normal: 0.3 }];
+    expect(tariffFor(ts, "2026-03")?.normal).toBe(0.25);
+    expect(tariffFor(ts, "2026-04")?.normal).toBe(0.3);
+    expect(tariffFor([{ ...T, validFrom: "2030-01-01" }], "2026-04")).toBeNull();
+  });
+});
+
+describe("energy.overview", () => {
+  async function fill() {
+    const s = await seedMeters();
+    const db = getTestDb();
+    await db.delete(energyTariffs);
+    await db.insert(energyTariffs).values({ validFrom: "2015-01-01", normalEurKwh: "0.25", offpeakEurKwh: "0.2", feedInEurKwh: "0.06", feedInCostEurKwh: "0.04", fixedEurDay: "1.5" });
+    const year = lastMonths(24, NOW);
+    const last = year.slice(12);
+    // fridge: 10 + 5 kWh a month, full coverage; the second year uses 20% more
+    const fridge = year.map((m, i) => {
+      const f = i < 12 ? 1 : 1.2;
+      return { month: m, kwhNormal: 10 * f, kwhOffpeak: 5 * f, baseW: 15 + i, peakW: 160, hours: hoursIn(m) };
+    });
+    // tv plug: only the last 12 months, 70% coverage -> no trend
+    const tv = last.map((m) => ({ month: m, kwhNormal: 8, kwhOffpeak: 4, baseW: 30, peakW: 300, hours: hoursIn(m) * 0.7 }));
+    // grid + solar for the last 12 months, except solar misses 2026-09
+    const grid = last.map((m) => ({ month: m, kwhNormal: 100, kwhOffpeak: 80, kwhReturnedNormal: 50, kwhReturnedOffpeak: 10 }));
+    const solar = last.filter((m) => m !== "2026-09").map((m) => ({ month: m, kwhProduced: 300 }));
+    await applyEnergyReport(db, { itemId: s.fridgePlug, source: "t", months: fridge }, NOW);
+    await applyEnergyReport(db, { itemId: s.tvPlug, source: "t", months: tv }, NOW);
+    await applyEnergyReport(db, { itemId: s.grid, source: "t", months: grid }, NOW);
+    await applyEnergyReport(db, { itemId: s.solar, source: "t", months: solar }, NOW);
+    // the current, partial month is stored but never counted
+    await applyEnergyReport(db, { itemId: s.fridgePlug, source: "t", months: [{ month: "2026-10", kwhNormal: 999, kwhOffpeak: 0 }] }, NOW);
+    // a plug in another house never counts here
+    await applyEnergyReport(db, { itemId: s.elsewhere, source: "t", months: [{ month: "2026-09", kwhNormal: 500, kwhOffpeak: 0 }] }, NOW);
+    return s;
+  }
+
+  it("totals, costs, baseline and trend per plug over the last 12 complete months", async () => {
+    const s = await fill();
+    const o = await energyOverview(getTestDb(), s.houseId, NOW);
+    expect(o.months[0]).toBe("2025-10");
+    expect(o.months[11]).toBe("2026-09");
+    expect(o.tariff?.normal).toBe(0.25);
+    const fridge = o.plugs.find((p) => p.itemId === s.fridgePlug)!;
+    expect(fridge.kwh).toBeCloseTo(12 * 15 * 1.2, 3);
+    expect(fridge.eur).toBeCloseTo(12 * (12 * 0.25 + 6 * 0.2), 3);
+    expect(fridge.trendPct).toBeCloseTo(20, 1);
+    expect(fridge.baseW).toBe(32.5); // median of 27..38
+    expect(fridge.peakW).toBe(160);
+    expect(fridge.baseEurYear).toBeCloseTo((32.5 / 1000) * 8760 * ((80 / 168) * 0.25 + (88 / 168) * 0.2), 2);
+    expect(fridge.hours).toBe(fridge.hoursPossible);
+    const tv = o.plugs.find((p) => p.itemId === s.tvPlug)!;
+    expect(tv.trendPct).toBeNull(); // 70% coverage and no previous year
+    expect(tv.powers.map((p) => p.name).sort()).toEqual(["Mac mini", "Television"]);
+    expect(fridge.powers).toEqual([]);
+    expect(o.plugs.map((p) => p.itemId)).not.toContain(s.elsewhere);
+    expect(o.plugs.map((p) => p.itemId)).not.toContain(s.grid);
+    expect(o.plugs[0].itemId).toBe(s.fridgePlug); // sorted by euros, highest first
+    expect(o.rooms).toEqual([{ roomId: null, name: "No room", kwh: 12 * 18 + 12 * 12, eur: expect.closeTo(12 * 4.2 + 12 * 2.8, 2) }]);
+    expect(o.house.baselineW).toBe(62.5);
+  });
+
+  it("house use only counts months that have every source", async () => {
+    const s = await fill();
+    const o = await energyOverview(getTestDb(), s.houseId, NOW);
+    expect(o.house.monthsCounted).toBe(11); // 2026-09 has no solar row
+    expect(o.house.useKwh).toBeCloseTo(11 * (180 + 300 - 60), 3);
+    expect(o.house.producedKwh).toBeCloseTo(11 * 300, 3);
+    expect(o.house.exportKwh).toBeCloseTo(11 * 60, 3);
+    const plugs11 = 11 * (15 * 1.2 + 12);
+    expect(o.house.unmeasuredKwh).toBeCloseTo(11 * (180 + 300 - 60) - plugs11, 3);
+    expect(o.house.importKwh).toBeCloseTo(11 * 180, 3);
+    // fixed costs only for the 11 counted months (2025-10 .. 2026-08: 335 days)
+    expect(o.house.fixedEur).toBeCloseTo(335 * 1.5, 2);
+    expect(o.house.netCostEur).toBeCloseTo(11 * (100 * 0.25 + 80 * 0.2 - 60 * (0.06 - 0.04)) + o.house.fixedEur!, 2);
+  });
+
+  it("gives null house figures and euros when nothing can be counted or priced", async () => {
+    const s = await seedMeters();
+    await getTestDb().delete(energyTariffs);
+    await applyEnergyReport(getTestDb(), { itemId: s.fridgePlug, source: "t", months: [{ month: "2026-09", kwhNormal: 1, kwhOffpeak: 1 }] }, NOW);
+    const o = await energyOverview(getTestDb(), s.houseId, NOW);
+    expect(o.tariff).toBeNull();
+    expect(o.house).toMatchObject({ useKwh: null, unmeasuredKwh: null, netCostEur: null, monthsCounted: 0, baselineEurYear: null });
+    const fridge = o.plugs.find((p) => p.itemId === s.fridgePlug)!;
+    expect([fridge.kwh, fridge.eur, fridge.avgW, fridge.trendPct]).toEqual([2, null, null, null]);
+  });
+
+  it("leaves out archived meters", async () => {
+    const s = await fill();
+    await getTestDb().update(items).set({ status: "archived" }).where(eq(items.id, s.tvPlug));
+    const o = await energyOverview(getTestDb(), s.houseId, NOW);
+    expect(o.plugs.map((p) => p.itemId)).toEqual([s.fridgePlug]);
+  });
+
+  it("is scoped to the session house through the router", async () => {
+    const s = await fill();
+    const o = await callerFor(s.other).energy.overview({});
+    expect(o.plugs.map((p) => p.itemId)).toEqual([s.elsewhere]);
+    const all = await callerFor(s.other).energy.overview({ houseId: null });
+    expect(all.plugs.map((p) => p.itemId).sort((a, b) => a - b)).toEqual([s.fridgePlug, s.tvPlug, s.elsewhere].sort((a, b) => a - b));
   });
 });

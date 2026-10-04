@@ -1,5 +1,5 @@
-import { eq } from "drizzle-orm";
-import { energyMonths, items } from "@db/schema";
+import { and, eq, inArray } from "drizzle-orm";
+import { energyMonths, energyTariffs, items, relations, rooms } from "@db/schema";
 import type { getDb } from "../queries/connection";
 
 type Db = ReturnType<typeof getDb>;
@@ -119,4 +119,299 @@ export async function applyEnergyReport(db: Db, input: { itemId: number; source:
     }
   });
   return { months: input.months.length };
+}
+
+// ---------------------------------------------------------------------------
+// Calculations (spec §4). Decimal columns arrive as strings; they become numbers here.
+
+export type Tariff = { validFrom: string; normal: number; offpeak: number; feedIn: number; feedInCost: number; fixedPerDay: number; note: string | null };
+type Month = {
+  month: string;
+  kwhNormal: number | null;
+  kwhOffpeak: number | null;
+  kwhReturnedNormal: number | null;
+  kwhReturnedOffpeak: number | null;
+  kwhProduced: number | null;
+  avgW: number | null;
+  baseW: number | null;
+  peakW: number | null;
+  hours: number | null;
+};
+
+const num = (v: string | number | null | undefined) => (v == null ? null : Number(v));
+const toMonth = (r: typeof energyMonths.$inferSelect): Month => ({
+  month: r.month,
+  kwhNormal: num(r.kwhNormal),
+  kwhOffpeak: num(r.kwhOffpeak),
+  kwhReturnedNormal: num(r.kwhReturnedNormal),
+  kwhReturnedOffpeak: num(r.kwhReturnedOffpeak),
+  kwhProduced: num(r.kwhProduced),
+  avgW: num(r.avgW),
+  baseW: num(r.baseW),
+  peakW: num(r.peakW),
+  hours: num(r.hours),
+});
+
+export async function loadTariffs(db: Db): Promise<Tariff[]> {
+  const rows = await db.select().from(energyTariffs).orderBy(energyTariffs.validFrom);
+  return rows.map((r) => ({
+    validFrom: String(r.validFrom),
+    normal: Number(r.normalEurKwh),
+    offpeak: Number(r.offpeakEurKwh),
+    feedIn: Number(r.feedInEurKwh),
+    feedInCost: Number(r.feedInCostEurKwh),
+    fixedPerDay: Number(r.fixedEurDay),
+    note: r.note,
+  }));
+}
+
+/** The price valid on the month's first day: the latest validFrom on or before it. */
+export function tariffFor(tariffs: Tariff[], month: string): Tariff | null {
+  const first = `${month}-01`;
+  let found: Tariff | null = null;
+  for (const t of [...tariffs].sort((a, b) => a.validFrom.localeCompare(b.validFrom))) if (t.validFrom <= first) found = t;
+  return found;
+}
+
+/** The n complete months before the current one, oldest first. */
+export function lastMonths(n: number, now = new Date()): string[] {
+  const out: string[] = [];
+  for (let i = n; i >= 1; i--) out.push(currentMonth(new Date(now.getFullYear(), now.getMonth() - i, 1)));
+  return out;
+}
+export function daysIn(month: string): number {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+export const hoursIn = (month: string) => daysIn(month) * 24;
+
+/** 88 of the week's 168 hours are off-peak (weekdays 23-07, weekends). */
+const OFFPEAK_SHARE = 88 / 168;
+const used = (m: Month) => (m.kwhNormal ?? 0) + (m.kwhOffpeak ?? 0);
+const cost = (m: Month, t: Tariff | null) => (t ? (m.kwhNormal ?? 0) * t.normal + (m.kwhOffpeak ?? 0) * t.offpeak : null);
+export const baselineEurYear = (baseW: number | null, t: Tariff | null) =>
+  baseW == null || !t ? null : (baseW / 1000) * 8760 * ((1 - OFFPEAK_SHARE) * t.normal + OFFPEAK_SHARE * t.offpeak);
+const median = (xs: number[]) => {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+};
+const round = (v: number | null, d = 1) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
+
+/** Sums over a window of months; months without a row add nothing. */
+function windowStats(rows: Map<string, Month>, window: string[], tariffs: Tariff[]) {
+  let kwh = 0,
+    eur = 0,
+    hours = 0,
+    priced = true;
+  const bases: number[] = [];
+  let peak: number | null = null;
+  for (const m of window) {
+    const r = rows.get(m);
+    if (!r) continue;
+    kwh += used(r);
+    const c = cost(r, tariffFor(tariffs, m));
+    if (c == null) priced = false;
+    else eur += c;
+    hours += r.hours ?? 0;
+    if (r.baseW != null) bases.push(r.baseW);
+    if (r.peakW != null) peak = Math.max(peak ?? 0, r.peakW);
+  }
+  const hoursPossible = window.reduce((s, m) => s + hoursIn(m), 0);
+  return { kwh, eur: priced ? eur : null, hours, hoursPossible, baseW: median(bases), peakW: peak };
+}
+
+/** Last 12 months against the 12 before, in percent; null unless both windows are ≥ 80% measured. */
+function trend(rows: Map<string, Month>, now: Date, tariffs: Tariff[]): number | null {
+  const all = lastMonths(24, now);
+  const prev = windowStats(rows, all.slice(0, 12), tariffs);
+  const last = windowStats(rows, all.slice(12), tariffs);
+  if (prev.hours < 0.8 * prev.hoursPossible || last.hours < 0.8 * last.hoursPossible || prev.kwh <= 0) return null;
+  return round(((last.kwh - prev.kwh) / prev.kwh) * 100);
+}
+
+export type PlugSummary = {
+  itemId: number;
+  name: string;
+  roomId: number | null;
+  roomName: string | null;
+  kwh: number;
+  eur: number | null;
+  avgW: number | null;
+  baseW: number | null;
+  baseEurYear: number | null;
+  peakW: number | null;
+  hours: number;
+  hoursPossible: number;
+  trendPct: number | null;
+  powers: { id: number; name: string }[];
+};
+export type EnergyOverview = {
+  months: string[];
+  tariff: Tariff | null;
+  house: {
+    useKwh: number | null;
+    producedKwh: number | null;
+    importKwh: number | null;
+    exportKwh: number | null;
+    unmeasuredKwh: number | null;
+    netCostEur: number | null;
+    fixedEur: number | null;
+    monthsCounted: number;
+    baselineW: number;
+    baselineEurYear: number | null;
+  };
+  plugs: PlugSummary[];
+  rooms: { roomId: number | null; name: string; kwh: number; eur: number | null }[];
+};
+
+/** Active meter items, of one house or (houseId null) of all houses. */
+async function metersOf(db: Db, houseId: number | null) {
+  const where = houseId != null ? and(eq(items.status, "active"), eq(items.houseId, houseId)) : eq(items.status, "active");
+  const all = await db.select({ id: items.id, name: items.name, roomId: items.roomId, attributes: items.attributes }).from(items).where(where);
+  return all.flatMap((i) => {
+    const kind = meterKind(i);
+    return kind ? [{ id: i.id, name: i.name, roomId: i.roomId, kind }] : [];
+  });
+}
+
+async function monthsByItem(db: Db, itemIds: number[], window: string[]) {
+  const by = new Map<number, Map<string, Month>>();
+  if (itemIds.length === 0) return by;
+  const rows = await db.select().from(energyMonths).where(and(inArray(energyMonths.itemId, itemIds), inArray(energyMonths.month, window)));
+  for (const r of rows) {
+    if (!by.has(r.itemId)) by.set(r.itemId, new Map());
+    by.get(r.itemId)!.set(r.month, toMonth(r));
+  }
+  return by;
+}
+
+/** The active items each plug powers. */
+async function poweredBy(db: Db, plugIds: number[]) {
+  const out = new Map<number, { id: number; name: string }[]>();
+  if (plugIds.length === 0) return out;
+  const rels = await db
+    .select({ from: relations.fromItemId, id: items.id, name: items.name })
+    .from(relations)
+    .innerJoin(items, eq(items.id, relations.toItemId))
+    .where(and(eq(relations.type, POWERS), inArray(relations.fromItemId, plugIds), eq(items.status, "active")));
+  for (const r of rels) out.set(r.from, [...(out.get(r.from) ?? []), { id: r.id, name: r.name }]);
+  return out;
+}
+
+/**
+ * The last 12 complete months for one house (or all houses when houseId is null):
+ * per plug, per room, and the house from its grid meter and inverter.
+ * The current, partial month never counts. A house month counts only when the
+ * grid meter and (if the house has one) the inverter both have a row for it.
+ */
+export async function energyOverview(db: Db, houseId: number | null, now = new Date()): Promise<EnergyOverview> {
+  const months = lastMonths(12, now);
+  const window24 = lastMonths(24, now);
+  const tariffs = await loadTariffs(db);
+  const tariff = tariffFor(tariffs, currentMonth(now));
+  const meters = await metersOf(db, houseId);
+  const data = await monthsByItem(
+    db,
+    meters.map((m) => m.id),
+    window24,
+  );
+  const plugMeters = meters.filter((m) => m.kind === "plug");
+  const links = await poweredBy(
+    db,
+    plugMeters.map((p) => p.id),
+  );
+  const roomIds = [...new Set(plugMeters.map((p) => p.roomId).filter((r): r is number => r != null))];
+  const roomNames = new Map(
+    roomIds.length ? (await db.select({ id: rooms.id, name: rooms.name }).from(rooms).where(inArray(rooms.id, roomIds))).map((r) => [r.id, r.name]) : [],
+  );
+
+  const plugs: PlugSummary[] = plugMeters.map((p) => {
+    const rows = data.get(p.id) ?? new Map<string, Month>();
+    const w = windowStats(rows, months, tariffs);
+    return {
+      itemId: p.id,
+      name: p.name,
+      roomId: p.roomId,
+      roomName: p.roomId != null ? (roomNames.get(p.roomId) ?? null) : null,
+      kwh: round(w.kwh, 3)!,
+      eur: round(w.eur, 2),
+      avgW: w.hours > 0 ? round((w.kwh * 1000) / w.hours) : null,
+      baseW: round(w.baseW),
+      baseEurYear: round(baselineEurYear(w.baseW, tariff), 2),
+      peakW: round(w.peakW),
+      hours: round(w.hours)!,
+      hoursPossible: w.hoursPossible,
+      trendPct: trend(rows, now, tariffs),
+      powers: links.get(p.id) ?? [],
+    };
+  });
+  plugs.sort((a, b) => (b.eur ?? b.kwh) - (a.eur ?? a.kwh));
+
+  const roomTotals = new Map<number | null, { roomId: number | null; name: string; kwh: number; eur: number | null }>();
+  for (const p of plugs) {
+    const r = roomTotals.get(p.roomId) ?? { roomId: p.roomId, name: p.roomName ?? "No room", kwh: 0, eur: 0 };
+    r.kwh = round(r.kwh + p.kwh, 3)!;
+    r.eur = r.eur == null || p.eur == null ? null : round(r.eur + p.eur, 2);
+    roomTotals.set(p.roomId, r);
+  }
+
+  // house: only months where the grid meter and (if there is one) the inverter both have a row
+  const grid = meters.find((m) => m.kind === "grid");
+  const solar = meters.find((m) => m.kind === "solar");
+  let useKwh = 0,
+    producedKwh = 0,
+    importKwh = 0,
+    exportKwh = 0,
+    unmeasured = 0,
+    netCost = 0,
+    fixed = 0,
+    counted = 0,
+    priced = true;
+  for (const m of months) {
+    const g = grid ? data.get(grid.id)?.get(m) : undefined;
+    const s = solar ? data.get(solar.id)?.get(m) : undefined;
+    if (!g || (solar && !s)) continue;
+    const t = tariffFor(tariffs, m);
+    const imp = used(g);
+    const exp = (g.kwhReturnedNormal ?? 0) + (g.kwhReturnedOffpeak ?? 0);
+    const prod = s?.kwhProduced ?? 0;
+    const use = imp + prod - exp;
+    const plugSum = plugMeters.reduce((sum, p) => {
+      const r = data.get(p.id)?.get(m);
+      return sum + (r ? used(r) : 0);
+    }, 0);
+    counted++;
+    useKwh += use;
+    producedKwh += prod;
+    importKwh += imp;
+    exportKwh += exp;
+    unmeasured += use - plugSum;
+    if (!t) priced = false;
+    else {
+      const f = t.fixedPerDay * daysIn(m);
+      fixed += f;
+      netCost += cost(g, t)! - exp * (t.feedIn - t.feedInCost) + f;
+    }
+  }
+  const baselineW = plugs.reduce((s, p) => s + (p.baseW ?? 0), 0);
+  return {
+    months,
+    tariff,
+    house: {
+      useKwh: counted ? round(useKwh, 3) : null,
+      producedKwh: counted && solar ? round(producedKwh, 3) : null,
+      importKwh: counted ? round(importKwh, 3) : null,
+      exportKwh: counted ? round(exportKwh, 3) : null,
+      unmeasuredKwh: counted ? round(unmeasured, 3) : null,
+      netCostEur: counted && priced ? round(netCost, 2) : null,
+      fixedEur: counted && priced ? round(fixed, 2) : null,
+      monthsCounted: counted,
+      baselineW: round(baselineW)!,
+      baselineEurYear: round(baselineEurYear(baselineW, tariff), 2),
+    },
+    plugs,
+    rooms: [...roomTotals.values()].sort((a, b) => b.kwh - a.kwh),
+  };
 }
