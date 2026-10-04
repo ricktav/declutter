@@ -40,53 +40,88 @@ Plug names and rooms are in `http://10.50.0.147:8000/pw-control.json`.
 - **New relation type `powers`:** `fromItemId` = a plug, `toItemId` = an item it powers. A plug powers zero, one or several items.
   - Initial links: the Espresso plug (000D6F0002786CEF) → #53 Espresso Apparaat Krups, and the Vaatwasser plug (000D6F00004BE875) → #56 AEG built-in dishwasher.
   - The Printer plug gets no link.
-- **Clean-up.** Once their plugs carry data, the `energy.kwh_2025`, `energy.avg_w_2025`, `energy.days_2025` and `energy.meter` keys come off #53 and #56 (they are already gone from #8), and their AGENTS.md bullet is removed.
-- **New AGENTS.md terms:** role `meter`, plain key `meter_kind` (`plug`, `grid` or `solar`), and relation `powers`. Flow's `ROLES` list gains `{ value: "meter", label: "Meter" }`.
+- **The setup is idempotent.** It finds rooms and items by name and `mac` before creating them. It checks `items.listRelations({ type: "powers" })` before adding a link, because `items.addRelation` does not dedupe.
+- **Clean-up.** The `energy.kwh_2025`, `energy.avg_w_2025`, `energy.days_2025` and `energy.meter` keys come off #53 and #56 (they are already gone from #8). Their text in AGENTS.md goes too: it is the tail of the Computer Lab line.
+  - That text wrongly says the Data Tracker writes these keys. declutter-flow wrote them once by hand on 4 Oct, and `homebase-map.json` has no energy entries.
+  - The removal comes after the Workbench Energy section (§7) ships and the plug rows are in, so #53 and #56 never lose their numbers in the UI.
+- **New AGENTS.md terms:**
+  - role `meter`;
+  - plain keys `meter_kind` (`plug`, `grid` or `solar`) and `solaredge_site`;
+  - relation `powers`.
+- **Role lists.** `meter` joins Flow's `ROLES` list (`{ value: "meter", label: "Meter" }`) and the Workbench role options. `DATA_ROLES` and `BACKUP_ROLES` stay unchanged: a meter holds no personal data and receives no backups.
 
 ## 2. Tables
 
-`energy_months`: one row per meter item per month.
+This follows the storage tables (migrations 0007/0008):
+- camelCase column names;
+- a serial `id` plus a unique index;
+- `itemId` as `bigint unsigned` (mode number), with no declared foreign key.
+
+The migration is 0009.
+
+`energy_months` (unique index `em_item_month_uq` on `itemId`, `month`): one row per meter item per month.
 
 | Column | Type | Meaning |
 |---|---|---|
-| `item_id` | int, FK items | the meter item |
-| `month` | char(7) | `YYYY-MM`, local time |
-| `kwh_normal` | decimal(10,3) | use (plug) or grid import, normal rate |
-| `kwh_offpeak` | decimal(10,3) | the same, off-peak rate |
-| `kwh_returned_normal` | decimal(10,3) null | grid export, normal (grid only) |
-| `kwh_returned_offpeak` | decimal(10,3) null | grid export, off-peak (grid only) |
-| `kwh_produced` | decimal(10,3) null | production (solar only) |
-| `avg_w` | decimal(8,1) null | average power over the measured hours (plugs) |
-| `base_w` | decimal(8,1) null | baseline load: the 10th percentile of the 15-minute averages (plugs) |
-| `peak_w` | decimal(8,1) null | highest 15-minute maximum (plugs) |
+| `id` | serial | |
+| `itemId` | bigint unsigned, not null | the meter item |
+| `month` | char(7), not null | `YYYY-MM`, local time |
+| `kwhNormal` | decimal(10,3) null | use (plug) or grid import, normal rate |
+| `kwhOffpeak` | decimal(10,3) null | the same, off-peak rate |
+| `kwhReturnedNormal` | decimal(10,3) null | grid export, normal (grid only) |
+| `kwhReturnedOffpeak` | decimal(10,3) null | grid export, off-peak (grid only) |
+| `kwhProduced` | decimal(10,3) null | production (solar only) |
+| `avgW` | decimal(8,1) null | average power over the measured hours (plugs) |
+| `baseW` | decimal(8,1) null | baseline load: the 10th percentile of the 15-minute averages (plugs) |
+| `peakW` | decimal(8,1) null | highest 15-minute maximum (plugs) |
 | `hours` | decimal(6,1) null | hours with data in the month |
-| `source` | varchar(32) | e.g. `plugwise`, `dsmr`, `solaredge` |
-| `updated_at` | timestamp | |
+| `source` | varchar(32), not null, default `"collector"` | e.g. `plugwise`, `dsmr`, `solaredge` |
+| `measuredAt` | timestamp, not null, default now | set on every report that writes the row |
+| `createdAt` | timestamp, not null, default now | |
 
-The primary key is (`item_id`, `month`). For a grid meter, `kwh_normal` is meter counter T2 (normal) and `kwh_offpeak` is T1 (low).
+For a grid meter, `kwhNormal` is meter counter T2 (normal) and `kwhOffpeak` is T1 (low).
 
-`energy_tariffs`: one row per price period.
+`energy_tariffs` (unique index on `validFrom`): one row per price period.
 
 | Column | Type | Meaning |
 |---|---|---|
-| `valid_from` | date, PK | the period starts here and runs until the next row |
-| `normal_eur_kwh` | decimal(7,5) | import, normal |
-| `offpeak_eur_kwh` | decimal(7,5) | import, off-peak |
-| `feed_in_eur_kwh` | decimal(7,5) | paid for export |
-| `feed_in_cost_eur_kwh` | decimal(7,5) | charged for export |
-| `fixed_eur_day` | decimal(6,3) | fixed delivery and network costs per day |
+| `id` | serial | |
+| `validFrom` | date, not null | the period starts here and runs until the next row |
+| `normalEurKwh` | decimal(7,5) | import, normal |
+| `offpeakEurKwh` | decimal(7,5) | import, off-peak |
+| `feedInEurKwh` | decimal(7,5) | paid for export |
+| `feedInCostEurKwh` | decimal(7,5) | charged for export |
+| `fixedEurDay` | decimal(6,3) | fixed delivery and network costs per day |
 | `note` | varchar(128) null | |
+| `createdAt` / `updatedAt` | timestamp | |
 
-The seed row has `valid_from` 2015-01-01, 0.24395, 0.24395, 0.06050, 0.03993 and 1.510 (€0.20 delivery + €1.31 Liander per day), with the note "contract prices 2026; older prices unknown". Until Rick adds older rows, older months are costed at today's price.
+The seed row has `validFrom` 2015-01-01, 0.24395, 0.24395, 0.06050, 0.03993 and 1.510 (€0.20 delivery + €1.31 Liander per day), with the note "contract prices 2026; older prices unknown". Until Rick adds older rows, older months are costed at today's price.
+
+Drizzle returns decimal columns as strings. `api/lib/energy.ts` converts them to numbers before anything uses them, and every reader gets numbers.
 
 ## 3. Interface (`energy` router)
 
 - **`energy.report({ itemId, source, months })`**
-  - `source` is at most 32 characters; `months` holds 1–200 entries of `{ month, kwhNormal, kwhOffpeak, kwhReturnedNormal?, kwhReturnedOffpeak?, kwhProduced?, avgW?, baseW?, peakW?, hours? }`.
-  - It upserts by (`itemId`, `month`) and never deletes.
-  - The whole report is refused with BAD_REQUEST if the item is missing, archived or not `role: "meter"`, any value is negative, a month is malformed, or a month lies after the current one.
-  - It writes **no item event**: these are measurements, not edits. A nightly report would otherwise add 31 events a night. This follows AGENTS.md: live meter data is read-only and skips the confirm step.
-- **`energy.overview({ houseId? })`** returns, for the last 12 complete months:
+  - `source` is at most 32 characters.
+  - `months` holds 1–200 entries of `{ month, kwhNormal?, kwhOffpeak?, kwhReturnedNormal?, kwhReturnedOffpeak?, kwhProduced?, avgW?, baseW?, peakW?, hours? }`. Every number is zod `number().nonnegative().finite()`, and `month` matches `^\d{4}-\d{2}$`.
+  - Fields follow the item's `meter_kind`:
+
+    | `meter_kind` | Required | Optional | Forbidden |
+    |---|---|---|---|
+    | `plug` | `kwhNormal`, `kwhOffpeak` | `avgW`, `baseW`, `peakW`, `hours` | returned, produced |
+    | `grid` | `kwhNormal`, `kwhOffpeak`, `kwhReturnedNormal`, `kwhReturnedOffpeak` | `hours` | `kwhProduced`, `avgW`, `baseW`, `peakW` |
+    | `solar` | `kwhProduced` | `hours` | everything else |
+
+  - It upserts by (`itemId`, `month`) in one transaction, sets `measuredAt`, and never deletes.
+  - The whole report is refused through an `EnergyReportError` → BAD_REQUEST, as storage does, if:
+    - the item is missing or archived, or is not `role: "meter"` with a known `meter_kind`;
+    - a field breaks the `meter_kind` rules above;
+    - a month repeats within the report;
+    - a month lies after the current month (local time).
+  - It writes **no item event**: these are measurements, not edits, and a nightly report would otherwise add 31 events a night. The AGENTS.md contract bullet states that reason. It follows the existing rule that live meter data is read-only and skips the confirm step.
+- **`energy.overview({ houseId? })`**
+  - It is scoped like `storage.overview`: the `houseId` input, else the session house, and active items only. The house block uses only the grid meter, inverter and plugs of that same house.
+  - It returns, for the last 12 complete months:
   - **House:**
     - use, production, import and export;
     - not measured (use minus all plugs);
@@ -100,23 +135,25 @@ The seed row has `valid_from` 2015-01-01, 0.24395, 0.24395, 0.06050, 0.03993 and
   - **Per room:** kWh and euros.
   - The current tariff.
 - **`energy.forItem({ itemId })`** works for a plug, or for an item a plug powers. It returns the plug, the other items on the same plug, and the last 24 months with kWh, euros and hours.
-- **`energy.setTariff({ validFrom, normal, offpeak, feedIn, feedInCost, fixedPerDay, note? })`** upserts by `validFrom`.
+  - For an item that is neither, it returns `{ plug: null, sharedWith: [], months: [] }`.
+  - NOT_FOUND is only for an item id that does not exist.
+- **`energy.setTariff({ validFrom, normal, offpeak, feedIn, feedInCost, fixedPerDay, note? })`** upserts by `validFrom` and logs an event, because it is Rick's edit (like `storage.setRole`).
 
 ## 4. Calculations
 
 - **Collector, per plug and month,** over the 15-minute rows:
   - kWh = Σ `avg_power_w` × 0.25 h / 1000, split into normal and off-peak by each row's local start time;
   - `hours` = number of rows × 0.25;
-  - `avg_w` = kWh × 1000 / hours;
-  - `base_w` = 10th percentile of `avg_power_w`;
-  - `peak_w` = max `max_power_w`.
-- **Price of a month:** the tariff row with the latest `valid_from` on or before the month's first day. Cost = `kwh_normal` × normal + `kwh_offpeak` × off-peak.
-- **Baseline cost per year** = `base_w` / 1000 × 8,760 h × (0.476 × normal + 0.524 × off-peak). 88 of the week's 168 hours are off-peak.
+  - `avgW` = kWh × 1000 / hours;
+  - `baseW` = 10th percentile of `avg_power_w`;
+  - `peakW` = max `max_power_w`.
+- **Price of a month:** the tariff row with the latest `validFrom` on or before the month's first day. Cost = `kwhNormal` × normal + `kwhOffpeak` × off-peak.
+- **Baseline cost per year** = `baseW` / 1000 × 8,760 h × (0.476 × normal + 0.524 × off-peak). 88 of the week's 168 hours are off-peak.
 - **Trend** = (last 12 months − the 12 before) / the 12 before. It is shown only when both windows have at least 80% of their hours measured.
 - **House:**
   - use = import (normal + off-peak) + production − export (normal + off-peak);
   - not measured = use − Σ plugs;
-  - net cost = import cost − export × (feed-in − feed-in cost) + `fixed_eur_day` × days.
+  - net cost = import cost − export × (feed-in − feed-in cost) + `fixedEurDay` × days.
   - Each is shown for a month only when all its inputs have that month.
 
 ## 5. Collectors (dockermac-1)
@@ -152,17 +189,29 @@ The seed row has `valid_from` 2015-01-01, 0.24395, 0.24395, 0.06050, 0.03993 and
 
 ## 7. Workbench
 
-A read-only "Energy" section on the item page of a plug or powered item: kWh and euros over 12 months, baseline watts and the trend, using `energy.forItem`.
+A read-only "Energy" section on the item page of a plug or powered item, using `energy.forItem`:
+- kWh and euros over 12 months, baseline watts and the trend;
+- a line "measured X of Y hours" when the 12 months have gaps.
+
+The section is hidden when `forItem` returns `plug: null`. For a plug without rows yet it shows "No energy data yet".
 
 ## 8. Who builds what, and in what order
 
-1. **declutter-main:** tables and migration, the `energy` router, AGENTS.md terms and the contract bullet. Additive: test database first, then live, then tell Rick.
+1. **declutter-main:**
+   - tables and migration 0009, the `energy` router;
+   - AGENTS.md terms and the contract bullet;
+   - `meter` in the Workbench role options.
+
+   Additive: test database first, then live, then tell Rick.
 2. **declutter-flow:**
    - one-off setup: rooms, 31 meter items and 2 `powers` links;
    - a dry-run list for Rick before the real run.
 3. **declutter-flow:** both collectors. Dry run, then `--all`, then nightly.
 4. **declutter-flow:** the Flow lens (`src/flow`).
-5. **declutter-main:** the Workbench section, and removing the `energy.*` keys from AGENTS.md once step 3 has data.
+5. **declutter-main:** the Workbench section.
+6. **After steps 3 and 5:**
+   - declutter-flow removes the `energy.*` keys from #53 and #56;
+   - declutter-main removes their text from AGENTS.md.
 
 ## 9. Testing
 
