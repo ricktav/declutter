@@ -155,8 +155,10 @@ describe("storage.overview", () => {
     await c.storage.setRole({ volumeId: vols.find((v) => v.mountPoint === "/")!.id, dataRole: "backup" });
     const o = await c.storage.overview({});
     const backup = o.totals.find((t) => t.dataRole === "backup")!;
-    expect([backup.volumes, backup.capacityBytes, backup.usedBytes]).toEqual([2, 30 * GB, 19 * GB]);
-    expect(o.totals.find((t) => t.dataRole === null)).toMatchObject({ volumes: 1, capacityBytes: 30 * GB, usedBytes: 1 * GB });
+    expect([backup.volumes, backup.usedBytes]).toEqual([2, 19 * GB]);
+    expect(o.totals.find((t) => t.dataRole === null)).toEqual({ dataRole: null, volumes: 1, usedBytes: 1 * GB });
+    // without containers every volume is its own container: capacity is the plain sum
+    expect([o.capacityBytes, o.freeBytes]).toEqual([60 * GB, 40 * GB]);
     expect(o.unassignedVolumes).toBe(1);
   });
 
@@ -206,7 +208,8 @@ describe("archived devices", () => {
     await getTestDb().update(items).set({ status: "archived" }).where(eq(items.id, nas));
     const after = await c.storage.overview({});
     expect(after.unassignedVolumes).toBe(1);
-    expect(after.totals).toEqual([{ dataRole: null, volumes: 1, capacityBytes: 10 * GB, usedBytes: 4 * GB }]);
+    expect(after.totals).toEqual([{ dataRole: null, volumes: 1, usedBytes: 4 * GB }]);
+    expect([after.capacityBytes, after.freeBytes]).toEqual([10 * GB, 6 * GB]);
     await expect(
       c.storage.report({ itemId: nas, source: "test", volumes: [{ mountPoint: "/volume1", capacityBytes: 20 * GB, usedBytes: 6 * GB }] }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
@@ -244,5 +247,96 @@ describe("storage.removeVolume", () => {
     const last = await getTestDb().query.items.findFirst({ where: eq(items.id, nas) });
     expect(last?.attributes?.storage_gb).toBe(Math.round((1000 * GB) / 1e9));
     await expect(c.storage.removeVolume({ volumeId: v1.id })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("containers", () => {
+  const T7 = (used: number, container: string | null = "disk5") => ({ mountPoint: "/Volumes/T7", label: "T7", container, capacityBytes: 1000 * GB, usedBytes: used });
+  const TM = (used: number, container: string | null = "disk5") => ({ mountPoint: "/Volumes/TM-T7", label: "TM-T7", container, capacityBytes: 1000 * GB, usedBytes: used });
+
+  async function deviceKeys(id: number) {
+    const item = await getTestDb().query.items.findFirst({ where: eq(items.id, id) });
+    return [item?.attributes?.storage_gb, item?.attributes?.storage_free_gb];
+  }
+
+  it("counts a shared container's capacity once on the device, in the overview and in free", async () => {
+    const { houseId, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: nas, source: "test", volumes: [T7(300 * GB), TM(200 * GB)] });
+    expect(await deviceKeys(nas)).toEqual([Math.round((1000 * GB) / 1e9), Math.round((500 * GB) / 1e9)]);
+    const o = await c.storage.overview({});
+    const d = o.externals.find((x) => x.id === nas)!;
+    expect([d.capacityBytes, d.usedBytes, d.freeBytes]).toEqual([1000 * GB, 500 * GB, 500 * GB]);
+    expect(d.volumes.map((v) => [v.label, v.container, v.shareOfContainer])).toEqual([
+      ["T7", "disk5", 0.3],
+      ["TM-T7", "disk5", 0.2],
+    ]);
+    expect([o.capacityBytes, o.freeBytes]).toEqual([1000 * GB, 500 * GB]);
+  });
+
+  it("counts the container once when its volumes come in two separate reports", async () => {
+    const { houseId, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: nas, source: "test", volumes: [T7(300 * GB)] });
+    await c.storage.report({ itemId: nas, source: "test", volumes: [TM(200 * GB)] });
+    expect(await deviceKeys(nas)).toEqual([Math.round((1000 * GB) / 1e9), Math.round((500 * GB) / 1e9)]);
+    const o = await c.storage.overview({});
+    const d = o.externals.find((x) => x.id === nas)!;
+    expect([d.capacityBytes, d.usedBytes, d.freeBytes]).toEqual([1000 * GB, 500 * GB, 500 * GB]);
+    expect([o.capacityBytes, o.freeBytes]).toEqual([1000 * GB, 500 * GB]);
+    // the second report must still fit the container with the first one's volume
+    await expect(c.storage.report({ itemId: nas, source: "test", volumes: [TM(800 * GB)] })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    const tm = await getTestDb().query.storageVolumes.findFirst({ where: eq(storageVolumes.mountPoint, "/Volumes/TM-T7") });
+    expect(tm?.usedBytes).toBe(200 * GB); // nothing written
+  });
+
+  it("updates a volume that moves container in place", async () => {
+    const { houseId, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: nas, source: "test", volumes: [T7(300 * GB, "disk5")] });
+    await c.storage.report({ itemId: nas, source: "test", volumes: [T7(310 * GB, "disk7")] });
+    const rows = await getTestDb().select().from(storageVolumes).where(eq(storageVolumes.itemId, nas));
+    expect(rows.map((r) => [r.mountPoint, r.container, r.usedBytes])).toEqual([["/Volumes/T7", "disk7", 310 * GB]]);
+    // an old payload without the field makes it its own container again
+    await c.storage.report({ itemId: nas, source: "test", volumes: [{ mountPoint: "/Volumes/T7", capacityBytes: 1000 * GB, usedBytes: 310 * GB }] });
+    const again = await getTestDb().select().from(storageVolumes).where(eq(storageVolumes.itemId, nas));
+    expect(again.map((r) => [r.mountPoint, r.container])).toEqual([["/Volumes/T7", null]]);
+  });
+
+  it("keeps the container's capacity when one of its volumes is removed", async () => {
+    const { houseId, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: nas, source: "test", volumes: [T7(300 * GB), TM(200 * GB)] });
+    const tm = (await getTestDb().select().from(storageVolumes).where(eq(storageVolumes.itemId, nas))).find((v) => v.label === "TM-T7")!;
+    await c.storage.removeVolume({ volumeId: tm.id });
+    expect(await deviceKeys(nas)).toEqual([Math.round((1000 * GB) / 1e9), Math.round((700 * GB) / 1e9)]);
+    const d = (await c.storage.overview({})).externals.find((x) => x.id === nas)!;
+    expect([d.capacityBytes, d.usedBytes, d.freeBytes]).toEqual([1000 * GB, 300 * GB, 700 * GB]);
+  });
+
+  it("totals count used bytes per role exactly while free stays with no role", async () => {
+    const { houseId, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: nas, source: "test", volumes: [T7(300 * GB), TM(200 * GB)] });
+    const before = await c.storage.overview({});
+    const vols = await getTestDb().select().from(storageVolumes).where(eq(storageVolumes.itemId, nas));
+    await c.storage.setRole({ volumeId: vols.find((v) => v.label === "TM-T7")!.id, dataRole: "backup" });
+    await c.storage.setRole({ volumeId: vols.find((v) => v.label === "T7")!.id, dataRole: "archive" });
+    const o = await c.storage.overview({});
+    const by = (r: string) => o.totals.find((t) => t.dataRole === r);
+    expect(by("backup")).toEqual({ dataRole: "backup", volumes: 1, usedBytes: 200 * GB });
+    expect(by("archive")).toEqual({ dataRole: "archive", volumes: 1, usedBytes: 300 * GB });
+    expect(o.totals.find((t) => t.dataRole === null)).toBeUndefined();
+    expect(o.unassignedVolumes).toBe(0);
+    expect([o.capacityBytes, o.freeBytes]).toEqual([before.capacityBytes, before.freeBytes]);
+    expect(o.freeBytes).toBe(500 * GB);
+  });
+
+  it("refuses a report whose volumes disagree on their container's capacity", async () => {
+    const { houseId, nas } = await seedDevices();
+    await expect(
+      callerFor(houseId).storage.report({ itemId: nas, source: "test", volumes: [T7(300 * GB), { ...TM(200 * GB), capacityBytes: 900 * GB }] }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: "container disk5: capacity differs between volumes." });
+    expect(await getTestDb().select().from(storageVolumes)).toHaveLength(0);
   });
 });

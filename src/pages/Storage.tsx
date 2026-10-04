@@ -47,7 +47,7 @@ export default function StoragePage() {
     const all = [...o.computers.flatMap((c) => [c, ...c.drives]), ...o.externals];
     return Math.max(0, ...all.map((d) => d.capacityBytes ?? 0));
   }, [o]);
-  const totalCapacity = o?.totals.reduce((s, t) => s + t.capacityBytes, 0) ?? 0;
+  const totalUsed = o?.totals.reduce((s, t) => s + t.usedBytes, 0) ?? 0;
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
@@ -70,7 +70,7 @@ export default function StoragePage() {
           <div className="flex items-baseline justify-between">
             <h2 className="text-sm font-semibold">By data role</h2>
             <span className="text-[12px] text-muted-foreground">
-              {formatBytes(o.totals.reduce((s, t) => s + t.usedBytes, 0))} used of {formatBytes(totalCapacity)} measured, every house
+              {formatBytes(totalUsed)} used of {formatBytes(o.capacityBytes)} measured, every house
               {o.unassignedVolumes > 0 && ` · ${o.unassignedVolumes} volume(s) without a role`}
             </span>
           </div>
@@ -79,19 +79,17 @@ export default function StoragePage() {
             {o.totals.map((t) => (
               <div
                 key={t.dataRole ?? "none"}
-                title={`${t.dataRole ?? "no role"}: ${formatBytes(t.usedBytes)} used of ${formatBytes(t.capacityBytes)} in ${t.volumes} volume(s)`}
-                style={{ width: `${totalCapacity > 0 ? (t.capacityBytes / totalCapacity) * 100 : 0}%`, background: t.dataRole ? ROLE_COLORS[t.dataRole] : "#9ca3af" }}
+                title={`${t.dataRole ?? "no role"}: ${formatBytes(t.usedBytes)} used in ${t.volumes} volume(s)`}
+                style={{ width: `${totalUsed > 0 ? (t.usedBytes / totalUsed) * 100 : 0}%`, background: t.dataRole ? ROLE_COLORS[t.dataRole] : "#9ca3af" }}
                 className="relative border-r border-white/70 last:border-r-0"
-              >
-                <div className="absolute inset-y-0 left-0 bg-black/25" style={{ width: `${t.capacityBytes > 0 ? (t.usedBytes / t.capacityBytes) * 100 : 0}%` }} />
-              </div>
+              />
             ))}
           </div>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
             {o.totals.map((t) => (
               <span key={t.dataRole ?? "none"} className="flex items-center gap-1.5">
                 <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: t.dataRole ? ROLE_COLORS[t.dataRole] : "#9ca3af" }} />
-                {t.dataRole ?? "no role"} · {formatBytes(t.usedBytes)} / {formatBytes(t.capacityBytes)}
+                {t.dataRole ?? "no role"} · {formatBytes(t.usedBytes)}
               </span>
             ))}
           </div>

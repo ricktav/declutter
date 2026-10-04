@@ -12,6 +12,7 @@ const reportVolume = z.object({
   label: z.string().max(128).nullable().optional(),
   fsType: z.string().max(32).nullable().optional(),
   device: z.string().max(128).nullable().optional(),
+  container: z.string().max(64).nullable().optional(),
   capacityBytes: z.number().int().nonnegative(),
   usedBytes: z.number().int().nonnegative(),
   dirs: z.array(z.object({ path: z.string().min(1).max(512), bytes: z.number().int().nonnegative() })).max(100).optional(),
