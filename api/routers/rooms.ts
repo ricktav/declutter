@@ -167,6 +167,9 @@ export const roomsRouter = createRouter({
         floor: z.string().nullable().optional(),
         lat: z.number().min(-90).max(90).nullable().optional(),
         lng: z.number().min(-180).max(180).nullable().optional(),
+        /** the 2D plan's size; a room with both set has a plan to place Things on */
+        widthM: z.number().positive().max(100).nullable().optional(),
+        depthM: z.number().positive().max(100).nullable().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -188,6 +191,9 @@ export const roomsRouter = createRouter({
       if (patch.name !== undefined && patch.name !== before.name) parts.push(`renamed from "${before.name}" to "${patch.name}"`);
       if (patch.floor !== undefined && patch.floor !== before.floor) parts.push(`floor set to ${patch.floor ?? "none"}`);
       if (patch.lat !== undefined || patch.lng !== undefined) parts.push("position updated");
+      const w = patch.widthM !== undefined ? (patch.widthM as number | null) : before.widthM;
+      const d = patch.depthM !== undefined ? (patch.depthM as number | null) : before.depthM;
+      if (w !== before.widthM || d !== before.depthM) parts.push(`size set to ${w ?? "?"}×${d ?? "?"} m`);
       await logEvent({
         entityType: "room",
         entityId: id,

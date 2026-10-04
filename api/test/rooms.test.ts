@@ -1,7 +1,7 @@
 // api/test/rooms.test.ts
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { areas, houses, items, photos, rooms } from "@db/schema";
+import { areas, events, houses, items, photos, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 
@@ -69,6 +69,24 @@ describe("rooms.update", () => {
     expect([room.name, room.floor]).toEqual(["Kitchen", null]);
     const inRoom = await db.select().from(items).where(eq(items.roomId, keuken));
     expect(inRoom).toHaveLength(2);
+  });
+});
+
+describe("rooms.update size", () => {
+  it("sets width and depth; rooms.list and rooms.get show them; the event says the size", async () => {
+    const { db, h1, keuken } = await seed();
+    const api = callerFor(h1);
+    await api.rooms.update({ id: keuken, widthM: 3.5, depthM: 4 });
+    expect((await api.rooms.list()).find((r) => r.id === keuken)).toMatchObject({ widthM: 3.5, depthM: 4 });
+    expect(await api.rooms.get({ id: keuken })).toMatchObject({ widthM: 3.5, depthM: 4 });
+    const ev = await db.select().from(events).where(eq(events.entityType, "room"));
+    expect(ev.at(-1)?.summary).toBe('Room "Keuken" size set to 3.5×4 m');
+
+    // clearing one side is allowed; zero and absurd sizes are not
+    await api.rooms.update({ id: keuken, depthM: null });
+    expect(await api.rooms.get({ id: keuken })).toMatchObject({ widthM: 3.5, depthM: null });
+    await expect(api.rooms.update({ id: keuken, widthM: 0 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(api.rooms.update({ id: keuken, depthM: 101 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });
 

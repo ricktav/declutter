@@ -21,6 +21,11 @@ export interface Placement {
   roomHasGeometry: boolean;
   /** the room has width and depth (the 2D plan, and a box in 3D) */
   roomHasDimensions: boolean;
+  /** the room has a 2D plan to place on: width and depth both above zero */
+  roomHasPlan: boolean;
+  /** the Thing this one sits inside (items.parentId); it is placed with its host */
+  parentId: number | null;
+  parentName: string | null;
   /** placed on the plan, and so in 3D: roomId and pos are both set */
   onPlan: boolean;
   /** confirmed pins only */
@@ -43,6 +48,7 @@ export async function placementFor(db: Db, itemId: number): Promise<Placement> {
     .where(and(eq(photoPins.itemId, itemId), eq(photoPins.status, "confirmed")))
     .orderBy(desc(photoPins.createdAt), desc(photoPins.id));
   const [{ n: photoCount }] = await db.select({ n: count() }).from(photos).where(eq(photos.itemId, itemId));
+  const parent = item.parentId != null ? await db.query.items.findFirst({ where: eq(items.id, item.parentId) }) : undefined;
 
   return {
     itemId: item.id,
@@ -50,6 +56,9 @@ export async function placementFor(db: Db, itemId: number): Promise<Placement> {
     roomName: room?.name ?? null,
     roomHasGeometry: room?.walls != null,
     roomHasDimensions: room?.widthM != null && room?.depthM != null,
+    roomHasPlan: (room?.widthM ?? 0) > 0 && (room?.depthM ?? 0) > 0,
+    parentId: item.parentId ?? null,
+    parentName: parent?.name ?? null,
     onPlan: item.roomId != null && item.pos != null,
     pins,
     photos: Number(photoCount),
@@ -103,9 +112,11 @@ async function roomPhotosFor(db: Db, roomId: number, itemId: number, pinnedPhoto
     .map((p) => ({ photoId: p.id, title: p.title, storageKey: p.storageKey, hasPinForItem: pinnedPhotoIds.has(p.id), isCutout: p.isCutout }));
 }
 
-/** Badges for many Things in two queries: confirmed pins per item, and each
- * item's roomId/pos. One row per distinct requested id, in request order; an
- * unknown id reads as not pinned and not on the plan. */
+/** Badges for many Things in two or three queries: confirmed pins per item,
+ * each item's roomId/pos, and the hosts of Things that sit inside another (a
+ * hosted Thing is on the plan when its host is). One row per distinct
+ * requested id, in request order; an unknown id reads as not pinned and not
+ * on the plan. */
 export async function placementSummaryFor(
   db: Db,
   itemIds: number[],
@@ -117,11 +128,21 @@ export async function placementSummaryFor(
     .from(photoPins)
     .where(and(inArray(photoPins.itemId, ids), eq(photoPins.status, "confirmed")))
     .groupBy(photoPins.itemId);
-  const itemRows = await db.select({ id: items.id, roomId: items.roomId, pos: items.pos }).from(items).where(inArray(items.id, ids));
+  const itemRows = await db
+    .select({ id: items.id, roomId: items.roomId, pos: items.pos, parentId: items.parentId })
+    .from(items)
+    .where(inArray(items.id, ids));
+  const hostIds = [...new Set(itemRows.map((r) => r.parentId).filter((x): x is number => x != null))];
+  const hostRows = hostIds.length
+    ? await db.select({ id: items.id, roomId: items.roomId, pos: items.pos }).from(items).where(inArray(items.id, hostIds))
+    : [];
   const pinsBy = new Map(pinRows.map((r) => [r.itemId, Number(r.n)]));
   const itemBy = new Map(itemRows.map((r) => [r.id, r]));
+  const hostBy = new Map(hostRows.map((r) => [r.id, r]));
+  const placed = (r: { roomId: number | null; pos: unknown } | undefined) => r != null && r.roomId != null && r.pos != null;
   return ids.map((id) => {
     const it = itemBy.get(id);
-    return { itemId: id, pinCount: pinsBy.get(id) ?? 0, onPlan: it != null && it.roomId != null && it.pos != null };
+    const onPlan = placed(it) || (it?.parentId != null && placed(hostBy.get(it.parentId)));
+    return { itemId: id, pinCount: pinsBy.get(id) ?? 0, onPlan };
   });
 }

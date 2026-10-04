@@ -5,6 +5,12 @@ import { isAuthorized } from "./lib/auth";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
+  // a CONFLICT about an owned photo carries the owner's id (cause.ownerId)
+  // so the client can say which owner it agrees to move the photo from
+  errorFormatter({ shape, error }) {
+    const ownerId = (error.cause as { ownerId?: unknown } | undefined)?.ownerId;
+    return typeof ownerId === "number" ? { ...shape, data: { ...shape.data, ownerId } } : shape;
+  },
 });
 
 const requireAuth = t.middleware(({ ctx, next }) => {

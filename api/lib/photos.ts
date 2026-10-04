@@ -2,7 +2,7 @@
 // Shared reads and writes for photos (images) and item_links (link, note,
 // file). The photos/pins/itemLinks routers and the deprecated attachments.*
 // aliases all go through these, so each table is written one way.
-import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { areas, captures, itemLinks, items, photoPins, photos, type CropBox, type ItemLink, type Photo } from "@db/schema";
 import type { getDb } from "../queries/connection";
@@ -410,10 +410,15 @@ export async function legacyAttachmentsForItem(db: Db, itemId: number): Promise<
  * with photos.ensureForCapture first. A photo of another Thing moves only
  * with force (the UI asks "Move from X?"). The photo keeps its own room
  * (where it was taken); only a room-less photo takes the Thing's room. Pins
- * and cover photos are not touched: the cover is read from the item's photos. */
+ * and cover photos are not touched: the cover is read from the item's photos.
+ * A photo with pins on other Things is a scene, not this Thing's photo: it is
+ * never attached (not even with force); pin the Thing in it instead. With
+ * force, fromItemId (the owner the user agreed to move from, sent back as
+ * the CONFLICT's ownerId) makes the move happen only while that is still the
+ * owner. */
 export async function attachPhotoToItem(
   db: Db,
-  input: { photoId: number; itemId: number; force?: boolean },
+  input: { photoId: number; itemId: number; force?: boolean; fromItemId?: number },
 ): Promise<{ photoId: number; itemId: number; roomId: number | null }> {
   const photo = await db.query.photos.findFirst({ where: eq(photos.id, input.photoId) });
   if (!photo) throw new TRPCError({ code: "NOT_FOUND", message: "Photo not found." });
@@ -421,20 +426,39 @@ export async function attachPhotoToItem(
   if (!item) throw new TRPCError({ code: "BAD_REQUEST", message: "Thing not found." });
   if (item.status !== "active") throw new TRPCError({ code: "BAD_REQUEST", message: `"${item.name}" is archived.` });
   if (photo.itemId === item.id) return { photoId: photo.id, itemId: item.id, roomId: photo.roomId };
+  const otherPins = await db
+    .selectDistinct({ itemId: photoPins.itemId })
+    .from(photoPins)
+    .where(and(eq(photoPins.photoId, photo.id), isNotNull(photoPins.itemId), ne(photoPins.itemId, item.id)));
+  if (otherPins.length) {
+    const n = otherPins.length;
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: `This photo shows ${n} other ${n === 1 ? "Thing" : "Things"}; pin ${item.name} in it instead.`,
+    });
+  }
   if (photo.itemId != null && !input.force) {
     const owner = await db.query.items.findFirst({ where: eq(items.id, photo.itemId) });
-    throw new TRPCError({ code: "CONFLICT", message: `Photo belongs to ${owner?.name ?? `#${photo.itemId}`}` });
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: `Photo belongs to ${owner?.name ?? `#${photo.itemId}`}`,
+      cause: { ownerId: photo.itemId },
+    });
   }
   const roomId = photo.roomId ?? item.roomId ?? null;
   await db.transaction(async (tx) => {
     // without force, only a photo that is still free (or already ours) is
     // taken: of two attaches racing for the same photo, one wins and the
     // other gets CONFLICT instead of silently moving it
+    // with force and fromItemId, the move happens only while that Thing
+    // still owns the photo: the user agreed to move it from that one
     const where = input.force
-      ? eq(photos.id, photo.id)
+      ? input.fromItemId != null
+        ? and(eq(photos.id, photo.id), eq(photos.itemId, input.fromItemId))
+        : eq(photos.id, photo.id)
       : and(eq(photos.id, photo.id), or(isNull(photos.itemId), eq(photos.itemId, item.id)));
     const [res] = await tx.update(photos).set({ itemId: item.id, roomId }).where(where);
-    if (!input.force && res.affectedRows === 0) {
+    if ((!input.force || input.fromItemId != null) && res.affectedRows === 0) {
       throw new TRPCError({ code: "CONFLICT", message: "Photo was just attached to another Thing." });
     }
     await logEvent(

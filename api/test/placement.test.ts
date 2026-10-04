@@ -98,6 +98,51 @@ describe("photos.attachToItem", () => {
     await api.photos.attachToItem({ photoId: p, itemId: kettle, force: true });
     expect((await db.select().from(photos).where(eq(photos.id, p)))[0].itemId).toBe(kettle);
   });
+
+  it("refuses a photo with pins on other Things, even with force; a pin of the target itself is fine", async () => {
+    const { db, keuken, thing, photo, api } = await seed();
+    const kettle = await thing("Kettle", { roomId: keuken });
+    const toaster = await thing("Toaster", { roomId: keuken });
+    const mixer = await thing("Mixer", { roomId: keuken });
+    const scene = await photo({ roomId: keuken });
+    await db.insert(photoPins).values([
+      { photoId: scene, itemId: toaster, xPct: 1, yPct: 1 },
+      { photoId: scene, itemId: toaster, xPct: 5, yPct: 5 },
+      { photoId: scene, itemId: mixer, xPct: 2, yPct: 2, origin: "ai", status: "suggested" },
+      { photoId: scene, itemId: kettle, xPct: 3, yPct: 3 },
+    ]);
+    for (const force of [false, true]) {
+      await expect(api.photos.attachToItem({ photoId: scene, itemId: kettle, force })).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: "This photo shows 2 other Things; pin Kettle in it instead.",
+      });
+    }
+    expect((await db.select().from(photos).where(eq(photos.id, scene)))[0].itemId).toBeNull();
+
+    const own = await photo({ roomId: keuken });
+    await db.insert(photoPins).values({ photoId: own, itemId: kettle, xPct: 3, yPct: 3 });
+    await api.photos.attachToItem({ photoId: own, itemId: kettle });
+    expect((await db.select().from(photos).where(eq(photos.id, own)))[0].itemId).toBe(kettle);
+  });
+
+  it("CONFLICT carries the owner id; force with fromItemId moves only from that owner", async () => {
+    const { db, keuken, thing, photo, api } = await seed();
+    const kettle = await thing("Kettle", { roomId: keuken });
+    const toaster = await thing("Toaster", { roomId: keuken });
+    const mixer = await thing("Mixer", { roomId: keuken });
+    const p = await photo({ itemId: toaster, roomId: keuken });
+    const err = await api.photos.attachToItem({ photoId: p, itemId: kettle }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "CONFLICT", cause: { ownerId: toaster } });
+
+    // the owner changed since the question: no move
+    await expect(api.photos.attachToItem({ photoId: p, itemId: kettle, force: true, fromItemId: mixer })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect((await db.select().from(photos).where(eq(photos.id, p)))[0].itemId).toBe(toaster);
+
+    await api.photos.attachToItem({ photoId: p, itemId: kettle, force: true, fromItemId: toaster });
+    expect((await db.select().from(photos).where(eq(photos.id, p)))[0].itemId).toBe(kettle);
+  });
 });
 
 describe("items.placement", () => {
@@ -159,6 +204,11 @@ describe("items.placement", () => {
       roomPhotos: [],
     });
 
+    expect(await api.items.placement({ itemId: flat })).toMatchObject({ roomHasPlan: true, parentId: null, parentName: null });
+    // walls but no size: geometry for 3D, yet no 2D plan
+    await db.update(rooms).set({ widthM: null, depthM: null }).where(eq(rooms.id, zolder));
+    expect(await api.items.placement({ itemId: scanned })).toMatchObject({ roomHasGeometry: true, roomHasPlan: false });
+
     // a room with neither walls nor dimensions: still on the plan when pos is set
     const [{ id: bare }] = await db.insert(rooms).values({ houseId: (await db.select().from(houses))[0].id, name: "Hal", source: "manual" }).$returningId();
     const coat = await thing("Coat", { roomId: bare, pos });
@@ -185,5 +235,18 @@ describe("items.placementSummary", () => {
       { itemId: a, pinCount: 2, onPlan: true },
       { itemId: b, pinCount: 1, onPlan: false },
     ]);
+  });
+
+  it("a hosted Thing is on the plan when its host is; placement names the host", async () => {
+    const { keuken, thing, api } = await seed();
+    const pc = await thing("PC", { roomId: keuken, pos });
+    const ssd = await thing("SSD", { roomId: keuken, parentId: pc });
+    const box = await thing("Box", { roomId: keuken });
+    const cable = await thing("Cable", { roomId: keuken, parentId: box });
+    expect(await api.items.placementSummary({ itemIds: [ssd, cable] })).toEqual([
+      { itemId: ssd, pinCount: 0, onPlan: true },
+      { itemId: cable, pinCount: 0, onPlan: false },
+    ]);
+    expect(await api.items.placement({ itemId: ssd })).toMatchObject({ parentId: pc, parentName: "PC", onPlan: false });
   });
 });

@@ -61,9 +61,11 @@ export const photosRouter = createRouter({
 
   /** Attach a bucket photo to an existing Thing (photo ids only; a capture
    * goes through ensureForCapture first). CONFLICT when the photo belongs to
-   * another Thing, unless force moves it. */
+   * another Thing (data.ownerId names it), unless force moves it; fromItemId
+   * with force moves it only from that owner. PRECONDITION_FAILED when the
+   * photo has pins on other Things. */
   attachToItem: procedure
-    .input(z.object({ photoId: z.number(), itemId: z.number(), force: z.boolean().optional() }))
+    .input(z.object({ photoId: z.number(), itemId: z.number(), force: z.boolean().optional(), fromItemId: z.number().optional() }))
     .mutation(({ input }) => attachPhotoToItem(getDb(), input)),
 
   listForItem: procedure.input(z.object({ itemId: z.number() })).query(({ input }) =>
