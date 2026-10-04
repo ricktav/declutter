@@ -71,7 +71,7 @@ for (const w of want) {
   const rid = await roomId(w.room);
   plan.push(`item: create "${w.name}" in ${w.room} ${JSON.stringify(w.attributes)}`);
   if (APPLY) {
-    const created = await m("items.create", { areaId: area.id, houseId: house.id, roomId: rid, name: w.name, attributes: w.attributes, verificationStatus: "confirmed" });
+    const created = await m("items.create", { areaId: area.id, houseId: house.id, roomId: rid, name: w.name, attributes: w.attributes, verificationStatus: "confirmed", suggestLinks: false });
     byKey.set(w.key, created.id);
   }
 }
