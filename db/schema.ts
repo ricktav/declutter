@@ -437,3 +437,45 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type Photo = typeof photos.$inferSelect;
 export type ItemLink = typeof itemLinks.$inferSelect;
 export type PhotoPin = typeof photoPins.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Storage volumes — one row per mounted volume on a device item (an internal
+// drive, an external drive, a NAS or, when the collector cannot tell which
+// drive, the computer itself). Bytes, measured by a collector (df); the data
+// role is Rick's call and survives every report. A volume that stops being
+// reported keeps its last measurement; the UI shows its age.
+// ---------------------------------------------------------------------------
+export type DataRole = "unique" | "test" | "backup" | "archive" | "system" | "media" | "scratch";
+
+export const storageVolumes = mysqlTable(
+  "storage_volumes",
+  {
+    id: serial("id").primaryKey(),
+    itemId: bigint("itemId", { mode: "number", unsigned: true }).notNull(),
+    mountPoint: varchar("mountPoint", { length: 255 }).notNull(),
+    label: varchar("label", { length: 128 }),
+    fsType: varchar("fsType", { length: 32 }),
+    device: varchar("device", { length: 128 }),
+    capacityBytes: bigint("capacityBytes", { mode: "number" }).notNull(),
+    usedBytes: bigint("usedBytes", { mode: "number" }).notNull(),
+    dataRole: varchar("dataRole", { length: 16 }).$type<DataRole>(),
+    source: varchar("source", { length: 32 }).notNull().default("manual"),
+    measuredAt: timestamp("measuredAt").notNull().defaultNow(),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("sv_item_mount_uq").on(t.itemId, t.mountPoint), index("sv_role_idx").on(t.dataRole)],
+);
+
+// The biggest top-level directories of a volume at its last measurement (du).
+// Replaced wholesale on every report that carries directories.
+export const storageDirs = mysqlTable(
+  "storage_dirs",
+  {
+    id: serial("id").primaryKey(),
+    volumeId: bigint("volumeId", { mode: "number", unsigned: true }).notNull(),
+    path: varchar("path", { length: 512 }).notNull(),
+    bytes: bigint("bytes", { mode: "number" }).notNull(),
+    measuredAt: timestamp("measuredAt").notNull().defaultNow(),
+  },
+  (t) => [index("sd_volume_idx").on(t.volumeId)],
+);

@@ -50,6 +50,13 @@
       "when": 1790967571744,
       "tag": "0006_drop_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1791127474173,
+      "tag": "0007_storage_volumes",
+      "breakpoints": true
     }
   ]
 }
