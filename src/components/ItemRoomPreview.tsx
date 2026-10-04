@@ -1,9 +1,10 @@
-import { lazy, Suspense, useState, type MouseEvent } from "react";
+import { lazy, Suspense, useMemo, useState, type MouseEvent } from "react";
 import { Link, useInRouterContext } from "react-router";
 import { Box } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
+import type { CameraMarker } from "@/components/RoomPlan3D";
 const RoomPlan3D = lazy(() => import("@/components/RoomPlan3D").then((m) => ({ default: m.RoomPlan3D })));
 
 type PlanView = "2d" | "3d";
@@ -16,6 +17,10 @@ type PlanView = "2d" | "3d";
  * `size="card"` (default) is the small card; double-click or its ⤢ button
  * opens the same view at `size="full"` in a pan/zoom overlay. `view` /
  * `onViewChange` optionally control the 2D/3D tab from outside.
+ *
+ * The room's placed photos show as camera markers in both views; a click on
+ * one opens that photo in the zoom overlay. `onOpenCamera` is how the
+ * overlay's own full-size copy hands such a click back to its card.
  */
 export function ItemRoomPreview({
   roomId,
@@ -23,12 +28,14 @@ export function ItemRoomPreview({
   size = "card",
   view: viewProp,
   onViewChange,
+  onOpenCamera,
 }: {
   roomId: number;
   itemId: number;
   size?: "card" | "full";
   view?: PlanView;
   onViewChange?: (view: PlanView) => void;
+  onOpenCamera?: (photoId: number) => void;
 }) {
   const room = trpc.rooms.get.useQuery({ id: roomId });
   // the Flow front end has no router - there the room name is a plain link into the Workbench
@@ -38,6 +45,18 @@ export function ItemRoomPreview({
   // three.js (and its WebGL context) is only loaded once the 3D tab is opened
   const [opened3d, setOpened3d] = useState(view === "3d");
   const [zoomOpen, setZoomOpen] = useState(false);
+  // a camera marker's photo shown in the zoom overlay (over the enlarged preview, if that is open)
+  const [openPhotoId, setOpenPhotoId] = useState<number | null>(null);
+  const roomPhotos = trpc.photos.roomPhotos.useQuery({ roomId }, { enabled: !!room.data });
+  const cameras = useMemo<CameraMarker[]>(
+    () =>
+      (roomPhotos.data ?? []).flatMap((p) =>
+        p.camera && !p.isCutout ? [{ id: p.photoId, title: p.title ?? "Photo", camera: p.camera }] : [],
+      ),
+    [roomPhotos.data],
+  );
+  const openCamera = onOpenCamera ?? setOpenPhotoId;
+  const openPhoto = openPhotoId != null ? roomPhotos.data?.find((p) => p.photoId === openPhotoId) : undefined;
   const full = size === "full";
 
   const setView = (v: PlanView) => {
@@ -116,6 +135,8 @@ export function ItemRoomPreview({
             openings={room.data.openings}
             items={planItems}
             selectedId={itemId}
+            cameras={cameras}
+            onSelectCamera={openCamera}
           />
         </div>
         {/* in the zoom overlay the 3D view keeps its own orbit controls */}
@@ -132,16 +153,41 @@ export function ItemRoomPreview({
             items={planItems}
             selectedId={itemId}
             active={view === "3d"}
+            cameras={cameras}
+            onSelectCamera={openCamera}
           />
           </Suspense>
           )}
         </div>
       </div>
       {!full && (
-        <ZoomOverlay open={zoomOpen} onClose={() => setZoomOpen(false)} title={room.data.name}>
-          <ItemRoomPreview roomId={roomId} itemId={itemId} size="full" view={view} onViewChange={setView} />
+        <ZoomOverlay
+          open={zoomOpen || !!openPhoto}
+          // closing a photo opened from the enlarged preview goes back to that preview
+          onClose={() => (openPhoto ? setOpenPhotoId(null) : setZoomOpen(false))}
+          title={openPhoto ? (openPhoto.title ?? "Photo") : room.data.name}
+        >
+          {openPhoto ? (
+            <CameraPhoto storageKey={openPhoto.storageKey} title={openPhoto.title ?? "Photo"} />
+          ) : (
+            <ItemRoomPreview
+              roomId={roomId}
+              itemId={itemId}
+              size="full"
+              view={view}
+              onViewChange={setView}
+              onOpenCamera={setOpenPhotoId}
+            />
+          )}
         </ZoomOverlay>
       )}
     </div>
   );
+}
+
+/** A camera marker's photo, full size in the zoom overlay. */
+function CameraPhoto({ storageKey, title }: { storageKey: string; title: string }) {
+  const url = trpc.photos.url.useQuery({ key: storageKey });
+  if (!url.data?.url) return null;
+  return <img src={url.data.url} alt={title} draggable={false} className="max-w-full max-h-full object-contain rounded" />;
 }

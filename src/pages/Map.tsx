@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { trpc } from "@/providers/trpc";
 import { HousesMap } from "@/components/HousesMap";
-import { Home, MapPin, ChevronRight, Loader2 } from "lucide-react";
+import { Home, MapPin, ChevronRight, Loader2, Camera } from "lucide-react";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
 
@@ -126,6 +126,7 @@ export default function MapPage() {
                     storageKey={p.storageKey}
                     captureId={p.id}
                     roomId={selected.id}
+                    onPlan={p.camera != null}
                     onZoom={setZoomUrl}
                   />
                 ))}
@@ -147,23 +148,37 @@ export default function MapPage() {
  * source photo), but the pin canvas at /annotate works on a *photo* id - a
  * capture isn't pinnable until it also has a photo. Make one on demand
  * (find-or-create, so repeat visits reuse the same row) before navigating in.
+ * The same goes for "Place on the plan": the plan page places a photo id.
  */
 function PhotoCard({
   storageKey,
   captureId,
   roomId,
+  onPlan,
   onZoom,
 }: {
   storageKey: string;
   captureId: number;
   roomId: number;
+  /** the capture's location photo stands on this room's plan as a camera */
+  onPlan: boolean;
   onZoom: (url: string) => void;
 }) {
   const url = trpc.photos.url.useQuery({ key: storageKey });
   const navigate = useNavigate();
-  const ensure = trpc.photos.ensureForCapture.useMutation({
-    onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
-  });
+  const ensure = trpc.photos.ensureForCapture.useMutation();
+  const [going, setGoing] = useState<"pin" | "place" | null>(null);
+  const go = (to: "pin" | "place") => {
+    setGoing(to);
+    ensure.mutate(
+      { captureId, roomId },
+      {
+        onSuccess: (res) =>
+          navigate(to === "pin" ? `/annotate/${res.photoId}` : `/rooms/${roomId}?placePhoto=${res.photoId}`),
+        onSettled: () => setGoing(null),
+      },
+    );
+  };
 
   return (
     <div className="relative rounded-lg border border-border bg-white p-2">
@@ -189,15 +204,34 @@ function PhotoCard({
       ) : (
         <div className="w-full aspect-video rounded bg-muted/40" />
       )}
+      {onPlan && (
+        <span
+          className="absolute top-3 left-3 flex items-center gap-1 rounded bg-white/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm"
+          title="This photo stands on the room's plan as a camera"
+        >
+          <Camera className="h-3 w-3" /> on the plan
+        </span>
+      )}
       <button
-        onClick={() => ensure.mutate({ captureId, roomId })}
+        onClick={() => go("pin")}
         disabled={ensure.isPending}
         className="mt-1.5 flex items-center gap-1 text-[12px] text-primary hover:underline disabled:opacity-50"
       >
-        {ensure.isPending ? (
+        {going === "pin" ? (
           <Loader2 className="h-3 w-3 animate-spin" />
         ) : (
           <>Pin objects on this photo <ChevronRight className="h-3 w-3" /></>
+        )}
+      </button>
+      <button
+        onClick={() => go("place")}
+        disabled={ensure.isPending}
+        className="mt-0.5 flex items-center gap-1 text-[12px] text-primary hover:underline disabled:opacity-50"
+      >
+        {going === "place" ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <>Place on the plan <ChevronRight className="h-3 w-3" /></>
         )}
       </button>
     </div>

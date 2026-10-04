@@ -3,11 +3,11 @@
 // Took over the image half of the old attachments router and the two photo
 // procedures of api/routers/map.ts.
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, items, photos } from "@db/schema";
+import { captures, items, photos, type PhotoCamera } from "@db/schema";
 import { readFileBytes, urlForKey, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
@@ -219,7 +219,9 @@ export const photosRouter = createRouter({
 
   listAll: procedure.query(() => listPhotoCatalog(getDb())),
 
-  /** The photo pool for a room: every source capture behind the cutouts of the room's active items. */
+  /** The photo pool for a room: every source capture behind the cutouts of the room's active items.
+   * `camera` is the camera of the capture's location photo when that photo
+   * stands in this room (null otherwise, or when it has no location photo yet). */
   forRoom: procedure.input(z.object({ roomId: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const roomItems = await db
@@ -238,7 +240,19 @@ export const photosRouter = createRouter({
       .from(captures)
       .where(inArray(captures.id, captureIds))
       .orderBy(asc(captures.id));
-    return caps.filter((c): c is { id: number; storageKey: string } => !!c.storageKey);
+    const locations = await db
+      .select({ sourceCaptureId: photos.sourceCaptureId, roomId: photos.roomId, camera: photos.camera })
+      .from(photos)
+      .where(and(inArray(photos.sourceCaptureId, captureIds), isNull(photos.itemId), isNull(photos.cropBox)))
+      .orderBy(asc(photos.id));
+    const cameraBy = new Map<number, PhotoCamera>();
+    for (const l of locations) {
+      if (l.sourceCaptureId == null || l.roomId !== input.roomId || !l.camera || cameraBy.has(l.sourceCaptureId)) continue;
+      cameraBy.set(l.sourceCaptureId, l.camera);
+    }
+    return caps
+      .filter((c): c is { id: number; storageKey: string } => !!c.storageKey)
+      .map((c) => ({ ...c, camera: cameraBy.get(c.id) ?? null }));
   }),
 
   /** Stand a photo somewhere in its room, looking one way (null takes it

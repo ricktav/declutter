@@ -7,6 +7,17 @@ import type { PlanItem } from "./RoomPlan2D";
 const DEFAULT_WALL_HEIGHT = 2.4;
 const ITEM_COLOR = 0x5a7a52; // matches the app's moss-green primary
 const ITEM_COLOR_ROLLUP = 0x9aa89a;
+const CAMERA_COLOR = 0xc8553d; // terracotta accent: a photo's viewpoint, not a Thing
+const CAMERA_WEDGE_RADIUS_M = 1.2; // same reach as the 2D marker's cone
+
+/** A photo standing in its room as a camera, in the room frame (same as
+ * items.pos): heading 0 = +x, counter-clockwise seen from above. Shared by
+ * RoomPlan2D and RoomPlan3D. */
+export type CameraMarker = {
+  id: number;
+  title: string;
+  camera: { xM: number; yM: number; headingDeg: number; fovDeg: number; heightM: number };
+};
 
 /**
  * 3D twin of the same room data RoomPlan2D renders - parametric boxes for
@@ -28,6 +39,9 @@ export function RoomPlan3D({
   pinMode = false,
   onPinPlace,
   active = true,
+  cameras,
+  selectedCameraId = null,
+  onSelectCamera,
 }: {
   widthM: number;
   depthM: number;
@@ -44,6 +58,11 @@ export function RoomPlan3D({
    * "resize" from the browser's perspective) - this flag drives an explicit
    * resize instead, or the canvas stays stuck at its initial 0x0 size. */
   active?: boolean;
+  /** photos placed in this room, drawn as small cones (not drawn while the room has no size) */
+  cameras?: CameraMarker[];
+  selectedCameraId?: number | null;
+  /** a click on a camera cone; it never selects an item or places a pin */
+  onSelectCamera?: (id: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -52,6 +71,11 @@ export function RoomPlan3D({
   const controlsRef = useRef<OrbitControls | null>(null);
   const roomGroupRef = useRef<THREE.Group | null>(null);
   const itemMeshesRef = useRef<THREE.Mesh[]>([]);
+  const cameraMeshesRef = useRef<THREE.Mesh[]>([]);
+  const onSelectCameraRef = useRef(onSelectCamera);
+  useEffect(() => {
+    onSelectCameraRef.current = onSelectCamera;
+  }, [onSelectCamera]);
   const framedKeyRef = useRef<string | null>(null);
   const pinModeRef = useRef(pinMode);
   pinModeRef.current = pinMode;
@@ -129,6 +153,13 @@ export function RoomPlan3D({
       if (downPos && Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 6) return;
       setPtr(e.clientX, e.clientY);
       ray.setFromCamera(ptr, camera);
+      // camera cones first, in every mode: a click on one opens that photo
+      // and never selects the item behind it or places a pin
+      const camHit = ray.intersectObjects(cameraMeshesRef.current)[0];
+      if (camHit) {
+        onSelectCameraRef.current?.(camHit.object.userData.id as number);
+        return;
+      }
       if (!pinModeRef.current) {
         const hit = ray.intersectObjects(itemMeshesRef.current)[0];
         if (hit) onSelect?.(hit.object.userData.id as number);
@@ -185,6 +216,7 @@ export function RoomPlan3D({
     scene.add(roomGroup);
     roomGroupRef.current = roomGroup;
     itemMeshesRef.current = [];
+    cameraMeshesRef.current = [];
 
     const floor = new THREE.Mesh(
       new THREE.BoxGeometry(W, 0.05, D),
@@ -232,6 +264,49 @@ export function RoomPlan3D({
       itemMeshesRef.current.push(mesh);
     }
 
+    // a camera only has a frame while the room has a size; a stored marker
+    // of an unsized room stays stored but is not drawn
+    if (W > 0 && D > 0) {
+      const wedgeMat = new THREE.MeshBasicMaterial({
+        color: CAMERA_COLOR,
+        transparent: true,
+        opacity: 0.18,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      for (const cam of cameras ?? []) {
+        const c = cam.camera;
+        const heading = THREE.MathUtils.degToRad(c.headingDeg);
+        // the selected camera glows; set here (the room is rebuilt on a new
+        // selection) rather than mutating the meshes from another effect
+        const isSel = cam.id === selectedCameraId;
+        const mesh = new THREE.Mesh(
+          new THREE.ConeGeometry(0.12, 0.3, 12),
+          new THREE.MeshStandardMaterial({
+            color: CAMERA_COLOR,
+            emissive: isSel ? 0xffb37a : 0x000000,
+            emissiveIntensity: isSel ? 0.7 : 0,
+          }),
+        );
+        mesh.position.set(c.xM - W / 2, c.heightM, c.yM - D / 2);
+        // the cone's axis is +y with the tip up: lay it along +x first, then
+        // turn it to the heading (Euler XYZ applies z before y)
+        mesh.rotation.z = -Math.PI / 2;
+        mesh.rotation.y = heading;
+        mesh.userData = { kind: "camera", id: cam.id };
+        roomGroup.add(mesh);
+        cameraMeshesRef.current.push(mesh);
+
+        // the field of view as a flat sector on the floor; after rotation.x
+        // = -pi/2 a circle's angle t points the same way as rotation.y = t
+        const fov = THREE.MathUtils.degToRad(c.fovDeg);
+        const wedge = new THREE.Mesh(new THREE.CircleGeometry(CAMERA_WEDGE_RADIUS_M, 24, heading - fov / 2, fov), wedgeMat);
+        wedge.rotation.x = -Math.PI / 2;
+        wedge.position.set(c.xM - W / 2, 0.01, c.yM - D / 2);
+        roomGroup.add(wedge);
+      }
+    }
+
     // Only frame the camera the first time this room's dimensions are seen -
     // items re-render on every selection/pin (a new array each time), and
     // resetting the camera on every one of those would fight the user's own
@@ -242,7 +317,7 @@ export function RoomPlan3D({
       controls.target.set(0, 0.6, 0);
       controls.update();
     }
-  }, [widthM, depthM, wallHeightM, walls, items]);
+  }, [widthM, depthM, wallHeightM, walls, items, cameras, selectedCameraId]);
 
   // selection highlight
   useEffect(() => {
