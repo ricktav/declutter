@@ -61,6 +61,45 @@ enum FlowLogic {
         capture.kind == .scan || isGeojsonKey(capture.storageKey)
     }
 
+    /// Name matches for the Sort typeahead. Active Things only, rejected hidden.
+    static func matchingItems(
+        _ items: [FlowItem],
+        query: String,
+        excluding: Set<Int> = [],
+        preferHouseId: Int? = nil,
+        limit: Int = 8
+    ) -> [FlowItem] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard q.count >= 2 else { return [] }
+        return items
+            .filter { isReal($0) && $0.status == .active && !excluding.contains($0.id) }
+            .compactMap { item -> (FlowItem, Int, Bool)? in
+                let name = item.name.lowercased()
+                guard name.contains(q) else { return nil }
+                let score: Int
+                if name == q { score = 0 }
+                else if name.hasPrefix(q) { score = 1 }
+                else { score = 2 }
+                let sameHouse = preferHouseId != nil && item.houseId == preferHouseId
+                return (item, score, sameHouse)
+            }
+            .sorted { a, b in
+                if a.1 != b.1 { return a.1 < b.1 }
+                if a.2 != b.2 { return a.2 }
+                return a.0.name.count < b.0.name.count
+            }
+            .prefix(limit)
+            .map(\.0)
+    }
+
+    static func itemSubtitle(_ item: FlowItem, houses: [FlowHouse]) -> String {
+        [item.areaName, placeLabel(item, houses: houses)]
+            .compactMap { $0 }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
     static func sortRank(_ capture: FlowCapture) -> Int {
         if isFloorScan(capture) { return 2 }
         if capture.kind == .image { return 0 }

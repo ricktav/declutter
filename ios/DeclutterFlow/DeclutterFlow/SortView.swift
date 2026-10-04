@@ -134,6 +134,7 @@ private struct DraftRow: Identifiable {
     let id = UUID()
     var name: String
     var areaId: Int?
+    var itemId: Int?
     var checked: Bool
     var attributes: [String: String]?
 }
@@ -158,6 +159,15 @@ private struct CaptureCard: View {
     }
     private var chosen: [DraftRow] {
         rows.filter { $0.checked && !$0.name.trimmingCharacters(in: .whitespaces).isEmpty && $0.areaId != nil }
+    }
+    private var takenIds: Set<Int> {
+        Set(rows.compactMap(\.itemId))
+    }
+    private var unusedMatches: [TriageSpottedItem] {
+        matched.filter { m in
+            guard let id = m.matchedItemId else { return false }
+            return !takenIds.contains(id)
+        }
     }
 
     var body: some View {
@@ -191,17 +201,58 @@ private struct CaptureCard: View {
                     }
                     .disabled(asking)
                 }
-                if !matched.isEmpty {
-                    Text("Already in the inventory: \(matched.compactMap(\.matchedItemName).joined(separator: ", "))")
-                        .font(.system(size: 12))
-                        .foregroundStyle(FlowTheme.muted)
+                if !unusedMatches.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Already in the inventory")
+                            .font(.system(size: 12))
+                            .foregroundStyle(FlowTheme.muted)
+                        ForEach(unusedMatches, id: \.self) { m in
+                            Button {
+                                addExisting(m)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "link")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(FlowTheme.moss)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(m.matchedItemName ?? m.itemName)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(FlowTheme.ink)
+                                        Text("Use this Thing — Photo is not added again")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(FlowTheme.muted)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(FlowTheme.moss)
+                                }
+                                .padding(8)
+                                .background(Color(hex: 0xF0F2EA), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
                 ForEach($rows) { $row in
                     HStack(alignment: .top, spacing: 8) {
                         Toggle("", isOn: $row.checked).labelsHidden().tint(FlowTheme.moss)
                         VStack(alignment: .leading, spacing: 4) {
-                            TextField("Name", text: $row.name)
-                                .font(.system(size: 14, weight: .medium))
+                            ThingNameField(
+                                name: $row.name,
+                                itemId: $row.itemId,
+                                areaId: $row.areaId,
+                                items: session.visibleItems,
+                                houses: session.houses,
+                                excludeIds: takenIds,
+                                preferHouseId: place.houseId ?? session.here.houseId,
+                                placeholder: "Name"
+                            )
+                            if row.itemId != nil {
+                                Text("Already a Thing — this Photo is not added again")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(FlowTheme.moss)
+                            }
                             Picker("Kind", selection: Binding(
                                 get: { row.areaId ?? session.areas.first?.id ?? 0 },
                                 set: { row.areaId = $0 }
@@ -213,6 +264,7 @@ private struct CaptureCard: View {
                             .pickerStyle(.menu)
                             .font(.system(size: 12))
                             .foregroundStyle(FlowTheme.muted)
+                            .disabled(row.itemId != nil)
                         }
                     }
                     .padding(8)
@@ -222,23 +274,16 @@ private struct CaptureCard: View {
                     )
                     .opacity(row.checked ? 1 : 0.6)
                 }
-                HStack {
-                    TextField(rows.isEmpty ? "Type what it is" : "Add another Thing", text: $extra)
-                        .padding(10)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(hex: 0xD5D9CD)))
-                    Button {
-                        let n = extra.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !n.isEmpty else { return }
-                        rows.append(DraftRow(name: n, areaId: session.areas.first?.id, checked: true))
-                        extra = ""
-                    } label: {
-                        Image(systemName: "plus")
-                            .padding(10)
-                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(hex: 0xD5D9CD)))
-                    }
-                    .disabled(extra.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+                AddThingField(
+                    text: $extra,
+                    items: session.visibleItems,
+                    houses: session.houses,
+                    excludeIds: takenIds,
+                    preferHouseId: place.houseId ?? session.here.houseId,
+                    placeholder: rows.isEmpty ? "Type what it is" : "Add another Thing",
+                    onAddNew: { addNew($0) },
+                    onPickExisting: { addExistingItem($0) }
+                )
                 Button { placeOpen = true } label: {
                     HStack {
                         Image(systemName: "mappin").foregroundStyle(FlowTheme.moss)
@@ -280,6 +325,7 @@ private struct CaptureCard: View {
                 }
             }
         }
+        .scrollDismissesKeyboard(.interactively)
         .onAppear { seed() }
         .onChange(of: capture.suggestion) { _, _ in
             if rows.isEmpty { seedRowsFromSuggestion() }
@@ -338,10 +384,37 @@ private struct CaptureCard: View {
                 DraftRow(
                     name: s.itemName,
                     areaId: session.areas.first(where: { $0.slug == s.areaSlug })?.id ?? session.areas.first?.id,
+                    itemId: nil,
                     checked: true,
                     attributes: s.attributes
                 )
             }
+    }
+
+    private func addNew(_ name: String) {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return }
+        rows.append(DraftRow(name: n, areaId: session.areas.first?.id, itemId: nil, checked: true))
+        extra = ""
+    }
+
+    private func addExistingItem(_ item: FlowItem) {
+        guard !takenIds.contains(item.id) else { return }
+        rows.append(DraftRow(name: item.name, areaId: item.areaId, itemId: item.id, checked: true))
+        extra = ""
+    }
+
+    private func addExisting(_ spotted: TriageSpottedItem) {
+        guard let id = spotted.matchedItemId, !takenIds.contains(id) else { return }
+        let areaId = session.visibleItems.first(where: { $0.id == id })?.areaId
+            ?? session.areas.first(where: { $0.slug == spotted.areaSlug })?.id
+            ?? session.areas.first?.id
+        rows.append(DraftRow(
+            name: spotted.matchedItemName ?? spotted.itemName,
+            areaId: areaId,
+            itemId: id,
+            checked: true
+        ))
     }
 
     private func askAI() async {
@@ -372,7 +445,12 @@ private struct CaptureCard: View {
                 floor: place.floor.isEmpty ? nil : place.floor,
                 room: place.room.isEmpty ? nil : place.room,
                 items: chosen.map {
-                    AcceptItemInput(areaId: $0.areaId!, itemId: nil, itemName: $0.name.trimmingCharacters(in: .whitespaces), attributes: $0.attributes)
+                    AcceptItemInput(
+                        areaId: $0.areaId!,
+                        itemId: $0.itemId,
+                        itemName: $0.name.trimmingCharacters(in: .whitespaces),
+                        attributes: $0.attributes
+                    )
                 }
             )
             await session.refresh()
@@ -527,5 +605,146 @@ private struct PlaceCard: View {
         } catch {
             busy = false
         }
+    }
+}
+
+private struct ThingNameField: View {
+    @Binding var name: String
+    @Binding var itemId: Int?
+    @Binding var areaId: Int?
+    let items: [FlowItem]
+    let houses: [FlowHouse]
+    let excludeIds: Set<Int>
+    var preferHouseId: Int?
+    var placeholder: String = "Name"
+    @FocusState private var focused: Bool
+
+    private var matches: [FlowItem] {
+        FlowLogic.matchingItems(items, query: name, excluding: excludeIds, preferHouseId: preferHouseId)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TextField(placeholder, text: $name)
+                .font(.system(size: 14, weight: .medium))
+                .focused($focused)
+                .onChange(of: name) { _, newValue in
+                    guard let itemId else { return }
+                    if items.first(where: { $0.id == itemId })?.name != newValue {
+                        self.itemId = nil
+                    }
+                }
+            if itemId == nil, focused, !matches.isEmpty {
+                ThingMatchList(matches: matches, houses: houses) { item in
+                    name = item.name
+                    itemId = item.id
+                    areaId = item.areaId
+                    focused = false
+                }
+            }
+        }
+    }
+}
+
+private struct AddThingField: View {
+    @Binding var text: String
+    let items: [FlowItem]
+    let houses: [FlowHouse]
+    let excludeIds: Set<Int>
+    var preferHouseId: Int?
+    var placeholder: String
+    var onAddNew: (String) -> Void
+    var onPickExisting: (FlowItem) -> Void
+    @FocusState private var focused: Bool
+
+    private var matches: [FlowItem] {
+        FlowLogic.matchingItems(items, query: text, excluding: excludeIds, preferHouseId: preferHouseId)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                TextField(placeholder, text: $text)
+                    .focused($focused)
+                    .submitLabel(.done)
+                    .onSubmit { addNew() }
+                    .padding(10)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(hex: 0xD5D9CD)))
+                Button(action: addNew) {
+                    Image(systemName: "plus")
+                        .padding(10)
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(hex: 0xD5D9CD)))
+                }
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if !matches.isEmpty {
+                ThingMatchList(matches: matches, houses: houses) { item in
+                    onPickExisting(item)
+                    text = ""
+                    focused = false
+                }
+            }
+        }
+    }
+
+    private func addNew() {
+        let n = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return }
+        onAddNew(n)
+        text = ""
+    }
+}
+
+private struct ThingMatchList: View {
+    let matches: [FlowItem]
+    let houses: [FlowHouse]
+    var onPick: (FlowItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Already a Thing")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(FlowTheme.muted)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+            ForEach(matches) { item in
+                Button {
+                    onPick(item)
+                } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "link")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(FlowTheme.moss)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(FlowTheme.ink)
+                                .multilineTextAlignment(.leading)
+                            if !FlowLogic.itemSubtitle(item, houses: houses).isEmpty {
+                                Text(FlowLogic.itemSubtitle(item, houses: houses))
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(FlowTheme.muted)
+                                    .multilineTextAlignment(.leading)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if item.id != matches.last?.id {
+                    Divider().padding(.leading, 28)
+                }
+            }
+        }
+        .background(Color(hex: 0xF7F8F3), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color(hex: 0xD5D9CD))
+        )
     }
 }

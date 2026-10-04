@@ -64,7 +64,7 @@ The phone and the server must be on the same network (or a VPN). A `localhost` U
 |---|---|
 | **Settings** | Base URL + APP_TOKEN (Keychain) + `ping` |
 | **Snap** | Camera / library → `POST /api/upload` (`file`, `scope=inbox`) → `inbox.create`. Optional Place (“where you are”). Notes and links. **Scan this Place** (RoomPlan LiDAR) → `rooms.upsertFromScan` (`source: "roomplan"`). |
-| **Sort** | Inbox Photos: AI triage, name / kind, Place, file (`inbox.acceptMany`) or dismiss. Check (`items.setVerification`). Place (`items.update`). |
+| **Sort** | Inbox Photos: AI triage, name / kind, Place, file (`inbox.acceptMany`) or dismiss. Typing a name shows existing Things so you can link instead of creating a duplicate (`itemId`). Check (`items.setVerification`). Place (`items.update`). |
 | **Act** | Keep / sell / donate / toss / later (`items.setDecision`). Sell list / donate box / toss run. **Gone** (`items.setArchived`). Later returns after 7 days. |
 | **Find** | Search Things or Places. Room detail shows a 2D / 3D plan when one exists, or offers a LiDAR scan. |
 
