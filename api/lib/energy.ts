@@ -207,9 +207,11 @@ function windowStats(rows: Map<string, Month>, window: string[], tariffs: Tariff
     priced = true;
   const bases: number[] = [];
   let peak: number | null = null;
+  let any = false;
   for (const m of window) {
     const r = rows.get(m);
     if (!r) continue;
+    any = true;
     kwh += used(r);
     const c = cost(r, tariffFor(tariffs, m));
     if (c == null) priced = false;
@@ -219,7 +221,7 @@ function windowStats(rows: Map<string, Month>, window: string[], tariffs: Tariff
     if (r.peakW != null) peak = Math.max(peak ?? 0, r.peakW);
   }
   const hoursPossible = window.reduce((s, m) => s + hoursIn(m), 0);
-  return { kwh, eur: priced ? eur : null, hours, hoursPossible, baseW: median(bases), peakW: peak };
+  return { any, kwh, eur: priced ? eur : null, hours, hoursPossible, baseW: median(bases), peakW: peak };
 }
 
 /** Last 12 months against the 12 before, in percent; null unless both windows are ≥ 80% measured. */
@@ -269,10 +271,10 @@ export type EnergyOverview = {
 /** Active meter items, of one house or (houseId null) of all houses. */
 async function metersOf(db: Db, houseId: number | null) {
   const where = houseId != null ? and(eq(items.status, "active"), eq(items.houseId, houseId)) : eq(items.status, "active");
-  const all = await db.select({ id: items.id, name: items.name, roomId: items.roomId, attributes: items.attributes }).from(items).where(where);
+  const all = await db.select({ id: items.id, name: items.name, houseId: items.houseId, roomId: items.roomId, attributes: items.attributes }).from(items).where(where);
   return all.flatMap((i) => {
     const kind = meterKind(i);
-    return kind ? [{ id: i.id, name: i.name, roomId: i.roomId, kind }] : [];
+    return kind ? [{ id: i.id, name: i.name, houseId: i.houseId, roomId: i.roomId, kind }] : [];
   });
 }
 
@@ -305,6 +307,10 @@ async function poweredBy(db: Db, plugIds: number[]) {
  * per plug, per room, and the house from its grid meter and inverter.
  * The current, partial month never counts. A house month counts only when the
  * grid meter and (if the house has one) the inverter both have a row for it.
+ * The house block always describes one house: its grid meter, inverter and plugs.
+ * With houseId null the plug and room lists cover all houses, and the block is
+ * the one house that has a grid meter; with two or more such houses there is no
+ * single house to describe, so the block stays empty (null figures, 0 months).
  */
 export async function energyOverview(db: Db, houseId: number | null, now = new Date()): Promise<EnergyOverview> {
   const months = lastMonths(12, now);
@@ -357,9 +363,12 @@ export async function energyOverview(db: Db, houseId: number | null, now = new D
     roomTotals.set(p.roomId, r);
   }
 
-  // house: only months where the grid meter and (if there is one) the inverter both have a row
-  const grid = meters.find((m) => m.kind === "grid");
-  const solar = meters.find((m) => m.kind === "solar");
+  // house: one house's meters only; only months where its grid meter and (if there is one) its inverter both have a row
+  const gridHouses = [...new Set(meters.filter((m) => m.kind === "grid").map((m) => m.houseId))];
+  const blockMeters = gridHouses.length === 1 ? meters.filter((m) => m.houseId === gridHouses[0]) : [];
+  const grid = blockMeters.find((m) => m.kind === "grid");
+  const solar = blockMeters.find((m) => m.kind === "solar");
+  const blockPlugs = blockMeters.filter((m) => m.kind === "plug");
   let useKwh = 0,
     producedKwh = 0,
     importKwh = 0,
@@ -378,7 +387,9 @@ export async function energyOverview(db: Db, houseId: number | null, now = new D
     const exp = (g.kwhReturnedNormal ?? 0) + (g.kwhReturnedOffpeak ?? 0);
     const prod = s?.kwhProduced ?? 0;
     const use = imp + prod - exp;
-    const plugSum = plugMeters.reduce((sum, p) => {
+    // Known simplification: a plug without a row for this month counts as 0 in the plug sum,
+    // so a plug that missed a month makes "not measured" larger, never smaller.
+    const plugSum = blockPlugs.reduce((sum, p) => {
       const r = data.get(p.id)?.get(m);
       return sum + (r ? used(r) : 0);
     }, 0);
@@ -413,5 +424,60 @@ export async function energyOverview(db: Db, houseId: number | null, now = new D
     },
     plugs,
     rooms: [...roomTotals.values()].sort((a, b) => b.kwh - a.kwh),
+  };
+}
+
+export type ItemEnergy = {
+  plug: { id: number; name: string } | null;
+  sharedWith: { id: number; name: string }[];
+  summary: { kwh: number; eur: number | null; baseW: number | null; peakW: number | null; hours: number; hoursPossible: number; trendPct: number | null } | null;
+  months: { month: string; kwh: number | null; eur: number | null; hours: number | null; hoursPossible: number }[];
+};
+
+/**
+ * A plug's figures for the plug itself or for an item it powers: the last 12
+ * complete months as a summary and the last 24 month by month. The whole
+ * plug's use is shown, with the other items on it; it is never split.
+ * Null when the item does not exist; an empty result when no plug is involved.
+ */
+export async function energyForItem(db: Db, itemId: number, now = new Date()): Promise<ItemEnergy | null> {
+  const item = await db.query.items.findFirst({ where: eq(items.id, itemId) });
+  if (!item) return null;
+  let plug: { id: number; name: string } | null = meterKind(item) === "plug" ? { id: item.id, name: item.name } : null;
+  if (!plug) {
+    const rels = await db
+      .select({ id: items.id, name: items.name, attributes: items.attributes })
+      .from(relations)
+      .innerJoin(items, eq(items.id, relations.fromItemId))
+      .where(and(eq(relations.type, POWERS), eq(relations.toItemId, itemId), eq(items.status, "active")))
+      .orderBy(items.id);
+    // only a plug meter counts as the source; a stray powers link from something else does not
+    const rel = rels.find((r) => meterKind(r) === "plug");
+    plug = rel ? { id: rel.id, name: rel.name } : null;
+  }
+  if (!plug) return { plug: null, sharedWith: [], summary: null, months: [] };
+  const sharedWith = ((await poweredBy(db, [plug.id])).get(plug.id) ?? []).filter((x) => x.id !== itemId);
+  const window24 = lastMonths(24, now);
+  const tariffs = await loadTariffs(db);
+  const rows = (await monthsByItem(db, [plug.id], window24)).get(plug.id) ?? new Map<string, Month>();
+  const w = windowStats(rows, window24.slice(12), tariffs);
+  return {
+    plug,
+    sharedWith,
+    summary: w.any
+      ? {
+          kwh: round(w.kwh, 3)!,
+          eur: round(w.eur, 2),
+          baseW: round(w.baseW),
+          peakW: round(w.peakW),
+          hours: round(w.hours)!,
+          hoursPossible: w.hoursPossible,
+          trendPct: trend(rows, now, tariffs),
+        }
+      : null,
+    months: window24.map((m) => {
+      const r = rows.get(m);
+      return { month: m, kwh: r ? round(used(r), 3) : null, eur: r ? round(cost(r, tariffFor(tariffs, m)), 2) : null, hours: r?.hours ?? null, hoursPossible: hoursIn(m) };
+    }),
   };
 }

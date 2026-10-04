@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { areas, events, houses, items, relations, energyMonths, energyTariffs } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
-import { EnergyReportError, applyEnergyReport, currentMonth, energyOverview, hoursIn, lastMonths, meterKind, tariffFor } from "../lib/energy";
+import { EnergyReportError, applyEnergyReport, currentMonth, energyForItem, energyOverview, hoursIn, lastMonths, meterKind, tariffFor } from "../lib/energy";
 
 beforeEach(resetTestDb);
 
@@ -225,5 +225,81 @@ describe("energy.overview", () => {
     expect(o.plugs.map((p) => p.itemId)).toEqual([s.elsewhere]);
     const all = await callerFor(s.other).energy.overview({ houseId: null });
     expect(all.plugs.map((p) => p.itemId).sort((a, b) => a - b)).toEqual([s.fridgePlug, s.tvPlug, s.elsewhere].sort((a, b) => a - b));
+  });
+
+  it("with houseId null, the house block is the one house that has a grid meter", async () => {
+    const s = await fill();
+    // a counted month for the other house's plug: it must not lower this house's "not measured"
+    await applyEnergyReport(getTestDb(), { itemId: s.elsewhere, source: "t", months: [{ month: "2026-08", kwhNormal: 40, kwhOffpeak: 0 }] }, NOW);
+    const scoped = await energyOverview(getTestDb(), s.houseId, NOW);
+    const all = await energyOverview(getTestDb(), null, NOW);
+    expect(all.house).toEqual(scoped.house);
+    expect(all.plugs.map((p) => p.itemId)).toContain(s.elsewhere);
+  });
+
+  it("with houseId null and two houses with a grid meter, the house block is empty", async () => {
+    const s = await fill();
+    const db = getTestDb();
+    const [{ areaId }] = await db.select({ areaId: items.areaId }).from(items).where(eq(items.id, s.grid));
+    const [{ id: grid2 }] = await db.insert(items).values({ areaId, houseId: s.other, name: "Slimme meter Josies", attributes: { role: "meter", meter_kind: "grid" } }).$returningId();
+    await applyEnergyReport(db, { itemId: grid2, source: "t", months: [{ month: "2026-08", kwhNormal: 1, kwhOffpeak: 1, kwhReturnedNormal: 0, kwhReturnedOffpeak: 0 }] }, NOW);
+    const all = await energyOverview(db, null, NOW);
+    expect(all.house).toMatchObject({ useKwh: null, producedKwh: null, importKwh: null, exportKwh: null, unmeasuredKwh: null, netCostEur: null, fixedEur: null, monthsCounted: 0 });
+    expect(all.house.baselineW).toBe(62.5); // still over all plugs
+    expect((await energyOverview(db, s.houseId, NOW)).house.monthsCounted).toBe(11);
+  });
+});
+
+describe("energy.forItem and setTariff", () => {
+  it("gives a powered item its plug's figures and the other items on that plug", async () => {
+    const s = await seedMeters();
+    const db = getTestDb();
+    await applyEnergyReport(db, { itemId: s.tvPlug, source: "t", months: [{ month: "2026-09", kwhNormal: 8, kwhOffpeak: 4, hours: 720 }] }, NOW);
+    const e = (await energyForItem(db, s.tv, NOW))!;
+    expect(e.plug).toEqual({ id: s.tvPlug, name: "Plugwise – TV / Mac / UPC" });
+    expect(e.sharedWith.map((x) => x.name)).toEqual(["Mac mini"]);
+    expect(e.months).toHaveLength(24);
+    expect(e.months.at(-1)).toMatchObject({ month: "2026-09", kwh: 12, hours: 720 });
+    expect(e.summary?.kwh).toBe(12);
+    const plug = (await energyForItem(db, s.tvPlug, NOW))!;
+    expect(plug.sharedWith.map((x) => x.name).sort()).toEqual(["Mac mini", "Television"]);
+  });
+
+  it("gives a plug with no months a null summary and 24 empty months, not an empty card", async () => {
+    const s = await seedMeters();
+    const e = (await energyForItem(getTestDb(), s.fridgePlug, NOW))!;
+    expect(e.plug).toEqual({ id: s.fridgePlug, name: "Plugwise – Koelkast" });
+    expect(e.summary).toBeNull();
+    expect(e.months).toHaveLength(24);
+    expect(e.months.every((m) => m.kwh == null && m.hoursPossible > 0)).toBe(true);
+  });
+
+  it("returns an empty result for an item without a plug and NOT_FOUND for a missing id", async () => {
+    const s = await seedMeters();
+    const c = callerFor(s.houseId);
+    expect(await c.energy.forItem({ itemId: s.grid })).toEqual({ plug: null, sharedWith: [], summary: null, months: [] });
+    await expect(c.energy.forItem({ itemId: 999999 })).rejects.toThrow(/not found/i);
+  });
+
+  it("setTariff upserts by validFrom and logs an event", async () => {
+    const s = await seedMeters();
+    const c = callerFor(s.houseId);
+    const before = (await getTestDb().select().from(events)).length;
+    await c.energy.setTariff({ validFrom: "2027-01-01", normal: 0.3, offpeak: 0.25, feedIn: 0.05, feedInCost: 0.04, fixedPerDay: 1.6 });
+    await c.energy.setTariff({ validFrom: "2027-01-01", normal: 0.31, offpeak: 0.25, feedIn: 0.05, feedInCost: 0.04, fixedPerDay: 1.6, note: "new contract" });
+    const rows = await getTestDb().select().from(energyTariffs);
+    expect(rows.filter((r) => String(r.validFrom) === "2027-01-01").map((r) => [Number(r.normalEurKwh), r.note])).toEqual([[0.31, "new contract"]]);
+    expect((await getTestDb().select().from(events)).length).toBe(before + 2);
+  });
+
+  it("setTariff refuses negative prices and dates that are not YYYY-MM-DD", async () => {
+    const s = await seedMeters();
+    const c = callerFor(s.houseId);
+    const ok = { validFrom: "2027-01-01", normal: 0.3, offpeak: 0.25, feedIn: 0.05, feedInCost: 0.04, fixedPerDay: 1.6 };
+    await expect(c.energy.setTariff({ ...ok, normal: -0.1 })).rejects.toThrow();
+    await expect(c.energy.setTariff({ ...ok, validFrom: "2027-1-1" })).rejects.toThrow();
+    await expect(c.energy.setTariff({ ...ok, validFrom: "2027-02-30" })).rejects.toThrow();
+    await expect(c.energy.setTariff({ ...ok, normal: 100 })).rejects.toThrow();
+    expect(await getTestDb().select().from(energyTariffs)).toHaveLength(0);
   });
 });

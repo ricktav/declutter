@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { areas, items } from "@db/schema";
 import { getTestDb, resetTestDb, truncateTables } from "./db";
 import { getDb } from "../queries/connection";
+
+// the slow test database needs more than 5 s for tests that reset it twice
+vi.setConfig({ testTimeout: 20000 });
 
 beforeEach(async () => {
   await resetTestDb();
