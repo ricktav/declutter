@@ -171,6 +171,7 @@ export default function ItemDetail() {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  const locRef = useRef<HTMLElement>(null);
   const [roomId, setRoomId] = useState<number | null>(null);
   const [editingLoc, setEditingLoc] = useState(false);
   const [childName, setChildName] = useState("");
@@ -297,6 +298,12 @@ export default function ItemDetail() {
       setRoomId(it.roomId);
     }
     setEditingLoc(true);
+  };
+  /** The pane's "Pick a room": open the Location editor and bring it into
+   * view (it sits further down the column). */
+  const pickRoom = () => {
+    startEditLoc();
+    requestAnimationFrame(() => locRef.current?.scrollIntoView({ block: "center" }));
   };
   const saveLoc = () => {
     update.mutate({
@@ -737,7 +744,7 @@ export default function ItemDetail() {
           )}
 
           {/* location: house → floor → room (areas are the topic, not the place) */}
-          <section className="rounded-lg border border-border bg-white p-4">
+          <section ref={locRef} className="rounded-lg border border-border bg-white p-4">
             <div className="flex items-center mb-2">
               <h2 className="micro-label text-muted-foreground">Location</h2>
               {!editingLoc ? (
@@ -918,7 +925,7 @@ export default function ItemDetail() {
           )}
 
           {/* placement: photo, 2D plan, 3D */}
-          <PlacementPane itemId={it.id} onPickRoom={startEditLoc} />
+          <PlacementPane itemId={it.id} onPickRoom={pickRoom} />
         </div>
       </div>
 
@@ -958,7 +965,9 @@ export default function ItemDetail() {
  * 3D additionally needs the room's walls or its width and depth. Each gap
  * gets its direct action. */
 function PlacementPane({ itemId, onPickRoom }: { itemId: number; onPickRoom: () => void }) {
-  const placement = trpc.items.placement.useQuery({ itemId });
+  // "always": coming back from Annotate or the plan must show the new pin or
+  // position, even when the cached answer is still within staleTime
+  const placement = trpc.items.placement.useQuery({ itemId }, { refetchOnMount: "always" });
   return (
     <section className="rounded-lg border border-border bg-white p-4">
       <h2 className="micro-label text-muted-foreground mb-2">Placement</h2>
@@ -1051,6 +1060,12 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
           <div className="text-[13px]">
             Placed on the plan of {room} ·{" "}
             <Link to={`/rooms/${p.roomId}`} className={actionLink}>Open plan</Link>
+          </div>
+        ) : !p.roomHasGeometry && !p.roomHasDimensions ? (
+          // no walls and no width/depth: the plan is 0x0, nothing to click on
+          <div className="text-[13px] text-muted-foreground">
+            Size or scan the room first ·{" "}
+            <Link to={`/rooms/${p.roomId}`} className={actionLink}>Open {room}</Link>
           </div>
         ) : (
           <div className="flex items-center gap-2 text-[13px] text-muted-foreground">

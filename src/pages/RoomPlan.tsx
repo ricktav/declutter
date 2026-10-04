@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { useParams, useSearchParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
@@ -113,17 +113,40 @@ export default function RoomPlanPage() {
   const placeParam = Number(searchParams.get("placeItem"));
   const placeParamId = Number.isInteger(placeParam) && placeParam > 0 ? placeParam : null;
   const placeParamItem = placeParamId != null ? room.data?.items.find((it) => it.id === placeParamId) : undefined;
-  const placeParamOk = placeParamItem != null && placeParamItem.ownerRoomId === id && !placeParamItem.pos;
+  // A room with neither walls nor a width and depth has a 0x0 plan: there
+  // is nowhere to click, so place mode is never entered for it.
+  const roomSized =
+    room.data != null && (room.data.walls != null || (room.data.widthM != null && room.data.depthM != null));
+  const sizeNotice = room.data ? `Give ${room.data.name} a size or a scan first, then place Things on its plan.` : "";
+  /** A Thing inside another Thing (a drawer's content) has no box of its
+   * own: the host says where it is. */
+  const hostNameOf = (parentId: number | null | undefined) =>
+    parentId == null ? null : (room.data?.items.find((it) => it.id === parentId)?.name ?? "another Thing");
+  const insideTitle = (parentId: number | null | undefined) => `Inside ${hostNameOf(parentId)}: placed with it`;
+  const placeParamOk =
+    roomSized &&
+    placeParamItem != null &&
+    placeParamItem.ownerRoomId === id &&
+    !placeParamItem.pos &&
+    placeParamItem.parentId == null;
   const placeNotice =
     placeParamId == null || !room.data || placeParamOk
       ? null
       : !placeParamItem || placeParamItem.ownerRoomId !== id
         ? `That Thing is not in ${room.data.name}, so it was not placed here.`
-        : `${placeParamItem.name} is already placed on the plan.`;
+        : placeParamItem.pos
+          ? `${placeParamItem.name} is already placed on the plan.`
+          : placeParamItem.parentId != null
+            ? `${insideTitle(placeParamItem.parentId)}.`
+            : sizeNotice;
   const [placingManual, setPlacingManual] = useState<{ id: number; name: string } | null>(null);
-  const placing =
-    placingManual ?? (placeParamOk && placeParamItem ? { id: placeParamItem.id, name: placeParamItem.name } : null);
+  const placeParamTarget = placeParamOk && placeParamItem ? placeParamItem : null;
+  const placing = useMemo(
+    () => placingManual ?? (placeParamTarget ? { id: placeParamTarget.id, name: placeParamTarget.name } : null),
+    [placingManual, placeParamTarget],
+  );
   const [placingBusy, setPlacingBusy] = useState(false);
+  const [placeError, setPlaceError] = useState<string | null>(null);
 
   const dropPlaceParam = () => {
     if (!searchParams.has("placeItem")) return;
@@ -132,7 +155,9 @@ export default function RoomPlanPage() {
     setSearchParams(next, { replace: true });
   };
   const startPlace = (item: { id: number; name: string }) => {
+    if (!roomSized) return;
     dropPlaceParam();
+    setPlaceError(null);
     setPlacingManual(item);
     setPinMode(false);
     setPendingPin(null);
@@ -142,6 +167,7 @@ export default function RoomPlanPage() {
   };
   const cancelPlace = () => {
     setPlacingManual(null);
+    setPlaceError(null);
     dropPlaceParam();
   };
   /** Same footprint and stacking as a new pin, but for a Thing that
@@ -149,6 +175,12 @@ export default function RoomPlanPage() {
   const placeAt = async (at: { xM: number; yM: number }) => {
     if (!placing || placingBusy) return;
     const target = placing;
+    // Hold the target in state and drop `?placeItem=` before the write: the
+    // mutation awaits the room refetch, and with the param still set the
+    // freshly placed Thing would flash the "already placed" notice.
+    setPlacingManual(target);
+    dropPlaceParam();
+    setPlaceError(null);
     setPlacingBusy(true);
     try {
       const basePos = { xM: at.xM, yM: at.yM, wM: 0.5, dM: 0.5, rotDeg: 0 };
@@ -157,6 +189,9 @@ export default function RoomPlanPage() {
       utils.items.placement.invalidate({ itemId: target.id });
       cancelPlace();
       setSelectedId(target.id);
+    } catch (e) {
+      // stay in place mode so another click can retry
+      setPlaceError(e instanceof Error ? e.message : String(e));
     } finally {
       setPlacingBusy(false);
     }
@@ -171,14 +206,15 @@ export default function RoomPlanPage() {
     setPinAreaId(null);
   };
 
+  const onEscape = useEffectEvent(() => cancelPlace());
   useEffect(() => {
     if (!placing) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") cancelPlace();
+      if (e.key === "Escape") onEscape();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  });
+  }, [placing]);
 
   /** Shared by both the 2D plan and the 3D twin - pinning a point creates a
    * real item at that footprint, status "confirmed" (a human just placed it
@@ -344,6 +380,7 @@ export default function RoomPlanPage() {
                     Click where <b>{placing.name}</b> stands
                   </span>
                   <span className="text-muted-foreground">· Esc cancels</span>
+                  {placeError && <span className="text-destructive">Not placed: {placeError}</span>}
                   <Button size="sm" variant="outline" className="h-6 text-[11px] ml-auto" onClick={cancelPlace}>
                     Cancel
                   </Button>
@@ -404,7 +441,7 @@ export default function RoomPlanPage() {
               </p>
               {room.data.items.filter((it) => !it.pos).length > 0 && (
                 <div className="mt-3 text-[12px] text-muted-foreground">
-                  <p>Unplaced:</p>
+                  <p>Unplaced:{!roomSized && <span className="ml-1 text-amber-700">{sizeNotice}</span>}</p>
                   <ul className="mt-1 flex flex-wrap gap-1.5">
                     {room.data.items
                       .filter((it) => !it.pos)
@@ -417,15 +454,30 @@ export default function RoomPlanPage() {
                             {it.name}
                           </Link>
                           {it.ownerRoomId === id ? (
-                            <Button
-                              size="sm"
-                              variant={placing?.id === it.id ? "default" : "outline"}
-                              className="h-5 px-1.5 text-[11px]"
-                              title={`Place ${it.name} on the plan`}
-                              onClick={() => (placing?.id === it.id ? cancelPlace() : startPlace({ id: it.id, name: it.name }))}
+                            // the title sits on a wrapper: a disabled Button has
+                            // pointer-events: none, so its own title never shows
+                            <span
+                              className="inline-flex"
+                              title={
+                                !roomSized
+                                  ? sizeNotice
+                                  : it.parentId != null
+                                    ? insideTitle(it.parentId)
+                                    : `Place ${it.name} on the plan`
+                              }
                             >
-                              <MapPin className="h-3 w-3 mr-0.5" /> Place
-                            </Button>
+                              <Button
+                                size="sm"
+                                variant={placing?.id === it.id ? "default" : "outline"}
+                                className="h-5 px-1.5 text-[11px]"
+                                disabled={!roomSized || it.parentId != null}
+                                onClick={() =>
+                                  placing?.id === it.id ? cancelPlace() : startPlace({ id: it.id, name: it.name })
+                                }
+                              >
+                                <MapPin className="h-3 w-3 mr-0.5" /> Place
+                              </Button>
+                            </span>
                           ) : (
                             <Link
                               to={`/rooms/${it.ownerRoomId}?placeItem=${it.id}`}

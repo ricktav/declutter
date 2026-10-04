@@ -188,16 +188,29 @@ export default function AnnotatePage() {
   } | null>(null);
 
   const invalidate = () => utils.pins.listForPhoto.invalidate({ photoId: attId });
+  /** After a pin change: the photo's pins, plus the item view's Placement
+   * pane of every Thing the pin pointed at before (read from the cached
+   * list, still the old answer here) or points at now. */
+  const invalidatePin = (pinId: number | null, itemId?: number | null) => {
+    const ids = new Set<number>();
+    if (itemId != null) ids.add(itemId);
+    if (pinId != null) {
+      const before = utils.pins.listForPhoto.getData({ photoId: attId })?.find((p) => p.id === pinId)?.itemId;
+      if (before != null) ids.add(before);
+    }
+    for (const i of ids) utils.items.placement.invalidate({ itemId: i });
+    invalidate();
+  };
 
-  const addPin = trpc.pins.add.useMutation({ onSuccess: invalidate });
+  const addPin = trpc.pins.add.useMutation({ onSuccess: (_res, vars) => invalidatePin(null, vars.itemId) });
   const resolve = trpc.pins.resolve.useMutation({
-    onSuccess: () => {
-      invalidate();
+    onSuccess: (_res, vars) => {
+      invalidatePin(vars.id, vars.itemId);
       utils.events.list.invalidate();
     },
   });
-  const removePin = trpc.pins.remove.useMutation({ onSuccess: invalidate });
-  const reposition = trpc.pins.update.useMutation({ onSuccess: invalidate });
+  const removePin = trpc.pins.remove.useMutation({ onSuccess: (_res, vars) => invalidatePin(vars.id) });
+  const reposition = trpc.pins.update.useMutation({ onSuccess: (_res, vars) => invalidatePin(vars.id, vars.itemId) });
   const [dragPos, setDragPos] = useState<Record<number, { xPct: number; yPct: number }>>({});
   const dragging = useRef<number | null>(null);
   const createItem = trpc.items.create.useMutation();

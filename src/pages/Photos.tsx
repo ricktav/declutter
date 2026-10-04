@@ -359,8 +359,10 @@ export default function PhotosPage() {
               ? "No photos yet — pin items on photos or add one from an item's page."
               : notPlaced && itemIds.length > 0 && summary.isError
                 ? `Could not check placement: ${summary.error.message}`
-                : notPlaced && itemIds.length > 0 && !summary.isSuccess
-                  ? "Checking placement…"
+                : notPlaced && itemIds.length > 0 && !(summary.isSuccess && !summary.isPlaceholderData)
+                  ? // placeholder data is the previous id list's answer: it can hide
+                    // Things it never covered, so it does not prove "every Thing placed"
+                    "Checking placement…"
                   : notPlaced && !q
                     ? "Every Thing with a photo is pinned and on its plan."
                     : `No photos match "${q}".`}
