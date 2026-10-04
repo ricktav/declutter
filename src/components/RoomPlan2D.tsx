@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { ItemPos, RoomGeometry } from "@db/schema";
+import type { ItemPos, PhotoCamera, RoomGeometry } from "@db/schema";
 import { applyStacking } from "@/lib/roomStacking";
 
 export type PlanItem = {
@@ -13,12 +13,34 @@ export type PlanItem = {
   editable?: boolean;
 };
 
+/** A photo standing on the plan: where it was taken and where it looks. */
+export type CameraMarker = {
+  /** the photo's id */
+  id: number;
+  title: string;
+  camera: PhotoCamera;
+  /** a suggestion drawn before it is placed: dashed, not interactive */
+  ghost?: boolean;
+};
+
 type Opening = RoomGeometry["openings"][number];
+type CameraDrag = {
+  kind: "move" | "aim";
+  id: number;
+  startLoc: { x: number; y: number };
+  start: PhotoCamera;
+  pending?: PhotoCamera;
+};
 type DragKind = "move" | "rotate" | "resize";
 type DragState = { kind: DragKind; id: number; startLoc: { x: number; y: number }; startPos: ItemPos };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 const round2 = (v: number) => +v.toFixed(2);
+/** radius of a camera's view wedge, in metres */
+const CAMERA_WEDGE_M = 1.2;
+const CAMERA_FOV_MIN = 20;
+const CAMERA_FOV_MAX = 120;
+const normDeg = (d: number) => ((d % 360) + 360) % 360;
 
 
 /**
@@ -49,6 +71,12 @@ export function RoomPlan2D({
   onCutRect,
   pinMode = false,
   onPinPlace,
+  cameras,
+  selectedCameraId = null,
+  onSelectCamera,
+  onCameraChange,
+  cameraMode = false,
+  onCameraPlace,
 }: {
   widthM: number;
   depthM: number;
@@ -74,6 +102,19 @@ export function RoomPlan2D({
    * (RoomPlan page) owns naming/creating it. */
   pinMode?: boolean;
   onPinPlace?: (pos: { xM: number; yM: number }) => void;
+  /** Photos standing on the plan (dot + view wedge). Heading 0 = +x,
+   * counter-clockwise seen from above, like an item's rotDeg. */
+  cameras?: CameraMarker[];
+  selectedCameraId?: number | null;
+  onSelectCamera?: (id: number) => void;
+  /** Called once on pointer-up after a marker was moved (dot), aimed (the
+   * handle at the wedge's tip) or widened (shift + handle, 5° steps).
+   * Without it the markers are select-only. */
+  onCameraChange?: (id: number, camera: PhotoCamera) => void;
+  /** When true, a floor click reports its position to onCameraPlace
+   * (instead of onPinPlace): the caller stands a photo there. */
+  cameraMode?: boolean;
+  onCameraPlace?: (pos: { xM: number; yM: number }) => void;
 }) {
   const S = 70; // px per meter
   const PAD = 36;
@@ -86,6 +127,12 @@ export function RoomPlan2D({
   const dragRef = useRef<DragState | null>(null);
   const cutStartRef = useRef<{ xM: number; yM: number } | null>(null);
   const [cutRect, setCutRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const camDragRef = useRef<CameraDrag | null>(null);
+  // the marker being dragged, drawn from here until the caller's cameras
+  // catch up (a camera drag re-renders: a handful of markers, not the
+  // whole item set's hot path)
+  const [camDraft, setCamDraft] = useState<{ id: number; camera: PhotoCamera } | null>(null);
+  const floorMode = cutMode || pinMode || cameraMode;
 
   const xTicks = Array.from({ length: Math.floor(widthM) + 1 }, (_, i) => i);
   const yTicks = Array.from({ length: Math.floor(depthM) + 1 }, (_, i) => i);
@@ -135,12 +182,23 @@ export function RoomPlan2D({
   };
 
   const handlePinClick = (e: React.MouseEvent) => {
-    if (!pinMode) return;
+    if (!pinMode && !cameraMode) return;
     const loc = toLocal(e.clientX, e.clientY);
-    onPinPlace?.({
+    const at = {
       xM: round2(clamp((loc.x - PAD) / S, 0, widthM)),
       yM: round2(clamp((loc.y - PAD) / S, 0, depthM)),
-    });
+    };
+    if (cameraMode) onCameraPlace?.(at);
+    else onPinPlace?.(at);
+  };
+
+  const startCameraDrag = (kind: CameraDrag["kind"], marker: CameraMarker, e: React.PointerEvent) => {
+    if (floorMode || marker.ghost) return;
+    onSelectCamera?.(marker.id);
+    e.stopPropagation();
+    if (!onCameraChange) return;
+    camDragRef.current = { kind, id: marker.id, startLoc: toLocal(e.clientX, e.clientY), start: { ...marker.camera } };
+    (e.target as Element).setPointerCapture(e.pointerId);
   };
 
   const startCut = (e: React.PointerEvent) => {
@@ -158,6 +216,28 @@ export function RoomPlan2D({
       const loc = toLocal(e.clientX, e.clientY);
       const xM = clamp((loc.x - PAD) / S, 0, widthM), yM = clamp((loc.y - PAD) / S, 0, depthM);
       setCutRect({ x0: cutStartRef.current.xM, y0: cutStartRef.current.yM, x1: xM, y1: yM });
+      return;
+    }
+    const camDrag = camDragRef.current;
+    if (camDrag) {
+      const loc = toLocal(e.clientX, e.clientY);
+      const next = { ...camDrag.start };
+      if (camDrag.kind === "move") {
+        next.xM = round2(clamp(camDrag.start.xM + (loc.x - camDrag.startLoc.x) / S, 0, widthM));
+        next.yM = round2(clamp(camDrag.start.yM + (loc.y - camDrag.startLoc.y) / S, 0, depthM));
+      } else {
+        // screen y grows down the plan: a direction (dx, dy) is atan2(-dy, dx)
+        const a = (Math.atan2(-(loc.y - py(camDrag.start.yM)), loc.x - px(camDrag.start.xM)) * 180) / Math.PI;
+        if (e.shiftKey) {
+          // the handle drags an edge of the wedge: fov = twice the angle off the heading
+          const off = Math.abs(((normDeg(a - camDrag.start.headingDeg) + 180) % 360) - 180);
+          next.fovDeg = clamp(Math.round((2 * off) / 5) * 5, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
+        } else {
+          next.headingDeg = normDeg(Math.round(a));
+        }
+      }
+      camDrag.pending = next;
+      setCamDraft({ id: camDrag.id, camera: next });
       return;
     }
     const drag = dragRef.current;
@@ -193,6 +273,13 @@ export function RoomPlan2D({
       const xM = round2(Math.min(rect.x0, rect.x1)), yM = round2(Math.min(rect.y0, rect.y1));
       const wM = round2(Math.abs(rect.x1 - rect.x0)), dM = round2(Math.abs(rect.y1 - rect.y0));
       if (wM > 0.2 && dM > 0.2) onCutRect?.({ xM, yM, wM, dM });
+      return;
+    }
+    const camDrag = camDragRef.current;
+    if (camDrag) {
+      camDragRef.current = null;
+      setCamDraft(null);
+      if (camDrag.pending) onCameraChange?.(camDrag.id, camDrag.pending);
       return;
     }
     const drag = dragRef.current as (DragState & { pending?: ItemPos }) | null;
@@ -244,7 +331,7 @@ export function RoomPlan2D({
         y={PAD}
         width={widthM * S}
         height={depthM * S}
-        className={`fill-muted/20 stroke-border ${cutMode || pinMode ? "cursor-crosshair" : ""}`}
+        className={`fill-muted/20 stroke-border ${floorMode ? "cursor-crosshair" : ""}`}
         strokeWidth={1}
         onPointerDown={startCut}
         onClick={handlePinClick}
@@ -292,12 +379,12 @@ export function RoomPlan2D({
             data-item-id={it.id}
             transform={`rotate(${-p.rotDeg} ${x + w / 2} ${y + d / 2})`}
             onPointerDown={(e) => {
-              if (cutMode || pinMode) return;
+              if (floorMode) return;
               if (editable && it.editable !== false) startDrag("move", it.id, e);
               else onSelect?.(it.id);
             }}
             onClick={handlePinClick}
-            className={cutMode || pinMode ? "" : editable && it.editable !== false ? "cursor-move" : "cursor-pointer"}
+            className={floorMode ? "" : editable && it.editable !== false ? "cursor-move" : "cursor-pointer"}
           >
             <rect
               x={x}
@@ -319,6 +406,75 @@ export function RoomPlan2D({
               {it.name}
               {p.baseM ? " ↑" : ""}
             </text>
+          </g>
+        );
+      })}
+
+      {(cameras ?? []).map((m) => {
+        const cam = camDraft?.id === m.id ? camDraft.camera : m.camera;
+        const cx = px(clamp(cam.xM, 0, widthM)), cy = py(clamp(cam.yM, 0, depthM));
+        const R = CAMERA_WEDGE_M * S;
+        const at = (deg: number) => {
+          const r = (deg * Math.PI) / 180;
+          return { x: cx + R * Math.cos(r), y: cy - R * Math.sin(r) };
+        };
+        const a1 = at(cam.headingDeg - cam.fovDeg / 2);
+        const a2 = at(cam.headingDeg + cam.fovDeg / 2);
+        const tip = at(cam.headingDeg);
+        const isSel = !m.ghost && m.id === selectedCameraId;
+        const live = !m.ghost && !floorMode;
+        const color = "#7c3aed";
+        return (
+          <g
+            key={`cam-${m.id}${m.ghost ? "-ghost" : ""}`}
+            data-camera-id={m.id}
+            pointerEvents={live ? undefined : "none"}
+            opacity={m.ghost ? 0.6 : 1}
+          >
+            <title>{m.title}</title>
+            {/* sweep 0: counter-clockwise on screen, the way the heading grows */}
+            <path
+              d={`M ${cx} ${cy} L ${a1.x} ${a1.y} A ${R} ${R} 0 0 0 ${a2.x} ${a2.y} Z`}
+              fill={color}
+              fillOpacity={isSel ? 0.22 : 0.12}
+              stroke={color}
+              strokeOpacity={isSel ? 0.9 : 0.5}
+              strokeWidth={isSel ? 2 : 1}
+              strokeDasharray={m.ghost ? "5 3" : undefined}
+              className={live ? "cursor-pointer" : ""}
+              onPointerDown={(e) => {
+                if (!live) return;
+                onSelectCamera?.(m.id);
+                e.stopPropagation();
+              }}
+            />
+            <circle
+              cx={cx}
+              cy={cy}
+              r={5}
+              fill={m.ghost ? "white" : color}
+              stroke={isSel ? "#1e1b4b" : color}
+              strokeWidth={isSel ? 2.5 : 1.5}
+              strokeDasharray={m.ghost ? "3 2" : undefined}
+              className={live ? (onCameraChange ? "cursor-move" : "cursor-pointer") : ""}
+              onPointerDown={(e) => startCameraDrag("move", m, e)}
+            />
+            {isSel && onCameraChange && (
+              <>
+                <line x1={cx} y1={cy} x2={tip.x} y2={tip.y} stroke={color} strokeWidth={1} strokeDasharray="3 2" />
+                <circle
+                  cx={tip.x}
+                  cy={tip.y}
+                  r={6}
+                  className="fill-white cursor-grab"
+                  stroke={color}
+                  strokeWidth={2}
+                  onPointerDown={(e) => startCameraDrag("aim", m, e)}
+                >
+                  <title>Drag to aim · shift-drag to widen or narrow the view</title>
+                </circle>
+              </>
+            )}
           </g>
         );
       })}

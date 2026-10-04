@@ -1,14 +1,17 @@
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { useParams, useSearchParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
-import { RoomPlan2D } from "@/components/RoomPlan2D";
+import { RoomPlan2D, type CameraMarker } from "@/components/RoomPlan2D";
 import { RoomPlan3D } from "@/components/RoomPlan3D";
 import { Button } from "@/components/ui/button";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { ItemPicker } from "@/components/ItemPicker";
+import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { applyStacking } from "@/lib/roomStacking";
-import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2, MapPin, Box, Plus } from "lucide-react";
-import type { ItemPos } from "@db/schema";
+import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2, MapPin, Box, Plus, Camera, Maximize2, Sparkles } from "lucide-react";
+import type { ItemPos, PhotoCamera } from "@db/schema";
+
+const CAMERA_DEFAULT: Omit<PhotoCamera, "xM" | "yM"> = { headingDeg: 0, fovDeg: 60, heightM: 1.5 };
 
 /**
  * Floor plan for a scanned room - 2D (drag/rotate/resize/stacking/cut) and
@@ -82,6 +85,8 @@ export default function RoomPlanPage() {
 
   const selectItem = (itemId: number) => {
     setSelectedId(itemId);
+    setSelectedCameraId(null);
+    setConfirmRemoveCamera(false);
     setAttaching(false);
     setAttachError(null);
   };
@@ -165,6 +170,7 @@ export default function RoomPlanPage() {
     dropPlaceParam();
     setPlaceError(null);
     setPlacingManual(item);
+    cancelCameraPlace();
     setPinMode(false);
     setPendingPin(null);
     setCutMode(false);
@@ -213,15 +219,165 @@ export default function RoomPlanPage() {
     setPinAreaId(null);
   };
 
-  const onEscape = useEffectEvent(() => cancelPlace());
+  // ---- Photos on the plan: camera markers -------------------------------
+  // A full photo of this room stands on the plan as a camera (dot + view
+  // wedge). "Place" (or `?placePhoto=<photoId>`, from the Photos page and
+  // the item view) asks suggestCamera for a start, draws it as a ghost, and
+  // the next plan click stands the photo there with the suggested heading.
+  const roomPhotos = trpc.photos.roomPhotos.useQuery({ roomId: id }, { enabled: Number.isFinite(id) });
+  const fullPhotos = useMemo(() => (roomPhotos.data ?? []).filter((p) => !p.isCutout), [roomPhotos.data]);
+  // roomPhotos rows carry no roomId (a capture's location photo can be
+  // listed here while filed in no room, or another): photos.get says, and
+  // brings the thumbnail URL with it.
+  const photoDetails = trpc.useQueries((t) => fullPhotos.map((p) => t.photos.get({ id: p.photoId })));
+  const photoInfo = new Map(
+    fullPhotos.map((p, i) => {
+      const d = photoDetails[i]?.data;
+      return [p.photoId, { roomId: d?.photo?.roomId ?? null, url: d?.url ?? null, loaded: d != null }] as const;
+    }),
+  );
+  const photoTitle = (p: { photoId: number; title: string | null }) => p.title || `Photo #${p.photoId}`;
+  const onPlanPhotos = fullPhotos.filter((p) => p.camera != null && photoInfo.get(p.photoId)?.roomId === id);
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
+  const [confirmRemoveCamera, setConfirmRemoveCamera] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [zoomPhoto, setZoomPhoto] = useState<{ url: string; title: string } | null>(null);
+  const selectedCamera = onPlanPhotos.find((p) => p.photoId === selectedCameraId) ?? null;
+
+  const placePhotoRaw = Number(searchParams.get("placePhoto"));
+  const placePhotoId = Number.isInteger(placePhotoRaw) && placePhotoRaw > 0 ? placePhotoRaw : null;
+  const placePhotoDetail = trpc.photos.get.useQuery({ id: placePhotoId ?? -1 }, { enabled: placePhotoId != null });
+  const placePhotoRow = placePhotoDetail.data?.photo ?? null;
+  const placePhotoOk =
+    roomSized && placePhotoRow != null && placePhotoRow.cropBox == null && placePhotoRow.roomId === id;
+  const placePhotoNotice =
+    placePhotoId == null || !room.data || placePhotoDetail.isLoading || placePhotoOk
+      ? null
+      : !placePhotoRow
+        ? "That photo was not found, so nothing was placed."
+        : placePhotoRow.cropBox != null
+          ? "That photo is a cutout of a Thing, not a viewpoint: it does not stand on the plan."
+          : placePhotoRow.roomId == null
+            ? "That photo has no room yet, so it was not placed here. Give it a room first."
+            : placePhotoRow.roomId !== id
+              ? `That photo is not in ${room.data.name}, so it was not placed here.`
+              : null; // unsized: the size notice above the plan says it
+  const [cameraPlacingManual, setCameraPlacingManual] = useState<{ photoId: number; title: string } | null>(null);
+  const cameraPlacing =
+    cameraPlacingManual ??
+    (placePhotoOk && placePhotoRow ? { photoId: placePhotoRow.id, title: placePhotoRow.title || `Photo #${placePhotoRow.id}` } : null);
+  const suggestion = trpc.photos.suggestCamera.useQuery(
+    { id: cameraPlacing?.photoId ?? -1 },
+    { enabled: cameraPlacing != null && roomSized, staleTime: 0, retry: false },
+  );
+  const [cameraBusy, setCameraBusy] = useState(false);
+
+  const setCamera = trpc.photos.setCamera.useMutation();
+  /** Write a camera (null takes it off the plan). The list is updated first
+   * so a dragged marker stays where it was dropped; a failure refetches. */
+  const writeCamera = async (photoId: number, camera: PhotoCamera | null) => {
+    setCameraError(null);
+    utils.photos.roomPhotos.setData({ roomId: id }, (old) =>
+      old?.map((p) => (p.photoId === photoId ? { ...p, camera } : p)),
+    );
+    try {
+      await setCamera.mutateAsync({ id: photoId, camera });
+      return true;
+    } catch (e) {
+      setCameraError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      void utils.photos.roomPhotos.invalidate({ roomId: id });
+      void utils.photos.get.invalidate({ id: photoId });
+      void utils.items.placement.invalidate();
+    }
+  };
+
+  const dropPlacePhotoParam = () => {
+    if (!searchParams.has("placePhoto")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("placePhoto");
+    setSearchParams(next, { replace: true });
+  };
+  const cancelCameraPlace = () => {
+    setCameraPlacingManual(null);
+    setCameraError(null);
+    dropPlacePhotoParam();
+  };
+  const startCameraPlace = (photo: { photoId: number; title: string }) => {
+    if (!roomSized) return;
+    cancelPlace();
+    dropPlacePhotoParam();
+    setCameraError(null);
+    setCameraPlacingManual(photo);
+    setPinMode(false);
+    setPendingPin(null);
+    setCutMode(false);
+    setPendingCut(null);
+    setSelectedId(null);
+    setSelectedCameraId(null);
+    setConfirmRemoveCamera(false);
+    setView("2d");
+  };
+  /** The click gives the position; heading, view and height come from the
+   * suggestion (the defaults when it failed). */
+  const placeCameraAt = async (at: { xM: number; yM: number }) => {
+    if (!cameraPlacing || cameraBusy || suggestion.isLoading) return;
+    const target = cameraPlacing;
+    const base = suggestion.data?.camera ?? { xM: at.xM, yM: at.yM, ...CAMERA_DEFAULT };
+    // hold the target and drop `?placePhoto=` before the write, as placeAt does
+    setCameraPlacingManual(target);
+    dropPlacePhotoParam();
+    setCameraBusy(true);
+    try {
+      const ok = await writeCamera(target.photoId, { ...base, xM: at.xM, yM: at.yM });
+      if (ok) {
+        setCameraPlacingManual(null);
+        setSelectedCameraId(target.photoId);
+        setConfirmRemoveCamera(false);
+      }
+    } finally {
+      setCameraBusy(false);
+    }
+  };
+  const suggestForSelected = async () => {
+    if (!selectedCamera) return;
+    setCameraError(null);
+    try {
+      const s = await utils.photos.suggestCamera.fetch({ id: selectedCamera.photoId }, { staleTime: 0 });
+      await writeCamera(selectedCamera.photoId, s.camera);
+    } catch (e) {
+      setCameraError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const selectCamera = (photoId: number) => {
+    setSelectedCameraId(photoId);
+    setConfirmRemoveCamera(false);
+    setCameraError(null);
+    setSelectedId(null);
+  };
+  const cameraMarkers: CameraMarker[] = roomSized
+    ? [
+        ...onPlanPhotos.map((p) => ({ id: p.photoId, title: photoTitle(p), camera: p.camera! })),
+        ...(cameraPlacing && suggestion.data
+          ? [{ id: cameraPlacing.photoId, title: cameraPlacing.title, camera: suggestion.data.camera, ghost: true }]
+          : []),
+      ]
+    : [];
+
+  const onEscape = useEffectEvent(() => {
+    cancelPlace();
+    cancelCameraPlace();
+  });
+  const anyPlacing = placing != null || cameraPlacing != null;
   useEffect(() => {
-    if (!placing) return;
+    if (!anyPlacing) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onEscape();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [placing]);
+  }, [anyPlacing]);
 
   /** Shared by both the 2D plan and the 3D twin - pinning a point creates a
    * real item at that footprint, status "confirmed" (a human just placed it
@@ -287,6 +443,7 @@ export default function RoomPlanPage() {
                   type="button"
                   onClick={() => {
                     setView("3d");
+                    cancelCameraPlace();
                     setCutMode(false);
                     setPendingCut(null);
                   }}
@@ -303,6 +460,8 @@ export default function RoomPlanPage() {
                     className="h-7 text-[12px]"
                     onClick={() => {
                       cancelPlace();
+                      cancelCameraPlace();
+                      setSelectedCameraId(null);
                       setPinMode((v) => !v);
                       setPendingPin(null);
                       setCutMode(false);
@@ -319,6 +478,8 @@ export default function RoomPlanPage() {
                       className="h-7 text-[12px]"
                       onClick={() => {
                         cancelPlace();
+                        cancelCameraPlace();
+                        setSelectedCameraId(null);
                         setCutMode((v) => !v);
                         setPendingCut(null);
                         setPinMode(false);
@@ -393,6 +554,29 @@ export default function RoomPlanPage() {
                   </Button>
                 </div>
               )}
+              {cameraPlacing && (
+                <div className="mb-1.5 flex items-center gap-2 rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-[12px] text-violet-900">
+                  {cameraBusy || suggestion.isLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Camera className="h-3.5 w-3.5" />
+                  )}
+                  <span>
+                    Click where <b>{cameraPlacing.title}</b> was taken
+                    {suggestion.data?.basis === "pins"
+                      ? " · the dashed marker is a guess from its pinned Things"
+                      : suggestion.data
+                        ? " · the dashed marker is the room's centre"
+                        : ""}
+                  </span>
+                  <span className="text-muted-foreground">· Esc cancels</span>
+                  {suggestion.error && <span className="text-destructive">{suggestion.error.message}</span>}
+                  {cameraError && <span className="text-destructive">Not placed: {cameraError}</span>}
+                  <Button size="sm" variant="outline" className="h-6 text-[11px] ml-auto" onClick={cancelCameraPlace}>
+                    Cancel
+                  </Button>
+                </div>
+              )}
               {!roomSized && (
                 <div className="mb-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
                   <p>{sizeNotice}</p>
@@ -407,12 +591,20 @@ export default function RoomPlanPage() {
                   </button>
                 </div>
               )}
+              {placePhotoNotice && (
+                <div className="mb-1.5 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[12px] text-amber-900">
+                  <span>{placePhotoNotice}</span>
+                  <button className="ml-auto" title="Dismiss" onClick={dropPlacePhotoParam}>
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
               {/* Both views stay mounted - toggling via `hidden` instead of
                   conditional JSX - so switching tabs doesn't tear down and
                   recreate the 3D view's WebGL context every time (React
                   StrictMode double-invokes effects, so repeated mount/unmount
                   cycles can exhaust the browser's WebGL context limit). */}
-              <div hidden={view !== "2d"}>
+              <div hidden={view !== "2d"} data-zoom-ignore="">
                 <RoomPlan2D
                   widthM={room.data.widthM ?? 0}
                   depthM={room.data.depthM ?? 0}
@@ -431,6 +623,12 @@ export default function RoomPlanPage() {
                   }}
                   pinMode={pinMode || placing != null}
                   onPinPlace={onPlanClick}
+                  cameras={cameraMarkers}
+                  selectedCameraId={selectedCameraId}
+                  onSelectCamera={selectCamera}
+                  onCameraChange={(photoId, camera) => void writeCamera(photoId, camera)}
+                  cameraMode={cameraPlacing != null}
+                  onCameraPlace={placeCameraAt}
                 />
               </div>
               <div hidden={view !== "3d"}>
@@ -449,7 +647,7 @@ export default function RoomPlanPage() {
               </div>
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {view === "2d"
-                  ? "Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize. The ⟲/⟳ buttons above only rotate the view, not the data."
+                  ? "Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize. A photo's dot moves it, the handle at its view's tip aims it (shift = wider or narrower). The ⟲/⟳ buttons above only rotate the view, not the data."
                   : "Drag to orbit · scroll to zoom · click an item to select it."}
               </p>
               {room.data.items.some((it) => !it.pos && placeable(it)) && (
@@ -501,6 +699,81 @@ export default function RoomPlanPage() {
                           )}
                         </li>
                       ))}
+                  </ul>
+                </div>
+              )}
+              {fullPhotos.length > 0 && (
+                <div className="mt-4 text-[12px]">
+                  <p className="text-muted-foreground">
+                    Photos:
+                    {!roomSized && <span className="ml-1 text-amber-700">size the room above first.</span>}
+                  </p>
+                  <ul className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {fullPhotos.map((p) => {
+                      const info = photoInfo.get(p.photoId);
+                      const here = info?.roomId === id;
+                      const onPlan = here && p.camera != null;
+                      const title = photoTitle(p);
+                      return (
+                        <li
+                          key={p.photoId}
+                          className={`flex items-center gap-2 rounded border bg-white p-1 ${
+                            onPlan && selectedCameraId === p.photoId ? "border-violet-400" : "border-border"
+                          }`}
+                        >
+                          {info?.url ? (
+                            <img src={info.url} alt="" className="h-12 w-12 shrink-0 rounded object-cover bg-muted" />
+                          ) : (
+                            <div className="h-12 w-12 shrink-0 rounded bg-muted" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-foreground" title={title}>
+                              {title}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {p.pinCount > 0 ? `${p.pinCount} pinned` : "no pins"}
+                            </p>
+                          </div>
+                          {!info?.loaded ? null : onPlan ? (
+                            <button
+                              type="button"
+                              disabled={!roomSized}
+                              onClick={() => selectCamera(p.photoId)}
+                              className="shrink-0 px-1 text-[11px] text-violet-700 hover:underline disabled:opacity-50 disabled:no-underline"
+                            >
+                              on the plan
+                            </button>
+                          ) : here ? (
+                            <span className="inline-flex shrink-0" title={!roomSized ? sizeNotice : `Stand ${title} on the plan`}>
+                              <Button
+                                size="sm"
+                                variant={cameraPlacing?.photoId === p.photoId ? "default" : "outline"}
+                                className="h-5 px-1.5 text-[11px]"
+                                disabled={!roomSized}
+                                onClick={() =>
+                                  cameraPlacing?.photoId === p.photoId
+                                    ? cancelCameraPlace()
+                                    : startCameraPlace({ photoId: p.photoId, title })
+                                }
+                              >
+                                <Camera className="h-3 w-3 mr-0.5" /> Place
+                              </Button>
+                            </span>
+                          ) : info.roomId != null ? (
+                            <Link
+                              to={`/rooms/${info.roomId}?placePhoto=${p.photoId}`}
+                              className="shrink-0 px-1 text-[11px] text-primary hover:underline"
+                            >
+                              in another room →
+                            </Link>
+                          ) : (
+                            <span className="shrink-0 px-1 text-[11px] text-muted-foreground" title="Give the photo a room first">
+                              no room
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}
@@ -583,11 +856,39 @@ export default function RoomPlanPage() {
                     </Button>
                   </div>
                 </>
+              ) : selectedCamera && !cameraPlacing ? (
+                <CameraCard
+                  title={photoTitle(selectedCamera)}
+                  camera={selectedCamera.camera!}
+                  url={photoInfo.get(selectedCamera.photoId)?.url ?? null}
+                  busy={setCamera.isPending}
+                  error={cameraError}
+                  confirmRemove={confirmRemoveCamera}
+                  onOpen={(url) => setZoomPhoto({ url, title: photoTitle(selectedCamera) })}
+                  onSuggest={() => void suggestForSelected()}
+                  onRemove={async () => {
+                    if (!confirmRemoveCamera) {
+                      setConfirmRemoveCamera(true);
+                      return;
+                    }
+                    if (await writeCamera(selectedCamera.photoId, null)) {
+                      setSelectedCameraId(null);
+                      setConfirmRemoveCamera(false);
+                    }
+                  }}
+                  onClose={() => {
+                    setSelectedCameraId(null);
+                    setConfirmRemoveCamera(false);
+                    setCameraError(null);
+                  }}
+                />
               ) : !selectedItem ? (
                 <p className="text-[13px] text-muted-foreground">
                   {cutMode
                     ? "Drag a rectangle on the plan to mark the room's area."
-                    : placing
+                    : cameraPlacing
+                      ? `Click the plan where ${cameraPlacing.title} was taken.`
+                      : placing
                       ? `Click the plan where ${placing.name} stands.`
                       : pinMode
                       ? "Click the plan to pin a new item there."
@@ -693,9 +994,71 @@ export default function RoomPlanPage() {
               )}
             </aside>
           </div>
+          <ZoomOverlay open={zoomPhoto != null} onClose={() => setZoomPhoto(null)} title={zoomPhoto?.title}>
+            {zoomPhoto && (
+              <img src={zoomPhoto.url} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
+            )}
+          </ZoomOverlay>
         </>
       )}
     </div>
+  );
+}
+
+/** The selected photo marker: what it shows, where it stands, and the
+ * actions on it. Remove asks twice. */
+function CameraCard(props: {
+  title: string;
+  camera: PhotoCamera;
+  url: string | null;
+  busy: boolean;
+  error: string | null;
+  confirmRemove: boolean;
+  onOpen: (url: string) => void;
+  onSuggest: () => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  const { title, camera, url } = props;
+  return (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <p className="font-medium text-[14px] break-words">{title}</p>
+        <button type="button" title="Close" onClick={props.onClose} className="text-muted-foreground hover:text-foreground">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      {url ? (
+        <button type="button" className="mt-2 block w-full" title="Open" onClick={() => props.onOpen(url)}>
+          <img src={url} alt="" className="w-full max-h-40 rounded object-cover bg-muted" />
+        </button>
+      ) : (
+        <div className="mt-2 h-24 w-full rounded bg-muted" />
+      )}
+      <p className="text-[12px] text-muted-foreground mt-2">
+        at {camera.xM.toFixed(2)}, {camera.yM.toFixed(2)} m · facing {Math.round(camera.headingDeg)}° · view{" "}
+        {Math.round(camera.fovDeg)}°
+      </p>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <Button size="sm" variant="outline" className="h-7 text-[12px]" disabled={!url} onClick={() => url && props.onOpen(url)}>
+          <Maximize2 className="h-3.5 w-3.5 mr-1" /> Open
+        </Button>
+        <Button size="sm" variant="outline" className="h-7 text-[12px]" disabled={props.busy} onClick={props.onSuggest}>
+          <Sparkles className="h-3.5 w-3.5 mr-1" /> Suggest from pins
+        </Button>
+      </div>
+      {props.error && <p className="mt-2 text-[11px] text-destructive">{props.error}</p>}
+      <div className="mt-3 border-t border-border pt-2">
+        <button
+          type="button"
+          disabled={props.busy}
+          onClick={props.onRemove}
+          className="text-[12px] text-red-700 underline-offset-2 hover:underline disabled:opacity-50"
+        >
+          {props.confirmRemove ? "Really remove from the plan?" : "Remove from plan"}
+        </button>
+      </div>
+    </>
   );
 }
 
