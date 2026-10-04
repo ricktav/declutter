@@ -1105,9 +1105,11 @@ const items = await q("items.listAll", { includeArchived: true, houseId: null })
 const rels = await q("items.listRelations", { type: "powers" });
 
 const plan = [];
+const plannedRooms = new Set();
 const roomId = async (name) => {
   let r = rooms.find((x) => x.name === name);
-  if (!r) {
+  if (!r && !plannedRooms.has(name)) {
+    plannedRooms.add(name);
     plan.push(`room: create "${name}"`);
     if (APPLY) {
       await m("rooms.ensure", { name, houseId: house.id });
@@ -1120,7 +1122,7 @@ const roomId = async (name) => {
 const want = [
   ...circles.map((c) => ({
     key: c.mac,
-    name: `Plugwise – ${c.name}`,
+    name: `Plugwise – ${c.name === "circle+" ? "Circle+" : c.name}`,
     room: c.location,
     attributes: { role: "meter", meter_kind: "plug", brand: "Plugwise", model: c.name === "circle+" ? "Circle+" : "Circle", mac: c.mac },
   })),
