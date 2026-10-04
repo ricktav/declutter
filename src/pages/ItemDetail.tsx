@@ -35,6 +35,8 @@ import {
   Lightbulb,
 } from "lucide-react";
 import type { AttributeDef } from "@db/schema";
+import type { inferRouterOutputs } from "@trpc/server";
+import type { AppRouter } from "../../api/router";
 
 /** Link to the original, uncropped photo a cutout came from — opens full-size in a new tab. */
 function SourceLink({ photoId }: { photoId: number }) {
@@ -178,6 +180,7 @@ export default function ItemDetail() {
 
   const invalidate = () => {
     utils.items.get.invalidate({ id: itemId });
+    utils.items.placement.invalidate({ itemId });
     utils.items.listByArea.invalidate();
     utils.areas.list.invalidate();
   };
@@ -914,8 +917,8 @@ export default function ItemDetail() {
             </section>
           )}
 
-          {/* pinned in photos */}
-          <PinnedInPhotos itemId={it.id} />
+          {/* placement: photo, 2D plan, 3D */}
+          <PlacementPane itemId={it.id} onPickRoom={startEditLoc} />
         </div>
       </div>
 
@@ -950,29 +953,145 @@ export default function ItemDetail() {
   );
 }
 
-function PinnedInPhotos({ itemId }: { itemId: number }) {
-  const pins = trpc.pins.listForItem.useQuery({ itemId });
-  const list = (pins.data ?? []).filter((p) => p.status === "confirmed");
-  if (!pins.data) return null;
+/** Where the Thing is placed, and where it is not yet: pinned in a photo,
+ * on its room's 2D plan, and in 3D. Plan and 3D are one fact (roomId + pos);
+ * 3D additionally needs the room's walls or its width and depth. Each gap
+ * gets its direct action. */
+function PlacementPane({ itemId, onPickRoom }: { itemId: number; onPickRoom: () => void }) {
+  const placement = trpc.items.placement.useQuery({ itemId });
   return (
     <section className="rounded-lg border border-border bg-white p-4">
-      <h2 className="micro-label text-muted-foreground mb-2">Seen in photos</h2>
-      {list.length === 0 && (
-        <div className="text-[13px] text-muted-foreground">
-          Not pinned in any photo yet — annotate a photo and link this item.
+      <h2 className="micro-label text-muted-foreground mb-2">Placement</h2>
+      {placement.isLoading ? (
+        <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading placement…
         </div>
+      ) : placement.isError || !placement.data ? (
+        <div className="text-[13px] text-amber-800">Could not load placement: {placement.error?.message ?? "unknown error"}</div>
+      ) : (
+        <PlacementRows p={placement.data} onPickRoom={onPickRoom} />
       )}
-      <div className="space-y-1">
-        {list.map((p) => (
-          <div key={p.id} className="text-[13px] flex items-center gap-2">
-            <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <Link to={`/annotate/${p.photoId}`} className="text-primary hover:underline">
-              {p.photo?.title ?? `photo #${p.photoId}`}
-            </Link>
-            {p.label && <span className="text-muted-foreground text-[11px]">as “{p.label}”</span>}
-          </div>
-        ))}
-      </div>
     </section>
+  );
+}
+
+type PlacementData = inferRouterOutputs<AppRouter>["items"]["placement"];
+
+/** Room photos offered as pin canvases in the pane; the rest live on /photos. */
+const PANE_ROOM_PHOTOS_MAX = 6;
+
+function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => void }) {
+  const room = p.roomName ?? (p.roomId != null ? `room #${p.roomId}` : null);
+  const canvases = p.roomPhotos.filter((r) => !r.isCutout);
+  const shown = canvases.slice(0, PANE_ROOM_PHOTOS_MAX);
+  const in3d = p.onPlan && (p.roomHasGeometry || p.roomHasDimensions);
+  const actionLink = "text-[12px] text-primary hover:underline";
+
+  return (
+    <div className="space-y-3">
+      {/* 1. Photo */}
+      <div>
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-1">
+          <Camera className="h-3.5 w-3.5" /> Photo
+        </div>
+        {p.pins.length > 0 ? (
+          <>
+            <div className="text-[13px]">Seen in {p.pins.length} photo{p.pins.length === 1 ? "" : "s"}</div>
+            <div className="mt-1 space-y-1">
+              {p.pins.map((pin) => (
+                <div key={pin.pinId} className="text-[13px] flex items-center gap-2">
+                  <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <Link to={`/annotate/${pin.photoId}`} className="text-primary hover:underline">
+                    {pin.title ?? `photo #${pin.photoId}`}
+                  </Link>
+                  {pin.label && <span className="text-muted-foreground text-[11px]">as “{pin.label}”</span>}
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-[13px] text-muted-foreground">Not pinned in a photo yet</div>
+            {p.roomId != null &&
+              (shown.length > 0 ? (
+                <div className="mt-1">
+                  <div className="text-[12px] mb-1">Pin in a photo of {room}</div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {shown.map((ph) => (
+                      <RoomPhotoTile key={ph.photoId} photo={ph} itemId={p.itemId} />
+                    ))}
+                  </div>
+                  {canvases.length > shown.length && (
+                    <Link to={`/photos?room=${p.roomId}`} className={`${actionLink} mt-1 inline-block`}>
+                      {canvases.length - shown.length} more in Photos
+                    </Link>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-0.5 text-[12px]">
+                  No photo of {room} yet ·{" "}
+                  <Link to={`/photos?room=${p.roomId}`} className={actionLink}>Photos</Link>
+                </div>
+              ))}
+          </>
+        )}
+      </div>
+
+      {/* 2. 2D plan */}
+      <div>
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-1">
+          <MapPin className="h-3.5 w-3.5" /> 2D plan
+        </div>
+        {p.roomId == null ? (
+          <div className="text-[13px] text-muted-foreground">
+            Give it a room first ·{" "}
+            <button type="button" className={actionLink} onClick={onPickRoom}>Pick a room</button>
+          </div>
+        ) : p.onPlan ? (
+          <div className="text-[13px]">
+            Placed on the plan of {room} ·{" "}
+            <Link to={`/rooms/${p.roomId}`} className={actionLink}>Open plan</Link>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            Not on the plan yet
+            <Button asChild size="sm" variant="outline" className="h-6 text-[11px]">
+              <Link to={`/rooms/${p.roomId}?placeItem=${p.itemId}`}>Place on the plan</Link>
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* 3. 3D: the same fact as the plan, plus the room's shape */}
+      <div>
+        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-1">
+          <Images className="h-3.5 w-3.5" /> 3D
+        </div>
+        <div className={`text-[13px] ${in3d ? "" : "text-muted-foreground"}`}>
+          {in3d
+            ? "Visible in 3D"
+            : p.onPlan
+              ? "Scan or size the room to see it in 3D"
+              : "Appears once it is on the plan"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RoomPhotoTile({ photo, itemId }: { photo: PlacementData["roomPhotos"][number]; itemId: number }) {
+  const url = trpc.photos.url.useQuery({ key: photo.storageKey });
+  const title = photo.title ?? `photo #${photo.photoId}`;
+  return (
+    <Link
+      to={`/annotate/${photo.photoId}?itemId=${itemId}&back=item`}
+      title={`Pin in ${title}`}
+      className="group block rounded border border-border overflow-hidden hover:border-primary"
+    >
+      <div className="aspect-square bg-muted">
+        {url.data?.url && <img src={url.data.url} alt="" loading="lazy" className="h-full w-full object-cover" />}
+      </div>
+      <div className="truncate px-1 py-0.5 text-[10px] text-muted-foreground group-hover:text-primary">{title}</div>
+    </Link>
   );
 }

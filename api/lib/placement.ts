@@ -28,7 +28,7 @@ export interface Placement {
   /** photos with this itemId */
   photos: number;
   /** non-cutouts first, then newest first, max ROOM_PHOTOS_MAX */
-  roomPhotos: Array<{ photoId: number; title: string | null; hasPinForItem: boolean; isCutout: boolean }>;
+  roomPhotos: Array<{ photoId: number; title: string | null; storageKey: string; hasPinForItem: boolean; isCutout: boolean }>;
 }
 
 export async function placementFor(db: Db, itemId: number): Promise<Placement> {
@@ -74,6 +74,7 @@ async function roomPhotosFor(db: Db, roomId: number, itemId: number, pinnedPhoto
         .select({
           id: photos.id,
           title: photos.title,
+          storageKey: photos.storageKey,
           createdAt: photos.createdAt,
           sourceCaptureId: photos.sourceCaptureId,
           itemId: photos.itemId,
@@ -84,7 +85,7 @@ async function roomPhotosFor(db: Db, roomId: number, itemId: number, pinnedPhoto
     : [];
   const captureIds = [...new Set(cutouts.map((c) => c.sourceCaptureId).filter((x): x is number => x != null))];
   const itemless = await db
-    .select({ id: photos.id, title: photos.title, createdAt: photos.createdAt, itemId: photos.itemId, cropBox: photos.cropBox })
+    .select({ id: photos.id, title: photos.title, storageKey: photos.storageKey, createdAt: photos.createdAt, itemId: photos.itemId, cropBox: photos.cropBox })
     .from(photos)
     .where(
       and(
@@ -92,14 +93,14 @@ async function roomPhotosFor(db: Db, roomId: number, itemId: number, pinnedPhoto
         captureIds.length ? or(eq(photos.roomId, roomId), inArray(photos.sourceCaptureId, captureIds)) : eq(photos.roomId, roomId),
       ),
     );
-  const byId = new Map<number, { id: number; title: string | null; createdAt: Date; isCutout: boolean }>();
+  const byId = new Map<number, { id: number; title: string | null; storageKey: string; createdAt: Date; isCutout: boolean }>();
   for (const p of [...itemless, ...cutouts]) {
-    if (!byId.has(p.id)) byId.set(p.id, { id: p.id, title: p.title, createdAt: p.createdAt, isCutout: p.cropBox != null || p.itemId != null });
+    if (!byId.has(p.id)) byId.set(p.id, { id: p.id, title: p.title, storageKey: p.storageKey, createdAt: p.createdAt, isCutout: p.cropBox != null || p.itemId != null });
   }
   return [...byId.values()]
     .sort((a, b) => Number(a.isCutout) - Number(b.isCutout) || +b.createdAt - +a.createdAt || b.id - a.id)
     .slice(0, ROOM_PHOTOS_MAX)
-    .map((p) => ({ photoId: p.id, title: p.title, hasPinForItem: pinnedPhotoIds.has(p.id), isCutout: p.isCutout }));
+    .map((p) => ({ photoId: p.id, title: p.title, storageKey: p.storageKey, hasPinForItem: pinnedPhotoIds.has(p.id), isCutout: p.isCutout }));
 }
 
 /** Badges for many Things in two queries: confirmed pins per item, and each
