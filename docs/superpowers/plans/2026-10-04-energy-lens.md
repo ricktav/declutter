@@ -1209,7 +1209,7 @@ class AggregateTest(unittest.TestCase):
         m = aggregate(rows)["2026-10"]
         self.assertAlmostEqual(m["kwhNormal"], 0.025)          # 100 W x 0.25 h
         self.assertAlmostEqual(m["kwhOffpeak"], 0.010)         # 40 W x 0.25 h; -0.3 W clamps to 0
-        self.assertEqual(m["hours"], 0.75)
+        self.assertEqual(m["hours"], 0.8)                      # 3 x 0.25 h, one decimal like the column
         self.assertEqual(m["peakW"], 120.0)
         self.assertGreaterEqual(m["baseW"], 0)                 # never negative
         self.assertAlmostEqual(m["avgW"], round(0.035 * 1000 / 0.75, 1))
