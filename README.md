@@ -72,6 +72,7 @@ local Ollama.
   apply). An existing database that was created with `db:push` is switched to migrations once with
   `npm run db:adopt 0002_item_decision` (the last tag it already matches); after that, only
   `npm run db:migrate`.
+- `node scripts/storage-report-local.mjs --item <id>` measures this machine's volumes and top directories and posts them to the Storage page (`/storage`).
 - Photos and files are stored on local disk under `uploads/` and served at `/uploads/*`.
 - Access: set `APP_TOKEN` in `.env` and the app asks for it once per browser. Without it the
   API and photos are open to anyone who can reach the port, so only run that way on a
