@@ -66,6 +66,7 @@ function Shell() {
             onClick={() => setLens(lens === "lab" ? null : "lab")}
             aria-pressed={lens === "lab"}
             title="Computer lab lens"
+            aria-label="Computer lab lens"
             className={cn(
               "flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 font-data text-[12px]",
               lens === "lab"
@@ -73,12 +74,15 @@ function Shell() {
                 : "bg-[#3a3f2e] text-[#b4b8a5]"
             )}
           >
-            <Cpu className="h-3.5 w-3.5" /> Lab
+            {/* two lens chips plus the place pill: labels only where the header has room */}
+            <Cpu className="h-3.5 w-3.5" />{" "}
+            <span className="hidden min-[430px]:inline">Lab</span>
           </button>
           <button
             onClick={() => setLens(lens === "energy" ? null : "energy")}
             aria-pressed={lens === "energy"}
             title="Energy lens"
+            aria-label="Energy lens"
             className={cn(
               "flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 font-data text-[12px]",
               lens === "energy"
@@ -86,7 +90,8 @@ function Shell() {
                 : "bg-[#3a3f2e] text-[#b4b8a5]"
             )}
           >
-            <Zap className="h-3.5 w-3.5" /> Energy
+            <Zap className="h-3.5 w-3.5" />{" "}
+            <span className="hidden min-[430px]:inline">Energy</span>
           </button>
           <button
             onClick={() => setHereOpen(true)}
