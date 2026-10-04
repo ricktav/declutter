@@ -19,6 +19,7 @@ import SettingsPage from "@/pages/Settings";
 // when their route is visited.
 const RoomPlanPage = lazy(() => import("@/pages/RoomPlan"));
 const GalaxyPage = lazy(() => import("@/pages/Galaxy"));
+const StoragePage = lazy(() => import("@/pages/Storage"));
 const MapPage = lazy(() => import("@/pages/Map"));
 const WikiPage = lazy(() => import("@/pages/Wiki"));
 
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="/rooms" element={<RoomsPage />} />
             <Route path="/rooms/:roomId" element={<RoomPlanPage />} />
             <Route path="/galaxy" element={<GalaxyPage />} />
+            <Route path="/storage" element={<StoragePage />} />
             <Route path="/ideas" element={<IdeasPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/wiki" element={<WikiPage />} />

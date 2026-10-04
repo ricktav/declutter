@@ -35,6 +35,7 @@ import {
   Images,
   Network,
   Smartphone,
+  HardDrive,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
@@ -137,6 +138,7 @@ const NAV = [
   { to: "/map", label: "Map", icon: MapPin },
   { to: "/rooms", label: "Rooms", icon: Box },
   { to: "/galaxy", label: "Galaxy", icon: Network },
+  { to: "/storage", label: "Storage", icon: HardDrive },
   { to: "/ideas", label: "Ideas", icon: Lightbulb },
   { to: "/tasks", label: "Tasks", icon: ListChecks },
   { to: "/wiki", label: "Wiki", icon: BookOpen },
