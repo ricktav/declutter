@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { items, storageDirs, storageVolumes, type DataRole } from "@db/schema";
+import { items, rooms, storageDirs, storageVolumes, type DataRole } from "@db/schema";
 import type { getDb } from "../queries/connection";
 
 type Db = ReturnType<typeof getDb>;
@@ -45,6 +45,9 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
   const now = new Date();
   let dirCount = 0;
   await db.transaction(async (tx) => {
+    // read the item again inside the transaction so the attribute merge sees the same row it writes
+    const current = await tx.query.items.findFirst({ where: eq(items.id, input.itemId) });
+    if (!current) throw new StorageReportError("Item not found.");
     for (const v of input.volumes) {
       await tx
         .insert(storageVolumes)
@@ -90,7 +93,7 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
       .update(items)
       .set({
         attributes: {
-          ...(item.attributes ?? {}),
+          ...(current.attributes ?? {}),
           storage_gb: Math.round(capacity / 1e9),
           storage_free_gb: Math.round((capacity - used) / 1e9),
         },
@@ -131,4 +134,73 @@ export async function volumesForItems(db: Db, itemIds: number[]) {
     : [];
   const dirCount = new Map(counts.map((c) => [c.volumeId, Number(c.n)]));
   return vols.map((v) => ({ ...v, dirCount: dirCount.get(v.id) ?? 0 }));
+}
+
+const COMPUTER_ROLES = new Set(["laptop", "desktop", "server", "sbc"]);
+
+type DeviceRow = { id: number; name: string; parentId: number | null; roomId: number | null; attributes: Record<string, string | number> | null };
+
+function num(v: string | number | undefined): number | null {
+  if (v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** One device with its volumes; without volumes the block comes from the lab keys (GB → bytes, decimal). */
+function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForItems>>, roomName: string | null) {
+  const mine = volumes.filter((v) => v.itemId === row.id);
+  const measured = mine.length > 0;
+  const gb = num(row.attributes?.storage_gb);
+  const freeGb = num(row.attributes?.storage_free_gb);
+  const capacityBytes = measured ? mine.reduce((s, v) => s + v.capacityBytes, 0) : gb != null ? gb * 1e9 : null;
+  const usedBytes = measured ? mine.reduce((s, v) => s + v.usedBytes, 0) : gb != null && freeGb != null ? (gb - freeGb) * 1e9 : null;
+  return {
+    id: row.id,
+    name: row.name,
+    kind: String(row.attributes?.role ?? "storage"),
+    driveType: row.attributes?.drive_type != null ? String(row.attributes.drive_type) : null,
+    parentId: row.parentId,
+    roomName,
+    capacityBytes,
+    usedBytes,
+    measured,
+    volumes: mine.map((v) => ({
+      id: v.id,
+      mountPoint: v.mountPoint,
+      label: v.label,
+      fsType: v.fsType,
+      device: v.device,
+      capacityBytes: v.capacityBytes,
+      usedBytes: v.usedBytes,
+      dataRole: v.dataRole,
+      measuredAt: v.measuredAt,
+      dirCount: v.dirCount,
+    })),
+  };
+}
+
+export async function overviewFor(db: Db, houseId: number | null) {
+  const where = houseId != null ? and(eq(items.status, "active"), eq(items.houseId, houseId)) : eq(items.status, "active");
+  const all = await db
+    .select({ id: items.id, name: items.name, parentId: items.parentId, roomId: items.roomId, attributes: items.attributes, roomName: rooms.name })
+    .from(items)
+    .leftJoin(rooms, eq(rooms.id, items.roomId))
+    .where(where)
+    .orderBy(items.name);
+  const devices = all.filter((r) => isStorageDevice(r));
+  const volumes = await volumesForItems(db, devices.map((d) => d.id));
+  const computers = devices.filter((d) => COMPUTER_ROLES.has(String(d.attributes?.role)));
+  const computerIds = new Set(computers.map((c) => c.id));
+  const internal = devices.filter((d) => d.parentId != null && computerIds.has(d.parentId));
+  const externals = devices.filter((d) => !computerIds.has(d.id) && !(d.parentId != null && computerIds.has(d.parentId)));
+  const totals = await roleTotals(db);
+  return {
+    computers: computers.map((c) => ({
+      ...deviceOf(c, volumes, c.roomName),
+      drives: internal.filter((d) => d.parentId === c.id).map((d) => deviceOf(d, volumes, d.roomName)),
+    })),
+    externals: externals.map((d) => deviceOf(d, volumes, d.roomName)),
+    totals,
+    unassignedVolumes: totals.find((t) => t.dataRole === null)?.volumes ?? 0,
+  };
 }

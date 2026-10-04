@@ -118,3 +118,76 @@ describe("storage.report", () => {
     expect(item?.attributes?.storage_free_gb).toBe(Math.round((1900 * GB) / 1e9));
   });
 });
+
+describe("storage.overview", () => {
+  it("groups internal drives under their computer, externals apart, and falls back to attributes", async () => {
+    const { houseId, pc, ssd, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: ssd, source: "test", volumes: [{ mountPoint: "/", capacityBytes: 1000 * GB, usedBytes: 600 * GB }] });
+    const o = await c.storage.overview({});
+    expect(o.computers.map((x) => x.name)).toEqual(["mac-mini"]);
+    const mini = o.computers[0];
+    expect(mini.drives.map((d) => [d.name, d.measured, d.usedBytes])).toEqual([["Internal SSD", true, 600 * GB]]);
+    expect(mini.drives[0].volumes.map((v) => v.mountPoint)).toEqual(["/"]);
+    // the computer itself has no volumes: block from its attributes, unmeasured
+    expect([mini.measured, mini.capacityBytes, mini.usedBytes]).toEqual([false, 1000e9, 600e9]);
+    const ext = o.externals.find((d) => d.id === nas)!;
+    expect([ext.kind, ext.measured, ext.capacityBytes, ext.usedBytes]).toEqual(["nas", false, 3933e9, (3933 - 426) * 1e9]);
+    expect(o.externals.map((d) => d.id)).not.toContain(pc);
+    expect(o.externals.map((d) => d.id)).not.toContain(ssd);
+  });
+
+  it("totals sum every volume once and count the unassigned ones", async () => {
+    const { houseId, ssd, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: ssd, source: "test", volumes: [{ mountPoint: "/", capacityBytes: 10 * GB, usedBytes: 4 * GB }] });
+    await c.storage.report({
+      itemId: nas,
+      source: "test",
+      volumes: [
+        { mountPoint: "/volume1", capacityBytes: 20 * GB, usedBytes: 15 * GB },
+        { mountPoint: "/volume2", capacityBytes: 30 * GB, usedBytes: 1 * GB },
+      ],
+    });
+    const vols = await getTestDb().select().from(storageVolumes);
+    const v1 = vols.find((v) => v.mountPoint === "/volume1")!;
+    await c.storage.setRole({ volumeId: v1.id, dataRole: "backup" });
+    await c.storage.setRole({ volumeId: vols.find((v) => v.mountPoint === "/")!.id, dataRole: "backup" });
+    const o = await c.storage.overview({});
+    const backup = o.totals.find((t) => t.dataRole === "backup")!;
+    expect([backup.volumes, backup.capacityBytes, backup.usedBytes]).toEqual([2, 30 * GB, 19 * GB]);
+    expect(o.totals.find((t) => t.dataRole === null)).toMatchObject({ volumes: 1, capacityBytes: 30 * GB, usedBytes: 1 * GB });
+    expect(o.unassignedVolumes).toBe(1);
+  });
+
+  it("scopes to the context house but houseId null covers every house", async () => {
+    const { pc } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: h2 }] = await db.insert(houses).values({ name: "Zomerhuis" }).$returningId();
+    const areaId = (await db.query.areas.findFirst())!.id;
+    await db.insert(items).values({ areaId, houseId: h2, name: "pi-zomer", attributes: { role: "sbc" } });
+    expect((await callerFor(h2).storage.overview({})).computers.map((c) => c.name)).toEqual(["pi-zomer"]);
+    expect((await callerFor(h2).storage.overview({ houseId: null })).computers.map((c) => c.name).sort()).toEqual(["mac-mini", "pi-zomer"]);
+    expect((await callerFor(null).storage.overview({})).computers.map((c) => c.id)).toContain(pc);
+  });
+});
+
+describe("storage.dirs", () => {
+  it("lists a volume's directories biggest first with its device", async () => {
+    const { houseId, ssd } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: ssd,
+      source: "test",
+      volumes: [{ mountPoint: "/", capacityBytes: 10 * GB, usedBytes: 4 * GB, dirs: [{ path: "/Applications", bytes: 1 * GB }, { path: "/Users", bytes: 3 * GB }] }],
+    });
+    const v = (await getTestDb().select().from(storageVolumes))[0];
+    const d = await c.storage.dirs({ volumeId: v.id });
+    expect(d.volume.itemName).toBe("Internal SSD");
+    expect(d.dirs.map((x) => [x.path, x.bytes])).toEqual([
+      ["/Users", 3 * GB],
+      ["/Applications", 1 * GB],
+    ]);
+    await expect(c.storage.dirs({ volumeId: 999999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});

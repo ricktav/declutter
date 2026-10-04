@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { storageVolumes } from "@db/schema";
+import { items, storageDirs, storageVolumes } from "@db/schema";
 import { logEvent } from "../lib/events";
-import { DATA_ROLES, StorageReportError, applyReport } from "../lib/storage";
+import { DATA_ROLES, StorageReportError, applyReport, overviewFor } from "../lib/storage";
 
 const reportVolume = z.object({
   mountPoint: z.string().min(1).max(255),
@@ -59,4 +59,24 @@ export const storageRouter = createRouter({
       });
       return { ...row, dataRole: input.dataRole };
     }),
+
+  overview: procedure
+    .input(z.object({ houseId: z.number().nullable().optional() }).optional())
+    .query(async ({ input, ctx }) => {
+      const houseId = input?.houseId !== undefined ? input.houseId : ctx.houseId;
+      return overviewFor(getDb(), houseId);
+    }),
+
+  dirs: procedure.input(z.object({ volumeId: z.number().int() })).query(async ({ input }) => {
+    const db = getDb();
+    const volume = await db.query.storageVolumes.findFirst({ where: eq(storageVolumes.id, input.volumeId) });
+    if (!volume) throw new TRPCError({ code: "NOT_FOUND", message: "Volume not found." });
+    const item = await db.query.items.findFirst({ where: eq(items.id, volume.itemId) });
+    const dirs = await db
+      .select({ path: storageDirs.path, bytes: storageDirs.bytes, measuredAt: storageDirs.measuredAt })
+      .from(storageDirs)
+      .where(eq(storageDirs.volumeId, input.volumeId))
+      .orderBy(desc(storageDirs.bytes));
+    return { volume: { ...volume, itemName: item?.name ?? `#${volume.itemId}` }, dirs };
+  }),
 });
