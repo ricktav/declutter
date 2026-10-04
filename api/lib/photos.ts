@@ -404,3 +404,40 @@ export async function legacyAttachmentsForItem(db: Db, itemId: number): Promise<
     (a, b) => +b.createdAt - +a.createdAt || b.id - a.id,
   );
 }
+
+/** Attach a bucket photo (a location photo, a bare photo) to an existing
+ * Thing. A capture is never attached directly: the caller makes its photo
+ * with photos.ensureForCapture first. A photo of another Thing moves only
+ * with force (the UI asks "Move from X?"). The photo keeps its own room
+ * (where it was taken); only a room-less photo takes the Thing's room. Pins
+ * and cover photos are not touched: the cover is read from the item's photos. */
+export async function attachPhotoToItem(
+  db: Db,
+  input: { photoId: number; itemId: number; force?: boolean },
+): Promise<{ photoId: number; itemId: number; roomId: number | null }> {
+  const photo = await db.query.photos.findFirst({ where: eq(photos.id, input.photoId) });
+  if (!photo) throw new TRPCError({ code: "NOT_FOUND", message: "Photo not found." });
+  const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
+  if (!item) throw new TRPCError({ code: "BAD_REQUEST", message: "Thing not found." });
+  if (item.status !== "active") throw new TRPCError({ code: "BAD_REQUEST", message: `"${item.name}" is archived.` });
+  if (photo.itemId === item.id) return { photoId: photo.id, itemId: item.id, roomId: photo.roomId };
+  if (photo.itemId != null && !input.force) {
+    const owner = await db.query.items.findFirst({ where: eq(items.id, photo.itemId) });
+    throw new TRPCError({ code: "CONFLICT", message: `Photo belongs to ${owner?.name ?? `#${photo.itemId}`}` });
+  }
+  const roomId = photo.roomId ?? item.roomId ?? null;
+  await db.transaction(async (tx) => {
+    await tx.update(photos).set({ itemId: item.id, roomId }).where(eq(photos.id, photo.id));
+    await logEvent(
+      {
+        entityType: "item",
+        entityId: item.id,
+        action: "photo.attached",
+        summary: `Photo "${photo.title ?? photo.id}" attached to "${item.name}"${photo.itemId != null ? ` (moved from item #${photo.itemId})` : ""}`,
+        payload: { photoId: photo.id, fromItemId: photo.itemId ?? null, roomId },
+      },
+      tx,
+    );
+  });
+  return { photoId: photo.id, itemId: item.id, roomId };
+}

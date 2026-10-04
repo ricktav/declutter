@@ -12,7 +12,7 @@ import { readFileBytes, urlForKey, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
 import { logEvent } from "../lib/events";
-import { addPhoto, ensureLocationPhotoForCapture, ensurePinForCutout, listPhotoCatalog, removePhoto, unlinkPhoto } from "../lib/photos";
+import { addPhoto, attachPhotoToItem, ensureLocationPhotoForCapture, ensurePinForCutout, listPhotoCatalog, removePhoto, unlinkPhoto } from "../lib/photos";
 
 const cropBoxInput = z.object({
   xPct: z.number().min(0).max(100),
@@ -58,6 +58,13 @@ export const photosRouter = createRouter({
   /** Un-pin a photo from its item without deleting it: it goes back to the
    * Photos pool, keeping the item's room so it does not lose its place. */
   unlink: procedure.input(z.object({ id: z.number() })).mutation(({ input }) => unlinkPhoto(getDb(), input.id)),
+
+  /** Attach a bucket photo to an existing Thing (photo ids only; a capture
+   * goes through ensureForCapture first). CONFLICT when the photo belongs to
+   * another Thing, unless force moves it. */
+  attachToItem: procedure
+    .input(z.object({ photoId: z.number(), itemId: z.number(), force: z.boolean().optional() }))
+    .mutation(({ input }) => attachPhotoToItem(getDb(), input)),
 
   listForItem: procedure.input(z.object({ itemId: z.number() })).query(({ input }) =>
     getDb().select().from(photos).where(eq(photos.itemId, input.itemId)).orderBy(desc(photos.createdAt)),

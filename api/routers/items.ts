@@ -9,6 +9,7 @@ import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { getModel } from "../lib/ai";
 import { roomSummary, setItemLocation } from "../lib/location";
 import { coverPhotos, linkAsLegacy, photoAsLegacy } from "../lib/photos";
+import { placementFor, placementSummaryFor } from "../lib/placement";
 
 /** crude name-similarity: shared significant tokens */
 function nameScore(a: string, b: string): number {
@@ -156,6 +157,15 @@ export const itemsRouter = createRouter({
       children,
     };
   }),
+
+  /** Where a Thing is placed: confirmed pins, on the plan (= in 3D), and
+   * the photos of its room it could still be pinned in. */
+  placement: procedure.input(z.object({ itemId: z.number() })).query(({ input }) => placementFor(getDb(), input.itemId)),
+
+  /** Pin count and on-plan flag for many Things (tile badges), in two queries. */
+  placementSummary: procedure
+    .input(z.object({ itemIds: z.array(z.number()).min(1).max(500) }))
+    .query(({ input }) => placementSummaryFor(getDb(), input.itemIds)),
 
   create: procedure
     .input(
