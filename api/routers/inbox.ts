@@ -15,7 +15,7 @@ import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 import { setItemLocation } from "../lib/location";
-import { coverPhotos } from "../lib/photos";
+import { coverPhotos, ensureLocationPhotoForCapture, ensurePinForCutout } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -500,6 +500,9 @@ export const inboxRouter = createRouter({
       const targetId: number = itemId;
       const item = await db.query.items.findFirst({ where: eq(items.id, targetId) });
       const box = { xPct: input.xPct, yPct: input.yPct, wPct: input.wPct, hPct: input.hPct };
+      // the item is in the capture: pin it on the capture's location photo
+      // (made now when the snap has none yet), so "Seen in photos" shows it
+      const { photoId: locationPhotoId } = await ensureLocationPhotoForCapture(db, cap.id, input.roomId);
       await withNewFile(
         { bytes: new Uint8Array(cropped), fileName: `items/${targetId}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
         (saved) =>
@@ -525,6 +528,7 @@ export const inboxRouter = createRouter({
               },
               tx,
             );
+            await ensurePinForCutout(tx, { sourcePhotoId: locationPhotoId, itemId: targetId, box, label: input.label });
           }),
       );
       if (input.markProcessed) {

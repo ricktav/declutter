@@ -2,17 +2,124 @@
 // Shared reads and writes for photos (images) and item_links (link, note,
 // file). The photos/pins/itemLinks routers and the deprecated attachments.*
 // aliases all go through these, so each table is written one way.
-import { asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { areas, captures, itemLinks, items, photoPins, photos, type CropBox, type ItemLink, type Photo } from "@db/schema";
 import type { getDb } from "../queries/connection";
-import { readFileBytes } from "./filestore";
+import { readFileBytes, withNewFile } from "./filestore";
 import { sniffMime } from "./sniff";
 import { logEvent } from "./events";
 import { releaseStoredFiles } from "./entities";
 import { roomSummary } from "./location";
 
 type Db = ReturnType<typeof getDb>;
+type Tx = Pick<Db, "select" | "insert" | "update" | "query">;
+
+/** The box a cutout was cropped with, in percent of the source photo (center + size). */
+export interface PinBox {
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
+}
+
+/** A cutout means its item is in the source photo: make sure that photo
+ * carries a confirmed pin for the item, so the item's "Seen in photos"
+ * (pins.listForItem) shows it. One pin per (photo, item): an existing one
+ * (an AI suggestion, a pin drawn first) is confirmed and keeps its box. */
+export async function ensurePinForCutout(
+  tx: Tx,
+  input: { sourcePhotoId: number; itemId: number; box: PinBox; label: string },
+): Promise<{ id: number; created: boolean }> {
+  const existing = await tx.query.photoPins.findFirst({
+    where: and(eq(photoPins.photoId, input.sourcePhotoId), eq(photoPins.itemId, input.itemId)),
+  });
+  if (existing) {
+    if (existing.status !== "confirmed") {
+      await tx.update(photoPins).set({ status: "confirmed" }).where(eq(photoPins.id, existing.id));
+    }
+    return { id: existing.id, created: false };
+  }
+  const [{ id }] = await tx
+    .insert(photoPins)
+    .values({
+      photoId: input.sourcePhotoId,
+      itemId: input.itemId,
+      xPct: input.box.xPct,
+      yPct: input.box.yPct,
+      wPct: input.box.wPct,
+      hPct: input.box.hPct,
+      label: input.label.slice(0, 255),
+      origin: "user",
+      status: "confirmed",
+    })
+    .$returningId();
+  await logEvent(
+    {
+      entityType: "pin",
+      entityId: id,
+      action: "pin-added",
+      summary: `Pin "${input.label || "untitled"}" added to photo #${input.sourcePhotoId} for the cutout of item #${input.itemId}`,
+    },
+    tx,
+  );
+  return { id, created: true };
+}
+
+/** Find-or-create the bare, item-less "location photo" of a capture: the
+ * full image a pin canvas works on (cutouts carry the same sourceCaptureId
+ * but have an itemId). The capture row is locked first, so two calls at once
+ * (a double tap, two tabs) make one photo. A room given later is kept when
+ * the photo had none. */
+export async function ensureLocationPhotoForCapture(
+  db: Db,
+  captureId: number,
+  roomId?: number | null,
+): Promise<{ photoId: number; created: boolean }> {
+  return db.transaction(async (tx) => {
+    // Lock the capture row first: a second call for the same capture waits
+    // here. Its plain read below runs after the first call committed, so it
+    // finds that photo instead of making another one.
+    const [cap] = await tx.select().from(captures).where(eq(captures.id, captureId)).for("update");
+    const existing = await tx.query.photos.findFirst({
+      where: and(eq(photos.sourceCaptureId, captureId), isNull(photos.itemId)),
+    });
+    if (existing) {
+      // a room confirmed just now (Inbox's pending-item "Pin" flow) is worth keeping
+      if (roomId != null && existing.roomId == null) {
+        await tx.update(photos).set({ roomId }).where(eq(photos.id, existing.id));
+      }
+      return { photoId: existing.id, created: false };
+    }
+    if (!cap?.storageKey) throw new TRPCError({ code: "NOT_FOUND", message: "Capture has no stored photo." });
+    let bytes: Uint8Array;
+    try {
+      bytes = await readFileBytes(cap.storageKey);
+    } catch {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
+    }
+    const mimeType = await sniffMime(bytes, cap.storageKey);
+    // own copy of the bytes: a capture and a photo never share a key
+    return withNewFile(
+      { bytes, fileName: `locations/${cap.storageKey.split("/").pop() ?? "photo"}`, contentType: mimeType },
+      async (copy) => {
+        const [{ id }] = await tx
+          .insert(photos)
+          .values({
+            storageKey: copy.key,
+            size: copy.size,
+            mimeType,
+            sourceCaptureId: cap.id,
+            roomId: roomId ?? null,
+            title: "Location photo",
+          })
+          .$returningId();
+        await logEvent({ entityType: "photo", entityId: id, action: "created", summary: `Location photo created from capture #${cap.id}` }, tx);
+        return { photoId: id, created: true };
+      },
+    );
+  });
+}
 
 export type ItemLinkKind = "link" | "note" | "file";
 

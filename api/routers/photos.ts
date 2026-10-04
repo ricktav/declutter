@@ -3,17 +3,16 @@
 // Took over the image half of the old attachments router and the two photo
 // procedures of api/routers/map.ts.
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { captures, items, photos } from "@db/schema";
 import { readFileBytes, urlForKey, withNewFile } from "../lib/filestore";
-import { sniffMime } from "../lib/sniff";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
 import { logEvent } from "../lib/events";
-import { addPhoto, listPhotoCatalog, removePhoto, unlinkPhoto } from "../lib/photos";
+import { addPhoto, ensureLocationPhotoForCapture, ensurePinForCutout, listPhotoCatalog, removePhoto, unlinkPhoto } from "../lib/photos";
 
 const cropBoxInput = z.object({
   xPct: z.number().min(0).max(100),
@@ -133,12 +132,20 @@ export const photosRouter = createRouter({
         bytes = await readSourceBytes(source.storageKey);
       }
 
+      // the cutout's item is in the source photo: pin it there too, so the
+      // item's "Seen in photos" shows that photo
+      const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
+      const pinFor = { sourcePhotoId: source.id, itemId: input.itemId, box: input.box, label: item?.name ?? "" };
+
       // one cutout per item and original photo: pinning again or re-saving does not pile up copies
       if (sourceCaptureId) {
         const dup = await db.query.photos.findFirst({
           where: and(eq(photos.itemId, input.itemId), eq(photos.sourceCaptureId, sourceCaptureId)),
         });
-        if (dup) return { id: dup.id, storageKey: dup.storageKey, created: false as const };
+        if (dup) {
+          await db.transaction((tx) => ensurePinForCutout(tx, pinFor));
+          return { id: dup.id, storageKey: dup.storageKey, created: false as const };
+        }
       }
 
       const maxDim = { small: 480, medium: 900, big: undefined }[input.photoSize];
@@ -168,6 +175,7 @@ export const photosRouter = createRouter({
               },
               tx,
             );
+            await ensurePinForCutout(tx, pinFor);
             return { id, storageKey: saved.key, created: true as const };
           }),
       );
@@ -202,46 +210,8 @@ export const photosRouter = createRouter({
    * photo per capture (reused on repeat visits) so it becomes pinnable. */
   ensureForCapture: procedure
     .input(z.object({ captureId: z.number(), roomId: z.number().nullable().optional() }))
-    .mutation(({ input }) =>
-      getDb().transaction(async (tx) => {
-        // Lock the capture row first: a second call for the same capture (a
-        // double tap, two tabs) waits here. Its plain read below runs after
-        // the first call committed, so it finds that photo instead of making
-        // another one.
-        const [cap] = await tx.select().from(captures).where(eq(captures.id, input.captureId)).for("update");
-        // itemId IS NULL: a cutout carries the same sourceCaptureId but is a crop, not the full photo
-        const existing = await tx.query.photos.findFirst({
-          where: and(eq(photos.sourceCaptureId, input.captureId), isNull(photos.itemId)),
-        });
-        if (existing) {
-          // a room confirmed just now (Inbox's pending-item "Pin" flow) is worth keeping
-          if (input.roomId != null && existing.roomId == null) {
-            await tx.update(photos).set({ roomId: input.roomId }).where(eq(photos.id, existing.id));
-          }
-          return { photoId: existing.id };
-        }
-        if (!cap?.storageKey) throw new TRPCError({ code: "NOT_FOUND", message: "Capture has no stored photo." });
-        const bytes = await readSourceBytes(cap.storageKey);
-        const mimeType = await sniffMime(bytes, cap.storageKey);
-        // own copy of the bytes: a capture and a photo never share a key
-        return withNewFile(
-          { bytes, fileName: `locations/${cap.storageKey.split("/").pop() ?? "photo"}`, contentType: mimeType },
-          async (copy) => {
-            const [{ id }] = await tx
-              .insert(photos)
-              .values({
-                storageKey: copy.key,
-                size: copy.size,
-                mimeType,
-                sourceCaptureId: cap.id,
-                roomId: input.roomId ?? null,
-                title: "Location photo",
-              })
-              .$returningId();
-            await logEvent({ entityType: "photo", entityId: id, action: "created", summary: `Location photo created from capture #${cap.id}` }, tx);
-            return { photoId: id };
-          },
-        );
-      }),
-    ),
+    .mutation(async ({ input }) => {
+      const { photoId } = await ensureLocationPhotoForCapture(getDb(), input.captureId, input.roomId);
+      return { photoId };
+    }),
 });

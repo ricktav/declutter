@@ -263,16 +263,24 @@ export default function AnnotatePage() {
     // description ("ultrawide monitor") shouldn't outlive the link to the
     // actual inventory record ("Samsung ultrawide monitor")
     const label = draft.item ? draft.item.name : draft.label;
-    resolve.mutate({ id: p.id, confirm: true, label, itemId: draft.item?.id ?? null });
-    if (draft.item) {
-      const box = boxFor(p);
-      ensureItemPhoto(draft.item.id, {
-        xPct: box.xPct,
-        yPct: box.yPct,
-        wPct: box.wPct ?? 20,
-        hPct: box.hPct ?? 20,
-      });
-    }
+    const linked = draft.item;
+    // after the pin carries its item: createCutout then confirms this pin
+    // instead of adding a second one for the same item
+    resolve.mutate(
+      { id: p.id, confirm: true, label, itemId: linked?.id ?? null },
+      {
+        onSuccess: () => {
+          if (!linked) return;
+          const box = boxFor(p);
+          ensureItemPhoto(linked.id, {
+            xPct: box.xPct,
+            yPct: box.yPct,
+            wPct: box.wPct ?? 20,
+            hPct: box.hPct ?? 20,
+          });
+        },
+      },
+    );
     setSuggestionDrafts((prev) => {
       const { [p.id]: _drop, ...rest } = prev;
       return rest;
@@ -452,11 +460,6 @@ export default function AnnotatePage() {
       utils.areas.list.invalidate();
       utils.rooms.list.invalidate();
     }
-    // whether brand-new or existing, the drawn/adjusted box is already the
-    // confirmed photo - no separate "now pick a crop" step
-    if (itemId) {
-      ensureItemPhoto(itemId, box);
-    }
     // once linked, the item's own name is the label - not the free-text
     // description that found it
     const label = linkedItem ? linkedItem.name : pendingLabel.trim();
@@ -469,6 +472,12 @@ export default function AnnotatePage() {
       label,
       itemId,
     });
+    // whether brand-new or existing, the drawn/adjusted box is already the
+    // confirmed photo - no separate "now pick a crop" step. After the pin:
+    // createCutout finds it and does not add a second one
+    if (itemId) {
+      ensureItemPhoto(itemId, box);
+    }
     setPending(null);
   };
 
@@ -851,16 +860,24 @@ export default function AnnotatePage() {
                     disabled={reposition.isPending}
                     onClick={() => {
                       const label = editItem ? editItem.name : editLabel.trim();
-                      reposition.mutate({ id: editingPin.id, label, itemId: editItem?.id ?? null });
-                      if (editItem) {
-                        const box = boxFor(editingPin);
-                        ensureItemPhoto(editItem.id, {
-                          xPct: box.xPct,
-                          yPct: box.yPct,
-                          wPct: box.wPct ?? 20,
-                          hPct: box.hPct ?? 20,
-                        });
-                      }
+                      const pin = editingPin;
+                      const linked = editItem;
+                      // after the pin carries its item, so createCutout confirms it instead of adding another
+                      reposition.mutate(
+                        { id: pin.id, label, itemId: linked?.id ?? null },
+                        {
+                          onSuccess: () => {
+                            if (!linked) return;
+                            const box = boxFor(pin);
+                            ensureItemPhoto(linked.id, {
+                              xPct: box.xPct,
+                              yPct: box.yPct,
+                              wPct: box.wPct ?? 20,
+                              hPct: box.hPct ?? 20,
+                            });
+                          },
+                        },
+                      );
                       setEditingPinId(null);
                     }}
                   >

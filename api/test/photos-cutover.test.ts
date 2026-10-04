@@ -1,7 +1,7 @@
 // api/test/photos-cutover.test.ts
 import fs from "fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { areas, captures, houses, itemLinks, items, photoPins, photos, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
@@ -42,7 +42,14 @@ describe("after the cutover, a filed object is visible everywhere", () => {
     expect(detail?.links).toEqual([]);
     expect(detail?.attachments.map((a) => [a.id, a.kind])).toEqual([[photo.id, "image"]]);
     const catalog = await callerFor(h1).photos.listAll();
-    expect(catalog.filter((r) => r.source === "photo").map((r) => r.id)).toEqual([photo.id]);
+    // the cutout, plus the capture's location photo the item is pinned on
+    const [location] = await db.select().from(photos).where(and(eq(photos.sourceCaptureId, capId), isNull(photos.itemId)));
+    expect(
+      catalog
+        .filter((r) => r.source === "photo")
+        .map((r) => r.id)
+        .sort((a, b) => a - b),
+    ).toEqual([location.id, photo.id].sort((a, b) => a - b));
     expect(catalog.some((r) => r.source === "capture" && r.id === capId)).toBe(false);
     expect((await callerFor(h1).attachments.listForItem({ itemId })).map((a) => [a.id, a.kind])).toEqual([[photo.id, "image"]]);
   });
