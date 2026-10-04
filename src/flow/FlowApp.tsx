@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Camera, Cpu, Inbox, MapPin, Scale, Search } from "lucide-react";
+import { Camera, Cpu, Inbox, MapPin, Scale, Search, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HouseSwitcher } from "@/components/HouseSwitcher";
 import { FlowProvider, useFlow } from "./context";
@@ -23,7 +23,7 @@ const TABS: { key: Tab; label: string; icon: typeof Camera }[] = [
 
 const tabFromHash = (): Tab => {
   const h = location.hash.replace("#", "");
-  return TABS.some((t) => t.key === h) ? (h as Tab) : "snap";
+  return TABS.some(t => t.key === h) ? (h as Tab) : "snap";
 };
 
 export function FlowApp() {
@@ -68,20 +68,44 @@ function Shell() {
             title="Computer lab lens"
             className={cn(
               "flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 font-data text-[12px]",
-              lens === "lab" ? "bg-[#d2ff00] font-semibold text-[#282c20]" : "bg-[#3a3f2e] text-[#b4b8a5]",
+              lens === "lab"
+                ? "bg-[#d2ff00] font-semibold text-[#282c20]"
+                : "bg-[#3a3f2e] text-[#b4b8a5]"
             )}
           >
             <Cpu className="h-3.5 w-3.5" /> Lab
+          </button>
+          <button
+            onClick={() => setLens(lens === "energy" ? null : "energy")}
+            aria-pressed={lens === "energy"}
+            title="Energy lens"
+            className={cn(
+              "flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 font-data text-[12px]",
+              lens === "energy"
+                ? "bg-[#d2ff00] font-semibold text-[#282c20]"
+                : "bg-[#3a3f2e] text-[#b4b8a5]"
+            )}
+          >
+            <Zap className="h-3.5 w-3.5" /> Energy
           </button>
           <button
             onClick={() => setHereOpen(true)}
             className="flex min-w-0 flex-1 items-center gap-1.5 rounded-full bg-[#3a3f2e] px-3 py-1 text-left text-[12px]"
           >
             <MapPin className="h-3.5 w-3.5 shrink-0 text-[#d2ff00]" />
-            <span className="truncate">{here.roomId != null ? placeLabel(here.roomId, locations) : "Where are you?"}</span>
+            <span className="truncate">
+              {here.roomId != null
+                ? placeLabel(here.roomId, locations)
+                : "Where are you?"}
+            </span>
           </button>
           <HouseSwitcher dark />
-          <a href="/" aria-label="Workbench" title="Workbench" className="shrink-0 text-[12px] text-[#b4b8a5] hover:text-[#f4f4ed]">
+          <a
+            href="/"
+            aria-label="Workbench"
+            title="Workbench"
+            className="shrink-0 text-[12px] text-[#b4b8a5] hover:text-[#f4f4ed]"
+          >
             <span className="hidden min-[430px]:inline">Workbench </span>↗
           </a>
         </div>
@@ -90,7 +114,12 @@ function Shell() {
       <main className="mx-auto w-full max-w-md px-4 pt-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))]">
         {lens === "lab" && <LabBand onGoSort={() => go("sort")} />}
         <ScreenBoundary key={tab}>
-          {tab === "snap" && <SnapTab onChangeHere={() => setHereOpen(true)} onGoSort={() => go("sort")} />}
+          {tab === "snap" && (
+            <SnapTab
+              onChangeHere={() => setHereOpen(true)}
+              onGoSort={() => go("sort")}
+            />
+          )}
           {tab === "sort" && <SortTab />}
           {tab === "act" && <ActTab />}
           {tab === "find" && <FindTab />}
@@ -99,27 +128,39 @@ function Shell() {
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-white pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto grid max-w-md grid-cols-4">
-          {TABS.map((t) => (
+          {TABS.map(t => (
             <button
               key={t.key}
               onClick={() => go(t.key)}
               className={cn(
                 "relative flex flex-col items-center gap-0.5 py-2.5 font-data text-[11px]",
-                tab === t.key ? "bg-[#d2ff00] font-semibold text-[#282c20]" : "text-muted-foreground",
+                tab === t.key
+                  ? "bg-[#d2ff00] font-semibold text-[#282c20]"
+                  : "text-muted-foreground"
               )}
               aria-current={tab === t.key ? "page" : undefined}
             >
               <t.icon className="h-5 w-5" />
               {t.label}
               {t.key === "sort" && sortCount > 0 && (
-                <span className="absolute right-[22%] top-1.5 rounded-full bg-[#AD432B] px-1.5 text-[10px] leading-4 text-white">{sortCount}</span>
+                <span className="absolute right-[22%] top-1.5 rounded-full bg-[#AD432B] px-1.5 text-[10px] leading-4 text-white">
+                  {sortCount}
+                </span>
               )}
             </button>
           ))}
         </div>
       </nav>
 
-      {hereOpen && <LocationSheet title="Where are you?" value={here} onPick={setHere} onClose={() => setHereOpen(false)} allowClear />}
+      {hereOpen && (
+        <LocationSheet
+          title="Where are you?"
+          value={here}
+          onPick={setHere}
+          onClose={() => setHereOpen(false)}
+          allowClear
+        />
+      )}
     </div>
   );
 }
@@ -128,10 +169,18 @@ function Shell() {
 function LabBand({ onGoSort }: { onGoSort: () => void }) {
   const { items, backups } = useFlow();
   // top-level things only: a computer's internal drives are part of it
-  const lab = items.filter((it) => it.status === "active" && it.verificationStatus !== "rejected" && inLab(it) && it.parentId == null);
-  const states = lab.map((it) => backupState(it, backups));
-  const needBackup = states.filter((s) => s !== "n/a").length;
-  const covered = states.filter((s) => s === "covered" || s === "none-needed").length;
+  const lab = items.filter(
+    it =>
+      it.status === "active" &&
+      it.verificationStatus !== "rejected" &&
+      inLab(it) &&
+      it.parentId == null
+  );
+  const states = lab.map(it => backupState(it, backups));
+  const needBackup = states.filter(s => s !== "n/a").length;
+  const covered = states.filter(
+    s => s === "covered" || s === "none-needed"
+  ).length;
   const noRole = lab.filter(needsLabDetails).length;
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-[#282c20]/15 bg-[#d2ff00]/25 px-3 py-2 text-[12px]">
@@ -141,7 +190,10 @@ function LabBand({ onGoSort }: { onGoSort: () => void }) {
         {covered}/{needBackup} backed up
       </span>
       {noRole > 0 && (
-        <button onClick={onGoSort} className="font-data tabular-nums text-[#AD432B] underline">
+        <button
+          onClick={onGoSort}
+          className="font-data tabular-nums text-[#AD432B] underline"
+        >
           {noRole} without a role
         </button>
       )}

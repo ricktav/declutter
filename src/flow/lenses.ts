@@ -6,7 +6,7 @@ import type { FlowItem } from "./data";
  * describe the thing, so the Workbench shows them too); its workflow state
  * uses a "<lens>." prefix so it never collides with a description.
  */
-export type LensKey = "lab";
+export type LensKey = "lab" | "energy";
 
 export type LensField = {
   key: string;
@@ -29,15 +29,25 @@ export const ROLES: { value: string; label: string }[] = [
   { value: "phone", label: "Phone / tablet" },
   { value: "sbc", label: "Raspberry Pi" },
   { value: "network", label: "Network" },
+  { value: "meter", label: "Meter" },
   { value: "peripheral", label: "Peripheral" },
   { value: "part", label: "Part" },
   { value: "software", label: "Software" },
   { value: "service", label: "Service" },
 ];
-export const roleLabel = (v: string) => ROLES.find((r) => r.value === v)?.label ?? v;
+export const roleLabel = (v: string) =>
+  ROLES.find(r => r.value === v)?.label ?? v;
 
 /** Roles that can hold personal data - they need a backup, and a wipe before they go. */
-const DATA_ROLES = new Set(["laptop", "desktop", "server", "nas", "storage", "phone", "sbc"]);
+const DATA_ROLES = new Set([
+  "laptop",
+  "desktop",
+  "server",
+  "nas",
+  "storage",
+  "phone",
+  "sbc",
+]);
 /** Roles that can receive another device's backup. */
 const BACKUP_ROLES = new Set(["nas", "storage", "server"]);
 
@@ -49,16 +59,31 @@ export const LAB = {
   /** asked on the Sort card, next to the role */
   mainFields: [
     { key: "brand", label: "Brand", kind: "text", placeholder: "e.g. Dell" },
-    { key: "model", label: "Model", kind: "text", placeholder: "e.g. OptiPlex 7050" },
+    {
+      key: "model",
+      label: "Model",
+      kind: "text",
+      placeholder: "e.g. OptiPlex 7050",
+    },
     { key: "serial", label: "Serial number", kind: "text" },
   ] satisfies LensField[],
   moreFields: [
-    { key: "os", label: "Operating system", kind: "text", placeholder: "e.g. Ubuntu 24.04" },
+    {
+      key: "os",
+      label: "Operating system",
+      kind: "text",
+      placeholder: "e.g. Ubuntu 24.04",
+    },
     { key: "cpu", label: "CPU", kind: "text" },
     { key: "ram_gb", label: "RAM", kind: "number", unit: "GB" },
     { key: "storage_gb", label: "Storage", kind: "number", unit: "GB" },
     { key: "hostname", label: "Hostname", kind: "text" },
-    { key: "ip", label: "IP address", kind: "text", placeholder: "e.g. 10.50.0.x" },
+    {
+      key: "ip",
+      label: "IP address",
+      kind: "text",
+      placeholder: "e.g. 10.50.0.x",
+    },
     { key: "mac", label: "MAC address", kind: "text" },
   ] satisfies LensField[],
 };
@@ -72,6 +97,8 @@ export const LAB_KEYS = {
 };
 /** relation type: fromItemId (the NAS, drive or server) backs up toItemId (the device) */
 export const BACKS_UP = "backs-up";
+/** relation type: fromItemId (a plug) powers toItemId (an appliance) */
+export const POWERS = "powers";
 
 const attr = (it: FlowItem, key: string) => it.attributes?.[key];
 export const role = (it: FlowItem) => String(attr(it, "role") ?? "");
@@ -80,6 +107,8 @@ export const isBackupTarget = (it: FlowItem) => BACKUP_ROLES.has(role(it));
 
 export function inLab(it: FlowItem) {
   if (attr(it, LAB_KEYS.exclude) === "yes") return false;
+  // meters belong to the energy lens, never to the lab
+  if (role(it) === "meter") return false;
   if (role(it)) return true;
   return !!it.areaSlug && LAB.areaSlugs.includes(it.areaSlug);
 }
@@ -96,7 +125,10 @@ export function guessRole(it: FlowItem): string | null {
     [/server|proxmox/, "server"],
     [/desktop|imac|all-in-one|mac mini|tower|\bpc\b/, "desktop"],
     [/phone|iphone|ipad|tablet|android/, "phone"],
-    [/\bssd\b|\bhdd\b|hard ?disk|harde schijf|usb stick|sd card|external drive/, "storage"],
+    [
+      /\bssd\b|\bhdd\b|hard ?disk|harde schijf|usb stick|sd card|external drive/,
+      "storage",
+    ],
     [/router|switch|access point|modem|\bwifi\b|ethernet/, "network"],
     [/monitor|keyboard|mouse|printer|webcam|headset|speaker/, "peripheral"],
     [/\bram\b|dimm|cable|adapter|charger|board/, "part"],
@@ -104,12 +136,22 @@ export function guessRole(it: FlowItem): string | null {
   return rules.find(([re]) => re.test(hay))?.[1] ?? null;
 }
 
-export type Rel = { id: number; fromItemId: number; toItemId: number; type: string; status: string };
+export type Rel = {
+  id: number;
+  fromItemId: number;
+  toItemId: number;
+  type: string;
+  status: string;
+};
 
 /** The backup links that point at this device. */
-export const backupsOf = (it: FlowItem, backups: Rel[]) => backups.filter((r) => r.toItemId === it.id);
+export const backupsOf = (it: FlowItem, backups: Rel[]) =>
+  backups.filter(r => r.toItemId === it.id);
 
-export function backupState(it: FlowItem, backups: Rel[]): "covered" | "none-needed" | "missing" | "n/a" {
+export function backupState(
+  it: FlowItem,
+  backups: Rel[]
+): "covered" | "none-needed" | "missing" | "n/a" {
   if (!holdsData(it)) return "n/a";
   // a drive inside a computer is covered by that computer's backup; once
   // detached (no parent) it is asked about on its own
@@ -127,12 +169,26 @@ export function safetyChecks(it: FlowItem, backups: Rel[]) {
   if (!holdsData(it)) return null;
   const state = backupState(it, backups);
   return [
-    { key: LAB_KEYS.backup, label: it.parentId != null ? "Backed up (with its computer)" : "Backed up", done: state !== "missing" },
-    { key: LAB_KEYS.dataCopied, label: "Data copied off", done: !!attr(it, LAB_KEYS.dataCopied) },
-    { key: LAB_KEYS.wiped, label: "Wiped or reset", done: !!attr(it, LAB_KEYS.wiped) },
+    {
+      key: LAB_KEYS.backup,
+      label:
+        it.parentId != null ? "Backed up (with its computer)" : "Backed up",
+      done: state !== "missing",
+    },
+    {
+      key: LAB_KEYS.dataCopied,
+      label: "Data copied off",
+      done: !!attr(it, LAB_KEYS.dataCopied),
+    },
+    {
+      key: LAB_KEYS.wiped,
+      label: "Wiped or reset",
+      done: !!attr(it, LAB_KEYS.wiped),
+    },
   ];
 }
-export const safeToGo = (it: FlowItem, backups: Rel[]) => (safetyChecks(it, backups) ?? []).every((c) => c.done);
+export const safeToGo = (it: FlowItem, backups: Rel[]) =>
+  (safetyChecks(it, backups) ?? []).every(c => c.done);
 
 /** Today as YYYY-MM-DD in local time - a date, not a moment. */
 export function today() {
@@ -142,7 +198,9 @@ export function today() {
 export function shortDate(iso: string | number | undefined) {
   if (!iso) return "";
   const d = new Date(String(iso));
-  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return Number.isNaN(d.getTime())
+    ? String(iso)
+    : d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
 // The lens is a device preference: Rick's phone can sit in the lab while
@@ -150,7 +208,8 @@ export function shortDate(iso: string | number | undefined) {
 const LENS_KEY = "flow.lens";
 export function getLens(): LensKey | null {
   try {
-    return localStorage.getItem(LENS_KEY) === "lab" ? "lab" : null;
+    const v = localStorage.getItem(LENS_KEY);
+    return v === "lab" || v === "energy" ? v : null;
   } catch {
     return null;
   }
