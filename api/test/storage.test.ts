@@ -184,10 +184,65 @@ describe("storage.dirs", () => {
     const v = (await getTestDb().select().from(storageVolumes))[0];
     const d = await c.storage.dirs({ volumeId: v.id });
     expect(d.volume.itemName).toBe("Internal SSD");
+    expect(Object.keys(d.volume).sort()).toEqual(
+      ["capacityBytes", "dataRole", "device", "dirCount", "fsType", "id", "itemId", "itemName", "label", "measuredAt", "mountPoint", "usedBytes"],
+    );
     expect(d.dirs.map((x) => [x.path, x.bytes])).toEqual([
       ["/Users", 3 * GB],
       ["/Applications", 1 * GB],
     ]);
     await expect(c.storage.dirs({ volumeId: 999999 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("archived devices", () => {
+  it("drop out of the totals and refuse new reports", async () => {
+    const { houseId, ssd, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: ssd, source: "test", volumes: [{ mountPoint: "/", capacityBytes: 10 * GB, usedBytes: 4 * GB }] });
+    await c.storage.report({ itemId: nas, source: "test", volumes: [{ mountPoint: "/volume1", capacityBytes: 20 * GB, usedBytes: 5 * GB }] });
+    const before = await c.storage.overview({});
+    expect(before.unassignedVolumes).toBe(2);
+    await getTestDb().update(items).set({ status: "archived" }).where(eq(items.id, nas));
+    const after = await c.storage.overview({});
+    expect(after.unassignedVolumes).toBe(1);
+    expect(after.totals).toEqual([{ dataRole: null, volumes: 1, capacityBytes: 10 * GB, usedBytes: 4 * GB }]);
+    await expect(
+      c.storage.report({ itemId: nas, source: "test", volumes: [{ mountPoint: "/volume1", capacityBytes: 20 * GB, usedBytes: 6 * GB }] }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    const v = await getTestDb().query.storageVolumes.findFirst({ where: eq(storageVolumes.itemId, nas) });
+    expect(v?.usedBytes).toBe(5 * GB); // nothing written
+  });
+});
+
+describe("storage.removeVolume", () => {
+  it("deletes one volume with its directories and recomputes the device keys", async () => {
+    const { houseId, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: nas,
+      source: "test",
+      volumes: [
+        { mountPoint: "/volume1", capacityBytes: 3000 * GB, usedBytes: 2000 * GB, dirs: [{ path: "/volume1/photo", bytes: 1500 * GB }] },
+        { mountPoint: "/volume2", capacityBytes: 1000 * GB, usedBytes: 100 * GB, dirs: [{ path: "/volume2/tmp", bytes: 50 * GB }] },
+      ],
+    });
+    const vols = await getTestDb().select().from(storageVolumes).where(eq(storageVolumes.itemId, nas));
+    const v1 = vols.find((v) => v.mountPoint === "/volume1")!;
+    const v2 = vols.find((v) => v.mountPoint === "/volume2")!;
+    expect(await c.storage.removeVolume({ volumeId: v1.id })).toEqual({ removed: true });
+    const left = await getTestDb().select().from(storageVolumes).where(eq(storageVolumes.itemId, nas));
+    expect(left.map((v) => v.id)).toEqual([v2.id]);
+    expect(await getTestDb().select().from(storageDirs).where(eq(storageDirs.volumeId, v1.id))).toHaveLength(0);
+    expect(await getTestDb().select().from(storageDirs).where(eq(storageDirs.volumeId, v2.id))).toHaveLength(1);
+    const item = await getTestDb().query.items.findFirst({ where: eq(items.id, nas) });
+    expect(item?.attributes?.storage_gb).toBe(Math.round((1000 * GB) / 1e9));
+    expect(item?.attributes?.storage_free_gb).toBe(Math.round((900 * GB) / 1e9));
+
+    // the last volume goes: the keys stay as they were
+    await c.storage.removeVolume({ volumeId: v2.id });
+    const last = await getTestDb().query.items.findFirst({ where: eq(items.id, nas) });
+    expect(last?.attributes?.storage_gb).toBe(Math.round((1000 * GB) / 1e9));
+    await expect(c.storage.removeVolume({ volumeId: v1.id })).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

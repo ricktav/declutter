@@ -39,6 +39,7 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
   const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
   if (!item) throw new StorageReportError("Item not found.");
   if (!isStorageDevice(item)) throw new StorageReportError("Not a computer, drive or NAS: give the report a storage device.");
+  if (item.status === "archived") throw new StorageReportError("Item is archived: a report needs an active device.");
   for (const v of input.volumes) {
     if (v.usedBytes > v.capacityBytes) throw new StorageReportError(`${v.mountPoint}: used (${v.usedBytes}) above capacity (${v.capacityBytes}).`);
   }
@@ -85,25 +86,49 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
         }
       }
     }
-    // keep the whole-device lab keys in step with every volume we know
-    const all = await tx.select().from(storageVolumes).where(eq(storageVolumes.itemId, input.itemId));
-    const capacity = all.reduce((s, r) => s + r.capacityBytes, 0);
-    const used = all.reduce((s, r) => s + r.usedBytes, 0);
-    await tx
-      .update(items)
-      .set({
-        attributes: {
-          ...(current.attributes ?? {}),
-          storage_gb: Math.round(capacity / 1e9),
-          storage_free_gb: Math.round((capacity - used) / 1e9),
-        },
-      })
-      .where(eq(items.id, input.itemId));
+    await syncDeviceTotals(tx, input.itemId, current.attributes);
   });
   return { volumes: input.volumes.length, dirs: dirCount };
 }
 
-/** Capacity and use per data role over every volume, plus the unassigned rest. */
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/**
+ * Keep the whole-device lab keys (storage_gb, storage_free_gb) equal to the sum
+ * of every volume we know. With no volume left the keys stay as they are: the
+ * hand-entered value may be all we have.
+ */
+async function syncDeviceTotals(tx: Tx, itemId: number, attributes: Record<string, string | number> | null) {
+  const all = await tx.select().from(storageVolumes).where(eq(storageVolumes.itemId, itemId));
+  if (all.length === 0) return;
+  const capacity = all.reduce((s, r) => s + r.capacityBytes, 0);
+  const used = all.reduce((s, r) => s + r.usedBytes, 0);
+  await tx
+    .update(items)
+    .set({
+      attributes: {
+        ...(attributes ?? {}),
+        storage_gb: Math.round(capacity / 1e9),
+        storage_free_gb: Math.round((capacity - used) / 1e9),
+      },
+    })
+    .where(eq(items.id, itemId));
+}
+
+/** Delete one volume with its directories and bring the device's lab keys in step. Null when the id is unknown. */
+export async function removeVolume(db: Db, volumeId: number): Promise<{ itemId: number; mountPoint: string } | null> {
+  return db.transaction(async (tx) => {
+    const row = await tx.query.storageVolumes.findFirst({ where: eq(storageVolumes.id, volumeId) });
+    if (!row) return null;
+    await tx.delete(storageDirs).where(eq(storageDirs.volumeId, volumeId));
+    await tx.delete(storageVolumes).where(eq(storageVolumes.id, volumeId));
+    const item = await tx.query.items.findFirst({ where: eq(items.id, row.itemId) });
+    if (item) await syncDeviceTotals(tx, row.itemId, item.attributes);
+    return { itemId: row.itemId, mountPoint: row.mountPoint };
+  });
+}
+
+/** Capacity and use per data role over every volume of an active device, plus the unassigned rest. */
 export async function roleTotals(db: Db) {
   const rows = await db
     .select({
@@ -113,6 +138,8 @@ export async function roleTotals(db: Db) {
       usedBytes: sql<number>`sum(${storageVolumes.usedBytes})`,
     })
     .from(storageVolumes)
+    .innerJoin(items, eq(items.id, storageVolumes.itemId))
+    .where(eq(items.status, "active"))
     .groupBy(storageVolumes.dataRole);
   return rows.map((r) => ({
     dataRole: r.dataRole ?? null,
@@ -153,7 +180,7 @@ function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForI
   const gb = num(row.attributes?.storage_gb);
   const freeGb = num(row.attributes?.storage_free_gb);
   const capacityBytes = measured ? mine.reduce((s, v) => s + v.capacityBytes, 0) : gb != null ? gb * 1e9 : null;
-  const usedBytes = measured ? mine.reduce((s, v) => s + v.usedBytes, 0) : gb != null && freeGb != null ? (gb - freeGb) * 1e9 : null;
+  const usedBytes = measured ? mine.reduce((s, v) => s + v.usedBytes, 0) : gb != null && freeGb != null ? Math.max(0, Math.min(gb, gb - freeGb)) * 1e9 : null;
   return {
     id: row.id,
     name: row.name,

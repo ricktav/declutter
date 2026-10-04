@@ -5,7 +5,7 @@ import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { items, storageDirs, storageVolumes } from "@db/schema";
 import { logEvent } from "../lib/events";
-import { DATA_ROLES, StorageReportError, applyReport, overviewFor } from "../lib/storage";
+import { DATA_ROLES, StorageReportError, applyReport, overviewFor, removeVolume } from "../lib/storage";
 
 const reportVolume = z.object({
   mountPoint: z.string().min(1).max(255),
@@ -60,6 +60,19 @@ export const storageRouter = createRouter({
       return { ...row, dataRole: input.dataRole };
     }),
 
+  removeVolume: procedure.input(z.object({ volumeId: z.number().int() })).mutation(async ({ input }) => {
+    const removed = await removeVolume(getDb(), input.volumeId);
+    if (!removed) throw new TRPCError({ code: "NOT_FOUND", message: "Volume not found." });
+    await logEvent({
+      entityType: "item",
+      entityId: removed.itemId,
+      action: "storage.volume.removed",
+      summary: `${removed.mountPoint}: volume removed`,
+      payload: { volumeId: input.volumeId, mountPoint: removed.mountPoint },
+    });
+    return { removed: true as const };
+  }),
+
   overview: procedure
     .input(z.object({ houseId: z.number().nullable().optional() }).optional())
     .query(async ({ input, ctx }) => {
@@ -77,6 +90,22 @@ export const storageRouter = createRouter({
       .from(storageDirs)
       .where(eq(storageDirs.volumeId, input.volumeId))
       .orderBy(desc(storageDirs.bytes));
-    return { volume: { ...volume, itemName: item?.name ?? `#${volume.itemId}` }, dirs };
+    return {
+      volume: {
+        id: volume.id,
+        itemId: volume.itemId,
+        itemName: item?.name ?? `#${volume.itemId}`,
+        mountPoint: volume.mountPoint,
+        label: volume.label,
+        fsType: volume.fsType,
+        device: volume.device,
+        capacityBytes: volume.capacityBytes,
+        usedBytes: volume.usedBytes,
+        dataRole: volume.dataRole,
+        measuredAt: volume.measuredAt,
+        dirCount: dirs.length,
+      },
+      dirs,
+    };
   }),
 });

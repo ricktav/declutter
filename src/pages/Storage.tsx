@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { HardDrive, Server, X } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
@@ -21,6 +21,25 @@ export default function StoragePage() {
       utils.storage.dirs.invalidate();
     },
   });
+
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const removeVolume = trpc.storage.removeVolume.useMutation({
+    onSuccess: () => {
+      select(null);
+      utils.storage.overview.invalidate();
+    },
+  });
+  // the second click must come within 5 s
+  useEffect(() => {
+    if (!confirmRemove) return;
+    const t = setTimeout(() => setConfirmRemove(false), 5000);
+    return () => clearTimeout(t);
+  }, [confirmRemove]);
+  // a new selection starts the confirm over
+  const select = (volumeId: number | null) => {
+    setSelected(volumeId);
+    setConfirmRemove(false);
+  };
 
   const o = overview.data;
   const maxBytes = useMemo(() => {
@@ -82,6 +101,7 @@ export default function StoragePage() {
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_320px]">
         <div className="space-y-6">
           {overview.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+          {overview.isError && <p className="text-sm text-red-600">{overview.error.message}</p>}
           {o?.computers.length === 0 && o.externals.length === 0 && <p className="text-sm text-muted-foreground">No computers, drives or NAS boxes in this house.</p>}
           {o?.computers.map((c) => (
             <section key={c.id} className="rounded-lg border border-border bg-white p-4">
@@ -91,9 +111,9 @@ export default function StoragePage() {
                 <span className="text-[12px] text-muted-foreground">{c.kind}{c.roomName ? ` · ${c.roomName}` : ""}</span>
               </div>
               <div className="mt-3 flex flex-wrap items-start gap-4">
-                {c.drives.length === 0 || c.volumes.length > 0 ? <DeviceBlock device={c} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={setSelected} /> : null}
+                {c.drives.length === 0 || c.volumes.length > 0 ? <DeviceBlock device={c} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={select} /> : null}
                 {c.drives.map((d) => (
-                  <DeviceBlock key={d.id} device={d} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={setSelected} />
+                  <DeviceBlock key={d.id} device={d} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={select} />
                 ))}
               </div>
             </section>
@@ -106,7 +126,7 @@ export default function StoragePage() {
               </div>
               <div className="mt-3 flex flex-wrap items-start gap-4">
                 {o.externals.map((d) => (
-                  <DeviceBlock key={d.id} device={d} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={setSelected} showParent />
+                  <DeviceBlock key={d.id} device={d} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={select} showParent />
                 ))}
               </div>
             </section>
@@ -115,6 +135,8 @@ export default function StoragePage() {
 
         <aside className="lg:sticky lg:top-4 h-fit rounded-lg border border-border bg-white p-4">
           {selected == null && <p className="text-sm text-muted-foreground">Select a volume to see its biggest directories and set its data role.</p>}
+          {selected != null && dirs.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+          {selected != null && dirs.isError && <p className="text-sm text-red-600">{dirs.error.message}</p>}
           {selected != null && dirs.data && (
             <div className="space-y-3">
               <div className="flex items-start justify-between gap-2">
@@ -124,7 +146,7 @@ export default function StoragePage() {
                     {dirs.data.volume.itemName} · {dirs.data.volume.mountPoint} · {formatBytes(dirs.data.volume.usedBytes)} of {formatBytes(dirs.data.volume.capacityBytes)} · measured {new Date(dirs.data.volume.measuredAt).toLocaleString()}
                   </div>
                 </div>
-                <button type="button" onClick={() => setSelected(null)} aria-label="Close" className="rounded p-1 hover:bg-accent/40"><X className="h-4 w-4" /></button>
+                <button type="button" onClick={() => select(null)} aria-label="Close" className="rounded p-1 hover:bg-accent/40"><X className="h-4 w-4" /></button>
               </div>
               <div>
                 <div className="micro-label text-muted-foreground">Data role</div>
@@ -134,6 +156,7 @@ export default function StoragePage() {
                       key={r}
                       type="button"
                       disabled={setRole.isPending}
+                      aria-pressed={dirs.data.volume.dataRole === r}
                       onClick={() => setRole.mutate({ volumeId: selected, dataRole: dirs.data!.volume.dataRole === r ? null : (r as Role) })}
                       className="rounded-full border px-2.5 py-1 text-[12px] disabled:opacity-50"
                       style={dirs.data.volume.dataRole === r ? { background: ROLE_COLORS[r], color: "white", borderColor: ROLE_COLORS[r] } : { borderColor: "var(--border, #e5e7eb)" }}
@@ -142,6 +165,7 @@ export default function StoragePage() {
                     </button>
                   ))}
                 </div>
+                {setRole.isError && <p className="mt-1 text-[12px] text-red-600">{setRole.error.message}</p>}
               </div>
               <div>
                 <div className="micro-label text-muted-foreground">Biggest directories</div>
@@ -154,6 +178,17 @@ export default function StoragePage() {
                     </li>
                   ))}
                 </ul>
+              </div>
+              <div className="border-t border-border pt-2">
+                <button
+                  type="button"
+                  disabled={removeVolume.isPending}
+                  onClick={() => (confirmRemove ? removeVolume.mutate({ volumeId: selected }) : setConfirmRemove(true))}
+                  className="text-[12px] text-red-700 underline-offset-2 hover:underline disabled:opacity-50"
+                >
+                  {confirmRemove ? "Really remove?" : "Remove volume"}
+                </button>
+                {removeVolume.isError && <p className="mt-1 text-[12px] text-red-600">{removeVolume.error.message}</p>}
               </div>
             </div>
           )}

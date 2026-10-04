@@ -24,6 +24,13 @@ export const ROLE_COLORS: Record<string, string> = {
   scratch: "#c2410c",
 };
 
+const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isStale(measuredAt: Date | string): boolean {
+  const t = new Date(measuredAt).getTime();
+  return Number.isFinite(t) && Date.now() - t > STALE_MS;
+}
+
 export type VolumeLike = {
   id: number;
   mountPoint: string;
@@ -88,9 +95,9 @@ export function DeviceBlock({
               key={v.id}
               type="button"
               onClick={() => onSelectVolume(v.id)}
-              className={cn("relative h-full border-r border-white/70 last:border-r-0 text-left outline-none", selectedVolumeId === v.id && "ring-2 ring-inset ring-black")}
+              className={cn("relative h-full border-r border-white/70 last:border-r-0 text-left outline-none", selectedVolumeId === v.id && "ring-2 ring-inset ring-black", isStale(v.measuredAt) && "opacity-60")}
               style={{ width: `${cap > 0 ? (v.capacityBytes / cap) * 100 : 100}%` }}
-              title={`${v.label ?? v.mountPoint} · ${formatBytes(v.usedBytes)} of ${formatBytes(v.capacityBytes)}${v.dataRole ? ` · ${v.dataRole}` : " · no data role"}`}
+              title={`${v.label ?? v.mountPoint} · ${formatBytes(v.usedBytes)} of ${formatBytes(v.capacityBytes)}${v.dataRole ? ` · ${v.dataRole}` : " · no data role"}${isStale(v.measuredAt) ? " · stale" : ""}`}
             >
               <div className="absolute inset-y-0 left-0" style={{ width: `${v.capacityBytes > 0 ? (v.usedBytes / v.capacityBytes) * 100 : 0}%`, background: v.dataRole ? ROLE_COLORS[v.dataRole] : "#9ca3af" }} />
               <span className="absolute inset-x-1 bottom-0.5 truncate text-[10px] leading-none text-black/80 mix-blend-multiply">{v.label ?? v.mountPoint}</span>
