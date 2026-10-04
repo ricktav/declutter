@@ -64,6 +64,13 @@
       "when": 1791135893724,
       "tag": "0008_storage_container",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1791142787283,
+      "tag": "0009_energy",
+      "breakpoints": true
     }
   ]
 }

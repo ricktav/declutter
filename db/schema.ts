@@ -10,6 +10,9 @@ import {
   double,
   boolean,
   uniqueIndex,
+  decimal,
+  char,
+  date,
 } from "drizzle-orm/mysql-core";
 
 // ---------------------------------------------------------------------------
@@ -480,3 +483,51 @@ export const storageDirs = mysqlTable(
   },
   (t) => [index("sd_volume_idx").on(t.volumeId)],
 );
+
+// ---------------------------------------------------------------------------
+// Energy — monthly figures per meter item (a Plugwise plug, the grid meter,
+// the solar inverter), sent by collectors through energy.report. Measurements,
+// not edits: a report writes no item event and never deletes a row. Decimals
+// come back as strings; api/lib/energy.ts turns them into numbers.
+// ---------------------------------------------------------------------------
+export const energyMonths = mysqlTable(
+  "energy_months",
+  {
+    id: serial("id").primaryKey(),
+    itemId: bigint("itemId", { mode: "number", unsigned: true }).notNull(),
+    month: char("month", { length: 7 }).notNull(), // YYYY-MM, local time
+    kwhNormal: decimal("kwhNormal", { precision: 10, scale: 3 }), // use (plug) or grid import, normal rate
+    kwhOffpeak: decimal("kwhOffpeak", { precision: 10, scale: 3 }),
+    kwhReturnedNormal: decimal("kwhReturnedNormal", { precision: 10, scale: 3 }), // grid only
+    kwhReturnedOffpeak: decimal("kwhReturnedOffpeak", { precision: 10, scale: 3 }),
+    kwhProduced: decimal("kwhProduced", { precision: 10, scale: 3 }), // solar only
+    avgW: decimal("avgW", { precision: 8, scale: 1 }),
+    baseW: decimal("baseW", { precision: 8, scale: 1 }), // 10th percentile of the 15-minute averages
+    peakW: decimal("peakW", { precision: 8, scale: 1 }),
+    hours: decimal("hours", { precision: 6, scale: 1 }), // hours with data
+    source: varchar("source", { length: 32 }).notNull().default("collector"),
+    measuredAt: timestamp("measuredAt").notNull().defaultNow(),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("em_item_month_uq").on(t.itemId, t.month)],
+);
+
+// Price per period: a row applies from validFrom until the next row.
+export const energyTariffs = mysqlTable(
+  "energy_tariffs",
+  {
+    id: serial("id").primaryKey(),
+    validFrom: date("validFrom", { mode: "string" }).notNull(),
+    normalEurKwh: decimal("normalEurKwh", { precision: 7, scale: 5 }).notNull(),
+    offpeakEurKwh: decimal("offpeakEurKwh", { precision: 7, scale: 5 }).notNull(),
+    feedInEurKwh: decimal("feedInEurKwh", { precision: 7, scale: 5 }).notNull(),
+    feedInCostEurKwh: decimal("feedInCostEurKwh", { precision: 7, scale: 5 }).notNull(),
+    fixedEurDay: decimal("fixedEurDay", { precision: 6, scale: 3 }).notNull(),
+    note: varchar("note", { length: 128 }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => [uniqueIndex("et_valid_from_uq").on(t.validFrom)],
+);
+export type EnergyMonthRow = typeof energyMonths.$inferSelect;
+export type EnergyTariffRow = typeof energyTariffs.$inferSelect;
