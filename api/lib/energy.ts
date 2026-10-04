@@ -226,11 +226,14 @@ function windowStats(rows: Map<string, Month>, window: string[], tariffs: Tariff
 }
 
 /** Last 12 months against the 12 before, in percent; null unless both windows are ≥ 80% measured. */
+export const TREND_FLOOR_KWH = 5;
+
 function trend(rows: Map<string, Month>, now: Date, tariffs: Tariff[]): number | null {
   const all = lastMonths(24, now);
   const prev = windowStats(rows, all.slice(0, 12), tariffs);
   const last = windowStats(rows, all.slice(12), tariffs);
-  if (prev.hours < 0.8 * prev.hoursPossible || last.hours < 0.8 * last.hoursPossible || prev.kwh <= 0) return null;
+  // a previous year under TREND_FLOOR_KWH (an idle plug, a few Wh) is no base for a percentage
+  if (prev.hours < 0.8 * prev.hoursPossible || last.hours < 0.8 * last.hoursPossible || prev.kwh < TREND_FLOOR_KWH) return null;
   return round(((last.kwh - prev.kwh) / prev.kwh) * 100);
 }
 

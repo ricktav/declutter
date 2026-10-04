@@ -239,6 +239,21 @@ describe("energy.overview", () => {
     expect([fridge.kwh, fridge.eur, fridge.avgW, fridge.trendPct]).toEqual([2, null, null, null]);
   });
 
+  it("shows no trend when the previous year was nearly idle (a few Wh is no base)", async () => {
+    const s = await fill();
+    // overwrite the fridge's previous 12 months with a trickle: full coverage, but under 5 kWh in total
+    const prev = lastMonths(24, NOW).slice(0, 12);
+    await applyEnergyReport(
+      getTestDb(),
+      { itemId: s.fridgePlug, source: "t", months: prev.map((m) => ({ month: m, kwhNormal: 0.001, kwhOffpeak: 0, baseW: 1, peakW: 2, hours: hoursIn(m) })) },
+      NOW,
+    );
+    const o = await energyOverview(getTestDb(), s.houseId, NOW);
+    const fridge = o.plugs.find((p) => p.itemId === s.fridgePlug)!;
+    expect(fridge.kwh).toBeCloseTo(12 * 15 * 1.2, 1); // the last year is untouched
+    expect(fridge.trendPct).toBeNull(); // not +1,000,000 %
+  });
+
   it("leaves out archived meters", async () => {
     const s = await fill();
     await getTestDb().update(items).set({ status: "archived" }).where(eq(items.id, s.tvPlug));
