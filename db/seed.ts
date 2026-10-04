@@ -15,7 +15,7 @@ async function seed() {
       color: "#3b82f6",
       description: "All IT gear: computers, NAS, network, peripherals, software and services.",
       attributeDefs: [
-        { key: "role", label: "Role", type: "select" as const, options: ["laptop", "desktop", "server", "nas", "network", "peripheral", "software", "service"] },
+        { key: "role", label: "Role", type: "select" as const, options: ["laptop", "desktop", "server", "nas", "network", "peripheral", "software", "service", "meter"] },
         { key: "cpu", label: "CPU", type: "text" as const },
         { key: "ram_gb", label: "RAM (GB)", type: "number" as const },
         { key: "storage_gb", label: "Storage (GB)", type: "number" as const },
@@ -43,7 +43,7 @@ async function seed() {
   // self-healing: make sure the computers area carries the full attribute
   // schema (role/ip/network/purchase/warranty + generic spec fields)
   const COMPUTER_DEFS = [
-    { key: "role", label: "Role", type: "select" as const, options: ["laptop", "desktop", "server", "nas", "network", "peripheral", "software", "service"] },
+    { key: "role", label: "Role", type: "select" as const, options: ["laptop", "desktop", "server", "nas", "network", "peripheral", "software", "service", "meter"] },
     { key: "hostname", label: "Hostname", type: "text" as const },
     { key: "ip", label: "IP address", type: "text" as const },
     { key: "mac", label: "MAC address", type: "text" as const },

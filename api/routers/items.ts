@@ -181,6 +181,9 @@ export const itemsRouter = createRouter({
         // already made the decision. Automated filers (normalizer, bot
         // preprocessing) pass "detected" explicitly.
         verificationStatus: z.enum(["detected", "confirmed", "rejected"]).optional(),
+        // default true. Importers and collectors pass false: no name-based
+        // suggestions, no LLM call and no "links-suggested" event.
+        suggestLinks: z.boolean().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -213,6 +216,7 @@ export const itemsRouter = createRouter({
         );
         return newId;
       });
+      if (input.suggestLinks === false) return { id, suggestedRelations: 0, suggestedLinks: [] };
 
       // name-based suggestions run regardless; the LLM adds semantic matches
       // from the same area (it only sees same-area items, so links are scoped)

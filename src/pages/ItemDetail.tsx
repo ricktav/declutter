@@ -9,6 +9,7 @@ import { RoomPicker } from "@/components/RoomPicker";
 import { RecropDialog } from "@/components/RecropDialog";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
+import { EnergySection } from "@/components/EnergySection";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
@@ -742,6 +743,8 @@ export default function ItemDetail() {
               </div>
             </section>
           )}
+
+          <EnergySection itemId={it.id} />
 
           {/* location: house → floor → room (areas are the topic, not the place) */}
           <section ref={locRef} className="rounded-lg border border-border bg-white p-4">
