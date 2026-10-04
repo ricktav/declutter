@@ -2,14 +2,16 @@
 // Measure this machine's boot volume (df) and its biggest top-level directories
 // (du), and post one storage.report for one device item.
 // Default scope: the boot container only (the APFS container that holds "/" on
-// macOS, the filesystem of "/" on Linux), without its /System/Volumes/* helpers, so
-// "/" alone on a normal Mac. Everything else (/Volumes/*, simulator runtimes, disk
+// macOS, the filesystem of "/" on Linux): on a Mac "/" (sealed system) plus
+// /System/Volumes/Data (label "Data"), without VM, Preboot and Update. Everything else (/Volumes/*, simulator runtimes, disk
 // images, Time Machine volumes, other containers) is reported only when named with
 // --only, and an external drive is reported against its own item.
 // One volume per APFS volume: each reports its own use (df "Used") and the capacity
 // of its container (diskN), which it shares with the other volumes of that container;
-// naming one mount with --only reports every volume of its container. On macOS "/"
-// lists the Data volume's directories (/Users, /Applications, ...).
+// naming one mount with --only reports every volume of its container. Each volume
+// lists its own directories: "/" none when Data is reported (du would only follow its
+// firmlinks into Data), Data /Users, /Applications, ...
+// (printed without the /System/Volumes/Data prefix).
 //   node scripts/storage-report-local.mjs --item 205            # this Mac is item 205: its boot container
 //   node scripts/storage-report-local.mjs --item 205 --dry      # print the report, post nothing
 //   node scripts/storage-report-local.mjs --item <drive item id> --only /Volumes/T7   # an external drive (T7 and TM-T7 when they share a container), against its own item
@@ -40,7 +42,8 @@ for (const line of lines) {
   const m = line.match(/^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+\S+\s+(.+)$/);
   if (!m) continue;
   const [, device, blocks, used, avail, mountPoint] = m;
-  const local = device.startsWith("/dev/") && !/^\/(System(\/|$)|private\/var\/vm|dev(\/|$))/.test(mountPoint);
+  // the Data volume holds the user's files: the one /System mount we report
+  const local = device.startsWith("/dev/") && (mountPoint === "/System/Volumes/Data" || !/^\/(System(\/|$)|private\/var\/vm|dev(\/|$))/.test(mountPoint));
   const container = darwin ? device.match(/^\/dev\/(disk\d+)s\d+/)?.[1] || null : null;
   rows.push({
     device: device.replace(/^\/dev\//, ""),
@@ -56,13 +59,12 @@ const sizes = new Map();
 for (const r of rows) if (r.container) sizes.set(r.container, [...(sizes.get(r.container) ?? []), r.capacityBytes]);
 for (const r of rows) if (r.container && new Set(sizes.get(r.container)).size > 1) r.container = null;
 
-const dataMount = rows.find((r) => r.mountPoint === "/System/Volumes/Data");
 const byMount = (a, b) => (a.mountPoint === "/" ? -1 : b.mountPoint === "/" ? 1 : a.mountPoint.localeCompare(b.mountPoint));
 const keyOf = (r) => r.container || r.mountPoint;
 // default: the boot container; --only: the containers of the named mounts
 const scope = new Set(only ? rows.filter((r) => only.includes(r.mountPoint)).map(keyOf) : rows.filter((r) => r.mountPoint === "/").map(keyOf));
 const volumes = rows
-  // a named mount always; its container's other volumes only when local (no /System/Volumes/*, snapshots or VM)
+  // a named mount always; its container's other volumes only when local (Data yes; VM, Preboot, Update, snapshots no)
   .filter((r) => scope.has(keyOf(r)) && (r.local || (only && only.includes(r.mountPoint))))
   .sort(byMount)
   .map((r) => ({
@@ -72,8 +74,8 @@ const volumes = rows
     label: path.basename(r.mountPoint).slice(0, 128) || null,
     capacityBytes: r.capacityBytes,
     usedBytes: Math.min(r.usedBytes, r.capacityBytes),
-    // du -x stops at APFS firmlinks: "/" measures the Data volume of its container instead of the sealed system volume
-    root: r.mountPoint === "/" && dataMount && dataMount.container && dataMount.container === r.container ? dataMount.mountPoint : r.mountPoint,
+    // every volume measures its own root; "/" (sealed system) has few or no directories of its own, Data holds /Users, /Applications, ...
+    root: r.mountPoint,
   }));
 if (volumes.length === 0) { console.error(only ? `no mounted volume matches --only ${only.join(",")}` : "no boot volume found (use --only to name mount points)"); process.exit(1); }
 
@@ -98,7 +100,12 @@ function topDirs(root) {
   return sizes.sort((a, b) => b.bytes - a.bytes).slice(0, topN);
 }
 
+// On a Mac, du from "/" follows the firmlinks into the Data volume (/Users, /Applications)
+// and counts /System/Volumes/Data under /System: every directory it finds is Data's or
+// counted twice. When Data is in this report, "/" gets no directories; Data carries them.
+const dataReported = volumes.some((v) => v.mountPoint === "/System/Volumes/Data");
 for (const v of volumes) {
+  if (v.mountPoint === "/" && dataReported) { v.dirs = []; delete v.root; continue; }
   process.stderr.write(`measuring ${v.root} …\n`);
   v.dirs = topDirs(v.root);
   delete v.root;
