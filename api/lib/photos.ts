@@ -4,7 +4,7 @@
 // aliases all go through these, so each table is written one way.
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { areas, captures, itemLinks, items, photoPins, photos, type CropBox, type ItemLink, type Photo } from "@db/schema";
+import { areas, captures, itemLinks, items, photoPins, photos, rooms, type CropBox, type ItemLink, type ItemPos, type Photo, type PhotoCamera } from "@db/schema";
 import type { getDb } from "../queries/connection";
 import { readFileBytes, withNewFile } from "./filestore";
 import { sniffMime } from "./sniff";
@@ -87,7 +87,8 @@ export async function ensureLocationPhotoForCapture(
     if (existing) {
       // a room confirmed just now (Inbox's pending-item "Pin" flow) is worth keeping
       if (roomId != null && existing.roomId == null) {
-        await tx.update(photos).set({ roomId }).where(eq(photos.id, existing.id));
+        // a camera lives in its room's frame: a new room drops it
+        await tx.update(photos).set({ roomId, camera: null }).where(eq(photos.id, existing.id));
       }
       return { photoId: existing.id, created: false };
     }
@@ -183,9 +184,11 @@ export async function unlinkPhoto(db: Db, id: number): Promise<{ ok: true }> {
   const photo = await db.query.photos.findFirst({ where: eq(photos.id, id) });
   if (!photo) throw new TRPCError({ code: "NOT_FOUND", message: "Photo not found." });
   const item = photo.itemId ? await db.query.items.findFirst({ where: eq(items.id, photo.itemId) }) : null;
+  const roomId = photo.roomId ?? item?.roomId ?? null;
   await db
     .update(photos)
-    .set({ itemId: null, roomId: photo.roomId ?? item?.roomId ?? null })
+    // a camera lives in its room's frame: a new room drops it
+    .set({ itemId: null, roomId, ...(roomId !== photo.roomId ? { camera: null } : {}) })
     .where(eq(photos.id, id));
   await logEvent({
     entityType: "photo",
@@ -457,7 +460,11 @@ export async function attachPhotoToItem(
         ? and(eq(photos.id, photo.id), eq(photos.itemId, input.fromItemId))
         : eq(photos.id, photo.id)
       : and(eq(photos.id, photo.id), or(isNull(photos.itemId), eq(photos.itemId, item.id)));
-    const [res] = await tx.update(photos).set({ itemId: item.id, roomId }).where(where);
+    // a camera lives in its room's frame: it stays only while the room does
+    const [res] = await tx
+      .update(photos)
+      .set({ itemId: item.id, roomId, ...(roomId !== photo.roomId ? { camera: null } : {}) })
+      .where(where);
     if ((!input.force || input.fromItemId != null) && res.affectedRows === 0) {
       throw new TRPCError({ code: "CONFLICT", message: "Photo was just attached to another Thing." });
     }
@@ -473,4 +480,131 @@ export async function attachPhotoToItem(
     );
   });
   return { photoId: photo.id, itemId: item.id, roomId };
+}
+
+export const CAMERA_FOV_DEFAULT = 60;
+export const CAMERA_HEIGHT_DEFAULT = 1.5;
+/** how far inside the walls suggestCamera keeps a camera, in metres */
+const CAMERA_WALL_MARGIN_M = 0.3;
+
+/** Degrees into [0, 360). */
+export function normaliseHeading(deg: number): number {
+  const d = deg % 360;
+  const n = d < 0 ? d + 360 : d;
+  return n >= 360 ? 0 : n;
+}
+
+const round = (n: number, places: number) => +n.toFixed(places);
+
+/** The photo a camera may be set on: a full photo (not a cutout) with a
+ * room, and that room (for its size). */
+async function cameraTarget(db: Db, photoId: number) {
+  const photo = await db.query.photos.findFirst({ where: eq(photos.id, photoId) });
+  if (!photo) throw new TRPCError({ code: "NOT_FOUND", message: "Photo not found." });
+  if (photo.cropBox != null) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "A cutout is a crop of a Thing, not a viewpoint: it has no camera." });
+  }
+  if (photo.roomId == null) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Give the photo a room first: a camera stands in its room." });
+  }
+  const room = await db.query.rooms.findFirst({ where: eq(rooms.id, photo.roomId) });
+  if (!room) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The photo's room no longer exists." });
+  return { photo, room };
+}
+
+/** Put a photo's camera on its room's plan, or take it off (null). Inside
+ * the room when the room has both width and depth; heading normalised to
+ * [0, 360). Logs photo.camera on the photo's Thing, else on its room. */
+export async function setPhotoCamera(
+  db: Db,
+  input: { id: number; camera: PhotoCamera | null },
+): Promise<{ id: number; camera: PhotoCamera | null }> {
+  const { photo, room } = await cameraTarget(db, input.id);
+  let camera: PhotoCamera | null = null;
+  if (input.camera) {
+    const c = input.camera;
+    if (room.widthM != null && room.depthM != null && (c.xM > room.widthM || c.yM > room.depthM)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `The camera is outside "${room.name}" (${room.widthM} x ${room.depthM} m).`,
+      });
+    }
+    camera = { xM: c.xM, yM: c.yM, headingDeg: normaliseHeading(c.headingDeg), fovDeg: c.fovDeg, heightM: c.heightM };
+  }
+  await db.transaction(async (tx) => {
+    await tx.update(photos).set({ camera }).where(eq(photos.id, photo.id));
+    const label = photo.title ?? `#${photo.id}`;
+    await logEvent(
+      {
+        ...(photo.itemId != null ? { entityType: "item", entityId: photo.itemId } : { entityType: "room", entityId: room.id }),
+        action: "photo.camera",
+        summary: camera
+          ? `Photo "${label}" placed on the plan of "${room.name}" at ${camera.xM}, ${camera.yM} m facing ${camera.headingDeg}°`
+          : `Photo "${label}" taken off the plan of "${room.name}"`,
+        payload: { photoId: photo.id, roomId: room.id, camera },
+      },
+      tx,
+    );
+  });
+  return { id: photo.id, camera };
+}
+
+/** A starting camera for a photo. With confirmed pins whose Things are
+ * placed in the photo's room: c = the centroid of those Things' centres;
+ * the camera stands where the ray from c through the room's centre leaves
+ * the room (the wall point opposite c), kept 0.3 m inside the walls, and
+ * faces c (basis "pins"). Without: the room's centre, facing +x (basis
+ * "center"). Heading 0 = +x, counter-clockwise seen from above; yM grows
+ * "down" the plan, so a direction (dx, dy) in room metres is atan2(-dy, dx).
+ * Needs the room's width and depth. Writes nothing. */
+export async function suggestPhotoCamera(db: Db, photoId: number): Promise<{ camera: PhotoCamera; basis: "pins" | "center" }> {
+  const { photo, room } = await cameraTarget(db, photoId);
+  const W = room.widthM ?? 0;
+  const D = room.depthM ?? 0;
+  if (!(W > 0 && D > 0)) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: `"${room.name}" has no size yet: there is no plan to stand on.` });
+  }
+  const base = { fovDeg: CAMERA_FOV_DEFAULT, heightM: CAMERA_HEIGHT_DEFAULT };
+  const centre = { x: W / 2, y: D / 2 };
+
+  const placed = await db
+    .selectDistinct({ itemId: items.id, pos: items.pos })
+    .from(photoPins)
+    .innerJoin(items, eq(items.id, photoPins.itemId))
+    .where(and(eq(photoPins.photoId, photo.id), eq(photoPins.status, "confirmed"), eq(items.roomId, room.id), isNotNull(items.pos)));
+  const centres = placed
+    .map((r) => r.pos as ItemPos | null)
+    .filter((p): p is ItemPos => p != null)
+    .map((p) => ({ x: p.xM + p.wM / 2, y: p.yM + p.dM / 2 }));
+  if (!centres.length) {
+    return { camera: { xM: round(centre.x, 2), yM: round(centre.y, 2), headingDeg: 0, ...base }, basis: "center" };
+  }
+
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const c = {
+    x: clamp(centres.reduce((s, p) => s + p.x, 0) / centres.length, 0, W),
+    y: clamp(centres.reduce((s, p) => s + p.y, 0) / centres.length, 0, D),
+  };
+  // the ray from c through the centre; with c on the centre, look from the -x wall
+  let ux = centre.x - c.x;
+  let uy = centre.y - c.y;
+  const len = Math.hypot(ux, uy);
+  if (len < 1e-6) {
+    ux = -1;
+    uy = 0;
+  } else {
+    ux /= len;
+    uy /= len;
+  }
+  // distance along the ray to the first wall it meets
+  const tx = ux > 0 ? (W - c.x) / ux : ux < 0 ? -c.x / ux : Infinity;
+  const ty = uy > 0 ? (D - c.y) / uy : uy < 0 ? -c.y / uy : Infinity;
+  const t = Math.min(tx, ty);
+  const inset = (v: number, size: number) =>
+    size > 2 * CAMERA_WALL_MARGIN_M ? clamp(v, CAMERA_WALL_MARGIN_M, size - CAMERA_WALL_MARGIN_M) : size / 2;
+  const cam = { x: inset(c.x + t * ux, W), y: inset(c.y + t * uy, D) };
+  const dx = c.x - cam.x;
+  const dy = c.y - cam.y;
+  const headingDeg = Math.hypot(dx, dy) < 1e-6 ? 0 : normaliseHeading(round((Math.atan2(-dy, dx) * 180) / Math.PI, 1));
+  return { camera: { xM: round(cam.x, 2), yM: round(cam.y, 2), headingDeg, ...base }, basis: "pins" };
 }

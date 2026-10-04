@@ -163,6 +163,17 @@ export interface CropBox {
   hPct: number;
 }
 
+// A photo's viewpoint on its room's plan: position in metres from the room's
+// origin (like ItemPos), heading in degrees (0 = +x, counter-clockwise seen
+// from above), horizontal field of view, and the lens height above the floor.
+export interface PhotoCamera {
+  xM: number;
+  yM: number;
+  headingDeg: number;
+  fovDeg: number;
+  heightM: number;
+}
+
 // ---------------------------------------------------------------------------
 // Photos — images only (replaces attachments with kind "image"). An item's
 // photo has itemId; a location photo has roomId and no itemId; a cutout
@@ -181,6 +192,10 @@ export const photos = mysqlTable(
     size: bigint("size", { mode: "number" }),
     sourceCaptureId: bigint("sourceCaptureId", { mode: "number", unsigned: true }),
     cropBox: json("cropBox").$type<CropBox | null>(),
+    // where the photo was taken, in its room's frame (same frame as
+    // items.pos); null until placed. Reset when the photo changes room.
+    // Cutouts never have one: a crop of a Thing is not a viewpoint.
+    camera: json("camera").$type<PhotoCamera>(),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
   (t) => [

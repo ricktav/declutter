@@ -142,7 +142,11 @@ export const housesRouter = createRouter({
           const planMoves = !!s.walls && !t.walls;
           const withPos = moved.filter((it) => it.pos != null).map((it) => it.id);
           if (!planMoves && withPos.length) await tx.update(items).set({ pos: null }).where(inArray(items.id, withPos));
-          await tx.update(photos).set({ roomId: t.id }).where(eq(photos.roomId, s.id));
+          // a photo's camera is in its room's frame too: it survives with the plan
+          await tx
+            .update(photos)
+            .set({ roomId: t.id, ...(planMoves ? {} : { camera: null }) })
+            .where(eq(photos.roomId, s.id));
           await tx.update(rooms).set({ parentRoomId: t.id }).where(and(eq(rooms.parentRoomId, s.id), ne(rooms.id, t.id)));
           if (s.walls && !t.walls) {
             await tx
@@ -185,7 +189,7 @@ export const housesRouter = createRouter({
       const roomIds = roomRows.map((r) => r.id);
       if (roomIds.length) {
         await tx.update(items).set({ roomId: null }).where(inArray(items.roomId, roomIds));
-        await tx.update(photos).set({ roomId: null }).where(inArray(photos.roomId, roomIds));
+        await tx.update(photos).set({ roomId: null, camera: null }).where(inArray(photos.roomId, roomIds));
         await tx.delete(rooms).where(inArray(rooms.id, roomIds));
       }
       await tx.update(items).set({ houseId: null }).where(eq(items.houseId, input.id));

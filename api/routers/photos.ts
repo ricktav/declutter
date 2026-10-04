@@ -12,7 +12,20 @@ import { readFileBytes, urlForKey, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
 import { logEvent } from "../lib/events";
-import { addPhoto, attachPhotoToItem, ensureLocationPhotoForCapture, ensurePinForCutout, listPhotoCatalog, removePhoto, unlinkPhoto } from "../lib/photos";
+import {
+  addPhoto,
+  attachPhotoToItem,
+  CAMERA_FOV_DEFAULT,
+  CAMERA_HEIGHT_DEFAULT,
+  ensureLocationPhotoForCapture,
+  ensurePinForCutout,
+  listPhotoCatalog,
+  removePhoto,
+  setPhotoCamera,
+  suggestPhotoCamera,
+  unlinkPhoto,
+} from "../lib/photos";
+import { roomPhotosFor } from "../lib/placement";
 
 const cropBoxInput = z.object({
   xPct: z.number().min(0).max(100),
@@ -20,6 +33,19 @@ const cropBoxInput = z.object({
   wPct: z.number().min(1).max(100),
   hPct: z.number().min(1).max(100),
 });
+
+/** A camera in its room's frame (same frame as items.pos): heading 0 = +x,
+ * counter-clockwise seen from above; the room bounds are checked server-side. */
+const cameraInput = z.object({
+  xM: z.number().finite().min(0),
+  yM: z.number().finite().min(0),
+  headingDeg: z.number().finite(),
+  fovDeg: z.number().min(20).max(120).default(CAMERA_FOV_DEFAULT),
+  heightM: z.number().min(0).max(5).default(CAMERA_HEIGHT_DEFAULT),
+});
+
+/** Room photos returned by photos.roomPhotos. */
+const ROOM_PHOTOS_LIST_MAX = 60;
 
 /** Bytes of a source file, or a readable error when it is gone from disk. */
 async function readSourceBytes(key: string): Promise<Uint8Array> {
@@ -214,6 +240,22 @@ export const photosRouter = createRouter({
       .orderBy(asc(captures.id));
     return caps.filter((c): c is { id: number; storageKey: string } => !!c.storageKey);
   }),
+
+  /** Stand a photo somewhere in its room, looking one way (null takes it
+   * off the plan). Full photos with a room only; inside the room when it has
+   * a size. Logs photo.camera on the photo's Thing, else on its room. */
+  setCamera: procedure
+    .input(z.object({ id: z.number(), camera: cameraInput.nullable() }))
+    .mutation(({ input }) => setPhotoCamera(getDb(), input)),
+
+  /** A room's photos with their cameras: full photos first, newest first, max 60. */
+  roomPhotos: procedure
+    .input(z.object({ roomId: z.number() }))
+    .query(({ input }) => roomPhotosFor(getDb(), input.roomId, { limit: ROOM_PHOTOS_LIST_MAX })),
+
+  /** A starting camera from the photo's pinned, placed Things (basis "pins"),
+   * or the room's centre facing +x (basis "center"). Writes nothing. */
+  suggestCamera: procedure.input(z.object({ id: z.number() })).query(({ input }) => suggestPhotoCamera(getDb(), input.id)),
 
   /** The pin canvas (/annotate/:photoId) works on a photo; a pool or inbox
    * image is only a capture until now. Find-or-create one bare, item-less

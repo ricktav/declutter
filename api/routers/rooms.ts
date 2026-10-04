@@ -243,7 +243,7 @@ export const roomsRouter = createRouter({
           if (p) await tx.update(items).set({ pos: newPos }).where(eq(items.id, it.id));
         }
         const movedPhotos = await tx.select({ id: photos.id }).from(photos).where(eq(photos.roomId, from.id));
-        if (movedPhotos.length) await tx.update(photos).set({ roomId: to.id }).where(eq(photos.roomId, from.id));
+        if (movedPhotos.length) await tx.update(photos).set({ roomId: to.id, camera: null }).where(eq(photos.roomId, from.id)); // a camera is in the old frame
         await tx.update(rooms).set({ parentRoomId: to.id }).where(and(eq(rooms.parentRoomId, from.id), ne(rooms.id, to.id)));
         if (from.walls && !to.walls) {
           await tx
@@ -368,7 +368,7 @@ export const roomsRouter = createRouter({
               .set({ roomId: parentId, pos: p ? { ...p, xM: +(p.xM + ox).toFixed(2), yM: +(p.yM + oy).toFixed(2) } : p })
               .where(eq(items.id, it.id));
           }
-          await tx.update(photos).set({ roomId: parentId }).where(eq(photos.roomId, input.id));
+          await tx.update(photos).set({ roomId: parentId, camera: null }).where(eq(photos.roomId, input.id)); // a camera is in the cut's frame
           await tx.delete(rooms).where(eq(rooms.id, input.id));
           await logEvent(
             { entityType: "room", entityId: input.id, action: "deleted", summary: `Room "${room.name}" deleted, ${roomItems.length} item(s) moved back to parent room #${parentId}` },
@@ -389,7 +389,7 @@ export const roomsRouter = createRouter({
           await setItemLocation(tx, it.id, { roomId: null, houseId: room.houseId });
           if (it.pos) await tx.update(items).set({ pos: null }).where(eq(items.id, it.id));
         }
-        await tx.update(photos).set({ roomId: null }).where(eq(photos.roomId, input.id));
+        await tx.update(photos).set({ roomId: null, camera: null }).where(eq(photos.roomId, input.id));
         await tx.update(rooms).set({ parentRoomId: null }).where(eq(rooms.parentRoomId, input.id));
         await tx.delete(rooms).where(eq(rooms.id, input.id));
         await logEvent(

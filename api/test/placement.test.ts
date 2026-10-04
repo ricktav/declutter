@@ -175,7 +175,7 @@ describe("items.placement", () => {
       onPlan: false,
       photos: 1,
     });
-    expect(pl.pins).toEqual([{ pinId: expect.any(Number), photoId: kitchenShot, title: "Kitchen", label: "kettle" }]);
+    expect(pl.pins).toEqual([{ pinId: expect.any(Number), photoId: kitchenShot, title: "Kitchen", label: "kettle", camera: null }]);
     expect(new Set(pl.roomPhotos.map((p) => p.photoId))).toEqual(new Set([kitchenShot, locationShot, toasterCut]));
     // full images first (newest first), cutouts last
     expect(pl.roomPhotos.map((p) => [p.photoId, p.isCutout])).toEqual([
