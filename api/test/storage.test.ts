@@ -340,3 +340,44 @@ describe("containers", () => {
     expect(await getTestDb().select().from(storageVolumes)).toHaveLength(0);
   });
 });
+
+describe("attached-to and backs-up in the overview", () => {
+  it("hangs an attached drive under its computer and takes it out of externals", async () => {
+    const { houseId, pc, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    const { id: relId } = await c.items.addRelation({ fromItemId: nas, toItemId: pc, type: "attached-to" });
+    const o = await c.storage.overview({});
+    const mac = o.computers.find((x) => x.id === pc)!;
+    expect(mac.attached.map((d) => [d.id, d.attachedRelationId])).toEqual([[nas, relId]]);
+    expect(mac.drives.map((d) => d.attachedRelationId)).toEqual([null]);
+    expect(o.externals.map((d) => d.id)).not.toContain(nas);
+  });
+
+  it("keeps the drive external when its computer is archived", async () => {
+    const { houseId, pc, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    const { id: relId } = await c.items.addRelation({ fromItemId: nas, toItemId: pc, type: "attached-to" });
+    await getTestDb().update(items).set({ status: "archived" }).where(eq(items.id, pc));
+    const o = await c.storage.overview({});
+    expect(o.computers.map((x) => x.id)).not.toContain(pc);
+    expect(o.computers.every((x) => x.attached.length === 0)).toBe(true);
+    const d = o.externals.find((x) => x.id === nas);
+    expect(d?.attachedRelationId).toBe(relId);
+  });
+
+  it("lists the items a NAS backs up by name", async () => {
+    const { areaId, houseId, pc, nas } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: phone }] = await db.insert(items).values({ areaId, houseId, name: "iPhone" }).$returningId();
+    const c = callerFor(houseId);
+    const r1 = await c.items.addRelation({ fromItemId: nas, toItemId: pc, type: "backs-up" });
+    const r2 = await c.items.addRelation({ fromItemId: nas, toItemId: phone, type: "backs-up" });
+    const o = await c.storage.overview({});
+    const d = o.externals.find((x) => x.id === nas)!;
+    expect(d.backsUp).toEqual([
+      { relationId: r1.id, itemId: pc, name: "mac-mini" },
+      { relationId: r2.id, itemId: phone, name: "iPhone" },
+    ]);
+    expect(o.computers.find((x) => x.id === pc)!.backsUp).toEqual([]);
+  });
+});

@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { items, rooms, storageDirs, storageVolumes, type DataRole } from "@db/schema";
+import { items, relations, rooms, storageDirs, storageVolumes, type DataRole } from "@db/schema";
 import type { getDb } from "../queries/connection";
 
 type Db = ReturnType<typeof getDb>;
@@ -255,8 +255,15 @@ function num(v: string | number | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+type DeviceLinks = {
+  /** The device's `attached-to` relation (drive → computer), or null. */
+  attachedRelationId: (id: number) => number | null;
+  /** The items this device holds backups of (`backs-up` relations from it), active items only. */
+  backsUp: (id: number) => Array<{ relationId: number; itemId: number; name: string }>;
+};
+
 /** One device with its volumes; without volumes the block comes from the lab keys (GB → bytes, decimal). */
-function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForItems>>, roomName: string | null) {
+function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForItems>>, roomName: string | null, links: DeviceLinks) {
   const mine = volumes.filter((v) => v.itemId === row.id);
   const measured = mine.length > 0;
   const gb = num(row.attributes?.storage_gb);
@@ -276,6 +283,8 @@ function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForI
     usedBytes,
     freeBytes,
     measured,
+    attachedRelationId: links.attachedRelationId(row.id),
+    backsUp: links.backsUp(row.id),
     volumes: mine.map((v) => ({
       id: v.id,
       mountPoint: v.mountPoint,
@@ -297,6 +306,54 @@ function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForI
   };
 }
 
+/**
+ * The relations the overview draws: `attached-to` (drive → computer) and
+ * `backs-up` (holder → device), confirmed ones only, from the given devices.
+ * One query per type plus one for the names of the backed-up items, whatever
+ * the number of devices.
+ */
+async function deviceLinks(db: Db, deviceIds: number[], computerIds: Set<number>) {
+  const ofType = (type: string) =>
+    deviceIds.length === 0
+      ? Promise.resolve([] as Array<typeof relations.$inferSelect>)
+      : db
+          .select()
+          .from(relations)
+          .where(and(eq(relations.type, type), eq(relations.status, "confirmed"), inArray(relations.fromItemId, deviceIds)))
+          .orderBy(relations.id);
+  const [attachedRels, backupRels] = await Promise.all([ofType("attached-to"), ofType("backs-up")]);
+  // a device with several attached-to relations hangs under the first whose computer is shown; else it keeps its first one
+  const attachedTo = new Map<number, { relationId: number; computerId: number | null }>();
+  for (const r of attachedRels) {
+    const shown = computerIds.has(r.toItemId);
+    const prev = attachedTo.get(r.fromItemId);
+    if (!prev || (prev.computerId == null && shown)) attachedTo.set(r.fromItemId, { relationId: r.id, computerId: shown ? r.toItemId : null });
+  }
+  const targetIds = [...new Set(backupRels.map((r) => r.toItemId))];
+  // names come from every active item, whatever the house scope: a NAS may back up a device in another house
+  const names = targetIds.length
+    ? new Map(
+        (await db.select({ id: items.id, name: items.name }).from(items).where(and(inArray(items.id, targetIds), eq(items.status, "active")))).map(
+          (r) => [r.id, r.name] as const,
+        ),
+      )
+    : new Map<number, string>();
+  const backsUp = new Map<number, Array<{ relationId: number; itemId: number; name: string }>>();
+  for (const r of backupRels) {
+    const name = names.get(r.toItemId);
+    if (name === undefined) continue;
+    backsUp.set(r.fromItemId, [...(backsUp.get(r.fromItemId) ?? []), { relationId: r.id, itemId: r.toItemId, name }]);
+  }
+  return {
+    /** The shown computer a device hangs under, or null. */
+    hostOf: (id: number) => attachedTo.get(id)?.computerId ?? null,
+    links: {
+      attachedRelationId: (id: number) => attachedTo.get(id)?.relationId ?? null,
+      backsUp: (id: number) => backsUp.get(id) ?? [],
+    } satisfies DeviceLinks,
+  };
+}
+
 export async function overviewFor(db: Db, houseId: number | null) {
   const where = houseId != null ? and(eq(items.status, "active"), eq(items.houseId, houseId)) : eq(items.status, "active");
   const all = await db
@@ -310,15 +367,20 @@ export async function overviewFor(db: Db, houseId: number | null) {
   const computers = devices.filter((d) => COMPUTER_ROLES.has(String(d.attributes?.role)));
   const computerIds = new Set(computers.map((c) => c.id));
   const internal = devices.filter((d) => d.parentId != null && computerIds.has(d.parentId));
-  const externals = devices.filter((d) => !computerIds.has(d.id) && !(d.parentId != null && computerIds.has(d.parentId)));
+  const loose = devices.filter((d) => !computerIds.has(d.id) && !(d.parentId != null && computerIds.has(d.parentId)));
+  const { hostOf, links } = await deviceLinks(db, devices.map((d) => d.id), computerIds);
+  // an attached-to drive hangs under its computer only when that computer is shown; else it stays external
+  const attached = loose.filter((d) => hostOf(d.id) != null);
+  const externals = loose.filter((d) => hostOf(d.id) == null);
   const totals = await roleTotals(db);
   const { capacityBytes, freeBytes } = await capacityTotals(db);
   return {
     computers: computers.map((c) => ({
-      ...deviceOf(c, volumes, c.roomName),
-      drives: internal.filter((d) => d.parentId === c.id).map((d) => deviceOf(d, volumes, d.roomName)),
+      ...deviceOf(c, volumes, c.roomName, links),
+      drives: internal.filter((d) => d.parentId === c.id).map((d) => deviceOf(d, volumes, d.roomName, links)),
+      attached: attached.filter((d) => hostOf(d.id) === c.id).map((d) => deviceOf(d, volumes, d.roomName, links)),
     })),
-    externals: externals.map((d) => deviceOf(d, volumes, d.roomName)),
+    externals: externals.map((d) => deviceOf(d, volumes, d.roomName, links)),
     totals,
     capacityBytes,
     freeBytes,
