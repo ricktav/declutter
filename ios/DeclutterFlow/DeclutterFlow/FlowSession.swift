@@ -8,6 +8,7 @@ final class FlowSession: ObservableObject {
     @Published var houses: [FlowHouse] = []
     @Published var areas: [FlowArea] = []
     @Published var locations: [FlowLocation] = []
+    @Published var scannedRooms: [RoomSummary] = []
     @Published var here: Place = HereStore.load()
     @Published var ready = false
     @Published var loading = false
@@ -59,11 +60,13 @@ final class FlowSession: ObservableObject {
             async let housesTask = api.housesList()
             async let areasTask = api.areasList()
             async let locationsTask = api.mapListLocations()
+            async let roomsTask = api.roomsListAll()
             items = try await itemsTask
             captures = try await capturesTask
             houses = try await housesTask
             areas = try await areasTask
             locations = try await locationsTask
+            scannedRooms = try await roomsTask
             ready = true
         } catch let err as APIError {
             if err.isUnauthorized {
@@ -78,5 +81,21 @@ final class FlowSession: ObservableObject {
             ready = false
         }
         loading = false
+    }
+
+    func scannedRoom(houseId: Int?, name: String?) -> RoomSummary? {
+        guard let houseId, let name, !name.isEmpty else { return nil }
+        return scannedRooms.first { $0.houseId == houseId && $0.name == name }
+    }
+
+    func scannedRoom(for place: Place) -> RoomSummary? {
+        scannedRoom(houseId: place.houseId, name: place.hasRoom ? place.room : nil)
+    }
+
+    func linkItems(toRoomId roomId: Int, place: Place) async {
+        guard let api, let houseId = place.houseId else { return }
+        for it in items where it.houseId == houseId && it.room == place.room && it.roomId == nil {
+            try? await api.itemsUpdate(id: it.id, roomId: roomId)
+        }
     }
 }

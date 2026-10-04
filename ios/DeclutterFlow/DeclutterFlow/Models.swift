@@ -198,16 +198,78 @@ struct AttachmentURL: Codable {
     var url: String?
 }
 
+struct RoomSummary: Codable, Identifiable, Hashable {
+    var id: Int
+    var houseId: Int
+    var name: String
+}
+
+struct RoomWall: Codable, Hashable {
+    var points: [[Double]]
+    var kind: String?
+}
+
+struct RoomOpening: Codable, Hashable {
+    var edge: String
+    var offsetM: Double
+    var widthM: Double
+    var connectsTo: Int?
+}
+
+struct ItemPos: Codable, Hashable {
+    var xM: Double
+    var yM: Double
+    var wM: Double
+    var dM: Double
+    var rotDeg: Double
+    var hM: Double?
+}
+
 struct RoomInfo: Codable, Identifiable {
     var id: Int
     var name: String
     var houseId: Int?
+    var source: String?
+    var widthM: Double?
+    var depthM: Double?
+    var wallHeightM: Double?
+    var walls: [RoomWall]?
+    var openings: [RoomOpening]?
     var items: [RoomItem]?
+
+    var hasPlan: Bool {
+        (widthM ?? 0) > 0.1 && (depthM ?? 0) > 0.1 && !(walls ?? []).isEmpty
+    }
+
+    var geometryPayload: RoomGeometryPayload? {
+        guard hasPlan, let w = widthM, let d = depthM, let walls else { return nil }
+        return RoomGeometryPayload(
+            walls: walls,
+            openings: openings ?? [],
+            widthM: w,
+            depthM: d,
+            wallHeightM: wallHeightM ?? 2.4
+        )
+    }
 }
 
 struct RoomItem: Codable, Identifiable {
     var id: Int
     var name: String
+    var pos: ItemPos?
+}
+
+struct RoomGeometryPayload: Codable, Hashable {
+    var walls: [RoomWall]
+    var openings: [RoomOpening]
+    var widthM: Double
+    var depthM: Double
+    var wallHeightM: Double
+}
+
+struct UpsertScanResult: Codable {
+    var id: Int
+    var created: Bool
 }
 
 struct AcceptItemInput: Encodable {

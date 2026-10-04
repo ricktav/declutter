@@ -11,6 +11,7 @@ struct SnapView: View {
     @State private var savedCount = 0
     @State private var error: String?
     @State private var showCamera = false
+    @State private var showScan = false
     @State private var libraryItems: [PhotosPickerItem] = []
 
     private var pending: [FlowCapture] { session.pendingCaptures }
@@ -82,6 +83,28 @@ struct SnapView: View {
                             .background(Color.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color(hex: 0xD5D9CD)))
                     }
+
+                    Button { showScan = true } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "cube.transparent")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Scan this Place")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text(session.here.hasRoom
+                                     ? (session.scannedRoom(for: session.here) == nil
+                                        ? "No floor plan yet — LiDAR 2D / 3D"
+                                        : "Rescan the plan for \(session.here.room)")
+                                     : "Pick a Place, then walk the walls")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(FlowTheme.muted)
+                            }
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color(hex: 0xD5D9CD)))
+                    }
+                    .buttonStyle(.plain)
                 }
                 .frame(maxWidth: .infinity)
 
@@ -144,6 +167,10 @@ struct SnapView: View {
                 onCancel: { showCamera = false }
             )
             .ignoresSafeArea()
+        }
+        .fullScreenCover(isPresented: $showScan) {
+            RoomScanFlow(initialPlace: session.here)
+                .environmentObject(session)
         }
         .onChange(of: libraryItems) { _, items in
             guard !items.isEmpty else { return }

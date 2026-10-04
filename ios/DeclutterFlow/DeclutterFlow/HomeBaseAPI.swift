@@ -66,16 +66,17 @@ actor HomeBaseAPI {
         return try await client.query("items.listAll", input: Input(includeArchived: includeArchived), as: [FlowItem].self)
     }
 
-    func itemsUpdate(id: Int, houseId: Int?, floor: String?, room: String?) async throws {
+    func itemsUpdate(id: Int, houseId: Int? = nil, floor: String? = nil, room: String? = nil, roomId: Int? = nil) async throws {
         struct Input: Encodable {
             var id: Int
             var houseId: Int?
             var floor: String?
             var room: String?
+            var roomId: Int?
         }
         _ = try await client.mutation(
             "items.update",
-            input: Input(id: id, houseId: houseId, floor: floor, room: room),
+            input: Input(id: id, houseId: houseId, floor: floor, room: room, roomId: roomId),
             as: OkResult.self
         )
     }
@@ -140,6 +141,40 @@ actor HomeBaseAPI {
     func roomsGet(id: Int) async throws -> RoomInfo? {
         struct Input: Encodable { var id: Int }
         return try await client.query("rooms.get", input: Input(id: id), as: RoomInfo?.self)
+    }
+
+    func roomsListAll() async throws -> [RoomSummary] {
+        try await client.query("rooms.listAll", as: [RoomSummary].self)
+    }
+
+    /// Matches `rooms.upsertFromScan` — houseId + name, source `roomplan`.
+    func roomsUpsertFromScan(houseId: Int, name: String, geometry: RoomGeometryPayload) async throws -> UpsertScanResult {
+        struct Geometry: Encodable {
+            var walls: [RoomWall]
+            var openings: [RoomOpening]
+        }
+        struct Input: Encodable {
+            var houseId: Int
+            var name: String
+            var source: String
+            var widthM: Double
+            var depthM: Double
+            var wallHeightM: Double
+            var geometry: Geometry
+        }
+        return try await client.mutation(
+            "rooms.upsertFromScan",
+            input: Input(
+                houseId: houseId,
+                name: name,
+                source: "roomplan",
+                widthM: geometry.widthM,
+                depthM: geometry.depthM,
+                wallHeightM: geometry.wallHeightM,
+                geometry: Geometry(walls: geometry.walls, openings: geometry.openings)
+            ),
+            as: UpsertScanResult.self
+        )
     }
 
     func uploadInboxPhoto(jpeg: Data, fileName: String) async throws -> UploadedFile {

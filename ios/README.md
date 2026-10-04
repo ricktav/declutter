@@ -40,6 +40,7 @@ If `APP_TOKEN` is unset on the server, leave the token field empty. Only do that
 |---|---|---|
 | Photo library | Works (Photos picker) | Works |
 | Camera | Not available — use the library | Works (back camera) |
+| LiDAR Place scan | Not supported (`RoomCaptureSession.isSupported` is false) | Needs an iPhone/iPad **Pro** with LiDAR |
 | LAN HTTP | Works if the Mac can reach the server | Needs Local Network permission |
 
 ## ATS, local network, cleartext HTTP
@@ -62,10 +63,10 @@ The phone and the server must be on the same network (or a VPN). A `localhost` U
 | Tab | Behavior |
 |---|---|
 | **Settings** | Base URL + APP_TOKEN (Keychain) + `ping` |
-| **Snap** | Camera / library → `POST /api/upload` (`file`, `scope=inbox`) → `inbox.create`. Optional Place (“where you are”). Notes and links. |
+| **Snap** | Camera / library → `POST /api/upload` (`file`, `scope=inbox`) → `inbox.create`. Optional Place (“where you are”). Notes and links. **Scan this Place** (RoomPlan LiDAR) → `rooms.upsertFromScan` (`source: "roomplan"`). |
 | **Sort** | Inbox Photos: AI triage, name / kind, Place, file (`inbox.acceptMany`) or dismiss. Check (`items.setVerification`). Place (`items.update`). |
 | **Act** | Keep / sell / donate / toss / later (`items.setDecision`). Sell list / donate box / toss run. **Gone** (`items.setArchived`). Later returns after 7 days. |
-| **Find** | Search Things by name, Place, or kind. Decision on the Thing sheet. `rooms.get` when a room plan exists. |
+| **Find** | Search Things or Places. Room detail shows a 2D / 3D plan when one exists, or offers a LiDAR scan. |
 
 Tabs match web Flow. Photos load through `attachments.url` plus the same Bearer token (the relative `/uploads/…` URL is not enough on its own).
 
@@ -73,14 +74,15 @@ Tabs match web Flow. Photos load through `attachments.url` plus the same Bearer 
 
 - No Computer-lab **Lens** (backup checks, lab attributes, `items.listRelations`).
 - No Sell-list money fields (`sell.ask_price`, channel, listed/sold dates) — Decision and Gone only.
-- No floor-scan import, GeoJSON thumb, or room-plan pin canvas (`ItemRoomPreview` / annotate).
+- No GeoJSON / MappedIn floor-scan import and no pin-on-plan canvas (Workbench still owns those).
+- LiDAR scan stores wall/door/window polylines only — it does not auto-file furniture as Things.
 - No Workbench, wiki, ideas, or kanban.
 - No “open in Workbench” in-app browser.
 - App icon is a placeholder (empty 1024pt slot).
 
 ## API it uses (unchanged)
 
-tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany`, `inbox.dismiss`, `items.listAll`, `items.update`, `items.setVerification`, `items.setArchived`, `items.setDecision`, `items.patchAttributes` (client ready, unused in V1 UI), `houses.list`, `areas.list`, `map.listLocations`, `attachments.url`, `rooms.get`.
+tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany`, `inbox.dismiss`, `items.listAll`, `items.update`, `items.setVerification`, `items.setArchived`, `items.setDecision`, `items.patchAttributes` (client ready, unused in V1 UI), `houses.list`, `areas.list`, `map.listLocations`, `attachments.url`, `rooms.get`, `rooms.listAll`, `rooms.upsertFromScan`.
 
 HTTP: `POST /api/upload`.
 
