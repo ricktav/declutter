@@ -543,10 +543,9 @@ function TriageCard({
           {capture.storageKey && capture.kind === "image" && (
             <div className="mt-2 flex items-start gap-3">
               <button
-                title="Click or double-click to enlarge"
+                title="Click to enlarge"
                 className="cursor-zoom-in"
                 onClick={() => onZoom(capture.storageKey!, capture.id, true)}
-                onDoubleClick={() => onZoom(capture.storageKey!, capture.id, true)}
               >
                 <CaptureImage storageKey={capture.storageKey} />
               </button>
@@ -890,9 +889,8 @@ export default function InboxPage() {
                   {c.kind === "image" && c.storageKey ? (
                     <button
                       className="cursor-zoom-in block w-full"
-                      title="Click or double-click to enlarge"
+                      title="Click to enlarge"
                       onClick={() => openLightbox(c.storageKey!, c.id, false)}
-                      onDoubleClick={() => openLightbox(c.storageKey!, c.id, false)}
                     >
                       <ProcessedThumb storageKey={c.storageKey} kind={c.kind} />
                     </button>

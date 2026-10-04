@@ -3,7 +3,6 @@ import { Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
-import { useClickOrDoubleClick } from "@/hooks/use-zoomable";
 import { timeAgo } from "@/lib/format";
 import { Search, Loader2 } from "lucide-react";
 import { usePersistedState } from "@/hooks/use-persisted-state";
@@ -30,23 +29,11 @@ type Photo = {
  * to where they belong, but a raw inbox capture has no attachment yet, so
  * clicking it has to materialize one first (same step Inbox's own Pin
  * button does) before there's anywhere to navigate to. */
-function PhotoTile({ photo }: { photo: Photo }) {
+function PhotoTile({ photo, onZoom }: { photo: Photo; onZoom: (photo: Photo) => void }) {
   const navigate = useNavigate();
   const ensure = trpc.photos.ensureForCapture.useMutation({
     onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
   });
-  const [zoomOpen, setZoomOpen] = useState(false);
-  const href = photo.itemId ? `/items/${photo.itemId}` : `/annotate/${photo.id}`;
-  // single click keeps its job (open / pin); a double click enlarges instead
-  const clicks = useClickOrDoubleClick(
-    () => (photo.source === "capture" ? ensure.mutate({ captureId: photo.captureId! }) : navigate(href)),
-    () => photo.storageKey && setZoomOpen(true),
-  );
-  const zoom = photo.storageKey && (
-    <ZoomOverlay open={zoomOpen} onClose={() => setZoomOpen(false)} title={photo.itemName ?? undefined}>
-      <FullImage storageKey={photo.storageKey} />
-    </ZoomOverlay>
-  );
 
   const caption =
     photo.source === "capture"
@@ -66,14 +53,13 @@ function PhotoTile({ photo }: { photo: Photo }) {
     </>
   );
 
-  if (photo.source === "capture") {
-    return (
-      <>
+  const tile =
+    photo.source === "capture" ? (
       <button
-        className="group rounded-lg border border-border bg-white p-2 text-left hover:border-primary/50 disabled:opacity-60"
+        className="group w-full rounded-lg border border-border bg-white p-2 text-left hover:border-primary/50 disabled:opacity-60"
         disabled={ensure.isPending}
-        {...clicks}
-        title="Pin objects on this photo (double-click to enlarge)"
+        onClick={() => ensure.mutate({ captureId: photo.captureId! })}
+        title="Pin objects on this photo"
       >
         {ensure.isPending ? (
           <div className="aspect-square w-full flex items-center justify-center rounded-md border border-border bg-muted/40">
@@ -85,23 +71,32 @@ function PhotoTile({ photo }: { photo: Photo }) {
         <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{caption}</div>
         <div className="font-data text-[10px] text-muted-foreground">{timeAgo(photo.createdAt)}</div>
       </button>
-      {zoom}
-      </>
-    );
-  }
-
-  return (
-    <>
+    ) : (
       <Link
-        to={href}
-        className="group rounded-lg border border-border bg-white p-2 hover:border-primary/50"
-        title="Double-click to enlarge"
-        {...clicks}
+        to={photo.itemId ? `/items/${photo.itemId}` : `/annotate/${photo.id}`}
+        className="group block rounded-lg border border-border bg-white p-2 hover:border-primary/50"
       >
         {inner}
       </Link>
-      {zoom}
-    </>
+    );
+
+  // the enlarge button sits beside the link/button, not inside it, so the
+  // tile's own click stays exactly as it was and the HTML stays valid
+  return (
+    <div className="relative">
+      {tile}
+      {photo.storageKey && (
+        <button
+          type="button"
+          onClick={() => onZoom(photo)}
+          className="absolute top-3.5 right-3.5 h-6 w-6 flex items-center justify-center rounded bg-white/85 text-[13px] leading-none text-muted-foreground hover:text-foreground shadow-sm"
+          title="Enlarge"
+          aria-label="Enlarge"
+        >
+          ⤢
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -121,6 +116,7 @@ export default function PhotosPage() {
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = usePersistedState<SortBy>("photos.sortBy", "location");
   const [showObjects, setShowObjects] = usePersistedState("photos.showObjects", true);
+  const [zoomed, setZoomed] = useState<Photo | null>(null);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -216,7 +212,7 @@ export default function PhotosPage() {
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
               {g.rows.map((p) => (
-                <PhotoTile key={`${p.source}-${p.id}`} photo={p} />
+                <PhotoTile key={`${p.source}-${p.id}`} photo={p} onZoom={setZoomed} />
               ))}
             </div>
           </div>
@@ -227,6 +223,10 @@ export default function PhotosPage() {
           </div>
         )}
       </div>
+
+      <ZoomOverlay open={!!zoomed?.storageKey} onClose={() => setZoomed(null)} title={zoomed?.itemName ?? undefined}>
+        {zoomed?.storageKey && <FullImage storageKey={zoomed.storageKey} />}
+      </ZoomOverlay>
     </div>
   );
 }

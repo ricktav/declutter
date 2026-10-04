@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
-import { useZoomable } from "@/hooks/use-zoomable";
 import { trpc } from "@/providers/trpc";
 import { HousesMap } from "@/components/HousesMap";
 import { Home, MapPin, ChevronRight, Loader2 } from "lucide-react";
@@ -56,6 +55,7 @@ export default function MapPage() {
     { roomId: selected?.id ?? 0 },
     { enabled: !!selected },
   );
+  const [zoomUrl, setZoomUrl] = useState<string | null>(null);
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
@@ -121,13 +121,23 @@ export default function MapPage() {
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {photos.data.map((p) => (
-                  <PhotoCard key={p.id} storageKey={p.storageKey} captureId={p.id} roomId={selected.id} />
+                  <PhotoCard
+                    key={p.id}
+                    storageKey={p.storageKey}
+                    captureId={p.id}
+                    roomId={selected.id}
+                    onZoom={setZoomUrl}
+                  />
                 ))}
               </div>
             </>
           )}
         </div>
       </div>
+
+      <ZoomOverlay open={!!zoomUrl} onClose={() => setZoomUrl(null)} title={selected?.name}>
+        {zoomUrl && <img src={zoomUrl} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />}
+      </ZoomOverlay>
     </div>
   );
 }
@@ -138,38 +148,43 @@ export default function MapPage() {
  * capture isn't pinnable until it also has a photo. Make one on demand
  * (find-or-create, so repeat visits reuse the same row) before navigating in.
  */
-function PhotoCard({ storageKey, captureId, roomId }: { storageKey: string; captureId: number; roomId: number }) {
+function PhotoCard({
+  storageKey,
+  captureId,
+  roomId,
+  onZoom,
+}: {
+  storageKey: string;
+  captureId: number;
+  roomId: number;
+  onZoom: (url: string) => void;
+}) {
   const url = trpc.photos.url.useQuery({ key: storageKey });
   const navigate = useNavigate();
   const ensure = trpc.photos.ensureForCapture.useMutation({
     onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
   });
-  const zoom = useZoomable();
 
   return (
     <div className="relative rounded-lg border border-border bg-white p-2">
       {url.data?.url && (
-        <>
-          <button
-            type="button"
-            onClick={zoom.show}
-            className="absolute top-3 right-3 h-6 w-6 flex items-center justify-center rounded bg-white/85 text-[13px] leading-none text-muted-foreground hover:text-foreground shadow-sm"
-            title="Enlarge"
-            aria-label="Enlarge"
-          >
-            ⤢
-          </button>
-          <ZoomOverlay open={zoom.open} onClose={zoom.close}>
-            <img src={url.data.url} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
-          </ZoomOverlay>
-        </>
+        <button
+          type="button"
+          onClick={() => onZoom(url.data!.url!)}
+          className="absolute top-3 right-3 h-6 w-6 flex items-center justify-center rounded bg-white/85 text-[13px] leading-none text-muted-foreground hover:text-foreground shadow-sm"
+          title="Enlarge"
+          aria-label="Enlarge"
+        >
+          ⤢
+        </button>
       )}
       {url.data?.url ? (
         <img
           src={url.data.url}
           alt=""
           className="w-full aspect-video object-cover rounded cursor-zoom-in"
-          {...zoom.props}
+          title="Double-click to enlarge"
+          onDoubleClick={() => onZoom(url.data!.url!)}
         />
       ) : (
         <div className="w-full aspect-video rounded bg-muted/40" />

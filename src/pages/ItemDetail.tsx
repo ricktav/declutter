@@ -98,8 +98,7 @@ function AttachmentView({
           type="button"
           className="cursor-zoom-in block"
           onClick={() => onZoom?.(url.data!.url!)}
-          onDoubleClick={() => onZoom?.(url.data!.url!)}
-          title="Click or double-click to enlarge"
+          title="Click to enlarge"
         >
           <img
             src={url.data.url}

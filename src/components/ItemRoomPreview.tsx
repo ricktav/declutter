@@ -120,7 +120,9 @@ export function ItemRoomPreview({
         </div>
         {/* in the zoom overlay the 3D view keeps its own orbit controls */}
         <div hidden={view !== "3d"} className={full ? "h-full" : undefined} data-zoom-ignore={full ? "" : undefined}>
-          {opened3d && (
+          {/* the card drops its 3D view while the overlay shows its own, so
+              only one WebGL context exists at a time */}
+          {opened3d && !zoomOpen && (
           <Suspense fallback={null}>
           <RoomPlan3D
             widthM={room.data.widthM ?? 0}
