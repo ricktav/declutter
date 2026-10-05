@@ -76,9 +76,15 @@ struct FloorPlan2D: View {
 
             for it in items {
                 guard let p = it.pos else { continue }
-                let rect = CGRect(x: ox + p.xM * s, y: oy + p.yM * s, width: p.wM * s, height: p.dM * s)
-                context.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(FlowTheme.moss.opacity(0.35)))
-                context.stroke(Path(roundedRect: rect, cornerRadius: 2), with: .color(FlowTheme.moss), lineWidth: 1)
+                // Like the Workbench 2D plan: turn by -rotDeg about the footprint's centre
+                // (y points down, so that is counter-clockwise as seen from above).
+                let w = p.wM * s, d = p.dM * s
+                let centred = Path(roundedRect: CGRect(x: -w / 2, y: -d / 2, width: w, height: d), cornerRadius: 2)
+                let turn = CGAffineTransform(translationX: ox + p.xM * s + w / 2, y: oy + p.yM * s + d / 2)
+                    .rotated(by: -p.rotDeg * .pi / 180)
+                let box = centred.applying(turn)
+                context.fill(box, with: .color(FlowTheme.moss.opacity(0.35)))
+                context.stroke(box, with: .color(FlowTheme.moss), lineWidth: 1)
             }
         }
         .padding(4)
@@ -89,9 +95,27 @@ struct FloorPlan3D: UIViewRepresentable {
     let geometry: RoomGeometryPayload
     var items: [RoomItem] = []
 
+    final class Coordinator {
+        var sceneKey: Int?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// Changes only when the room or its Things' footprints change.
+    private var sceneKey: Int {
+        var h = Hasher()
+        h.combine(geometry)
+        for it in items {
+            h.combine(it.id)
+            h.combine(it.pos)
+        }
+        return h.finalize()
+    }
+
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
         view.scene = buildScene()
+        context.coordinator.sceneKey = sceneKey
         view.allowsCameraControl = true
         view.autoenablesDefaultLighting = true
         view.backgroundColor = UIColor(red: 0.96, green: 0.96, blue: 0.93, alpha: 1)
@@ -100,6 +124,10 @@ struct FloorPlan3D: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: SCNView, context: Context) {
+        // Rebuilding on every SwiftUI update would reset the orbit the viewer set.
+        let key = sceneKey
+        guard key != context.coordinator.sceneKey else { return }
+        context.coordinator.sceneKey = key
         uiView.scene = buildScene()
     }
 
@@ -142,7 +170,7 @@ struct FloorPlan3D: UIViewRepresentable {
             box.firstMaterial?.diffuse.contents = UIColor(red: 0.24, green: 0.36, blue: 0.25, alpha: 0.85)
             let node = SCNNode(geometry: box)
             node.position = SCNVector3(p.xM + p.wM / 2, (p.hM ?? 0.7) / 2, p.yM + p.dM / 2)
-            node.eulerAngles.y = Float(-p.rotDeg * .pi / 180)
+            node.eulerAngles.y = Float(p.rotDeg * .pi / 180) // as the Workbench 3D view: rotation.y = rotDeg
             scene.rootNode.addChildNode(node)
         }
 

@@ -80,7 +80,9 @@ struct FindView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 40)
             } else if scope == .places {
-                if placeRows.isEmpty {
+                if placeRows.isEmpty && !q.isEmpty {
+                    EmptyState(title: "Nothing found", caption: "Try a shorter word, a room or a floor name.")
+                } else if placeRows.isEmpty {
                     EmptyState(title: "No Places yet", caption: "Pick a Place in Snap or Sort first, then scan it here.")
                 } else {
                     ScrollView {
@@ -143,22 +145,26 @@ struct FindView: View {
 
     private func placeRow(_ r: FlowRoom) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: r.hasGeometry ? "square.split.bottomrightquarter" : "cube.transparent")
+            Image(systemName: r.hasPlan ? "square.split.bottomrightquarter" : "cube.transparent")
                 .foregroundStyle(FlowTheme.moss)
                 .frame(width: 36)
             VStack(alignment: .leading, spacing: 2) {
                 Text(r.name)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(FlowTheme.ink)
-                Text(FlowLogic.placeLabel(Place(room: r), houses: session.houses))
-                    .font(.system(size: 12))
-                    .foregroundStyle(FlowTheme.muted)
-                    .lineLimit(1)
+                // House and floor only: the name is on the line above.
+                let whereLabel = FlowLogic.placeLabel(houseId: r.houseId, floor: r.floor, room: nil, houses: session.houses)
+                if !whereLabel.isEmpty {
+                    Text(whereLabel)
+                        .font(.system(size: 12))
+                        .foregroundStyle(FlowTheme.muted)
+                        .lineLimit(1)
+                }
             }
             Spacer()
-            Text(r.hasGeometry ? "2D / 3D" : "No plan")
+            Text(r.hasPlan ? "2D / 3D" : "No plan")
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(r.hasGeometry ? FlowTheme.moss : FlowTheme.muted)
+                .foregroundStyle(r.hasPlan ? FlowTheme.moss : FlowTheme.muted)
             Text("\(r.itemCount)")
                 .font(.system(size: 12, design: .rounded))
                 .foregroundStyle(FlowTheme.muted)
@@ -214,7 +220,7 @@ private struct ThingSheet: View {
                         Text(a).font(.system(size: 12)).foregroundStyle(FlowTheme.muted)
                     }
                     if let roomInfo, roomInfo.hasPlan {
-                        Text("Room plan “\(roomInfo.name)” · \(roomInfo.items?.count ?? 0) Things")
+                        Text("Place plan “\(roomInfo.name)” · \(roomInfo.items?.count ?? 0) Things")
                             .font(.system(size: 12))
                             .foregroundStyle(FlowTheme.muted)
                     } else if roomInfo != nil {

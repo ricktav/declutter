@@ -68,6 +68,18 @@ struct FlowRoom: Codable, Identifiable, Hashable {
     var itemCount: Int
     var widthM: Double?
     var depthM: Double?
+
+    /// The app's one "has a plan" rule (see `RoomPlanRule`), as far as `rooms.list` can tell:
+    /// it sends `hasGeometry` (walls stored) but not the walls themselves.
+    var hasPlan: Bool { RoomPlanRule.hasPlan(widthM: widthM, depthM: depthM, hasWalls: hasGeometry) }
+}
+
+/// A Place has a plan when it has walls and a size above 10 cm each way. Find, Snap,
+/// the scan screen and the Place sheet all use this rule.
+enum RoomPlanRule {
+    static func hasPlan(widthM: Double?, depthM: Double?, hasWalls: Bool) -> Bool {
+        hasWalls && (widthM ?? 0) > 0.1 && (depthM ?? 0) > 0.1
+    }
 }
 
 /// The room `items.listAll` joins onto each Thing.
@@ -294,7 +306,7 @@ struct RoomInfo: Codable, Identifiable {
     }
 
     var hasPlan: Bool {
-        (widthM ?? 0) > 0.1 && (depthM ?? 0) > 0.1 && !(walls ?? []).isEmpty
+        RoomPlanRule.hasPlan(widthM: widthM, depthM: depthM, hasWalls: !(walls ?? []).isEmpty)
     }
 
     var geometryPayload: RoomGeometryPayload? {

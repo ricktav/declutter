@@ -6,6 +6,8 @@ struct RoomScanFlow: View {
     @Environment(\.dismiss) private var dismiss
 
     var initialPlace: Place
+    /// True from Snap: the scanned Place becomes "where you are". Find and the Place sheet leave Here alone.
+    var setsHere: Bool
     var onSaved: (() -> Void)?
 
     @State private var place: Place
@@ -15,8 +17,9 @@ struct RoomScanFlow: View {
     @State private var error: String?
     @State private var saving = false
 
-    init(initialPlace: Place, onSaved: (() -> Void)? = nil) {
+    init(initialPlace: Place, setsHere: Bool = false, onSaved: (() -> Void)? = nil) {
         self.initialPlace = initialPlace
+        self.setsHere = setsHere
         self.onSaved = onSaved
         _place = State(initialValue: initialPlace)
     }
@@ -52,7 +55,7 @@ struct RoomScanFlow: View {
                     }
                     .buttonStyle(.plain)
 
-                    if room?.hasGeometry == true {
+                    if room?.hasPlan == true {
                         Text("This Place already has a plan. A new scan replaces its walls; its Things stay.")
                             .font(.system(size: 12))
                             .foregroundStyle(FlowTheme.muted)
@@ -158,7 +161,7 @@ struct RoomScanFlow: View {
         do {
             let result = try await api.roomsUpsertFromScan(houseId: houseId, name: name, floor: floor, geometry: geometry)
             await session.refresh()
-            if let saved = session.rooms.first(where: { $0.id == result.id }) {
+            if setsHere, let saved = session.rooms.first(where: { $0.id == result.id }) {
                 session.setHere(Place(room: saved))
             }
             onSaved?()

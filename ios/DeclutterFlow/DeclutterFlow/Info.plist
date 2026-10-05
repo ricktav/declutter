@@ -13,8 +13,6 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Flow takes a Photo of each Thing so you can Sort it later, and uses the camera for a LiDAR scan of a Place.</string>
-	<key>NSWorldSensingUsageDescription</key>
-	<string>Flow scans a Place with LiDAR so it can store a 2D / 3D floor plan.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Flow can file Photos from your library as Things.</string>
 	<key>NSLocalNetworkUsageDescription</key>
