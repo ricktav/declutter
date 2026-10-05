@@ -1,0 +1,1 @@
+ALTER TABLE `energy_tariffs` ADD `netMetering` boolean DEFAULT true NOT NULL;

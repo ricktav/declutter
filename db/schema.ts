@@ -585,6 +585,8 @@ export const energyTariffs = mysqlTable(
     feedInEurKwh: decimal("feedInEurKwh", { precision: 7, scale: 5 }).notNull(),
     feedInCostEurKwh: decimal("feedInCostEurKwh", { precision: 7, scale: 5 }).notNull(),
     fixedEurDay: decimal("fixedEurDay", { precision: 6, scale: 3 }).notNull(),
+    /** saldering: import and export net over the year; Energiek's ends 2027-01-01 */
+    netMetering: boolean("netMetering").notNull().default(true),
     note: varchar("note", { length: 128 }),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),

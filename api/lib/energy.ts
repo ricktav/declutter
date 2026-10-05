@@ -125,7 +125,17 @@ export async function applyEnergyReport(db: Db, input: { itemId: number; source:
 // ---------------------------------------------------------------------------
 // Calculations (spec §4). Decimal columns arrive as strings; they become numbers here.
 
-export type Tariff = { validFrom: string; normal: number; offpeak: number; feedIn: number; feedInCost: number; fixedPerDay: number; note: string | null };
+export type Tariff = {
+  validFrom: string;
+  normal: number;
+  offpeak: number;
+  feedIn: number;
+  feedInCost: number;
+  fixedPerDay: number;
+  /** saldering: export nets against import over the year (Energiek: until 2027-01-01) */
+  netMetering: boolean;
+  note: string | null;
+};
 type Month = {
   month: string;
   kwhNormal: number | null;
@@ -162,6 +172,7 @@ export async function loadTariffs(db: Db): Promise<Tariff[]> {
     feedIn: Number(r.feedInEurKwh),
     feedInCost: Number(r.feedInCostEurKwh),
     fixedPerDay: Number(r.fixedEurDay),
+    netMetering: Boolean(r.netMetering),
     note: r.note,
   }));
 }
@@ -264,6 +275,16 @@ export type EnergyOverview = {
     unmeasuredKwh: number | null;
     netCostEur: number | null;
     fixedEur: number | null;
+    selfConsumedKwh: number | null;
+    nettedKwh: number | null;
+    netImportKwh: number | null;
+    netExportKwh: number | null;
+    selfConsumptionPct: number | null;
+    coverageDirectPct: number | null;
+    coverageNettedPct: number | null;
+    feedInEur: number | null;
+    feedInCostEur: number | null;
+    netMetering: boolean | null;
     monthsCounted: number;
     baselineW: number;
     baselineEurYear: number | null;
@@ -378,10 +399,14 @@ export async function energyOverview(db: Db, houseId: number | null, now = new D
     importKwh = 0,
     exportKwh = 0,
     unmeasured = 0,
-    netCost = 0,
     fixed = 0,
     counted = 0,
     priced = true;
+  // Cost per group of months: those whose tariff nets (saldering) and those whose does not.
+  // feedIn and feedInCost are summed per month (export × that month's price), so a price change mid-window is respected.
+  const group = () => ({ imp: 0, exp: 0, importCost: 0, feedIn: 0, feedInCost: 0 });
+  const nm = group(),
+    plain = group();
   for (const m of months) {
     const g = grid ? data.get(grid.id)?.get(m) : undefined;
     const s = solar ? data.get(solar.id)?.get(m) : undefined;
@@ -405,11 +430,28 @@ export async function energyOverview(db: Db, houseId: number | null, now = new D
     unmeasured += use - plugSum;
     if (!t) priced = false;
     else {
-      const f = t.fixedPerDay * daysIn(m);
-      fixed += f;
-      netCost += cost(g, t)! - exp * (t.feedIn - t.feedInCost) + f;
+      fixed += t.fixedPerDay * daysIn(m);
+      const gr = t.netMetering ? nm : plain;
+      gr.imp += imp;
+      gr.exp += exp;
+      gr.importCost += cost(g, t)!;
+      gr.feedIn += exp * t.feedIn;
+      gr.feedInCost += exp * t.feedInCost;
     }
   }
+  // Saldering (Energiek): netted per year, so over the window's netMetering months as a whole.
+  // netted kWh cost the group's average import price (keeps the normal/offpeak split);
+  // terugleverkosten apply to ALL exported kWh; terugleververgoeding only to the surplus (export above import).
+  const netted = Math.min(nm.imp, nm.exp);
+  const avgImportPrice = nm.imp > 0 ? nm.importCost / nm.imp : 0;
+  const avgFeedIn = nm.exp > 0 ? nm.feedIn / nm.exp : 0;
+  const netExport = nm.exp - netted + plain.exp;
+  const netImport = nm.imp - netted + plain.imp;
+  const feedInEur = (nm.exp - netted) * avgFeedIn + plain.feedIn;
+  const feedInCostEur = nm.feedInCost + plain.feedInCost;
+  const netCost = nm.importCost - netted * avgImportPrice + plain.importCost - feedInEur + feedInCostEur + fixed;
+  const selfConsumed = Math.max(producedKwh - exportKwh, 0);
+  const pct = (a: number, b: number) => (b > 0 ? round((a / b) * 100) : null);
   // the house baseline is the house block's plugs only, so it matches the other house figures
   const blockPlugIds = new Set(blockPlugs.map((p) => p.id));
   const baselineW = plugs.filter((p) => blockPlugIds.has(p.itemId)).reduce((s, p) => s + (p.baseW ?? 0), 0);
@@ -424,6 +466,16 @@ export async function energyOverview(db: Db, houseId: number | null, now = new D
       unmeasuredKwh: counted ? round(unmeasured, 3) : null,
       netCostEur: counted && priced ? round(netCost, 2) : null,
       fixedEur: counted && priced ? round(fixed, 2) : null,
+      selfConsumedKwh: counted ? round(selfConsumed, 3) : null,
+      nettedKwh: counted && priced ? round(netted, 3) : null,
+      netImportKwh: counted && priced ? round(netImport, 3) : null,
+      netExportKwh: counted && priced ? round(netExport, 3) : null,
+      selfConsumptionPct: counted ? pct(selfConsumed, producedKwh) : null,
+      coverageDirectPct: counted ? pct(selfConsumed, useKwh) : null,
+      coverageNettedPct: counted && priced ? pct(selfConsumed + netted, useKwh) : null,
+      feedInEur: counted && priced ? round(feedInEur, 2) : null,
+      feedInCostEur: counted && priced ? round(feedInCostEur, 2) : null,
+      netMetering: counted ? (tariff?.netMetering ?? null) : null,
       monthsCounted: counted,
       baselineW: round(baselineW)!,
       baselineEurYear: round(baselineEurYear(baselineW, tariff), 2),

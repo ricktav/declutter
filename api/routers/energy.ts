@@ -72,6 +72,8 @@ export const energyRouter = createRouter({
         feedIn: price,
         feedInCost: price,
         fixedPerDay: n.max(999.999),
+        /** saldering (export nets against import over the year); Energiek's ends 2027-01-01 */
+        netMetering: z.boolean().optional().default(true),
         note: z.string().max(128).nullable().optional(),
       }),
     )
@@ -83,13 +85,14 @@ export const energyRouter = createRouter({
         feedInEurKwh: input.feedIn.toFixed(5),
         feedInCostEurKwh: input.feedInCost.toFixed(5),
         fixedEurDay: input.fixedPerDay.toFixed(3),
+        netMetering: input.netMetering,
         note: input.note ?? null,
       };
       await getDb().insert(energyTariffs).values({ validFrom: input.validFrom, ...set }).onDuplicateKeyUpdate({ set });
       await logEvent({
         entityType: "energy",
         action: "energy.tariff",
-        summary: `Price from ${input.validFrom}: €${input.normal}/kWh normal, €${input.offpeak}/kWh off-peak`,
+        summary: `Price from ${input.validFrom}: €${input.normal}/kWh normal, €${input.offpeak}/kWh off-peak${input.netMetering ? "" : ", no net metering"}`,
         payload: input,
       });
       return { validFrom: input.validFrom };

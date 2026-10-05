@@ -128,7 +128,7 @@ describe("energy.report", () => {
 });
 
 const NOW = new Date(2026, 9, 4, 12); // 4 Oct 2026, local time: last 12 = 2025-10..2026-09
-const T = { validFrom: "2015-01-01", normal: 0.25, offpeak: 0.2, feedIn: 0.06, feedInCost: 0.04, fixedPerDay: 1.5, note: null };
+const T = { validFrom: "2015-01-01", normal: 0.25, offpeak: 0.2, feedIn: 0.06, feedInCost: 0.04, fixedPerDay: 1.5, netMetering: true, note: null };
 
 describe("energy calculations", () => {
   it("windows are complete months, oldest first", () => {
@@ -212,7 +212,9 @@ describe("energy.overview", () => {
     expect(o.house.importKwh).toBeCloseTo(11 * 180, 3);
     // fixed costs only for the 11 counted months (2025-10 .. 2026-08: 335 days)
     expect(o.house.fixedEur).toBeCloseTo(335 * 1.5, 2);
-    expect(o.house.netCostEur).toBeCloseTo(11 * (100 * 0.25 + 80 * 0.2 - 60 * (0.06 - 0.04)) + o.house.fixedEur!, 2);
+    // saldering: export 660 < import 1980, so all 660 kWh net at the average import price; terugleverkosten on all 660
+    const importCost = 11 * (100 * 0.25 + 80 * 0.2);
+    expect(o.house.netCostEur).toBeCloseTo(importCost - 660 * (importCost / 1980) + 660 * 0.04 + o.house.fixedEur!, 2);
   });
 
   it("a month with solar and plug rows but no grid row is not counted and unmeasured never goes negative", async () => {
@@ -345,5 +347,152 @@ describe("energy.forItem and setTariff", () => {
     await expect(c.energy.setTariff({ ...ok, validFrom: "2027-02-30" })).rejects.toThrow();
     await expect(c.energy.setTariff({ ...ok, normal: 100 })).rejects.toThrow();
     expect(await getTestDb().select().from(energyTariffs)).toHaveLength(0);
+  });
+});
+
+describe("energy.overview: net metering (saldering)", () => {
+  // 2025-10 .. 2026-09 = 365 days
+  async function setup(tariff: { normal: string; offpeak: string; feedIn: string; feedInCost: string; fixed: string }) {
+    const s = await seedMeters();
+    const db = getTestDb();
+    await db.delete(energyTariffs);
+    await db.insert(energyTariffs).values({
+      validFrom: "2015-01-01",
+      normalEurKwh: tariff.normal,
+      offpeakEurKwh: tariff.offpeak,
+      feedInEurKwh: tariff.feedIn,
+      feedInCostEurKwh: tariff.feedInCost,
+      fixedEurDay: tariff.fixed,
+    });
+    return s;
+  }
+  const report = (itemId: number, months: object[]) => applyEnergyReport(getTestDb(), { itemId, source: "t", months: months as never }, NOW);
+
+  it("a year with export below import nets all export: €1,824 instead of €2,189 (Energiek 2025-10..2026-09)", async () => {
+    const s = await setup({ normal: "0.24395", offpeak: "0.24395", feedIn: "0.0605", feedInCost: "0.03993", fixed: "1.51" });
+    const months = lastMonths(12, NOW);
+    // import 11 × 573 + 580 = 6,883 kWh; export 11 × 166 + 166.4 = 1,992.4 kWh
+    await report(
+      s.grid,
+      months.map((m, i) => ({ month: m, kwhNormal: 300, kwhOffpeak: i === 11 ? 280 : 273, kwhReturnedNormal: 100, kwhReturnedOffpeak: i === 11 ? 66.4 : 66 })),
+    );
+    await report(
+      s.solar,
+      months.map((m) => ({ month: m, kwhProduced: 300 })),
+    );
+    const h = (await energyOverview(getTestDb(), s.houseId, NOW)).house;
+    expect(h.monthsCounted).toBe(12);
+    expect(h.importKwh).toBeCloseTo(6883, 3);
+    expect(h.exportKwh).toBeCloseTo(1992.4, 3);
+    expect(h.fixedEur).toBeCloseTo(551.15, 2);
+    // 6,883 × 0.24395 − 1,992.4 × 0.24395 + 1,992.4 × 0.03993 + 551.15 = €1,823.8
+    expect(Math.round(h.netCostEur!)).toBe(1824);
+    expect(h.netCostEur).toBeCloseTo(6883 * 0.24395 - 1992.4 * 0.24395 + 1992.4 * 0.03993 + 551.15, 2);
+    expect(h.nettedKwh).toBeCloseTo(1992.4, 3);
+    expect(h.netImportKwh).toBeCloseTo(6883 - 1992.4, 3);
+    expect(h.netExportKwh).toBe(0);
+    expect(h.feedInEur).toBe(0);
+    expect(h.feedInCostEur).toBeCloseTo(1992.4 * 0.03993, 2);
+    expect(h.netMetering).toBe(true);
+  });
+
+  it("a year with export above import: the surplus earns feedIn, terugleverkosten on all export", async () => {
+    const s = await setup({ normal: "0.25", offpeak: "0.2", feedIn: "0.06", feedInCost: "0.04", fixed: "1.5" });
+    const months = lastMonths(12, NOW);
+    // import 100 (60 normal + 40 off-peak = €23) and export 250 a month
+    await report(
+      s.grid,
+      months.map((m) => ({ month: m, kwhNormal: 60, kwhOffpeak: 40, kwhReturnedNormal: 200, kwhReturnedOffpeak: 50 })),
+    );
+    await report(
+      s.solar,
+      months.map((m) => ({ month: m, kwhProduced: 5000 / 12 })),
+    );
+    const h = (await energyOverview(getTestDb(), s.houseId, NOW)).house;
+    expect(h.nettedKwh).toBeCloseTo(1200, 3);
+    expect(h.netImportKwh).toBe(0);
+    expect(h.netExportKwh).toBeCloseTo(1800, 3);
+    expect(h.feedInEur).toBeCloseTo(1800 * 0.06, 2);
+    expect(h.feedInCostEur).toBeCloseTo(3000 * 0.04, 2);
+    // 276 − 1,200 × 0.23 − 1,800 × 0.06 + 3,000 × 0.04 + 365 × 1.5
+    expect(h.netCostEur).toBeCloseTo(276 - 276 - 108 + 120 + 547.5, 2);
+  });
+
+  it("months under a tariff without netMetering are not netted", async () => {
+    const s = await setup({ normal: "0.25", offpeak: "0.2", feedIn: "0.06", feedInCost: "0.04", fixed: "1.5" });
+    await callerFor(s.houseId).energy.setTariff({ validFrom: "2026-04-01", normal: 0.25, offpeak: 0.2, feedIn: 0.06, feedInCost: 0.04, fixedPerDay: 1.5, netMetering: false });
+    const months = lastMonths(12, NOW);
+    // each month: import 100 (€23), export 150
+    await report(
+      s.grid,
+      months.map((m) => ({ month: m, kwhNormal: 60, kwhOffpeak: 40, kwhReturnedNormal: 100, kwhReturnedOffpeak: 50 })),
+    );
+    await report(
+      s.solar,
+      months.map((m) => ({ month: m, kwhProduced: 200 })),
+    );
+    const o = await energyOverview(getTestDb(), s.houseId, NOW);
+    const h = o.house;
+    // netted half (2025-10..2026-03): 600 import, 900 export -> 600 netted, 300 surplus
+    // plain half (2026-04..2026-09): 600 import at €138, 900 export all at feedIn - feedInCost
+    expect(h.nettedKwh).toBeCloseTo(600, 3);
+    expect(h.netImportKwh).toBeCloseTo(600, 3);
+    expect(h.netExportKwh).toBeCloseTo(300 + 900, 3);
+    expect(h.feedInEur).toBeCloseTo(300 * 0.06 + 900 * 0.06, 2);
+    expect(h.feedInCostEur).toBeCloseTo(1800 * 0.04, 2);
+    expect(h.netCostEur).toBeCloseTo(138 - 138 - 18 + 36 + (138 - 54 + 36) + 547.5, 2);
+    expect(h.netMetering).toBe(false);
+    expect(o.tariff?.netMetering).toBe(false);
+    const [row] = await getTestDb().select().from(energyTariffs).where(eq(energyTariffs.validFrom, "2026-04-01"));
+    expect(row.netMetering).toBe(false);
+  });
+
+  it("gives self-consumption and coverage percentages, and nulls without grid data", async () => {
+    const s = await setup({ normal: "0.25", offpeak: "0.2", feedIn: "0.06", feedInCost: "0.04", fixed: "1.5" });
+    const empty = (await energyOverview(getTestDb(), s.houseId, NOW)).house;
+    expect(empty).toMatchObject({
+      monthsCounted: 0,
+      netCostEur: null,
+      selfConsumedKwh: null,
+      nettedKwh: null,
+      netImportKwh: null,
+      netExportKwh: null,
+      selfConsumptionPct: null,
+      coverageDirectPct: null,
+      coverageNettedPct: null,
+      feedInEur: null,
+      feedInCostEur: null,
+      netMetering: null,
+    });
+    const months = lastMonths(12, NOW);
+    // produced 5,000, export 3,000, import 1,200: use 3,200, self-consumed 2,000, netted 1,200
+    await report(
+      s.grid,
+      months.map((m) => ({ month: m, kwhNormal: 60, kwhOffpeak: 40, kwhReturnedNormal: 200, kwhReturnedOffpeak: 50 })),
+    );
+    await report(
+      s.solar,
+      months.map((m) => ({ month: m, kwhProduced: 5000 / 12 })),
+    );
+    const h = (await energyOverview(getTestDb(), s.houseId, NOW)).house;
+    expect(h.useKwh).toBeCloseTo(3200, 2);
+    expect(h.selfConsumedKwh).toBeCloseTo(2000, 2);
+    expect(h.selfConsumptionPct).toBe(40);
+    expect(h.coverageDirectPct).toBe(62.5);
+    expect(h.coverageNettedPct).toBe(100);
+    // no production: the self-consumption percentage has no divisor
+    await report(
+      s.solar,
+      months.map((m) => ({ month: m, kwhProduced: 0 })),
+    );
+    await report(
+      s.grid,
+      months.map((m) => ({ month: m, kwhNormal: 60, kwhOffpeak: 40, kwhReturnedNormal: 0, kwhReturnedOffpeak: 0 })),
+    );
+    const z = (await energyOverview(getTestDb(), s.houseId, NOW)).house;
+    expect(z.selfConsumedKwh).toBe(0);
+    expect(z.selfConsumptionPct).toBeNull();
+    expect(z.coverageDirectPct).toBe(0);
+    expect(z.coverageNettedPct).toBe(0);
   });
 });
