@@ -102,6 +102,13 @@ actor HomeBaseAPI {
         _ = try await client.mutation("items.update", input: Input(id: id, pos: pos), as: OkResult.self)
     }
 
+    /// Slides a Thing flush against the nearest wall of its Place. A Thing with no wall within
+    /// 0.5 m answers PRECONDITION_FAILED "No wall within 0.5 m".
+    func itemsSnapToWall(id: Int) async throws -> SnapToWallResult {
+        struct Input: Encodable { var id: Int }
+        return try await client.mutation("items.snapToWall", input: Input(id: id), as: SnapToWallResult.self)
+    }
+
     func itemsSetVerification(id: Int, status: VerificationStatus) async throws {
         struct Input: Encodable {
             var id: Int

@@ -319,6 +319,18 @@ struct ItemPos: Codable, Hashable {
     var baseM: Double?
 }
 
+/// `items.snapToWall`: the Thing's new pos, how far it moved, and the wall it now touches.
+struct SnapToWallResult: Codable {
+    struct Wall: Codable, Hashable {
+        var kind: String
+        /// "left", "right", "top" or "bottom".
+        var side: String
+    }
+    var pos: ItemPos
+    var movedM: Double
+    var wall: Wall
+}
+
 /// `rooms.get`: the room row plus its Things. Geometry fields decode leniently,
 /// so a room imported from another source (MappedIn) never breaks the sheet.
 struct RoomInfo: Codable, Identifiable {

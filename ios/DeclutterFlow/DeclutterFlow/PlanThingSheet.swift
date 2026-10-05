@@ -24,6 +24,9 @@ struct PlanThingSheet: View {
     @State private var busy = false
     @State private var error: String?
     @State private var showCamera = false
+    /// The Thing's pos after a snap, until the reloaded plan hands the sheet a fresh one.
+    @State private var snappedPos: ItemPos?
+    @State private var snapNote: String?
 
     init(item: RoomItem, ownerRoomName: String? = nil, onChanged: @escaping () async -> Void, onMove: @escaping () -> Void) {
         self.item = item
@@ -48,7 +51,7 @@ struct PlanThingSheet: View {
             parts.append("Scanned as \(Self.words(k))")
         }
         if let a = flowItem?.areaName { parts.append(a) }
-        if let p = item.pos {
+        if let p = snappedPos ?? item.pos {
             parts.append(String(format: "%.1f × %.1f m", p.wM, p.dM))
         }
         return parts.isEmpty ? "No kind yet" : parts.joined(separator: " · ")
@@ -128,10 +131,22 @@ struct PlanThingSheet: View {
                         .padding(.vertical, 12)
                         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color(hex: 0xD5D9CD)))
                 } else {
-                    actionButton("Move on the plan", systemImage: "arrow.up.and.down.and.arrow.left.and.right", fg: FlowTheme.ink, bg: Color.white, border: true) {
-                        onMove()
+                    HStack(spacing: 10) {
+                        actionButton("Move on the plan", systemImage: "arrow.up.and.down.and.arrow.left.and.right", fg: FlowTheme.ink, bg: Color.white, border: true) {
+                            onMove()
+                        }
+                        .disabled(busy || item.pos == nil)
+                        actionButton("Snap to wall", systemImage: "rectangle.leftthird.inset.filled", fg: FlowTheme.ink, bg: Color.white, border: true) {
+                            Task { await snapToWall() }
+                        }
+                        .disabled(busy || item.pos == nil)
                     }
-                    .disabled(busy || item.pos == nil)
+                }
+
+                if let snapNote {
+                    Text(snapNote)
+                        .font(.system(size: 12))
+                        .foregroundStyle(FlowTheme.moss)
                 }
 
                 ErrorLine(message: error)
@@ -184,6 +199,7 @@ struct PlanThingSheet: View {
         guard let api = session.api else { return }
         busy = true
         error = nil
+        snapNote = nil
         do {
             try await api.itemsSetVerification(id: item.id, status: s)
             status = s
@@ -196,11 +212,30 @@ struct PlanThingSheet: View {
         busy = false
     }
 
+    /// "No wall within 0.5 m" comes back as an error and shows in the ErrorLine: there is
+    /// nothing to retry, the Thing just is not near a wall.
+    private func snapToWall() async {
+        guard let api = session.api else { return }
+        busy = true
+        error = nil
+        snapNote = nil
+        do {
+            let r = try await api.itemsSnapToWall(id: item.id)
+            snappedPos = r.pos
+            snapNote = String(format: "Snapped to the %@ wall · %.2f m", r.wall.side, r.movedM)
+            await onChanged()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        busy = false
+    }
+
     private func rename() async {
         let n = trimmedName
         guard let api = session.api, !n.isEmpty, n != savedName else { return }
         busy = true
         error = nil
+        snapNote = nil
         do {
             try await api.itemsRename(id: item.id, name: n)
             name = n
