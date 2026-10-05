@@ -159,6 +159,9 @@ export interface RoomScanGeometry {
   depthM: number | null;
   wallHeightM: number | null;
   scanDate: string | null; // ISO
+  // absent on rows recorded before 2026-10-05's fix round; a revert then leaves them as they are
+  source?: "mappedin" | "roomplan" | "manual";
+  floor?: string | null;
 }
 
 export interface RoomScanChange {

@@ -102,6 +102,9 @@ describe("inbox.importGeojson rescan merge", () => {
       pos: t.pos,
     }));
 
+  // Captures are inserted directly (captureOf), not through inbox.create:
+  // createCapture dedups identical bytes, so the same scan uploaded twice
+  // would be one capture and the second import would be refused.
   it("the same scan imported twice creates nothing new and keeps ids and positions", async () => {
     const { db, h1 } = await seedScan();
     const first = await callerFor(h1).inbox.importGeojson({ captureId: await captureOf([STOVE, SINK]), roomName: "Keuken" });

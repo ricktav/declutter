@@ -732,6 +732,10 @@ export const inboxRouter = createRouter({
       const areaRows = await db.select().from(areas);
       const today = localDate(new Date());
       const counts = await db.transaction(async (tx) => {
+        // the early check is for a fast error; this locked read stops two
+        // concurrent imports of one capture from both getting through
+        const [locked] = await tx.select({ status: captures.status }).from(captures).where(eq(captures.id, input.captureId)).for("update");
+        if (locked?.status === "processed") throw new TRPCError({ code: "BAD_REQUEST", message: "This capture was already imported." });
         let roomId: number;
         // the room as it was, so this scan can be compared and undone (null: the scan creates it)
         const geometryBefore = match ? await snapshotRoom(tx, match.id) : null;
@@ -746,8 +750,10 @@ export const inboxRouter = createRouter({
 
         // A rescan is a new version of the same room: Things a scan put here
         // before are matched by scan_kind and moved, never inserted again.
-        const roomThings = match ? await tx.select().from(items).where(eq(items.roomId, match.id)) : [];
-        const active = roomThings.filter((t) => t.status === "active" && t.verificationStatus !== "rejected");
+        const roomThings = match ? await tx.select().from(items).where(eq(items.roomId, match.id)).orderBy(items.id) : [];
+        // rejected Things take part, so a false positive the scanner keeps
+        // finding matches its rejected Thing and is left alone, not re-created
+        const active = roomThings.filter((t) => t.status === "active");
         const byId = new Map(active.map((t) => [t.id, t]));
         const { matched, unmatchedPolys, missingItemIds } = matchScanItems(
           active.map((t) => ({ id: t.id, name: t.name, scanKind: t.attributes?.scan_kind != null ? String(t.attributes.scan_kind) : null, pos: t.pos ?? null })),
@@ -757,6 +763,10 @@ export const inboxRouter = createRouter({
         let moved = 0;
         for (const m of matched) {
           const t = byId.get(m.itemId)!;
+          if (t.verificationStatus === "rejected") {
+            changes.push({ itemId: t.id, action: "matched", posBefore: t.pos ?? null, posAfter: t.pos ?? null });
+            continue;
+          }
           const meta = scanMeta(m.poly.kind);
           const old = t.pos!;
           const hM = meta.hM ?? old.hM;
@@ -838,7 +848,8 @@ export const inboxRouter = createRouter({
         }
 
         // not detected this time: flag only; position, room and verification stay
-        for (const id of missingItemIds) {
+        const missing = missingItemIds.filter((id) => byId.get(id)!.verificationStatus !== "rejected");
+        for (const id of missing) {
           const t = byId.get(id)!;
           await tx.update(items).set({ attributes: { ...(t.attributes ?? {}), "scan.missing_at": today } }).where(eq(items.id, id));
           changes.push({
@@ -868,14 +879,14 @@ export const inboxRouter = createRouter({
             entityId: roomId,
             action: match ? "rescanned" : "created",
             summary: match
-              ? `Room "${roomName}" rescanned: ${matched.length} matched (${moved} moved), ${created} new, ${missingItemIds.length} missing`
+              ? `Room "${roomName}" rescanned: ${matched.length} matched (${moved} moved), ${created} new, ${missing.length} missing`
               : `Room "${roomName}" created from inbox geojson scan (${created} item(s) detected)`,
             actor: "system",
-            payload: { captureId: input.captureId, matched: matched.length, moved, created, missing: missingItemIds.length },
+            payload: { captureId: input.captureId, matched: matched.length, moved, created, missing: missing.length },
           },
           tx,
         );
-        return { roomId, created, matched: matched.length, moved, missing: missingItemIds.length };
+        return { roomId, created, matched: matched.length, moved, missing: missing.length };
       });
       return { ok: true, ...counts };
     }),

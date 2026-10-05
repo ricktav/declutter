@@ -62,10 +62,11 @@ const scanRows = async () => getTestDb().select().from(roomScans).orderBy(asc(ro
 const thing = async (name: string) => (await getTestDb().select().from(items).where(eq(items.name, name)))[0];
 
 /** Scan A: stove, sink, oven. Scan B: stove 0.3 m on, sink, no oven, a partition wall, and toilet, chair and table new. */
-async function twoScans() {
+async function twoScans(between?: (roomId: number) => Promise<void>) {
   const { db, h1 } = await seed();
   const capA = await captureOf([STOVE, SINK, OVEN]);
   const { roomId } = await callerFor(h1).inbox.importGeojson({ captureId: capA, roomName: "Keuken" });
+  await between?.(roomId);
   const capB = await captureOf([{ ...STOVE, x: 1.3 }, SINK, TOILET, CHAIR, TABLE], true);
   await callerFor(h1).inbox.importGeojson({ captureId: capB, roomId });
   const [a, b] = await scanRows();
@@ -89,6 +90,8 @@ describe("room_scans from inbox.importGeojson", () => {
       depthM: room.depthM,
       wallHeightM: null,
       scanDate: room.scanDate!.toISOString(),
+      source: "mappedin",
+      floor: null,
     });
     expect(scan.changes).toEqual(things.map((t) => ({ itemId: t.id, action: "created", posBefore: null, posAfter: t.pos })));
   });
@@ -144,7 +147,13 @@ describe("rooms.revertScan", () => {
   });
 
   it("restores walls and positions, deletes untouched new Things, keeps touched ones, clears the missing flag", async () => {
-    const { db, h1, roomId, a, b } = await twoScans();
+    // between the scans the room was given a floor and its source changed by hand
+    const { db, h1, roomId, a, b } = await twoScans((roomId) =>
+      getTestDb().update(rooms).set({ floor: "ground", source: "manual" }).where(eq(rooms.id, roomId)).then(() => undefined),
+    );
+    expect(b.before).toMatchObject({ source: "manual", floor: "ground" });
+    expect(b.after).toMatchObject({ source: "mappedin", floor: "ground" });
+    await db.update(rooms).set({ floor: "attic" }).where(eq(rooms.id, roomId));
     const chair = await thing("Chair");
     const table = await thing("Table");
     const toilet = await thing("Toilet");
@@ -158,6 +167,7 @@ describe("rooms.revertScan", () => {
     const [room] = await db.select().from(rooms).where(eq(rooms.id, roomId));
     expect(room.walls).toEqual(a.after.walls);
     expect(room.scanDate!.toISOString()).toBe(a.after.scanDate);
+    expect([room.source, room.floor]).toEqual(["manual", "ground"]);
     expect((await thing("Stove")).pos).toMatchObject({ xM: 1, yM: 1 });
     expect((await thing("Oven")).attributes).toEqual({ scan_kind: "oven" });
     expect((await thing("Sink")).attributes).toEqual({ scan_kind: "sink" });
@@ -218,5 +228,91 @@ describe("room_scans from rooms.upsertFromScan", () => {
     const [room] = await db.select().from(rooms).where(eq(rooms.id, first.id));
     expect([room.walls, room.widthM, room.depthM, room.wallHeightM]).toEqual([G1.walls, 3, 2, 2.4]);
     expect(room.scanDate!.toISOString()).toBe(a.after.scanDate);
+  });
+});
+
+describe("rooms.revertScan, more cases", () => {
+  it("after an undo the same capture can be imported again and records a new scan", async () => {
+    const { db, h1 } = await seed();
+    const captureId = await captureOf([STOVE, SINK]);
+    const { roomId } = await callerFor(h1).inbox.importGeojson({ captureId, roomName: "Keuken" });
+    const [a] = await scanRows();
+    await callerFor(h1).rooms.revertScan({ scanId: a.id });
+    const [cap] = await db.select().from(captures).where(eq(captures.id, captureId));
+    expect(cap.status).toBe("pending");
+    const again = await callerFor(h1).inbox.importGeojson({ captureId, roomId });
+    expect(again).toMatchObject({ roomId, created: 2 });
+    const rows = await scanRows();
+    // oldest first: the undone scan, then the new one
+    expect(rows.map((r) => [r.captureId, r.revertedAt != null])).toEqual([
+      [captureId, true],
+      [captureId, false],
+    ]);
+  });
+
+  it("keeps a created Thing a user renamed since the scan", async () => {
+    const { h1, b } = await twoScans();
+    const toilet = await thing("Toilet");
+    await callerFor(h1).items.update({ id: toilet.id, name: "Wc beneden" });
+    const r = await callerFor(h1).rooms.revertScan({ scanId: b.id });
+    expect(r).toMatchObject({ deleted: 2, kept: 1 });
+    expect((await thing("Wc beneden")).id).toBe(toilet.id);
+  });
+
+  it("skips a Thing deleted since the scan and one moved to another room", async () => {
+    const { db, h1, b } = await twoScans();
+    const sink = await thing("Sink");
+    const stove = await thing("Stove");
+    const [{ id: other }] = await db.insert(rooms).values({ houseId: h1, name: "Gang", source: "manual" }).$returningId();
+    await db.delete(items).where(eq(items.id, sink.id));
+    await db.update(items).set({ roomId: other }).where(eq(items.id, stove.id));
+    const r = await callerFor(h1).rooms.revertScan({ scanId: b.id });
+    expect(r).toEqual({ restored: 1, deleted: 3, kept: 0 }); // only the oven's flag
+    const after = await thing("Stove");
+    expect([after.roomId, after.pos?.xM]).toEqual([other, 1.3]);
+  });
+
+  it("a legacy Thing loses the scan_kind it learned from the undone scan", async () => {
+    const { db, h1 } = await seed();
+    const [{ id: roomId }] = await db.insert(rooms).values({ houseId: h1, name: "Keuken", source: "manual" }).$returningId();
+    const [furniture] = await db.select().from(areas).where(eq(areas.slug, "furniture"));
+    await db.insert(items).values({
+      areaId: furniture.id,
+      houseId: h1,
+      roomId,
+      name: "Chair 2",
+      attributes: { colour: "red" },
+      pos: { xM: 2.5, yM: 2.5, wM: 0.5, dM: 0.5, rotDeg: 0 },
+    });
+    const r = await callerFor(h1).inbox.importGeojson({ captureId: await captureOf([CHAIR]), roomId });
+    expect(r).toMatchObject({ matched: 1, created: 0 });
+    expect((await thing("Chair 2")).attributes).toEqual({ colour: "red", scan_kind: "chair" });
+    const [scan] = await scanRows();
+    expect(scan.before).toMatchObject({ walls: null, source: "manual" });
+    await callerFor(h1).rooms.revertScan({ scanId: scan.id });
+    expect((await thing("Chair 2")).attributes).toEqual({ colour: "red" });
+    const [room] = await db.select().from(rooms).where(eq(rooms.id, roomId));
+    expect([room.walls, room.source]).toEqual([null, "manual"]);
+  });
+});
+
+describe("rescan with a rejected Thing", () => {
+  it("a false positive the scanner keeps finding matches its rejected Thing and is left alone", async () => {
+    const { db, h1 } = await seed();
+    const { roomId } = await callerFor(h1).inbox.importGeojson({ captureId: await captureOf([STOVE, CHAIR]), roomName: "Keuken" });
+    const chair = await thing("Chair");
+    await callerFor(h1).items.setVerification({ id: chair.id, verificationStatus: "rejected" });
+
+    const r = await callerFor(h1).inbox.importGeojson({ captureId: await captureOf([STOVE, { ...CHAIR, x: 2.8 }]), roomId });
+    expect(r).toMatchObject({ created: 0, matched: 2, moved: 0, missing: 0 });
+    const same = await thing("Chair");
+    expect([same.pos, same.attributes, same.verificationStatus]).toEqual([chair.pos, chair.attributes, "rejected"]);
+    expect(await db.select().from(events).where(and(eq(events.entityId, chair.id), eq(events.action, "moved")))).toHaveLength(0);
+    expect((await db.select().from(items)).length).toBe(2);
+
+    // not detected at all: a rejected Thing is never flagged missing
+    const r2 = await callerFor(h1).inbox.importGeojson({ captureId: await captureOf([STOVE]), roomId });
+    expect(r2).toMatchObject({ missing: 0 });
+    expect((await thing("Chair")).attributes).toEqual({ scan_kind: "chair" });
   });
 });

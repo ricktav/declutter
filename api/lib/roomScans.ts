@@ -1,6 +1,10 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, or } from "drizzle-orm";
 import {
+  captures,
+  events,
+  ideaItems,
+  tasks,
   items,
   itemLinks,
   photos,
@@ -29,6 +33,8 @@ export async function snapshotRoom(tx: Tx, roomId: number): Promise<RoomScanGeom
     depthM: r.depthM ?? null,
     wallHeightM: r.wallHeightM ?? null,
     scanDate: r.scanDate ? r.scanDate.toISOString() : null,
+    source: r.source,
+    floor: r.floor ?? null,
   };
 }
 
@@ -74,8 +80,9 @@ function restoreAttrs(current: Record<string, string | number> | null, before: R
  * transaction: the room's geometry comes back from `before`, matched and
  * moved Things get their old position and flags, missing flags are put back
  * as they were, and Things the scan created are deleted unless someone has
- * touched them since (confirmed or rejected, a decision, a photo, a pin, a
- * relation, a link or a child). Returns the stored files of deleted Things
+ * touched them since (confirmed or rejected, a decision, a user edit, a
+ * photo, a pin, a relation, a link, a task, an idea or a child). The scan's
+ * capture goes back to pending. Returns the stored files of deleted Things
  * so the caller can release them after the commit.
  */
 export async function revertRoomScanTx(tx: Tx, scanId: number) {
@@ -105,6 +112,9 @@ export async function revertRoomScanTx(tx: Tx, scanId: number) {
       depthM: b?.depthM ?? null,
       wallHeightM: b?.wallHeightM ?? null,
       scanDate: b?.scanDate ? new Date(b.scanDate) : null,
+      // a room the scan created keeps its source and floor; otherwise both come back
+      ...(b?.source ? { source: b.source } : {}),
+      ...(b && b.floor !== undefined ? { floor: b.floor } : {}),
     })
     .where(eq(rooms.id, room.id));
 
@@ -122,7 +132,7 @@ export async function revertRoomScanTx(tx: Tx, scanId: number) {
     // deleted since, or moved to another room: its position is in another frame now
     if (!t || t.roomId !== scan.roomId) continue;
     if (c.action === "created") {
-      const reasons = await touchedBy(tx, t);
+      const reasons = await touchedBy(tx, t, scan.createdAt);
       if (reasons.length === 0) {
         files.push(...(await deleteItemTx(tx, t.id, { summary: `Thing "${t.name}" deleted: the scan of "${room.name}" that found it was undone` })));
         deleted++;
@@ -153,6 +163,8 @@ export async function revertRoomScanTx(tx: Tx, scanId: number) {
   }
 
   await tx.update(roomScans).set({ revertedAt: new Date() }).where(eq(roomScans.id, scan.id));
+  // the scan's file can be imported again after an undo
+  if (scan.captureId != null) await tx.update(captures).set({ status: "pending" }).where(eq(captures.id, scan.captureId));
   await logEvent(
     {
       entityType: "room",
@@ -170,7 +182,7 @@ export async function revertRoomScanTx(tx: Tx, scanId: number) {
 }
 
 /** Why a Thing a scan created is no longer the scan's alone; empty = untouched. */
-async function touchedBy(tx: Tx, t: typeof items.$inferSelect): Promise<string[]> {
+async function touchedBy(tx: Tx, t: typeof items.$inferSelect, since: Date): Promise<string[]> {
   const reasons: string[] = [];
   if (t.verificationStatus !== "detected") reasons.push(t.verificationStatus);
   if (t.decision != null) reasons.push(`decision ${t.decision}`);
@@ -190,5 +202,19 @@ async function touchedBy(tx: Tx, t: typeof items.$inferSelect): Promise<string[]
     reasons.push("relations");
   if (await has(tx.select({ id: itemLinks.id }).from(itemLinks).where(eq(itemLinks.itemId, t.id)).limit(1))) reasons.push("links");
   if (await has(tx.select({ id: items.id }).from(items).where(eq(items.parentId, t.id)).limit(1))) reasons.push("holds Things");
+  if (await has(tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.itemId, t.id)).limit(1))) reasons.push("tasks");
+  if (await has(tx.select({ id: ideaItems.ideaId }).from(ideaItems).where(eq(ideaItems.itemId, t.id)).limit(1))) reasons.push("ideas");
+  // a rename, description or attribute edit leaves a user event; the import
+  // itself writes none for a Thing it creates (>=: timestamps are whole seconds)
+  if (
+    await has(
+      tx
+        .select({ id: events.id })
+        .from(events)
+        .where(and(eq(events.entityType, "item"), eq(events.entityId, t.id), eq(events.actor, "user"), gte(events.createdAt, since)))
+        .limit(1),
+    )
+  )
+    reasons.push("edited");
   return reasons;
 }

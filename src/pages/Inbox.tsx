@@ -480,6 +480,8 @@ function TriageCard({
       setGeoError(null);
       utils.inbox.list.invalidate();
       utils.rooms.list.invalidate();
+      utils.rooms.get.invalidate();
+      utils.rooms.scans.invalidate();
     },
     onError: (e) => setGeoError(e.message),
   });

@@ -444,10 +444,14 @@ export default function RoomPlanPage() {
           (r.kept ? `, ${r.kept} new kept (someone worked on ${r.kept === 1 ? "it" : "them"})` : "") +
           ".",
       );
-      void utils.rooms.get.invalidate({ id });
       void utils.items.listAll.invalidate();
       void utils.rooms.scans.invalidate({ roomId: id });
       void utils.rooms.scanDiff.invalidate();
+      // the undo may have deleted the selected Thing: drop the selection once the room is fresh
+      void utils.rooms.get.invalidate({ id }).then(() => {
+        const fresh = utils.rooms.get.getData({ id });
+        if (fresh) setSelectedId((cur) => (cur != null && !fresh.items.some((it) => it.id === cur) ? null : cur));
+      });
     },
   });
 
