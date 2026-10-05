@@ -155,12 +155,10 @@ export async function coverPhotos(db: Db, itemIds?: number[]): Promise<Map<numbe
     .from(photos)
     .where(itemIds ? inArray(photos.itemId, itemIds) : isNotNull(photos.itemId))
     .orderBy(asc(photos.id));
-  const cutout = new Set<number>();
   for (const r of rows) {
     if (r.itemId == null) continue;
     if (r.cropBox) {
       out.set(r.itemId, { id: r.id, storageKey: r.storageKey }); // ascending ids: the last cutout is the newest
-      cutout.add(r.itemId);
     } else if (!out.has(r.itemId)) out.set(r.itemId, { id: r.id, storageKey: r.storageKey });
   }
   return out;
