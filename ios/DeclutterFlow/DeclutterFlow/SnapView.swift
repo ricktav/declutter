@@ -88,7 +88,7 @@ struct SnapView: View {
                             }
                         }
                     }
-                    .accessibilityLabel("Take a photo")
+                    .accessibilityLabel("Take a Photo")
 
                     Text("One Photo for each Thing, or one Photo of a shelf.")
                         .font(.system(size: 13))

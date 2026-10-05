@@ -209,12 +209,17 @@ final class SnapCamera: ObservableObject {
 
     init() {
         let center = NotificationCenter.default
-        let names: [Notification.Name] = [.AVCaptureSessionRuntimeError, .AVCaptureSessionWasInterrupted]
-        for name in names {
-            observers.append(center.addObserver(forName: name, object: engine.session, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.lost() }
-            })
-        }
+        // A runtime error (e.g. a media services reset) stopped the session: restart it if on screen.
+        observers.append(center.addObserver(forName: .AVCaptureSessionRuntimeError, object: engine.session, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.lost()
+                self?.resumeIfVisible()
+            }
+        })
+        // An interruption: wait for it to end.
+        observers.append(center.addObserver(forName: .AVCaptureSessionWasInterrupted, object: engine.session, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.lost() }
+        })
         observers.append(center.addObserver(forName: .AVCaptureSessionInterruptionEnded, object: engine.session, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.resumeIfVisible() }
         })
@@ -238,14 +243,17 @@ final class SnapCamera: ObservableObject {
     func start() async {
         idleStop?.cancel()
         idleStop = nil
-        if let starting {
-            await starting.value
-            return
+        // Wait for a start under way; if a stop landed during it, start again.
+        var seen: Task<Void, Never>?
+        while let current = starting, current != seen {
+            await current.value
+            if state == .running { return }
+            seen = current
         }
         let task = Task { await run() }
         starting = task
         await task.value
-        starting = nil
+        if starting == task { starting = nil }
     }
 
     private func run() async {
@@ -457,8 +465,22 @@ struct SnapCameraScreen: View {
         switch camera.state {
         case .running:
             CameraPreview(camera: camera)
-        case .idle, .starting:
+        case .starting:
             ProgressView().tint(FlowTheme.cream)
+        case .idle:
+            VStack(spacing: 10) {
+                Text("The camera is paused")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(FlowTheme.cream)
+                Button("Try again") {
+                    Task { await camera.start() }
+                }
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .foregroundStyle(FlowTheme.ink)
+                .background(FlowTheme.lime, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
         case .noCamera:
             note(
                 title: "No camera on this device",

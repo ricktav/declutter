@@ -150,7 +150,7 @@ struct ContentView: View {
                                 .padding(.vertical, 1)
                                 .background(FlowTheme.toss, in: Capsule())
                                 .offset(x: -18, y: 4)
-                                .accessibilityLabel("\(uploader.failed.count) Photos did not upload")
+                                .accessibilityLabel(uploader.failedSummary ?? "")
                         }
                         if t == .sort, session.sortCount > 0 {
                             Text("\(session.sortCount)")
