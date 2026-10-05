@@ -215,6 +215,11 @@ actor TRPCClient {
         if (200...299).contains(http.statusCode) { return }
         if http.statusCode == 401 { throw APIError.unauthorized }
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let err = obj["error"], !(err is String) {
+            // tRPC answers a failed procedure with HTTP 4xx and {"error":{"json":{message,code,data}}}.
+            throw parseRPCError(err)
+        }
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let message = obj["error"] as? String ?? obj["message"] as? String {
             throw APIError.http(status: http.statusCode, message: message)
         }

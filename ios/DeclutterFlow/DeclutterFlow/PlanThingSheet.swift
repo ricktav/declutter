@@ -24,8 +24,6 @@ struct PlanThingSheet: View {
     @State private var busy = false
     @State private var error: String?
     @State private var showCamera = false
-    /// The Thing's pos after a snap, until the reloaded plan hands the sheet a fresh one.
-    @State private var snappedPos: ItemPos?
     @State private var snapNote: String?
 
     init(item: RoomItem, ownerRoomName: String? = nil, onChanged: @escaping () async -> Void, onMove: @escaping () -> Void) {
@@ -51,7 +49,7 @@ struct PlanThingSheet: View {
             parts.append("Scanned as \(Self.words(k))")
         }
         if let a = flowItem?.areaName { parts.append(a) }
-        if let p = snappedPos ?? item.pos {
+        if let p = item.pos {
             parts.append(String(format: "%.1f × %.1f m", p.wM, p.dM))
         }
         return parts.isEmpty ? "No kind yet" : parts.joined(separator: " · ")
@@ -132,7 +130,7 @@ struct PlanThingSheet: View {
                         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color(hex: 0xD5D9CD)))
                 } else {
                     HStack(spacing: 10) {
-                        actionButton("Move on the plan", systemImage: "arrow.up.and.down.and.arrow.left.and.right", fg: FlowTheme.ink, bg: Color.white, border: true) {
+                        actionButton("Move", systemImage: "arrow.up.and.down.and.arrow.left.and.right", fg: FlowTheme.ink, bg: Color.white, border: true) {
                             onMove()
                         }
                         .disabled(busy || item.pos == nil)
@@ -221,7 +219,6 @@ struct PlanThingSheet: View {
         snapNote = nil
         do {
             let r = try await api.itemsSnapToWall(id: item.id)
-            snappedPos = r.pos
             snapNote = String(format: "Snapped to the %@ wall · %.2f m", r.wall.side, r.movedM)
             await onChanged()
         } catch {
