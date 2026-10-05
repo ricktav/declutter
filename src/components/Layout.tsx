@@ -35,6 +35,7 @@ import {
   Images,
   Network,
   Smartphone,
+  Zap,
   HardDrive,
   type LucideIcon,
 } from "lucide-react";
@@ -129,6 +130,9 @@ function RunningTimerPill() {
     </div>
   );
 }
+
+/** The live energy dashboard on dockermac-1. */
+export const METERKAST_URL = "http://10.50.0.10/meterkast.html";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -238,6 +242,12 @@ export default function Layout() {
         <a href="/flow/" className={navLinkClass({ isActive: false })}>
           <Smartphone className="h-4 w-4" />
           <span className="flex-1">Flow</span>
+          <span className="text-[11px] opacity-60">↗</span>
+        </a>
+        {/* live readings (plugs, smart meter, phases) live on the meterkast dashboard, not in HomeBase */}
+        <a href={METERKAST_URL} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
+          <Zap className="h-4 w-4" />
+          <span className="flex-1">Meterkast</span>
           <span className="text-[11px] opacity-60">↗</span>
         </a>
       </nav>

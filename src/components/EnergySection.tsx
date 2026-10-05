@@ -1,4 +1,5 @@
 import { trpc } from "@/providers/trpc";
+import { METERKAST_URL } from "@/components/Layout";
 
 const EUR = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 
@@ -13,7 +14,12 @@ export function EnergySection({ itemId }: { itemId: number }) {
     <section className="rounded-lg border border-border bg-white p-4">
       <div className="flex items-center mb-2">
         <h2 className="micro-label text-muted-foreground">Energy</h2>
-        {e.plug.id !== itemId && <span className="ml-auto text-[11px] text-muted-foreground">via {e.plug.name}</span>}
+        <span className="ml-auto flex items-center gap-3 text-[11px] text-muted-foreground">
+          {e.plug.id !== itemId && <span>via {e.plug.name}</span>}
+          <a href={METERKAST_URL} target="_blank" rel="noreferrer" className="underline" title="Live readings on the meterkast dashboard">
+            Live ↗
+          </a>
+        </span>
       </div>
       {!s ? (
         <p className="text-[13px] text-muted-foreground">No energy data yet.</p>
