@@ -649,7 +649,13 @@ export const inboxRouter = createRouter({
               if (framed && it.box) {
                 // the crop is the Thing's photo (like inbox.fileObject); the
                 // whole scene stays reachable through the pin on the location photo
-                capBytes ??= await readFileBytes(cap.storageKey!);
+                if (!capBytes) {
+                  try {
+                    capBytes = await readFileBytes(cap.storageKey!);
+                  } catch {
+                    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
+                  }
+                }
                 const cropped = await cropPercent(capBytes, it.box);
                 const saved = await putFile({
                   bytes: new Uint8Array(cropped),

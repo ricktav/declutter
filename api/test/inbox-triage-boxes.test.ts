@@ -4,12 +4,14 @@
 // give a new Thing the crop as its photo. The model is mocked: generateObject
 // parses a canned answer with the real triage schema, so the box cleaning the
 // provider's answer goes through is the one under test.
+import fs from "fs";
+import mysql from "mysql2/promise";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq, isNull } from "drizzle-orm";
 import { areas, captures, houses, items, photoPins, photos, rooms, type TriageSuggestion } from "@db/schema";
-import { getTestDb, resetTestDb } from "./db";
+import { getTestDb, requireTestDatabaseUrl, resetTestDb } from "./db";
 import { callerFor } from "./caller";
-import { removeTestUploads, writeTestJpeg } from "./fixtures";
+import { keyPath, removeTestUploads, trackedUploads, writeTestJpeg } from "./fixtures";
 
 const model = vi.hoisted(() => ({ answer: null as unknown }));
 
@@ -160,5 +162,85 @@ describe("inbox.acceptMany with a box", () => {
     await expect(
       callerFor(h1).inbox.acceptMany({ id: capId, items: [{ areaId, itemId: null, itemName: "pan", box: { ...pan, wPct: 0 } }] }),
     ).rejects.toThrow();
+  });
+
+  it("a failing item rolls the whole accept back and removes the files it wrote", async () => {
+    const { db, h1, areaId, capId } = await seed();
+    const before = trackedUploads().length;
+    await expect(
+      callerFor(h1).inbox.acceptMany({
+        id: capId,
+        items: [
+          { areaId, itemId: null, itemName: "pan", box: pan },
+          // an unsigned column: the insert fails after the first item's files exist
+          { areaId: -1, itemId: null, itemName: "pot", box: pot },
+        ],
+      }),
+    ).rejects.toThrow();
+    const written = trackedUploads().slice(before);
+    expect(written).toHaveLength(2); // the location photo and the pan's cutout
+    for (const k of written) expect(fs.existsSync(keyPath(k)), k).toBe(false);
+    expect(await db.select().from(items)).toHaveLength(0);
+    expect(await db.select().from(photos)).toHaveLength(0);
+    expect(await db.select().from(photoPins)).toHaveLength(0);
+  });
+
+  it("a missing capture file is PRECONDITION_FAILED, nothing written", async () => {
+    const { db, h1, areaId, capId } = await seed();
+    const [cap] = await db.select().from(captures).where(eq(captures.id, capId));
+    fs.rmSync(keyPath(cap.storageKey!), { force: true });
+    await expect(
+      callerFor(h1).inbox.acceptMany({ id: capId, items: [{ areaId, itemId: null, itemName: "pan", box: pan }] }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
+    expect(await db.select().from(items)).toHaveLength(0);
+  });
+
+  // acceptMany's first read fixes its snapshot before it waits on the capture
+  // lock. A location photo committed meanwhile by another connection must be
+  // found (a locking read), not duplicated.
+  it("waits on the capture row lock, then pins on the location photo made meanwhile", async () => {
+    const { db, h1, areaId, keuken, capId } = await seed();
+    const [cap] = await db.select().from(captures).where(eq(captures.id, capId));
+    const conn = await mysql.createConnection(requireTestDatabaseUrl());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("lock test timed out")), 15_000);
+    });
+    try {
+      const run = async () => {
+        await conn.beginTransaction();
+        await conn.query("SELECT id FROM captures WHERE id = ? FOR UPDATE", [capId]);
+        const call = callerFor(h1).inbox.acceptMany({
+          id: capId,
+          roomId: keuken,
+          items: [{ areaId, itemId: null, itemName: "pan", box: pan }],
+        });
+        let settled = false;
+        call.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        await new Promise((r) => setTimeout(r, 500));
+        expect(settled, "acceptMany resolved while another transaction held the capture lock").toBe(false);
+        const [res] = await conn.query<mysql.ResultSetHeader>(
+          "INSERT INTO photos (storageKey, mimeType, sourceCaptureId, roomId, title) VALUES (?, ?, ?, ?, ?)",
+          [cap.storageKey, "image/jpeg", capId, keuken, "Location photo"],
+        );
+        await conn.commit();
+        await call;
+        const locations = await db.select().from(photos).where(and(eq(photos.sourceCaptureId, capId), isNull(photos.itemId)));
+        expect(locations.map((p) => p.id)).toEqual([res.insertId]);
+        const pins = await db.select().from(photoPins);
+        expect(pins.map((p) => p.photoId)).toEqual([res.insertId]);
+      };
+      await Promise.race([run(), timeout]);
+    } finally {
+      clearTimeout(timer);
+      try {
+        await conn.rollback();
+      } finally {
+        await conn.end();
+      }
+    }
   });
 });

@@ -95,12 +95,18 @@ export async function ensureLocationPhotoInTx(
   written: string[],
 ): Promise<{ photoId: number; created: boolean }> {
   // Lock the capture row first: a second call for the same capture waits
-  // here. Its plain read below runs after the first call committed, so it
-  // finds that photo instead of making another one.
+  // here until the first call committed. The photo lookup is a locking read
+  // too: it reads the latest committed rows, not the snapshot of a caller's
+  // transaction that began before the wait (inbox.acceptMany reads first),
+  // so it finds the photo made meanwhile instead of making another one.
   const [cap] = await tx.select().from(captures).where(eq(captures.id, captureId)).for("update");
-  const existing = await tx.query.photos.findFirst({
-    where: and(eq(photos.sourceCaptureId, captureId), isNull(photos.itemId)),
-  });
+  const [existing] = await tx
+    .select()
+    .from(photos)
+    .where(and(eq(photos.sourceCaptureId, captureId), isNull(photos.itemId)))
+    .orderBy(asc(photos.id))
+    .limit(1)
+    .for("update");
   if (existing) {
     // a room confirmed just now (Inbox's pending-item "Pin" flow) is worth keeping
     if (roomId != null && existing.roomId == null) {
