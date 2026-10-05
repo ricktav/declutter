@@ -529,27 +529,26 @@ export async function setPhotoRoom(
   db: Db,
   input: { id: number; roomId: number | null },
 ): Promise<{ id: number; roomId: number | null; cameraCleared: boolean }> {
-  const photo = await db.query.photos.findFirst({ where: eq(photos.id, input.id) });
-  if (!photo) throw new TRPCError({ code: "NOT_FOUND", message: "Photo not found." });
-  const room = input.roomId != null ? await db.query.rooms.findFirst({ where: eq(rooms.id, input.roomId) }) : null;
-  if (input.roomId != null && !room) throw new TRPCError({ code: "BAD_REQUEST", message: "Place not found." });
-  if (room && photo.itemId != null) {
-    const item = await db.query.items.findFirst({ where: eq(items.id, photo.itemId) });
-    if (item?.houseId != null && item.houseId !== room.houseId) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: `"${room.name}" is in another house than "${item.name}"; move the Thing first.`,
-      });
+  return db.transaction(async (tx) => {
+    const photo = await tx.query.photos.findFirst({ where: eq(photos.id, input.id) });
+    if (!photo) throw new TRPCError({ code: "NOT_FOUND", message: "Photo not found." });
+    const room = input.roomId != null ? await tx.query.rooms.findFirst({ where: eq(rooms.id, input.roomId) }) : null;
+    if (input.roomId != null && !room) throw new TRPCError({ code: "BAD_REQUEST", message: "Place not found." });
+    const roomId = room?.id ?? null;
+    // the same room again: nothing to write, the camera stays
+    if (roomId === (photo.roomId ?? null)) return { id: photo.id, roomId, cameraCleared: false };
+    if (room && photo.itemId != null) {
+      const item = await tx.query.items.findFirst({ where: eq(items.id, photo.itemId) });
+      if (item?.houseId != null && item.houseId !== room.houseId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `"${room.name}" is in another house than "${item.name}"; move the Thing first.`,
+        });
+      }
     }
-  }
-  const roomId = room?.id ?? null;
-  const changed = roomId !== photo.roomId;
-  const cameraCleared = changed && photo.camera != null;
-  await db.transaction(async (tx) => {
-    await tx
-      .update(photos)
-      .set({ roomId, ...(changed ? { camera: null } : {}) })
-      .where(eq(photos.id, photo.id));
+    const cameraCleared = photo.camera != null;
+    // a camera lives in its room's frame: a new room drops it
+    await tx.update(photos).set({ roomId, camera: null }).where(eq(photos.id, photo.id));
     await logEvent(
       {
         entityType: "photo",
@@ -560,8 +559,8 @@ export async function setPhotoRoom(
       },
       tx,
     );
+    return { id: photo.id, roomId, cameraCleared };
   });
-  return { id: photo.id, roomId, cameraCleared };
 }
 
 export const CAMERA_FOV_DEFAULT = 60;

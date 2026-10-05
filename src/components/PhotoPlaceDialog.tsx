@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
 import { RoomPicker } from "@/components/RoomPicker";
@@ -8,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 /** The photo whose Place changes: a real photo (photos.setRoom), or an inbox
  * capture that becomes a photo in the chosen room (photos.ensureForCapture). */
 export type PlaceTarget =
-  | { source: "photo"; photoId: number; roomId: number | null; houseId: number | null; ofThing: boolean }
+  | { source: "photo"; photoId: number; roomId: number | null; houseId: number | null; ofThing: boolean; hasCamera: boolean }
   | { source: "capture"; captureId: number };
 
 /** What changed, for the caller's confirmation line. */
@@ -63,7 +64,15 @@ function PlaceBody({
   const { houseId: sessionHouseId } = useHouse();
   const houseId = (target.source === "photo" ? target.houseId : null) ?? sessionHouseId ?? undefined;
   const allRooms = trpc.rooms.list.useQuery({ houseId: null });
-  const [value, setValue] = useState<number | null>(target.source === "photo" ? target.roomId : null);
+  const storedRoomId = target.source === "photo" ? target.roomId : null;
+  const [value, setValue] = useState<number | null>(storedRoomId);
+  // remounts the picker so its text snaps back to the stored room after a failed save
+  const [pickerKey, setPickerKey] = useState(0);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const resetPicker = () => {
+    setValue(storedRoomId);
+    setPickerKey((k) => k + 1);
+  };
   // read after rooms.list is refetched: the picker may have just made the room
   const nameOf = (id: number | null) => {
     if (id == null) return null;
@@ -79,6 +88,7 @@ function PlaceBody({
       onMoved({ roomName: nameOf(res.roomId), cameraCleared: res.cameraCleared, ofThing: target.source === "photo" && target.ofThing });
       onClose();
     },
+    onError: resetPicker,
   });
   const ensure = trpc.photos.ensureForCapture.useMutation({
     onSuccess: async (_res, vars) => {
@@ -87,15 +97,20 @@ function PlaceBody({
       onMoved({ roomName: nameOf(vars.roomId ?? null), cameraCleared: false, ofThing: false });
       onClose();
     },
+    onError: resetPicker,
   });
   const pending = setRoom.isPending || ensure.isPending;
   const error = setRoom.error ?? ensure.error;
 
+  // only a picked room (or the confirmed "Clear Place") saves; the picker
+  // never clears the Place by itself
   const pick = (roomId: number | null) => {
+    if (roomId == null) return;
     setValue(roomId);
+    setConfirmClear(false);
     if (target.source === "photo") {
       if (roomId !== target.roomId) setRoom.mutate({ id: target.photoId, roomId });
-    } else if (roomId != null) {
+    } else {
       ensure.mutate({ captureId: target.captureId, roomId });
     }
   };
@@ -114,12 +129,37 @@ function PlaceBody({
       ) : (
         <div className="flex items-center gap-2">
           <div className="flex-1">
-            <RoomPicker value={value} onChange={pick} houseId={houseId} allowNone={target.source === "photo"} autoFocus />
+            <RoomPicker key={pickerKey} value={value} onChange={pick} houseId={houseId} autoFocus />
           </div>
           {pending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
         </div>
       )}
-      {error && <p className="text-[12px] text-destructive">{error.message}</p>}
+      {target.source === "photo" && target.roomId != null && (
+        <div className="flex flex-wrap items-center gap-2 text-[12px]">
+          {confirmClear ? (
+            <>
+              <span>Clear the Place?{target.hasCamera ? " Its camera marker is lost too." : ""}</span>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7 text-[12px]"
+                disabled={pending}
+                onClick={() => setRoom.mutate({ id: target.photoId, roomId: null })}
+              >
+                Clear Place
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setConfirmClear(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" variant="outline" className="h-7 text-[12px]" disabled={pending} onClick={() => setConfirmClear(true)}>
+              Clear Place…
+            </Button>
+          )}
+        </div>
+      )}
+      {error && <p className="text-[12px] text-destructive">Not saved: {error.message}</p>}
     </>
   );
 }

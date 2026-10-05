@@ -261,6 +261,7 @@ function PhotoTile({
                     roomId: photo.photoRoomId,
                     houseId: photo.houseId,
                     ofThing: photo.itemId != null,
+                    hasCamera: photo.camera != null,
                   }
             )
           }

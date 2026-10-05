@@ -174,6 +174,9 @@ export default function AnnotatePage() {
   const { houseId: sessionHouseId } = useHouse();
   const placeHouseId = photoRoom?.houseId ?? photoThing.data?.houseId ?? sessionHouseId ?? undefined;
   const [placeNote, setPlaceNote] = useState<string | null>(null);
+  const [confirmClearPlace, setConfirmClearPlace] = useState(false);
+  // remounts the picker so its text snaps back to the stored room after a failed save
+  const [placePickerKey, setPlacePickerKey] = useState(0);
   const setPhotoRoom = trpc.photos.setRoom.useMutation({
     onSuccess: async (res) => {
       await utils.rooms.list.invalidate();
@@ -187,7 +190,10 @@ export default function AnnotatePage() {
           (res.cameraCleared ? " Camera marker cleared (it was in the old Place)." : ""),
       );
     },
-    onError: () => setPlaceNote(null),
+    onError: () => {
+      setPlaceNote(null);
+      setPlacePickerKey((k) => k + 1);
+    },
   });
   useEffect(() => {
     if (!placeNote) return;
@@ -620,16 +626,50 @@ export default function AnnotatePage() {
         {photoRow && placeHouseId != null && (
           <div className="w-56">
             <RoomPicker
-              key={photoRow.id}
+              key={`${photoRow.id}-${placePickerKey}`}
               value={photoRoomId}
               houseId={placeHouseId}
-              allowNone
               onChange={(roomId) => {
-                if (roomId !== photoRoomId) setPhotoRoom.mutate({ id: photoRow.id, roomId });
+                // only a picked room saves here; clearing goes through "Clear Place"
+                if (roomId != null && roomId !== photoRoomId) {
+                  setConfirmClearPlace(false);
+                  setPhotoRoom.mutate({ id: photoRow.id, roomId });
+                }
               }}
             />
           </div>
         )}
+        {photoRow && photoRoomId != null &&
+          (confirmClearPlace ? (
+            <>
+              <span>Clear the Place?{photoRow.camera ? " Its camera marker is lost too." : ""}</span>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7 text-[12px]"
+                disabled={setPhotoRoom.isPending}
+                onClick={() => {
+                  setConfirmClearPlace(false);
+                  setPhotoRoom.mutate({ id: photoRow.id, roomId: null });
+                }}
+              >
+                Clear Place
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setConfirmClearPlace(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-[12px] text-muted-foreground"
+              disabled={setPhotoRoom.isPending}
+              onClick={() => setConfirmClearPlace(true)}
+            >
+              Clear Place…
+            </Button>
+          ))}
         {photoRow && placeHouseId == null && <span className="text-muted-foreground">(choose a house in the top bar to set one)</span>}
         {setPhotoRoom.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         {placeNote && (
@@ -637,7 +677,7 @@ export default function AnnotatePage() {
             {placeNote}
           </span>
         )}
-        {setPhotoRoom.error && <span className="text-destructive">{setPhotoRoom.error.message}</span>}
+        {setPhotoRoom.error && <span className="text-destructive">Not saved: {setPhotoRoom.error.message}</span>}
       </div>
 
       {preselected && (

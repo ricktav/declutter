@@ -343,6 +343,9 @@ describe("coverPhotos", () => {
     const first = await add(itemId, "a", null);
     await add(itemId, "b", null);
     expect((await coverPhotos(db, [itemId])).get(itemId)?.id).toBe(first);
+  });
+});
+
 describe("photos.setRoom", () => {
   const cam = { xM: 1, yM: 1, headingDeg: 0, fovDeg: 60, heightM: 1.5 };
 
@@ -365,6 +368,13 @@ describe("photos.setRoom", () => {
     expect(res.cameraCleared).toBe(false);
     const [row] = await db.select().from(photos).where(eq(photos.id, id));
     expect([row.roomId, row.camera]).toEqual([keuken, cam]);
+  });
+
+  it("writes no event when the same room is set again", async () => {
+    const { db, h1, keuken } = await seed();
+    const [{ id }] = await db.insert(photos).values({ storageKey: "local/test-fake-setroom6.jpg", roomId: keuken }).$returningId();
+    expect(await callerFor(h1).photos.setRoom({ id, roomId: keuken })).toEqual({ id, roomId: keuken, cameraCleared: false });
+    expect(await db.select().from(events).where(eq(events.action, "photo.moved"))).toHaveLength(0);
   });
 
   it("null clears the Place and the camera", async () => {
