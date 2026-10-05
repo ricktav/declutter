@@ -614,6 +614,8 @@ struct ItemPin: Codable, Identifiable, Hashable {
     var hPct: Double?
     var label: String?
     var itemId: Int?
+    /// `confirmed`, or `suggested` for an AI suggestion nobody checked yet.
+    var status: String?
     var photo: ItemPhoto?
 
     /// The pin as a frame (centre + size), when it has a size.

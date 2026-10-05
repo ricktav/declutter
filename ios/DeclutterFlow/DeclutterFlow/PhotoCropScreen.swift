@@ -110,12 +110,16 @@ struct PhotoCropScreen: View {
             failed = true
             return
         }
+        failed = false
         let ui: UIImage? = switch source {
         case .key(let key): await PhotoLoading.load(key, api: api)
         case .url(let url): await PhotoLoading.load(url: url, api: api)
         }
         if let ui, ui.size.width > 0, ui.size.height > 0 {
-            image = ui
+            // The box is in percent, so a smaller copy crops the same; a full phone Photo
+            // would cost far more memory than the screen can show.
+            image = PhotoLoading.downsampled(ui, maxPixels: 3000)
+            failed = false
         } else {
             failed = true
         }
@@ -279,10 +283,27 @@ final class CropScrollView: UIScrollView, UIScrollViewDelegate {
         canvas.setZoom(zoomScale)
     }
 
-    /// The scroll view's own pan never starts on the frame or a handle: those drags move the frame.
+    /// Where the last touch went down, in the canvas: "inside the frame" is decided there,
+    /// not where the finger is once the pan threshold is passed.
+    private var touchDownInCanvas: CGPoint?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if event?.type == .touches {
+            touchDownInCanvas = convert(point, to: canvas)
+        }
+        return super.hitTest(point, with: event)
+    }
+
+    /// The scroll view's own pan does not start on the frame or a handle (those drags move the
+    /// frame), except with two fingers, or when the frame fills everything in view (there is
+    /// nothing else to pan from).
     override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-        if g === panGestureRecognizer, canvas.grabsTouch(at: g.location(in: canvas)) {
-            return false
+        if g === panGestureRecognizer {
+            if g.numberOfTouches >= 2 { return super.gestureRecognizerShouldBegin(g) }
+            let visible = convert(bounds, to: canvas).intersection(canvas.bounds)
+            let frameFillsView = !visible.isNull && canvas.frameRect.contains(visible)
+            let at = touchDownInCanvas ?? g.location(in: canvas)
+            if !frameFillsView, canvas.grabsTouch(at: at) { return false }
         }
         return super.gestureRecognizerShouldBegin(g)
     }
@@ -315,6 +336,9 @@ final class CropCanvas: UIView {
     private var dragStart: CropEdges?
 
     var imageSize: CGSize { imageView.image?.size ?? .zero }
+
+    /// The frame in canvas coordinates.
+    var frameRect: CGRect { edges.rect(in: bounds.size) }
 
     init(image: UIImage, edges: CropEdges) {
         self.edges = edges

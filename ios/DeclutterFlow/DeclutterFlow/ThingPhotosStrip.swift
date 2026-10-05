@@ -13,6 +13,11 @@ private struct StripPhoto: Identifiable, Hashable {
     var id: Int { photo.id }
 }
 
+private enum CropError: LocalizedError {
+    case notCropped
+    var errorDescription: String? { "Could not crop this Photo." }
+}
+
 /// What the crop screen opens with, and how its frame is saved.
 private struct CropJob: Identifiable {
     let id = UUID()
@@ -50,7 +55,8 @@ struct ThingPhotosStrip: View {
         let ordered = own.filter(\.isCover) + own.filter { !$0.isCover }
         let ownIds = Set(photos.map(\.id))
         var seen = Set<Int>()
-        let scenes: [StripPhoto] = pins.compactMap { pin in
+        // Only pins someone confirmed: an unchecked suggestion may mark the wrong thing.
+        let scenes: [StripPhoto] = pins.filter { $0.status == "confirmed" }.compactMap { pin in
             guard let p = pin.photo, !ownIds.contains(p.id), seen.insert(p.id).inserted else { return nil }
             return StripPhoto(photo: p, isCover: false, isScene: true, pinBox: pin.box)
         }
@@ -84,7 +90,8 @@ struct ThingPhotosStrip: View {
                     .padding(.vertical, 6)
                     .foregroundStyle(FlowTheme.ink)
                     .background(FlowTheme.lime, in: Capsule())
-                    .disabled(preparing)
+                    .disabled(preparing || !canCrop(selected))
+                    .opacity(canCrop(selected) ? 1 : 0.45)
                     .accessibilityLabel("Crop the selected Photo")
                 }
             }
@@ -115,9 +122,16 @@ struct ThingPhotosStrip: View {
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(hex: 0xD5D9CD)))
         .task(id: itemId) { await load() }
         .onChange(of: cropCoverRequest) { _, _ in
-            guard let cover = entries.first(where: \.isCover) ?? entries.first(where: { !$0.isScene }) else { return }
-            selectedId = cover.id
-            Task { await startCrop(cover) }
+            Task {
+                // Asked from the cover's viewer before the strip has loaded: load first.
+                if !loaded { await load() }
+                guard let cover = entries.first(where: \.isCover) ?? entries.first(where: { !$0.isScene }) else {
+                    error = "Could not crop this Photo: its Photos did not load."
+                    return
+                }
+                selectedId = cover.id
+                await startCrop(cover)
+            }
         }
         .fullScreenCover(item: $job) { job in
             PhotoCropScreen(
@@ -168,7 +182,7 @@ struct ThingPhotosStrip: View {
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(alignment: .bottomLeading) {
                     if e.isCover || e.isScene {
-                        Text(e.isCover ? "Cover" : "Scene")
+                        Text(e.isCover ? "Cover" : "Place")
                             .font(.system(size: 9, weight: .semibold, design: .rounded))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
@@ -183,19 +197,27 @@ struct ThingPhotosStrip: View {
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(e.isCover ? "Cover Photo" : e.isScene ? "Scene Photo" : "Photo") \(e.photo.id)")
+        .accessibilityLabel("\(e.isCover ? "Cover Photo" : e.isScene ? "Photo of the Place" : "Photo") \(e.photo.id)")
     }
 
     private func caption(_ e: StripPhoto) -> String {
-        if e.isScene { return "Scene Photo · Crop cuts this Thing out of it" }
-        if e.photo.isCutout { return "Cutout · Crop frames it again from the original" }
-        return "Whole Photo · Crop gives the Thing a cutout · tap again to zoom"
+        if e.isScene { return "Photo of the Place · Crop cuts this Thing out of it" }
+        if e.photo.isCutout, e.photo.sourceCaptureId != nil { return "Cropped Photo · Crop frames it again from the full Photo" }
+        if e.photo.isCutout { return "Cropped from a Photo that is no longer available" }
+        return "Full Photo · Crop gives the Thing a cropped Photo · tap again to zoom"
+    }
+
+    /// A cropped Photo with no full Photo behind it cannot be framed again, and cropping the
+    /// crop would pile up smaller copies.
+    private func canCrop(_ e: StripPhoto) -> Bool {
+        e.isScene || !e.photo.isCutout || e.photo.sourceCaptureId != nil
     }
 
     private func load() async {
         guard let api = session.api else { return }
         do {
             photos = try await api.photosListForItem(itemId: itemId)
+            error = nil
         } catch {
             self.error = error.localizedDescription
         }
@@ -216,7 +238,14 @@ struct ThingPhotosStrip: View {
     ///   has a cutout of the same original, that one is cropped again instead (the server keeps
     ///   one cutout per Thing and original).
     private func startCrop(_ e: StripPhoto) async {
-        guard let api = session.api else { return }
+        guard let api = session.api else {
+            error = "Could not crop this Photo: no server."
+            return
+        }
+        guard canCrop(e) else {
+            error = "This Photo was cropped from a Photo that is no longer available."
+            return
+        }
         preparing = true
         error = nil
         defer { preparing = false }
@@ -231,7 +260,7 @@ struct ThingPhotosStrip: View {
             }
             // The server crops from the original; with that gone it cannot crop this Photo.
             guard original?.available == true, original?.url != nil else {
-                self.error = "The original of this Photo is gone, so it cannot be cropped."
+                self.error = "The full Photo is no longer available, so this Photo cannot be cropped."
                 return
             }
         }
@@ -240,6 +269,7 @@ struct ThingPhotosStrip: View {
         let ownCutout: ItemPhoto? = p.sourceCaptureId.flatMap { cap in
             photos.first(where: { $0.sourceCaptureId == cap && $0.isCutout })
         }
+        let knownCutoutIds = Set(photos.filter(\.isCutout).map(\.id))
 
         if !e.isScene, p.isCutout, original != nil {
             job = CropJob(source: source, initialBox: original?.cropBox ?? p.cropBox) { box in
@@ -252,8 +282,11 @@ struct ThingPhotosStrip: View {
         } else {
             job = CropJob(source: source, initialBox: e.pinBox) { box in
                 let r = try await api.photosCreateCutout(itemId: itemId, sourcePhotoId: p.id, box: box)
-                // An existing Photo of the same original came back uncropped: crop that one.
+                // The server keeps one cropped Photo per Thing and full Photo and hands that one
+                // back unchanged: crop it again, but only when it is a cropped Photo we know (never
+                // a full Photo, which recrop would overwrite).
                 if !r.created {
+                    guard knownCutoutIds.contains(r.id) else { throw CropError.notCropped }
                     _ = try await api.photosRecrop(photoId: r.id, box: box)
                 }
             }

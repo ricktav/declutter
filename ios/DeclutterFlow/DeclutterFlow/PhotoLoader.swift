@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import ImageIO
 
 @MainActor
 final class PhotoCache: ObservableObject {
@@ -36,6 +37,23 @@ enum PhotoLoading {
         }
     }
 
+    /// A copy at most `maxPixels` on its long side (the image itself when it is smaller), with
+    /// the orientation baked in, as the server crops.
+    static func downsampled(_ image: UIImage, maxPixels: CGFloat) -> UIImage {
+        let px = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        guard max(px.width, px.height) > maxPixels else { return image }
+        if let data = image.jpegData(compressionQuality: 0.92) ?? image.pngData(),
+           let src = CGImageSourceCreateWithData(data as CFData, nil),
+           let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+               kCGImageSourceCreateThumbnailFromImageAlways: true,
+               kCGImageSourceCreateThumbnailWithTransform: true,
+               kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+           ] as CFDictionary) {
+            return UIImage(cgImage: cg)
+        }
+        return image
+    }
+
     /// Loads an image by the URL the server handed out (e.g. `photos.sourcePhoto`), cached
     /// by that URL.
     static func load(url relativeOrAbsolute: String, api: HomeBaseAPI) async -> UIImage? {
@@ -44,7 +62,16 @@ enum PhotoLoading {
         do {
             guard let url = await api.resolvePhotoURL(relativeOrAbsolute) else { return nil }
             let data = try await api.download(url)
-            guard let ui = UIImage(data: data) else { return nil }
+            // Downsampled straight from the file (ImageIO, orientation applied): an original
+            // can be a 12 MP capture, and the box is in percent so the size does not matter.
+            guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+                  let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceCreateThumbnailWithTransform: true,
+                      kCGImageSourceThumbnailMaxPixelSize: 3000,
+                  ] as CFDictionary)
+            else { return nil }
+            let ui = UIImage(cgImage: cg)
             PhotoCache.shared.store(ui, for: cacheKey)
             return ui
         } catch {
