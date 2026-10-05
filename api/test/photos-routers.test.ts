@@ -8,6 +8,7 @@ import { getTestDb, requireTestDatabaseUrl, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 import { keyPath, removeTestUploads, writeTestJpeg, writeTestPng } from "./fixtures";
 import { releaseStoredFiles } from "../lib/entities";
+import { coverPhotos } from "../lib/photos";
 
 beforeEach(async () => {
   await resetTestDb();
@@ -295,5 +296,35 @@ describe("photos.listAll titles", () => {
     await db.insert(photos).values({ itemId, storageKey: "local/test-fake-title.jpg", title: "front view" });
     expect((await callerFor(h1).photos.listAll()).map((r) => r.title)).toEqual(["front view"]);
     expect((await callerFor(h1).attachments.listAllImages()).map((r) => r.title)).toEqual(["front view"]);
+  });
+});
+
+describe("coverPhotos", () => {
+  async function add(itemId: number, name: string, cropBox: typeof box | null) {
+    const [{ id }] = await getTestDb().insert(photos).values({ itemId, storageKey: `local/cover-${name}.jpg`, cropBox }).$returningId();
+    return id;
+  }
+
+  it("prefers a cutout over an older whole Photo", async () => {
+    const { db, itemId } = await seed();
+    await add(itemId, "whole", null);
+    const cut = await add(itemId, "cut", box);
+    expect((await coverPhotos(db, [itemId])).get(itemId)?.id).toBe(cut);
+    expect((await coverPhotos(db)).get(itemId)?.id).toBe(cut);
+  });
+
+  it("takes the newest of two cutouts", async () => {
+    const { db, itemId } = await seed();
+    await add(itemId, "cut1", box);
+    const newer = await add(itemId, "cut2", box);
+    await add(itemId, "whole", null);
+    expect((await coverPhotos(db, [itemId])).get(itemId)?.id).toBe(newer);
+  });
+
+  it("takes the oldest whole Photo when there is no cutout", async () => {
+    const { db, itemId } = await seed();
+    const first = await add(itemId, "a", null);
+    await add(itemId, "b", null);
+    expect((await coverPhotos(db, [itemId])).get(itemId)?.id).toBe(first);
   });
 });

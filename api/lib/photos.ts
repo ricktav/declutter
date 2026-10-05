@@ -143,17 +143,26 @@ export async function ensureLocationPhotoInTx(
 
 export type ItemLinkKind = "link" | "note" | "file";
 
-/** First photo (lowest id) of each item: its cover thumbnail and its AI
- * reference photo. Every item with a photo when itemIds is omitted. */
+/** Cover photo of each item, also its AI reference photo: a cutout (a Photo
+ * with a cropBox) beats a whole Photo, the newest cutout wins (a fresh crop is
+ * the best reading of the Thing); with no cutout the first whole Photo (lowest
+ * id). Every item with a photo when itemIds is omitted. */
 export async function coverPhotos(db: Db, itemIds?: number[]): Promise<Map<number, { id: number; storageKey: string }>> {
   const out = new Map<number, { id: number; storageKey: string }>();
   if (itemIds && itemIds.length === 0) return out;
   const rows = await db
-    .select({ id: photos.id, itemId: photos.itemId, storageKey: photos.storageKey })
+    .select({ id: photos.id, itemId: photos.itemId, storageKey: photos.storageKey, cropBox: photos.cropBox })
     .from(photos)
     .where(itemIds ? inArray(photos.itemId, itemIds) : isNotNull(photos.itemId))
     .orderBy(asc(photos.id));
-  for (const r of rows) if (r.itemId != null && !out.has(r.itemId)) out.set(r.itemId, { id: r.id, storageKey: r.storageKey });
+  const cutout = new Set<number>();
+  for (const r of rows) {
+    if (r.itemId == null) continue;
+    if (r.cropBox) {
+      out.set(r.itemId, { id: r.id, storageKey: r.storageKey }); // ascending ids: the last cutout is the newest
+      cutout.add(r.itemId);
+    } else if (!out.has(r.itemId)) out.set(r.itemId, { id: r.id, storageKey: r.storageKey });
+  }
   return out;
 }
 
