@@ -7,6 +7,9 @@ import { Sheet } from "./ui";
 import { euro } from "./data";
 import { POWERS } from "./lenses";
 
+/** The live dashboard on dockermac-1: plugs, smart meter and phases right now. */
+const METERKAST_URL = "http://10.50.0.10/meterkast.html";
+
 const kwh = (v: number | null | undefined) =>
   v == null ? "—" : `${Math.round(v).toLocaleString("nl-NL")} kWh`;
 const eur = (v: number | null | undefined) => (v == null ? "—" : euro(v));
@@ -53,14 +56,25 @@ export function EnergyFind({ onOpen }: { onOpen: (itemId: number) => void }) {
           Always on: {Math.round(house.baselineW)} W on the plugs ·{" "}
           {eur(house.baselineEurYear)} a year
         </p>
-        <button
-          onClick={() => setPriceOpen(true)}
-          className="self-start font-data text-[12px] text-[#3C5D41] underline"
-        >
-          {tariff
-            ? `€${tariff.normal.toFixed(3)} per kWh`
-            : "Set a price per kWh"}
-        </button>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <button
+            onClick={() => setPriceOpen(true)}
+            className="font-data text-[12px] text-[#3C5D41] underline"
+          >
+            {tariff
+              ? `€${tariff.normal.toFixed(3)} per kWh`
+              : "Set a price per kWh"}
+          </button>
+          {/* live readings stay on the meterkast dashboard; this lens is history and cost */}
+          <a
+            href={METERKAST_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="font-data text-[12px] text-[#3C5D41] underline"
+          >
+            Live → meterkast ↗
+          </a>
+        </div>
       </section>
 
       <PlugList
