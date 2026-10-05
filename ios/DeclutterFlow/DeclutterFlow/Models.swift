@@ -343,12 +343,39 @@ struct RoomGeometryPayload: Codable, Hashable {
     var widthM: Double
     var depthM: Double
     var wallHeightM: Double
+    /// What RoomPlan found in the room, in the same plan frame as `walls`. Only a fresh
+    /// scan carries these; a plan loaded from `rooms.get` shows its Things instead.
+    var objects: [ScanObjectPayload] = []
 }
 
-/// `rooms.upsertFromScan` returns `{ id, created }`.
+/// One RoomPlan object for `rooms.upsertFromScan`'s `objects`: its footprint in the plan
+/// frame (metres, origin at the room's min corner, y down the plan), like `items.pos`.
+struct ScanObjectPayload: Codable, Hashable {
+    /// RoomPlan's category in lower camel case (`table`, `washerDryer`, …).
+    var kind: String
+    /// Min corner of the unrotated footprint; it turns by `rotDeg` about its centre.
+    var xM: Double
+    var yM: Double
+    var wM: Double
+    var dM: Double
+    /// Same sign as `items.pos.rotDeg`: the 2D plan draws it turned by -rotDeg (y down).
+    var rotDeg: Double
+    var hM: Double
+}
+
+/// `rooms.upsertFromScan` returns `{ id, created }` (created: the room row was new), plus
+/// `things` when the scan sent objects: how the scan's Things merged into the room.
 struct UpsertScanResult: Codable {
     var id: Int
     var created: Bool
+    var things: ScanThingCounts?
+}
+
+struct ScanThingCounts: Codable, Hashable {
+    var matched: Int
+    var moved: Int
+    var created: Int
+    var missing: Int
 }
 
 struct AcceptItemInput: Encodable {

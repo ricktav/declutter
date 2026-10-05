@@ -70,7 +70,7 @@ The phone and the server must be on the same network (or a VPN). A `localhost` U
 | Tab | Behavior |
 |---|---|
 | **Settings** | Base URL + APP_TOKEN (Keychain) + House (sent as `x-house-id`) + `ping` |
-| **Snap** | Camera / library → `POST /api/upload` (`file`, `scope=inbox`) → `inbox.create`. Optional Place (“where you are”). Notes and links. **Scan this Place** (RoomPlan LiDAR) → `rooms.upsertFromScan` (`source: "roomplan"`, the picked room's own house and name, so it updates that room). |
+| **Snap** | Camera / library → `POST /api/upload` (`file`, `scope=inbox`) → `inbox.create`. Optional Place (“where you are”). Notes and links. **Scan this Place** (RoomPlan LiDAR) → `rooms.upsertFromScan` (`source: "roomplan"`, the picked room's own house and name, so it updates that room, plus `objects`: the furniture RoomPlan found as footprints in the plan frame). The server files those as detected Things and merges a rescan by kind and distance, like the MappedIn import; after saving, the scan screen shows the counts from `things` and the session refreshes so the plan shows them. |
 | **Sort** | Inbox Photos: AI triage, name / kind, Place, file (`inbox.acceptMany`) or dismiss. Check (`items.setVerification`). Place (`items.update` with `roomId`). |
 | **Act** | Keep / sell / donate / toss / later (`items.setDecision`). Sell list / donate box / toss run. **Gone** (`items.setArchived`). Later returns after 7 days. |
 | **Find** | Search Things or Places. Decision on the Thing sheet. A Place (`rooms.get`) shows its 2D / 3D plan when one exists, or offers a LiDAR scan. |
@@ -82,7 +82,7 @@ Tabs match web Flow. Photos load through `photos.url` plus the same Bearer token
 - No Computer-lab **Lens** (backup checks, lab attributes, `items.listRelations`).
 - No Sell-list money fields (`sell.ask_price`, channel, listed/sold dates) — Decision and Gone only.
 - No GeoJSON / MappedIn floor-scan import and no pin-on-plan canvas (`ItemRoomPreview` / annotate); the Workbench owns those.
-- The LiDAR scan stores wall/door/window polylines only. It does not file furniture as Things.
+- The LiDAR scan sends wall/door/window polylines and RoomPlan's objects (`kind` = the category in lower camel case, `xM`/`yM` = min corner, `wM`/`dM`, `rotDeg` in (−90, 90] with the sign of `items.pos.rotDeg`, `hM`). Objects share the walls' straightening turn and origin (`ScanPlanFrame` in `RoomPlanGeometry.swift`); one RoomPlan put through a wall is kept as found. `ScanPlanFrame` has no RoomPlan types, so it can be checked with a plain `swiftc` script on a Mac (there is no XCTest target).
 - No Workbench, wiki, ideas, or kanban.
 - No “open in Workbench” in-app browser.
 - App icon is a placeholder (empty 1024pt slot).

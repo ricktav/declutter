@@ -16,6 +16,8 @@ struct RoomScanFlow: View {
     @State private var geometry: RoomGeometryPayload?
     @State private var error: String?
     @State private var saving = false
+    /// Set once the scan is saved with objects: how its Things merged into the Place.
+    @State private var savedThings: ScanThingCounts?
 
     init(initialPlace: Place, setsHere: Bool = false, onSaved: (() -> Void)? = nil) {
         self.initialPlace = initialPlace
@@ -36,7 +38,7 @@ struct RoomScanFlow: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("A LiDAR scan of this Place becomes its floor plan (2D and 3D) in HomeBase. Things already filed here stay in this Place.")
+                    Text("A LiDAR scan of this Place becomes its floor plan (2D and 3D) in HomeBase, and the furniture it finds becomes detected Things. Things already filed here stay in this Place.")
                         .font(.system(size: 13))
                         .foregroundStyle(FlowTheme.muted)
 
@@ -56,7 +58,7 @@ struct RoomScanFlow: View {
                     .buttonStyle(.plain)
 
                     if room?.hasPlan == true {
-                        Text("This Place already has a plan. A new scan replaces its walls; its Things stay.")
+                        Text("This Place already has a plan. A new scan replaces its walls and moves the Things an earlier scan found; its other Things stay.")
                             .font(.system(size: 12))
                             .foregroundStyle(FlowTheme.muted)
                     }
@@ -68,8 +70,31 @@ struct RoomScanFlow: View {
                         )
                     }
 
-                    if let geometry {
+                    if let savedThings {
+                        Text(Self.summary(savedThings))
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(FlowTheme.ink)
+                        Text("They are detected Things in this Place: confirm or fix them in Sort.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(FlowTheme.muted)
+                        Button {
+                            onSaved?()
+                            dismiss()
+                        } label: {
+                            Text("Done")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .foregroundStyle(FlowTheme.ink)
+                                .background(FlowTheme.lime, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    } else if let geometry {
                         FloorPlanView(geometry: geometry)
+                        if !geometry.objects.isEmpty {
+                            Text(geometry.objects.count == 1 ? "1 object found; it becomes a Thing in this Place." : "\(geometry.objects.count) objects found; they become Things in this Place.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(FlowTheme.muted)
+                        }
                         Button {
                             Task { await save(geometry) }
                         } label: {
@@ -111,7 +136,10 @@ struct RoomScanFlow: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Close") {
+                        if savedThings != nil { onSaved?() }
+                        dismiss()
+                    }
                 }
             }
         }
@@ -164,11 +192,27 @@ struct RoomScanFlow: View {
             if setsHere, let saved = session.rooms.first(where: { $0.id == result.id }) {
                 session.setHere(Place(room: saved))
             }
-            onSaved?()
-            dismiss()
+            if let things = result.things, things.matched + things.created + things.missing > 0 {
+                // Stay open to say what the scan did to the Place's Things; Done closes.
+                savedThings = things
+            } else {
+                onSaved?()
+                dismiss()
+            }
         } catch {
             self.error = error.localizedDescription
         }
         saving = false
+    }
+
+    /// "3 Things found, 1 moved, 1 new · 1 missing": matched counts the ones already here.
+    static func summary(_ t: ScanThingCounts) -> String {
+        let found = t.matched + t.created
+        var parts = [found == 1 ? "1 Thing found" : "\(found) Things found"]
+        if t.moved > 0 { parts.append("\(t.moved) moved") }
+        if t.created > 0 && t.matched > 0 { parts.append("\(t.created) new") }
+        var line = parts.joined(separator: ", ")
+        if t.missing > 0 { line += " · \(t.missing) not seen this time" }
+        return line
     }
 }

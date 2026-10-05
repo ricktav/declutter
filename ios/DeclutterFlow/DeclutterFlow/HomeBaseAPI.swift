@@ -160,6 +160,7 @@ actor HomeBaseAPI {
 
     /// Store a LiDAR (RoomPlan) scan as a room's plan. The server matches by houseId + name,
     /// so pass the picked room's own name to update it instead of creating a second room.
+    /// `objects` (RoomPlan's furniture) become detected Things, merged like a GeoJSON rescan.
     func roomsUpsertFromScan(houseId: Int, name: String, floor: String?, geometry: RoomGeometryPayload) async throws -> UpsertScanResult {
         struct Geometry: Encodable {
             var walls: [RoomWall]
@@ -174,6 +175,7 @@ actor HomeBaseAPI {
             var wallHeightM: Double
             var floor: String?
             var geometry: Geometry
+            var objects: [ScanObjectPayload]
         }
         return try await client.mutation(
             "rooms.upsertFromScan",
@@ -185,7 +187,8 @@ actor HomeBaseAPI {
                 depthM: geometry.depthM,
                 wallHeightM: geometry.wallHeightM,
                 floor: floor,
-                geometry: Geometry(walls: geometry.walls, openings: geometry.openings)
+                geometry: Geometry(walls: geometry.walls, openings: geometry.openings),
+                objects: geometry.objects
             ),
             as: UpsertScanResult.self
         )
