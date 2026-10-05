@@ -34,6 +34,10 @@ export function Photo({ storageKey, className }: { storageKey: string | null | u
  * on the same spot of the picture at any width. Tall photos are capped at
  * `maxHeight` and centred; the box shrinks with them, keeping the ratio.
  */
+// natural width / height per photo, so a Photo seen before opens at its real
+// ratio instead of jumping from the 4:3 placeholder again
+const photoRatios = new Map<string, number>();
+
 export function FramedPhoto({
   storageKey,
   children,
@@ -45,7 +49,7 @@ export function FramedPhoto({
 }) {
   const url = trpc.attachments.url.useQuery({ key: storageKey });
   // natural width / height, known once the image has loaded; 4:3 until then
-  const [ratio, setRatio] = useState<number | null>(null);
+  const [ratio, setRatio] = useState<number | null>(() => photoRatios.get(storageKey) ?? null);
   const r = ratio ?? 4 / 3;
   return (
     <div className="flex w-full justify-center">
@@ -60,7 +64,10 @@ export function FramedPhoto({
             className="absolute inset-0 h-full w-full"
             onLoad={(e) => {
               const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
-              if (w > 0 && h > 0) setRatio(w / h);
+              if (w > 0 && h > 0) {
+                photoRatios.set(storageKey, w / h);
+                setRatio(w / h);
+              }
             }}
           />
         )}

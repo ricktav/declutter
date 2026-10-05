@@ -15,7 +15,8 @@ import type { CropBox } from "@db/schema";
 
 // Skipped cards, in skip order, kept on this device so a reload (or the phone
 // dropping the tab) does not bring them back to the front. Card keys
-// ("c12" = capture 12, "k7" = check Thing 7, ...); pruned to the live queue.
+// ("c12" = capture 12, "k7" = check Thing 7, ...); capture keys are pruned
+// once that capture is no longer pending.
 const SKIPPED_KEY = "flow.sort.skipped";
 function loadSkipped(): string[] {
   try {
@@ -46,33 +47,36 @@ function spottedBox(s: unknown): CropBox | null {
 
 /** Finish the record, one card at a time: what is it, is it right, where is it. */
 export function SortTab() {
-  const { lens, ready } = useFlow();
+  const { lens, ready, captures } = useFlow();
   const [filter, setFilter] = useState<Filter>("all");
   const [skipped, setSkipped] = useState<string[]>(loadSkipped);
   // a Photo picked from the strip is worked on first, until it is filed or skipped
   const [picked, setPicked] = useState<string | null>(null);
   const cards = useSortCards();
-  // only skips of cards still in the queue count (filed or dismissed ones fall out)
-  const live = ready ? skipped.filter((k) => cards.some((c) => c.key === k)) : skipped;
-  const liveKey = live.join(",");
+  // forget skips of captures that left the queue (filed or dismissed); other
+  // kinds stay, so a lens toggle or a late-loading list never drops them
+  const pruned = ready
+    ? skipped.filter((k) => !k.startsWith("c") || captures.some((x) => x.status === "pending" && `c${x.id}` === k))
+    : skipped;
+  const prunedKey = JSON.stringify(pruned);
   useEffect(() => {
-    if (ready) storeSkipped(liveKey ? liveKey.split(",") : []);
-  }, [ready, liveKey]);
+    if (ready) storeSkipped(JSON.parse(prunedKey) as string[]);
+  }, [ready, prunedKey]);
 
   const counts: Record<Filter, number> = { all: cards.length, capture: 0, check: 0, lab: 0, place: 0 };
   for (const c of cards) counts[filterOf(c)]++;
   const visible = cards.filter((x) => filter === "all" || filterOf(x) === filter);
   // skipped cards go to the back of the line instead of disappearing
   const ordered = [
-    ...visible.filter((x) => !live.includes(x.key)),
-    ...live.map((k) => visible.find((x) => x.key === k)).filter((x): x is Card => !!x),
+    ...visible.filter((x) => !skipped.includes(x.key)),
+    ...skipped.map((k) => visible.find((x) => x.key === k)).filter((x): x is Card => !!x),
   ];
   const card = ordered.find((x) => x.key === picked) ?? ordered[0];
   const photos = ordered.filter((x): x is Extract<Card, { kind: "capture" }> => x.kind === "capture");
 
   const skip = () => {
     if (!card) return;
-    const next = [...live.filter((k) => k !== card.key), card.key];
+    const next = [...pruned.filter((k) => k !== card.key), card.key];
     setSkipped(next);
     storeSkipped(next);
     setPicked(null);
@@ -139,12 +143,12 @@ function PhotoStrip({
   return (
     <div className="flex flex-col gap-1.5">
       <span className="px-1 font-data text-[12px] text-muted-foreground">Pick a Photo</span>
-      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 py-0.5 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {cards.map(({ key, capture }) => (
           <button
             key={key}
             onClick={() => onPick(key)}
-            aria-label={`Sort capture ${capture.id}`}
+            aria-label={`Sort Photo ${capture.id}`}
             aria-current={key === current}
             className={cn(
               "h-16 w-16 shrink-0 rounded-xl p-0.5 outline-none",
@@ -193,11 +197,13 @@ const LIME = "#a3e635";
 
 /** The AI's frames over the Photo, one per row that has a box; tap toggles that row. */
 function Frames({ rows, active, onTap }: { rows: Row[]; active: number | null; onTap: (i: number) => void }) {
-  // big frames first, so a small one inside a big one stays on top and tappable
+  // in the DOM by number; stacked by size, so a small frame inside a big one
+  // stays on top and tappable
   const framed = rows
     .map((r, i) => ({ r, i }))
     .filter((x) => x.r.box)
-    .sort((a, b) => b.r.box!.wPct * b.r.box!.hPct - a.r.box!.wPct * a.r.box!.hPct);
+    .sort((a, b) => a.r.num! - b.r.num!);
+  const bySize = [...framed].sort((a, b) => b.r.box!.wPct * b.r.box!.hPct - a.r.box!.wPct * a.r.box!.hPct);
   return (
     <>
       {framed.map(({ r, i }) => {
@@ -217,6 +223,7 @@ function Frames({ rows, active, onTap }: { rows: Row[]; active: number | null; o
               top: `${top}%`,
               width: `${Math.min(100, b.xPct + b.wPct / 2) - left}%`,
               height: `${Math.min(100, b.yPct + b.hPct / 2) - top}%`,
+              zIndex: 1 + bySize.findIndex((x) => x.i === i),
               border: `2px ${r.checked ? "solid" : "dashed"} ${LIME}`,
             }}
           >
@@ -236,7 +243,7 @@ function Frames({ rows, active, onTap }: { rows: Row[]; active: number | null; o
 function RowNumber({ num }: { num?: number }) {
   if (num == null) return null;
   return (
-    <span className="grid h-5 min-w-5 shrink-0 place-items-center rounded-md px-1 font-data text-[11px] font-bold text-[#282c20]" style={{ background: LIME }}>
+    <span aria-hidden className="grid h-5 min-w-5 shrink-0 place-items-center rounded-md px-1 font-data text-[11px] font-bold text-[#282c20]" style={{ background: LIME }}>
       {num}
     </span>
   );
