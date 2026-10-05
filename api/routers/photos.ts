@@ -173,10 +173,10 @@ export const photosRouter = createRouter({
       if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
       const pinFor = { sourcePhotoId: source.id, itemId: input.itemId, box: input.box, label: item.name };
 
-      // one cutout per item and original photo: pinning again or re-saving does not pile up copies
+      // one cutout per item and original photo (a whole Photo of the same capture is not a cutout): pinning again or re-saving does not pile up copies
       if (sourceCaptureId) {
         const dup = await db.query.photos.findFirst({
-          where: and(eq(photos.itemId, input.itemId), eq(photos.sourceCaptureId, sourceCaptureId)),
+          where: and(eq(photos.itemId, input.itemId), eq(photos.sourceCaptureId, sourceCaptureId), isNotNull(photos.cropBox)),
         });
         if (dup) {
           await db.transaction((tx) => ensurePinForCutout(tx, pinFor));

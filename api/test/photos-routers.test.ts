@@ -97,6 +97,23 @@ describe("photos.ensureForCapture / createCutout / recrop", () => {
     expect(fs.existsSync(keyPath(a.storageKey))).toBe(false);
   });
 
+  it("createCutout on a whole Photo from a capture makes a new cutout and leaves the whole Photo alone", async () => {
+    const { db, h1, itemId } = await seed();
+    const capKey = await writeTestJpeg();
+    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: capKey }).$returningId();
+    const [{ id: whole }] = await db
+      .insert(photos)
+      .values({ itemId, sourceCaptureId: capId, storageKey: capKey, mimeType: "image/jpeg" })
+      .$returningId();
+    const cut = await callerFor(h1).photos.createCutout({ itemId, sourcePhotoId: whole, box });
+    expect(cut.created).toBe(true);
+    expect(cut.id).not.toBe(whole);
+    const [w] = await db.select().from(photos).where(eq(photos.id, whole));
+    expect([w.storageKey, w.cropBox]).toEqual([capKey, null]);
+    const [c] = await db.select().from(photos).where(eq(photos.id, cut.id));
+    expect(c.cropBox).toEqual(box);
+  });
+
   it("a source photo that is gone from disk gives a readable error and writes nothing", async () => {
     const { db, h1, itemId } = await seed();
     const [{ id: capId }] = await db
