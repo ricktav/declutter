@@ -1,13 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { timeAgo } from "@/lib/format";
-import { Search, Loader2, MapPin, LayoutGrid, Link2, X, Camera } from "lucide-react";
+import { Search, Loader2, MapPin, LayoutGrid, Link2, X, Camera, Home } from "lucide-react";
 import { usePersistedState } from "@/hooks/use-persisted-state";
 import { AttachPhotoDialog, type AttachTarget } from "@/components/AttachPhotoDialog";
+import { PhotoPlaceDialog, type PlaceResult, type PlaceTarget } from "@/components/PhotoPlaceDialog";
 import { cn } from "@/lib/utils";
 import type { PhotoCamera } from "@db/schema";
 
@@ -28,6 +29,8 @@ type Photo = {
   roomId: number | null;
   roomName: string | null;
   floor: string | null;
+  /** the photo's own Place; roomId is its Thing's room first */
+  photoRoomId: number | null;
   areaName: string | null;
   isCutout: boolean;
   /** where the photo stands on its room's plan */
@@ -79,6 +82,7 @@ function PhotoTile({
   rooms,
   onZoom,
   onAttach,
+  onChangePlace,
 }: {
   photo: Photo;
   placement: Placement | undefined;
@@ -86,6 +90,7 @@ function PhotoTile({
   rooms: RoomOption[];
   onZoom: (photo: Photo) => void;
   onAttach: (target: AttachTarget) => void;
+  onChangePlace: (target: PlaceTarget) => void;
 }) {
   const navigate = useNavigate();
   const ensure = trpc.photos.ensureForCapture.useMutation({
@@ -164,84 +169,107 @@ function PhotoTile({
     <div className="group/tile relative">
       {tile}
       {placement && photo.itemId != null && <PlacementBadges placement={placement} />}
-      {inBucket && (
-        // visible on hover or while focus is in the tile (Tab onto the tile
-        // shows the row, the next Tab reaches its buttons); always on touch
-        // screens, which cannot hover. invisible rather than opacity-0, so a
-        // hidden button cannot be clicked by accident
-        <div className="invisible mt-1 flex flex-wrap gap-1 group-hover/tile:visible group-focus-within/tile:visible [@media(hover:none)]:visible">
-          <button
-            type="button"
-            className="flex-1 flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50"
-            onClick={() =>
-              onAttach(
+      {/* visible on hover or while focus is in the tile (Tab onto the tile
+          shows the row, the next Tab reaches its buttons); always on touch
+          screens, which cannot hover. invisible rather than opacity-0, so a
+          hidden button cannot be clicked by accident. Every photo can change
+          its Place; only a bucket photo gets the other actions */}
+      <div className="invisible mt-1 flex flex-wrap gap-1 group-hover/tile:visible group-focus-within/tile:visible [@media(hover:none)]:visible">
+        {inBucket && (
+          <>
+            <button
+              type="button"
+              className="flex-1 flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50"
+              onClick={() =>
+                onAttach(
+                  photo.source === "capture"
+                    ? { source: "capture", captureId: photo.captureId! }
+                    : { source: "photo", photoId: photo.id }
+                )
+              }
+              title="Make this one of a Thing's photos"
+            >
+              <Link2 className="h-3 w-3" /> Attach to Thing…
+            </button>
+            <button
+              type="button"
+              className="flex-1 flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50 disabled:opacity-60"
+              disabled={ensureForPin.isPending}
+              onClick={() =>
                 photo.source === "capture"
-                  ? { source: "capture", captureId: photo.captureId! }
-                  : { source: "photo", photoId: photo.id }
-              )
-            }
-            title="Make this one of a Thing's photos"
-          >
-            <Link2 className="h-3 w-3" /> Attach to Thing…
-          </button>
-          <button
-            type="button"
-            className="flex-1 flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50 disabled:opacity-60"
-            disabled={ensureForPin.isPending}
-            onClick={() =>
-              photo.source === "capture"
-                ? ensureForPin.mutate({ captureId: photo.captureId! })
-                : navigate(`/annotate/${photo.id}${pinQuery}`)
-            }
-            title="Draw a box around a Thing on this photo"
-          >
-            {ensureForPin.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <MapPin className="h-3 w-3" />} Pin
-            a Thing…
-          </button>
-          {canPlace &&
-            (pickRoom ? (
-              <select
-                autoFocus
-                aria-label="Room to place the photo in"
-                className="basis-full rounded border border-border bg-white px-1 py-1 text-[11px]"
-                disabled={ensureForPlace.isPending}
-                defaultValue=""
-                onChange={(e) => {
-                  const roomId = Number(e.target.value);
-                  if (roomId > 0) ensureForPlace.mutate({ captureId: photo.captureId!, roomId });
-                }}
-                onBlur={() => !ensureForPlace.isPending && setPickRoom(false)}
-              >
-                <option value="" disabled>
-                  {ensureForPlace.isPending ? "Opening the plan…" : "Which room?"}
-                </option>
-                {rooms.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.floor ? `${r.name} · ${r.floor}` : r.name}
+                  ? ensureForPin.mutate({ captureId: photo.captureId! })
+                  : navigate(`/annotate/${photo.id}${pinQuery}`)
+              }
+              title="Draw a box around a Thing on this photo"
+            >
+              {ensureForPin.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <MapPin className="h-3 w-3" />} Pin
+              a Thing…
+            </button>
+            {canPlace &&
+              (pickRoom ? (
+                <select
+                  autoFocus
+                  aria-label="Room to place the photo in"
+                  className="basis-full rounded border border-border bg-white px-1 py-1 text-[11px]"
+                  disabled={ensureForPlace.isPending}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const roomId = Number(e.target.value);
+                    if (roomId > 0) ensureForPlace.mutate({ captureId: photo.captureId!, roomId });
+                  }}
+                  onBlur={() => !ensureForPlace.isPending && setPickRoom(false)}
+                >
+                  <option value="" disabled>
+                    {ensureForPlace.isPending ? "Opening the plan…" : "Which room?"}
                   </option>
-                ))}
-              </select>
-            ) : (
-              <button
-                type="button"
-                className="basis-full flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50"
-                onClick={() =>
-                  photo.source === "capture"
-                    ? setPickRoom(true)
-                    : navigate(`/rooms/${photo.roomId}?placePhoto=${photo.id}`)
-                }
-                title={
-                  photo.source === "capture"
-                    ? "Choose its room, then stand this photo on the room's plan"
-                    : "Stand this photo on its room's plan, looking where it was taken"
-                }
-              >
-                <Camera className="h-3 w-3" /> Place on the plan{photo.source === "capture" ? "…" : ""}
-              </button>
-            ))}
-          {ensureForPlace.error && <p className="basis-full text-[10px] text-destructive">{ensureForPlace.error.message}</p>}
-        </div>
-      )}
+                  {rooms.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.floor ? `${r.name} · ${r.floor}` : r.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <button
+                  type="button"
+                  className="basis-full flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50"
+                  onClick={() =>
+                    photo.source === "capture"
+                      ? setPickRoom(true)
+                      : navigate(`/rooms/${photo.roomId}?placePhoto=${photo.id}`)
+                  }
+                  title={
+                    photo.source === "capture"
+                      ? "Choose its room, then stand this photo on the room's plan"
+                      : "Stand this photo on its room's plan, looking where it was taken"
+                  }
+                >
+                  <Camera className="h-3 w-3" /> Place on the plan{photo.source === "capture" ? "…" : ""}
+                </button>
+              ))}
+          </>
+        )}
+        <button
+          type="button"
+          className="basis-full flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50"
+          onClick={() =>
+            onChangePlace(
+              photo.source === "capture"
+                ? { source: "capture", captureId: photo.captureId! }
+                : {
+                    source: "photo",
+                    photoId: photo.id,
+                    roomId: photo.photoRoomId,
+                    houseId: photo.houseId,
+                    ofThing: photo.itemId != null,
+                  }
+            )
+          }
+          title="Change the Place where this Photo was taken"
+        >
+          <Home className="h-3 w-3" /> Change Place…
+        </button>
+        {ensureForPlace.error && <p className="basis-full text-[10px] text-destructive">{ensureForPlace.error.message}</p>}
+      </div>
       {photo.storageKey && (
         <button
           type="button"
@@ -286,6 +314,24 @@ export default function PhotosPage() {
     setSearchParams(next, { replace: true });
   };
   const [attachTarget, setAttachTarget] = useState<AttachTarget | null>(null);
+  const [placeTarget, setPlaceTarget] = useState<PlaceTarget | null>(null);
+  const [placeNote, setPlaceNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!placeNote) return;
+    const t = setTimeout(() => setPlaceNote(null), 5000);
+    return () => clearTimeout(t);
+  }, [placeNote]);
+  const onMoved = (res: PlaceResult) =>
+    setPlaceNote(
+      [
+        res.roomName ? `Moved to ${res.roomName}.` : "Place cleared.",
+        res.cameraCleared ? "Camera marker cleared (it was in the old Place)." : "",
+        // the page groups a Thing's photo under its Thing's Place
+        res.ofThing ? "The tile stays under its Thing's Place." : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
 
   // One placementSummary call for every Thing on the page (never one per
   // tile). The ids come from the whole list, not the filtered one, so typing
@@ -425,6 +471,12 @@ export default function PhotosPage() {
         )}
       </div>
 
+      {placeNote && (
+        <div role="status" className="mt-3 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-900">
+          {placeNote}
+        </div>
+      )}
+
       <div className="mt-5 space-y-7">
         {groups.map((g) => (
           <div key={g.key}>
@@ -441,6 +493,7 @@ export default function PhotosPage() {
                   rooms={rooms.data ?? NO_ROOMS}
                   onZoom={setZoomed}
                   onAttach={setAttachTarget}
+                  onChangePlace={setPlaceTarget}
                 />
               ))}
             </div>
@@ -470,6 +523,7 @@ export default function PhotosPage() {
       </ZoomOverlay>
 
       <AttachPhotoDialog target={attachTarget} onClose={() => setAttachTarget(null)} />
+      <PhotoPlaceDialog target={placeTarget} onClose={() => setPlaceTarget(null)} onMoved={onMoved} />
     </div>
   );
 }

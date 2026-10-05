@@ -2,7 +2,7 @@
 import fs from "fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { areas, captures, houses, itemLinks, items, photoPins, photos, rooms } from "@db/schema";
+import { areas, captures, events, houses, itemLinks, items, photoPins, photos, rooms } from "@db/schema";
 import mysql from "mysql2/promise";
 import { getTestDb, requireTestDatabaseUrl, resetTestDb } from "./db";
 import { callerFor } from "./caller";
@@ -343,5 +343,49 @@ describe("coverPhotos", () => {
     const first = await add(itemId, "a", null);
     await add(itemId, "b", null);
     expect((await coverPhotos(db, [itemId])).get(itemId)?.id).toBe(first);
+describe("photos.setRoom", () => {
+  const cam = { xM: 1, yM: 1, headingDeg: 0, fovDeg: 60, heightM: 1.5 };
+
+  it("sets the room, clears the camera when the room changes, and logs photo.moved", async () => {
+    const { db, h1, keuken } = await seed();
+    const [{ id: zolder }] = await db.insert(rooms).values({ houseId: h1, name: "Zolder", floor: "attic", source: "manual" }).$returningId();
+    const [{ id }] = await db.insert(photos).values({ storageKey: "local/test-fake-setroom.jpg", roomId: keuken, camera: cam }).$returningId();
+    const res = await callerFor(h1).photos.setRoom({ id, roomId: zolder });
+    expect(res).toEqual({ id, roomId: zolder, cameraCleared: true });
+    const [row] = await db.select().from(photos).where(eq(photos.id, id));
+    expect([row.roomId, row.camera]).toEqual([zolder, null]);
+    const [ev] = await db.select().from(events).where(eq(events.action, "photo.moved"));
+    expect([ev.entityType, ev.entityId, ev.summary]).toEqual(["photo", id, "Photo moved to Zolder"]);
+  });
+
+  it("keeps the camera when the same room is set again", async () => {
+    const { db, h1, keuken } = await seed();
+    const [{ id }] = await db.insert(photos).values({ storageKey: "local/test-fake-setroom2.jpg", roomId: keuken, camera: cam }).$returningId();
+    const res = await callerFor(h1).photos.setRoom({ id, roomId: keuken });
+    expect(res.cameraCleared).toBe(false);
+    const [row] = await db.select().from(photos).where(eq(photos.id, id));
+    expect([row.roomId, row.camera]).toEqual([keuken, cam]);
+  });
+
+  it("null clears the Place and the camera", async () => {
+    const { db, h1, keuken } = await seed();
+    const [{ id }] = await db.insert(photos).values({ storageKey: "local/test-fake-setroom3.jpg", roomId: keuken, camera: cam }).$returningId();
+    expect(await callerFor(h1).photos.setRoom({ id, roomId: null })).toEqual({ id, roomId: null, cameraCleared: true });
+    const [row] = await db.select().from(photos).where(eq(photos.id, id));
+    expect([row.roomId, row.camera]).toEqual([null, null]);
+    const [ev] = await db.select().from(events).where(eq(events.action, "photo.moved"));
+    expect(ev.summary).toBe("Photo's Place cleared");
+  });
+
+  it("refuses a room in another house than the photo's Thing, but lets a Thing-less photo go anywhere", async () => {
+    const { db, h1, itemId, keuken } = await seed();
+    const [{ id: h2 }] = await db.insert(houses).values({ name: "B" }).$returningId();
+    const [{ id: elders }] = await db.insert(rooms).values({ houseId: h2, name: "Elders", floor: "ground", source: "manual" }).$returningId();
+    const [{ id }] = await db.insert(photos).values({ itemId, storageKey: "local/test-fake-setroom4.jpg", roomId: keuken }).$returningId();
+    await expect(callerFor(h1).photos.setRoom({ id, roomId: elders })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    const [row] = await db.select().from(photos).where(eq(photos.id, id));
+    expect(row.roomId).toBe(keuken);
+    const [{ id: free }] = await db.insert(photos).values({ storageKey: "local/test-fake-setroom5.jpg", roomId: keuken }).$returningId();
+    expect((await callerFor(h1).photos.setRoom({ id: free, roomId: elders })).roomId).toBe(elders);
   });
 });

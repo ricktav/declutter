@@ -303,6 +303,8 @@ export interface CatalogRow {
   isItemCover: boolean;
   /** a crop of a Thing (cropBox set): never a camera */
   isCutout: boolean;
+  /** the photo's own Place (photos.roomId); roomId above is its Thing's room first */
+  photoRoomId: number | null;
   /** where the photo stands on its room's plan (photos.camera); null for captures */
   camera: PhotoCamera | null;
 }
@@ -344,6 +346,7 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
       areaName: it ? (areaById.get(it.areaId)?.name ?? null) : null,
       isItemCover: p.itemId != null && covers.get(p.itemId)?.id === p.id,
       isCutout: p.cropBox != null,
+      photoRoomId: p.roomId ?? null,
       camera: p.camera ?? null,
     };
   });
@@ -370,6 +373,7 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
       areaName: null,
       isItemCover: false,
       isCutout: false,
+      photoRoomId: null,
       camera: null,
     }));
 
@@ -514,6 +518,50 @@ export async function attachPhotoToItem(
     );
   });
   return { photoId: photo.id, itemId: item.id, roomId };
+}
+
+/** Change a Photo's Place (its room), or clear it (null). A camera lives in
+ * its room's frame, so a new room drops it; the same room keeps it. A photo
+ * of a Thing may only move to a room of that Thing's house; a photo without a
+ * Thing may go to any room. Pins and the Thing's own room are not touched (a
+ * Thing is placed through items.update). Logs photo.moved on the photo. */
+export async function setPhotoRoom(
+  db: Db,
+  input: { id: number; roomId: number | null },
+): Promise<{ id: number; roomId: number | null; cameraCleared: boolean }> {
+  const photo = await db.query.photos.findFirst({ where: eq(photos.id, input.id) });
+  if (!photo) throw new TRPCError({ code: "NOT_FOUND", message: "Photo not found." });
+  const room = input.roomId != null ? await db.query.rooms.findFirst({ where: eq(rooms.id, input.roomId) }) : null;
+  if (input.roomId != null && !room) throw new TRPCError({ code: "BAD_REQUEST", message: "Place not found." });
+  if (room && photo.itemId != null) {
+    const item = await db.query.items.findFirst({ where: eq(items.id, photo.itemId) });
+    if (item?.houseId != null && item.houseId !== room.houseId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `"${room.name}" is in another house than "${item.name}"; move the Thing first.`,
+      });
+    }
+  }
+  const roomId = room?.id ?? null;
+  const changed = roomId !== photo.roomId;
+  const cameraCleared = changed && photo.camera != null;
+  await db.transaction(async (tx) => {
+    await tx
+      .update(photos)
+      .set({ roomId, ...(changed ? { camera: null } : {}) })
+      .where(eq(photos.id, photo.id));
+    await logEvent(
+      {
+        entityType: "photo",
+        entityId: photo.id,
+        action: "photo.moved",
+        summary: room ? `Photo moved to ${room.name}` : "Photo's Place cleared",
+        payload: { photoId: photo.id, fromRoomId: photo.roomId ?? null, roomId, cameraCleared },
+      },
+      tx,
+    );
+  });
+  return { id: photo.id, roomId, cameraCleared };
 }
 
 export const CAMERA_FOV_DEFAULT = 60;

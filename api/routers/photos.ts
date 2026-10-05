@@ -22,6 +22,7 @@ import {
   listPhotoCatalog,
   removePhoto,
   setPhotoCamera,
+  setPhotoRoom,
   suggestPhotoCamera,
   unlinkPhoto,
 } from "../lib/photos";
@@ -254,6 +255,13 @@ export const photosRouter = createRouter({
       .filter((c): c is { id: number; storageKey: string } => !!c.storageKey)
       .map((c) => ({ ...c, camera: cameraBy.get(c.id) ?? null }));
   }),
+
+  /** Change a Photo's Place (null clears it). A new room clears its camera
+   * (cameraCleared says so). BAD_REQUEST for a room in another house than
+   * the photo's Thing. Pins and the Thing's room stay as they are. */
+  setRoom: procedure
+    .input(z.object({ id: z.number(), roomId: z.number().nullable() }))
+    .mutation(({ input }) => setPhotoRoom(getDb(), input)),
 
   /** Stand a photo somewhere in its room, looking one way (null takes it
    * off the plan). Full photos with a room only; inside the room when it has

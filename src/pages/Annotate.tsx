@@ -6,6 +6,9 @@ import { ItemPicker } from "@/components/ItemPicker";
 import { AreaPicker } from "@/components/AreaPicker";
 import { Box } from "@/components/DetectObjects";
 import { cn } from "@/lib/utils";
+import { RoomPicker } from "@/components/RoomPicker";
+import { invalidatePhotoPlace } from "@/components/PhotoPlaceDialog";
+import { useHouse } from "@/context/house";
 import {
   Sparkles,
   Loader2,
@@ -14,6 +17,7 @@ import {
   X,
   ArrowLeft,
   Flag,
+  Home,
 } from "lucide-react";
 
 type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
@@ -135,12 +139,9 @@ export default function AnnotatePage() {
   const utils = trpc.useUtils();
   const imgRef = useRef<HTMLImageElement>(null);
 
-  // a location confirmed on the way in here (e.g. from Inbox's pending-item
-  // "Pin" flow, which has no location of its own yet) - only applied to a
-  // brand-new item created while pinning, so it doesn't start out homeless
   const [searchParams] = useSearchParams();
   const roomIdParam = searchParams.get("roomId");
-  const confirmedRoomId = roomIdParam && roomIdParam !== "none" ? Number(roomIdParam) : null;
+  const roomIdFromUrl = roomIdParam && roomIdParam !== "none" ? Number(roomIdParam) : null;
   // a Thing chosen before coming here (the item view's "Pin in a photo"):
   // the next box drawn is linked to it; `back=item` returns to its page
   // once the pin is saved
@@ -156,6 +157,43 @@ export default function AnnotatePage() {
 
   const pinsQuery = trpc.pins.listForPhoto.useQuery({ photoId: attId });
   const urlQuery = trpc.photos.get.useQuery({ id: attId });
+  // the Photo's own Place: shown and changed in the header
+  const photoRow = urlQuery.data?.photo ?? null;
+  const photoRoomId = photoRow?.roomId ?? null;
+  // a brand-new Thing made while pinning lands in the Photo's Place; the
+  // ?roomId= confirmed on the way in (e.g. Inbox's pending-item "Pin" flow)
+  // is the fallback for a Photo without one, so it doesn't start out homeless
+  const confirmedRoomId = photoRoomId ?? roomIdFromUrl;
+  const allRooms = trpc.rooms.list.useQuery({ houseId: null });
+  const photoRoom = photoRoomId != null ? (allRooms.data?.find((r) => r.id === photoRoomId) ?? null) : null;
+  // a room-less Photo of a Thing picks from its Thing's house
+  const photoThing = trpc.items.get.useQuery(
+    { id: photoRow?.itemId ?? -1 },
+    { enabled: photoRow?.itemId != null && photoRoomId == null },
+  );
+  const { houseId: sessionHouseId } = useHouse();
+  const placeHouseId = photoRoom?.houseId ?? photoThing.data?.houseId ?? sessionHouseId ?? undefined;
+  const [placeNote, setPlaceNote] = useState<string | null>(null);
+  const setPhotoRoom = trpc.photos.setRoom.useMutation({
+    onSuccess: async (res) => {
+      await utils.rooms.list.invalidate();
+      invalidatePhotoPlace(utils);
+      const name =
+        res.roomId == null
+          ? null
+          : (utils.rooms.list.getData({ houseId: null })?.find((r) => r.id === res.roomId)?.name ?? `#${res.roomId}`);
+      setPlaceNote(
+        (name ? `Place saved: ${name}.` : "Place cleared.") +
+          (res.cameraCleared ? " Camera marker cleared (it was in the old Place)." : ""),
+      );
+    },
+    onError: () => setPlaceNote(null),
+  });
+  useEffect(() => {
+    if (!placeNote) return;
+    const t = setTimeout(() => setPlaceNote(null), 5000);
+    return () => clearTimeout(t);
+  }, [placeNote]);
   const areas = trpc.areas.list.useQuery();
 
   const [pending, setPending] = useState<{ xPct: number; yPct: number; wPct?: number; hPct?: number } | null>(null);
@@ -572,6 +610,34 @@ export default function AnnotatePage() {
           )}
           AI detect objects
         </Button>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px]">
+        <Home className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-muted-foreground">
+          Place: <b className="text-foreground">{photoRoom ? photoRoom.name : urlQuery.data?.photo ? (photoRoomId != null ? `#${photoRoomId}` : "No Place") : "…"}</b>
+        </span>
+        {photoRow && placeHouseId != null && (
+          <div className="w-56">
+            <RoomPicker
+              key={photoRow.id}
+              value={photoRoomId}
+              houseId={placeHouseId}
+              allowNone
+              onChange={(roomId) => {
+                if (roomId !== photoRoomId) setPhotoRoom.mutate({ id: photoRow.id, roomId });
+              }}
+            />
+          </div>
+        )}
+        {photoRow && placeHouseId == null && <span className="text-muted-foreground">(choose a house in the top bar to set one)</span>}
+        {setPhotoRoom.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        {placeNote && (
+          <span role="status" className="text-emerald-700">
+            {placeNote}
+          </span>
+        )}
+        {setPhotoRoom.error && <span className="text-destructive">{setPhotoRoom.error.message}</span>}
       </div>
 
       {preselected && (
