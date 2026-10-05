@@ -146,6 +146,50 @@ export const rooms = mysqlTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// Room scans — one row per scan import (inbox.importGeojson, rooms.upsertFromScan):
+// the room's geometry before and after, and every Thing the scan matched,
+// moved, created or flagged missing. The newest scan of a room that is not
+// reverted can be undone (rooms.revertScan); rows are never deleted.
+// ---------------------------------------------------------------------------
+export interface RoomScanGeometry {
+  walls: RoomGeometry["walls"] | null;
+  openings: RoomGeometry["openings"] | null;
+  widthM: number | null;
+  depthM: number | null;
+  wallHeightM: number | null;
+  scanDate: string | null; // ISO
+}
+
+export interface RoomScanChange {
+  itemId: number;
+  action: "matched" | "moved" | "created" | "missing";
+  posBefore: ItemPos | null;
+  posAfter: ItemPos | null;
+  // the attribute keys the scan set or removed, with their value before the
+  // scan (null = the key was absent), so a revert puts exactly those back
+  attrsBefore?: Record<string, string | number | null>;
+}
+
+export const roomScans = mysqlTable(
+  "room_scans",
+  {
+    id: serial("id").primaryKey(),
+    roomId: bigint("roomId", { mode: "number", unsigned: true }).notNull(),
+    houseId: bigint("houseId", { mode: "number", unsigned: true }).notNull(),
+    captureId: bigint("captureId", { mode: "number", unsigned: true }),
+    source: varchar("source", { length: 32 }).$type<"geojson" | "roomplan" | "mappedin" | "manual">().notNull(),
+    scanDate: timestamp("scanDate").notNull(),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    before: json("before").$type<RoomScanGeometry>(), // null: the scan created the room
+    after: json("after").$type<RoomScanGeometry>().notNull(),
+    changes: json("changes").$type<RoomScanChange[]>().notNull(),
+    revertedAt: timestamp("revertedAt"),
+  },
+  (t) => [index("room_scans_room_idx").on(t.roomId)],
+);
+export type RoomScanRow = typeof roomScans.$inferSelect;
+
 export interface RoomGeometry {
   // kind defaults to "wall" when absent (the original single-room seed data
   // predates this field) - door/window segments can land anywhere on a real

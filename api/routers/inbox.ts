@@ -5,9 +5,10 @@ import { eq, desc, isNull, and, inArray, sql } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type RoomGeometry, type ItemPos } from "@db/schema";
+import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type RoomGeometry, type ItemPos, type RoomScanChange } from "@db/schema";
 import { parseGeojsonFloor, FURNITURE_KIND_MAP } from "../lib/geojsonFloor";
 import { matchScanItems, type ScanPoly } from "../lib/scanMerge";
+import { recordRoomScan, snapshotRoom } from "../lib/roomScans";
 import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
@@ -732,6 +733,9 @@ export const inboxRouter = createRouter({
       const today = localDate(new Date());
       const counts = await db.transaction(async (tx) => {
         let roomId: number;
+        // the room as it was, so this scan can be compared and undone (null: the scan creates it)
+        const geometryBefore = match ? await snapshotRoom(tx, match.id) : null;
+        const changes: RoomScanChange[] = [];
         if (match) {
           await tx.update(rooms).set(values).where(eq(rooms.id, match.id));
           roomId = match.id;
@@ -770,6 +774,13 @@ export const inboxRouter = createRouter({
           // rename cannot lose the match
           const attributes = { ...rest, scan_kind: m.poly.kind };
           await tx.update(items).set({ pos, attributes }).where(eq(items.id, t.id));
+          changes.push({
+            itemId: t.id,
+            action: m.movedM > 0.05 ? "moved" : "matched",
+            posBefore: old,
+            posAfter: pos,
+            attrsBefore: { scan_kind: t.attributes?.scan_kind ?? null, "scan.missing_at": t.attributes?.["scan.missing_at"] ?? null },
+          });
           if (m.movedM > 0.05) {
             moved++;
             await logEvent(
@@ -803,7 +814,15 @@ export const inboxRouter = createRouter({
           const n = (nameCounts[key] = (nameCounts[key] ?? 0) + 1);
           const name = n > 1 ? `${meta.label} ${n}` : meta.label;
 
-          await tx.insert(items).values({
+          const pos: ItemPos = {
+            xM: poly.xM,
+            yM: poly.yM,
+            wM: poly.wM,
+            dM: poly.dM,
+            rotDeg: 0,
+            ...(meta.hM != null ? { hM: meta.hM } : {}),
+          };
+          const [{ id: newId }] = await tx.insert(items).values({
             areaId,
             houseId: targetHouseId,
             roomId,
@@ -811,16 +830,10 @@ export const inboxRouter = createRouter({
             status: "active",
             verificationStatus: "detected",
             attributes: { scan_kind: poly.kind },
-            pos: {
-              xM: poly.xM,
-              yM: poly.yM,
-              wM: poly.wM,
-              dM: poly.dM,
-              rotDeg: 0,
-              ...(meta.hM != null ? { hM: meta.hM } : {}),
-            },
+            pos,
             description: `Auto-detected from the ${roomName} floor scan (MappedIn export) - not yet reviewed.`,
-          });
+          }).$returningId();
+          changes.push({ itemId: newId, action: "created", posBefore: null, posAfter: pos });
           created++;
         }
 
@@ -828,7 +841,25 @@ export const inboxRouter = createRouter({
         for (const id of missingItemIds) {
           const t = byId.get(id)!;
           await tx.update(items).set({ attributes: { ...(t.attributes ?? {}), "scan.missing_at": today } }).where(eq(items.id, id));
+          changes.push({
+            itemId: id,
+            action: "missing",
+            posBefore: t.pos ?? null,
+            posAfter: t.pos ?? null,
+            attrsBefore: { "scan.missing_at": t.attributes?.["scan.missing_at"] ?? null },
+          });
         }
+
+        await recordRoomScan(tx, {
+          roomId,
+          houseId: targetHouseId,
+          captureId: input.captureId,
+          source: "geojson",
+          scanDate: values.scanDate,
+          before: geometryBefore,
+          after: await snapshotRoom(tx, roomId),
+          changes,
+        });
 
         await tx.update(captures).set({ status: "processed" }).where(eq(captures.id, input.captureId));
         await logEvent(

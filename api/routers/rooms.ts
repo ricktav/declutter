@@ -1,10 +1,12 @@
 import { z } from "zod";
-import { eq, and, ne, sql, isNotNull } from "drizzle-orm";
+import { eq, and, ne, sql, isNotNull, desc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { rooms, items, photos, type RoomGeometry, type ItemPos } from "@db/schema";
+import { rooms, items, photos, roomScans, type RoomGeometry, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
+import { recordRoomScan, revertRoomScanTx, scanCounts, snapshotRoom } from "../lib/roomScans";
+import { releaseStoredFiles } from "../lib/entities";
 import { ensureRoom, setItemLocation } from "../lib/location";
 
 const geometryInput = z.object({
@@ -325,28 +327,101 @@ export const roomsRouter = createRouter({
         openings: input.geometry.openings as RoomGeometry["openings"],
       };
 
-      if (match) {
-        await db.update(rooms).set(values).where(eq(rooms.id, match.id));
-        await logEvent({
-          entityType: "room",
-          entityId: match.id,
-          action: "rescanned",
-          summary: `Room "${input.name}" geometry updated from ${input.source} scan`,
-          actor: "system",
-        });
-        return { id: match.id, created: false };
-      }
+      // every scan is a recorded version: geometry before and after, no Thing changes
+      return db.transaction(async (tx) => {
+        if (match) {
+          const before = await snapshotRoom(tx, match.id);
+          await tx.update(rooms).set(values).where(eq(rooms.id, match.id));
+          await recordRoomScan(tx, {
+            roomId: match.id,
+            houseId: input.houseId,
+            source: input.source,
+            scanDate: values.scanDate,
+            before,
+            after: await snapshotRoom(tx, match.id),
+            changes: [],
+          });
+          await logEvent(
+            {
+              entityType: "room",
+              entityId: match.id,
+              action: "rescanned",
+              summary: `Room "${input.name}" geometry updated from ${input.source} scan`,
+              actor: "system",
+            },
+            tx,
+          );
+          return { id: match.id, created: false };
+        }
 
-      const [{ id }] = await db.insert(rooms).values(values).$returningId();
-      await logEvent({
-        entityType: "room",
-        entityId: id,
-        action: "created",
-        summary: `Room "${input.name}" created from ${input.source} scan`,
-        actor: "system",
+        const [{ id }] = await tx.insert(rooms).values(values).$returningId();
+        await recordRoomScan(tx, {
+          roomId: id,
+          houseId: input.houseId,
+          source: input.source,
+          scanDate: values.scanDate,
+          before: null,
+          after: await snapshotRoom(tx, id),
+          changes: [],
+        });
+        await logEvent(
+          {
+            entityType: "room",
+            entityId: id,
+            action: "created",
+            summary: `Room "${input.name}" created from ${input.source} scan`,
+            actor: "system",
+          },
+          tx,
+        );
+        return { id, created: true };
       });
-      return { id, created: true };
     }),
+
+  /** A room's recorded scans, newest first, with what each did to its Things. */
+  scans: procedure.input(z.object({ roomId: z.number() })).query(async ({ input }) => {
+    const rows = await getDb().select().from(roomScans).where(eq(roomScans.roomId, input.roomId)).orderBy(desc(roomScans.id));
+    return rows.map((r) => ({
+      id: r.id,
+      source: r.source,
+      scanDate: r.scanDate,
+      createdAt: r.createdAt,
+      revertedAt: r.revertedAt,
+      counts: scanCounts(r.changes),
+    }));
+  }),
+
+  /** One scan compared with the room before it: both geometries and every Thing change, with names. */
+  scanDiff: procedure.input(z.object({ scanId: z.number() })).query(async ({ input }) => {
+    const db = getDb();
+    const [scan] = await db.select().from(roomScans).where(eq(roomScans.id, input.scanId));
+    if (!scan) throw new TRPCError({ code: "NOT_FOUND", message: "Scan not found." });
+    const ids = [...new Set(scan.changes.map((c) => c.itemId))];
+    const things = ids.length
+      ? await db.select({ id: items.id, name: items.name, status: items.status }).from(items).where(inArray(items.id, ids))
+      : [];
+    const byId = new Map(things.map((t) => [t.id, t]));
+    return {
+      scan: { id: scan.id, roomId: scan.roomId, source: scan.source, scanDate: scan.scanDate, revertedAt: scan.revertedAt },
+      before: scan.before ?? null,
+      after: scan.after,
+      changes: scan.changes.map((c) => {
+        const t = byId.get(c.itemId);
+        return { ...c, name: t?.name ?? "(deleted)", status: t?.status ?? "deleted" };
+      }),
+    };
+  }),
+
+  /**
+   * Undo the room's latest scan: geometry and Thing positions and flags come
+   * back, Things it created are deleted unless someone touched them since.
+   */
+  revertScan: procedure.input(z.object({ scanId: z.number() })).mutation(async ({ input }) => {
+    const db = getDb();
+    const { files, ...result } = await db.transaction((tx) => revertRoomScanTx(tx, input.scanId));
+    await releaseStoredFiles(db, files);
+    return result;
+  }),
 
   remove: procedure
     .input(z.object({ id: z.number(), force: z.boolean().default(false) }))
