@@ -23,6 +23,9 @@ export type CameraMarker = {
   ghost?: boolean;
 };
 
+/** A Thing a scan moved: an arrow from its old footprint centre to the new one. */
+export type PlanMove = { from: ItemPos; to: ItemPos; label: string };
+
 type Opening = RoomGeometry["openings"][number];
 type CameraDrag = {
   kind: "move" | "aim";
@@ -77,6 +80,8 @@ export function RoomPlan2D({
   onCameraChange,
   cameraMode = false,
   onCameraPlace,
+  ghostWalls,
+  moves,
 }: {
   widthM: number;
   depthM: number;
@@ -115,6 +120,12 @@ export function RoomPlan2D({
    * (instead of onPinPlace): the caller stands a photo there. */
   cameraMode?: boolean;
   onCameraPlace?: (pos: { xM: number; yM: number }) => void;
+  /** An earlier outline (a previous scan's walls), drawn dashed and faint
+   * under the live walls. Display only. */
+  ghostWalls?: RoomGeometry["walls"] | null;
+  /** Arrows from where a Thing was to where it is now (a scan's moves).
+   * Display only: they never take the pointer. */
+  moves?: PlanMove[];
 }) {
   const S = 70; // px per meter
   const PAD = 36;
@@ -355,6 +366,19 @@ export function RoomPlan2D({
         onClick={handlePinClick}
       />
 
+      {(ghostWalls ?? []).map((wall, i) => (
+        <polyline
+          key={`ghost-${i}`}
+          points={wall.points.map(([x, y]) => `${px(x)},${py(y)}`).join(" ")}
+          stroke="#64748b"
+          strokeOpacity={0.45}
+          strokeWidth={2}
+          strokeDasharray="5 4"
+          fill="none"
+          pointerEvents="none"
+        />
+      ))}
+
       {(walls ?? []).map((wall, i) => {
         const kind = wall.kind ?? "wall";
         const points = wall.points.map(([x, y]) => `${px(x)},${py(y)}`).join(" ");
@@ -424,6 +448,26 @@ export function RoomPlan2D({
               {it.name}
               {p.baseM ? " ↑" : ""}
             </text>
+          </g>
+        );
+      })}
+
+      {(moves ?? []).map((m, i) => {
+        const centre = (p: ItemPos) => ({ x: px(Math.max(0, p.xM) + p.wM / 2), y: py(Math.max(0, p.yM) + p.dM / 2) });
+        const a = centre(m.from), b = centre(m.to);
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (len < 2) return null;
+        // arrowhead drawn by hand (no <marker>: its id would have to be unique per plan)
+        const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+        const H = 9, Wd = 4.5;
+        const head = `${b.x},${b.y} ${b.x - ux * H - uy * Wd},${b.y - uy * H + ux * Wd} ${b.x - ux * H + uy * Wd},${b.y - uy * H - ux * Wd}`;
+        const color = "#ea580c";
+        return (
+          <g key={`move-${i}`} pointerEvents="none">
+            <title>{m.label}</title>
+            <circle cx={a.x} cy={a.y} r={3} fill="white" stroke={color} strokeWidth={1.5} />
+            <line x1={a.x} y1={a.y} x2={b.x - ux * (H - 1)} y2={b.y - uy * (H - 1)} stroke={color} strokeWidth={2} strokeDasharray="4 2" />
+            <polygon points={head} fill={color} />
           </g>
         );
       })}

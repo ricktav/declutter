@@ -1,17 +1,45 @@
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { useParams, useSearchParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
-import { RoomPlan2D, type CameraMarker } from "@/components/RoomPlan2D";
+import { RoomPlan2D, type CameraMarker, type PlanMove } from "@/components/RoomPlan2D";
+import { ScanDiffList } from "@/components/ScanDiffList";
+import { moveLabel } from "@/lib/scanDiff";
 import { RoomPlan3D } from "@/components/RoomPlan3D";
 import { Button } from "@/components/ui/button";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { applyStacking } from "@/lib/roomStacking";
-import { ArrowLeft, Loader2, Check, X, RotateCcw, RotateCw, Scissors, Trash2, MapPin, Box, Plus, Camera, Maximize2, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  Loader2,
+  Check,
+  X,
+  RotateCcw,
+  RotateCw,
+  Scissors,
+  Trash2,
+  MapPin,
+  Box,
+  Plus,
+  Camera,
+  Maximize2,
+  Sparkles,
+  ScanLine,
+  Undo2,
+} from "lucide-react";
 import type { ItemPos, PhotoCamera } from "@db/schema";
 
 const CAMERA_DEFAULT: Omit<PhotoCamera, "xM" | "yM"> = { headingDeg: 0, fovDeg: 60, heightM: 1.5 };
+
+const SCAN_SOURCE: Record<string, string> = {
+  geojson: "GeoJSON file",
+  roomplan: "iPhone LiDAR",
+  mappedin: "MappedIn",
+  manual: "by hand",
+};
+const scanWhen = (d: Date | string) =>
+  new Date(d).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
 /**
  * Floor plan for a scanned room - 2D (drag/rotate/resize/stacking/cut) and
@@ -388,6 +416,41 @@ export default function RoomPlanPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [anyPlacing]);
 
+  // ---- Scans: compare a scan with the one before, undo the latest --------
+  // Selecting a scan ghosts the outline from before it under the current
+  // walls and draws an arrow for each Thing it moved. Only the newest scan
+  // that is not undone yet can be undone.
+  const scans = trpc.rooms.scans.useQuery({ roomId: id }, { enabled: Number.isFinite(id) });
+  const [selectedScanId, setSelectedScanId] = useState<number | null>(null);
+  const [confirmUndoId, setConfirmUndoId] = useState<number | null>(null);
+  const [undoNote, setUndoNote] = useState<string | null>(null);
+  const scanDiff = trpc.rooms.scanDiff.useQuery({ scanId: selectedScanId ?? -1 }, { enabled: selectedScanId != null });
+  const latestLiveScanId = scans.data?.find((s) => !s.revertedAt)?.id ?? null;
+  const diff = selectedScanId != null && scanDiff.data?.scan.id === selectedScanId ? scanDiff.data : null;
+  const scanMoves = useMemo<PlanMove[]>(
+    () =>
+      (diff?.changes ?? [])
+        .filter((c) => c.action === "moved" && c.posBefore && c.posAfter)
+        .map((c) => ({ from: c.posBefore!, to: c.posAfter!, label: moveLabel(c) })),
+    [diff],
+  );
+  const revertScan = trpc.rooms.revertScan.useMutation({
+    onSuccess: (r) => {
+      setConfirmUndoId(null);
+      setSelectedScanId(null);
+      setUndoNote(
+        `Scan undone: ${r.restored} ${r.restored === 1 ? "Thing" : "Things"} put back` +
+          (r.deleted ? `, ${r.deleted} new deleted` : "") +
+          (r.kept ? `, ${r.kept} new kept (someone worked on ${r.kept === 1 ? "it" : "them"})` : "") +
+          ".",
+      );
+      void utils.rooms.get.invalidate({ id });
+      void utils.items.listAll.invalidate();
+      void utils.rooms.scans.invalidate({ roomId: id });
+      void utils.rooms.scanDiff.invalidate();
+    },
+  });
+
   /** Shared by both the 2D plan and the 3D twin - pinning a point creates a
    * real item at that footprint, status "confirmed" (a human just placed it
    * by hand, there's nothing to verify), default 0.5x0.5m (resize after). */
@@ -638,6 +701,8 @@ export default function RoomPlanPage() {
                   onCameraChange={(photoId, camera) => void writeCamera(photoId, camera)}
                   cameraMode={cameraPlacing != null}
                   onCameraPlace={placeCameraAt}
+                  ghostWalls={diff?.before?.walls ?? null}
+                  moves={scanMoves}
                 />
               </div>
               <div hidden={view !== "3d"}>
@@ -780,6 +845,134 @@ export default function RoomPlanPage() {
                             <span className="shrink-0 px-1 text-[11px] text-muted-foreground" title="Give the photo a room first">
                               no room
                             </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+              {(scans.data?.length ?? 0) > 0 && (
+                <div className="mt-4 text-[12px]">
+                  <p className="text-muted-foreground">
+                    Scans:
+                    <span className="ml-1">select one to compare it with the Place before it.</span>
+                  </p>
+                  {undoNote && (
+                    <div className="mt-1 flex items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-emerald-900">
+                      <span>{undoNote}</span>
+                      <button className="ml-auto" title="Dismiss" onClick={() => setUndoNote(null)}>
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  <ul className="mt-1 space-y-1.5">
+                    {scans.data!.map((s) => {
+                      const sel = selectedScanId === s.id;
+                      const undone = s.revertedAt != null;
+                      const c = s.counts;
+                      const summary = [
+                        c.moved ? `${c.moved} moved` : null,
+                        c.created ? `${c.created} new` : null,
+                        c.missing ? `${c.missing} not found` : null,
+                        c.matched ? `${c.matched} same place` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ");
+                      return (
+                        <li
+                          key={s.id}
+                          className={`rounded border bg-white ${sel ? "border-orange-400" : "border-border"} ${undone ? "opacity-60" : ""}`}
+                        >
+                          <div className="flex items-center gap-2 p-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedScanId(sel ? null : s.id);
+                                setConfirmUndoId(null);
+                                revertScan.reset();
+                              }}
+                              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                              title={sel ? "Stop comparing" : "Compare with the Place before this scan"}
+                            >
+                              <ScanLine className={`h-3.5 w-3.5 shrink-0 ${sel ? "text-orange-600" : "text-muted-foreground"}`} />
+                              <span className="min-w-0">
+                                <span className={`block truncate ${undone ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                                  {scanWhen(s.scanDate)} · {SCAN_SOURCE[s.source] ?? s.source}
+                                </span>
+                                <span className="block truncate text-[11px] text-muted-foreground">
+                                  {undone ? `undone ${scanWhen(s.revertedAt!)}` : summary || "outline only"}
+                                </span>
+                              </span>
+                            </button>
+                            {s.id === latestLiveScanId && confirmUndoId !== s.id && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 shrink-0 px-1.5 text-[11px]"
+                                onClick={() => {
+                                  setConfirmUndoId(s.id);
+                                  revertScan.reset();
+                                }}
+                              >
+                                <Undo2 className="h-3 w-3 mr-0.5" /> Undo this scan
+                              </Button>
+                            )}
+                          </div>
+                          {confirmUndoId === s.id && (
+                            <div className="border-t border-border bg-amber-50 px-2 py-1.5 text-amber-900">
+                              <p>
+                                The outline and the Things' places go back to before this scan; Things it found that
+                                nobody has touched since are deleted.
+                              </p>
+                              <div className="mt-1.5 flex items-center gap-1.5">
+                                <Button
+                                  size="sm"
+                                  className="h-6 px-2 text-[11px]"
+                                  disabled={revertScan.isPending}
+                                  onClick={() => revertScan.mutate({ scanId: s.id })}
+                                >
+                                  {revertScan.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                                  Undo
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-6 px-2 text-[11px]"
+                                  disabled={revertScan.isPending}
+                                  onClick={() => setConfirmUndoId(null)}
+                                >
+                                  Keep
+                                </Button>
+                                {revertScan.error && <span className="text-destructive">{revertScan.error.message}</span>}
+                              </div>
+                            </div>
+                          )}
+                          {sel && (
+                            <div className="border-t border-border px-1.5 py-1.5">
+                              {scanDiff.isLoading ? (
+                                <span className="flex items-center gap-1 text-muted-foreground">
+                                  <Loader2 className="h-3 w-3 animate-spin" /> Loading…
+                                </span>
+                              ) : scanDiff.error ? (
+                                <span className="text-destructive">{scanDiff.error.message}</span>
+                              ) : diff ? (
+                                <>
+                                  {diff.before && view === "2d" && (
+                                    <p className="mb-1 px-1.5 text-[11px] text-muted-foreground">
+                                      The dashed grey outline is the Place before this scan; orange arrows show where Things
+                                      moved.
+                                    </p>
+                                  )}
+                                  <ScanDiffList
+                                    changes={diff.changes}
+                                    firstScan={diff.before == null}
+                                    selectedId={selectedId}
+                                    onSelect={selectItem}
+                                  />
+                                </>
+                              ) : null}
+                            </div>
                           )}
                         </li>
                       );
