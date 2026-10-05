@@ -42,14 +42,14 @@ export function EnergyFind({ onOpen }: { onOpen: (itemId: number) => void }) {
         ) : (
           <>
             <p className="tabular-nums">
-              Used {kwh(house.useKwh)} · produced {kwh(house.producedKwh)} · net
-              cost {eur(house.netCostEur)}
+              Used {kwh(house.useKwh)} · net cost {eur(house.netCostEur)}
             </p>
             <p className="tabular-nums text-muted-foreground">
               Not on a plug {kwh(house.unmeasuredKwh)}
               {house.monthsCounted < 12 &&
                 ` · ${house.monthsCounted} of 12 months complete`}
             </p>
+            {house.producedKwh != null && <SolarRows house={house} />}
           </>
         )}
         <p className="tabular-nums text-muted-foreground">
@@ -62,7 +62,7 @@ export function EnergyFind({ onOpen }: { onOpen: (itemId: number) => void }) {
             className="font-data text-[12px] text-[#3C5D41] underline"
           >
             {tariff
-              ? `€${tariff.normal.toFixed(3)} per kWh`
+              ? `€${tariff.normal.toFixed(3)} per kWh${tariff.netMetering ? " · netting on" : ""}`
               : "Set a price per kWh"}
           </button>
           {/* live readings stay on the meterkast dashboard; this lens is history and cost */}
@@ -114,6 +114,60 @@ export function EnergyFind({ onOpen }: { onOpen: (itemId: number) => void }) {
       {priceOpen && (
         <PriceSheet onClose={() => setPriceOpen(false)} current={tariff} />
       )}
+    </div>
+  );
+}
+
+type House = inferRouterOutputs<AppRouter>["energy"]["overview"]["house"];
+const pct = (v: number | null | undefined) =>
+  v == null ? "—" : `${Math.round(v)}%`;
+
+/**
+ * Where the solar power went and what was bought, the way the supplier
+ * settles it: exported kWh net against bought kWh for the year (saldering,
+ * until the price row turns netting off), export costs on every exported kWh.
+ */
+function SolarRows({ house }: { house: House }) {
+  const rows: [string, string, boolean?][] = [
+    ["Produced by the panels", kwh(house.producedKwh)],
+    [
+      "used directly",
+      `${kwh(house.selfConsumedKwh)} · ${pct(house.selfConsumptionPct)}`,
+      true,
+    ],
+    ["exported", kwh(house.exportKwh), true],
+    ["Bought from the grid", kwh(house.importKwh)],
+  ];
+  if ((house.nettedKwh ?? 0) > 0) {
+    rows.push(["netted against export", kwh(house.nettedKwh), true]);
+    rows.push(["net bought", kwh(house.netImportKwh), true]);
+  }
+  if ((house.netExportKwh ?? 0) > 0)
+    rows.push(["Exported beyond what you bought", kwh(house.netExportKwh)]);
+  return (
+    <div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-2">
+      <span className="micro-label text-muted-foreground">Solar</span>
+      {rows.map(([label, value, sub]) => (
+        <div
+          key={label}
+          className="flex items-baseline justify-between gap-2 tabular-nums"
+        >
+          <span className={sub ? "pl-3 text-muted-foreground" : ""}>
+            {label}
+          </span>
+          <span className={sub ? "text-muted-foreground" : ""}>{value}</span>
+        </div>
+      ))}
+      <p className="tabular-nums text-muted-foreground">
+        Own solar covers {pct(house.coverageDirectPct)} of use directly
+        {(house.nettedKwh ?? 0) > 0 &&
+          ` · ${pct(house.coverageNettedPct)} with netting`}
+      </p>
+      <p className="tabular-nums text-muted-foreground">
+        Export costs {eur(house.feedInCostEur)}
+        {(house.feedInEur ?? 0) > 0 &&
+          ` · feed-in paid ${eur(house.feedInEur)}`}
+      </p>
     </div>
   );
 }
@@ -338,9 +392,12 @@ function PriceSheet({
     feedIn: number;
     feedInCost: number;
     fixedPerDay: number;
+    netMetering: boolean;
   } | null;
   onClose: () => void;
 }) {
+  // saldering: on until the law ends it (1 Jan 2027); a new price row turns it off
+  const [netMetering, setNetMetering] = useState(current?.netMetering ?? true);
   const utils = trpc.useUtils();
   const set = trpc.energy.setTariff.useMutation({
     onSuccess: () => {
@@ -386,6 +443,16 @@ function PriceSheet({
             />
           </label>
         ))}
+        <label className="flex items-center justify-between gap-2 text-[13px]">
+          Net metering (salderen)
+          <input
+            id="price-netMetering"
+            type="checkbox"
+            checked={netMetering}
+            onChange={e => setNetMetering(e.target.checked)}
+            className="h-4 w-4"
+          />
+        </label>
         <button
           disabled={!ok || set.isPending}
           onClick={() => {
@@ -397,6 +464,7 @@ function PriceSheet({
               feedIn,
               feedInCost,
               fixedPerDay,
+              netMetering,
             });
           }}
           className="mt-1 rounded-xl bg-[#282c20] py-2.5 text-[14px] font-semibold text-[#f4f4ed] disabled:opacity-40"
