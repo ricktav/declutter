@@ -47,6 +47,26 @@ describe("snapPosToWalls", () => {
     expect(r.pos.xM).toBeCloseTo(0);
   });
 
+  it("in an L-shaped room snaps to the inner wall from the room side", () => {
+    // 4 x 4 minus the quadrant x > 1.5, y > 1.5: the walls' bounding-box centre (2, 2) lies outside the room
+    const L: RoomGeometry["walls"] = [
+      { points: [[0, 0], [4, 0]] },
+      { points: [[4, 0], [4, 1.5]] },
+      { points: [[4, 1.5], [1.5, 1.5]] },
+      { points: [[1.5, 1.5], [1.5, 4]] },
+      { points: [[1.5, 4], [0, 4]] },
+      { points: [[0, 4], [0, 0]] },
+    ];
+    const near = snapPosToWalls(pos(1.1, 3, 0.3, 0.3), L, 4, 4)!;
+    expect(near).toMatchObject({ side: "right", kind: "wall" });
+    expect(near.pos.xM).toBeCloseTo(1.2);
+    expect(near.movedM).toBeCloseTo(0.1);
+    const far = snapPosToWalls(pos(0.9, 3, 0.3, 0.3), L, 4, 4)!;
+    expect(far).toMatchObject({ side: "right" });
+    expect(far.pos.xM).toBeCloseTo(1.2);
+    expect(far.movedM).toBeCloseTo(0.3);
+  });
+
   it("returns movedM 0 for a Thing already flush", () => {
     const r = snapPosToWalls(pos(0, 1.2), box, 4, 3)!;
     expect(r).toMatchObject({ side: "left", movedM: 0 });

@@ -62,9 +62,9 @@ function linesOf(walls: RoomGeometry["walls"] | null | undefined): Line[] {
 /**
  * The nearest wall line within SNAP_MAX_M, as the signed gap to close
  * (positive = move +x/+y). On a tie the first segment in wall order wins.
- * The room side of each line is the side the room's interior point is on,
- * never the Thing's own centre: a Thing mostly through the wall is pulled
- * back in, not pushed out.
+ * The room side of a line is the side the Thing's centre is on, except for
+ * a footprint that straddles the line: then the room's interior point
+ * decides, so a Thing mostly through the wall is pulled back in.
  */
 function nearest(fp: ReturnType<typeof footprint>, lines: Line[], inside: { x: number; y: number }) {
   let best: { shift: number; axis: "x" | "y"; side: WallSide; kind: WallKind } | null = null;
@@ -72,9 +72,13 @@ function nearest(fp: ReturnType<typeof footprint>, lines: Line[], inside: { x: n
     const [c, h, lo, hi] = l.axis === "x" ? [fp.cx, fp.hx, fp.cy - fp.hy, fp.cy + fp.hy] : [fp.cy, fp.hy, fp.cx - fp.hx, fp.cx + fp.hx];
     if (l.to < lo - SPAN_TOL_M || l.from > hi + SPAN_TOL_M) continue; // the wall does not reach the Thing
     // gap > 0: open space between edge and wall; gap < 0: the edge is through the wall.
-    // An interior point on the line itself (a partition) says nothing: use the Thing's centre.
+    // Only a footprint that straddles the line asks the room's interior point
+    // which side is the room (its centre may already be through the wall);
+    // otherwise the Thing's own centre decides, since in an L-shaped room the
+    // interior point can lie outside the room. An interior point on the line
+    // itself (a partition) says nothing either.
     const ref = l.axis === "x" ? inside.x : inside.y;
-    const roomAfter = Math.abs(ref - l.at) > 1e-6 ? ref > l.at : c >= l.at;
+    const roomAfter = Math.abs(c - l.at) < h && Math.abs(ref - l.at) > 1e-6 ? ref > l.at : c >= l.at;
     let gap: number, shift: number, side: WallSide;
     if (roomAfter) {
       gap = c - h - l.at;

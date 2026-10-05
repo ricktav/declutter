@@ -416,7 +416,8 @@ export const itemsRouter = createRouter({
     if (!snap) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No wall within 0.5 m" });
     const wall = { kind: snap.kind, side: snap.side };
     // already flush: nothing to write, nothing to log
-    if (snap.pos.xM === pos.xM && snap.pos.yM === pos.yM) return { pos, movedM: 0, wall };
+    const mm = (n: number) => Math.round(n * 1000) / 1000;
+    if (mm(snap.pos.xM) === mm(pos.xM) && mm(snap.pos.yM) === mm(pos.yM)) return { pos, movedM: 0, wall };
     await db.transaction(async (tx) => {
       await tx.update(items).set({ pos: snap.pos }).where(eq(items.id, it.id));
       await logEvent(
