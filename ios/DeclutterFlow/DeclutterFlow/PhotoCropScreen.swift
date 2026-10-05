@@ -303,6 +303,9 @@ final class CropScrollView: UIScrollView, UIScrollViewDelegate {
             let visible = convert(bounds, to: canvas).intersection(canvas.bounds)
             let frameFillsView = !visible.isNull && canvas.frameRect.contains(visible)
             let at = touchDownInCanvas ?? g.location(in: canvas)
+            // a corner handle always keeps its drag; the "frame fills the view"
+            // exception only lets one finger pan the image from the move area
+            if canvas.handleGrabs(at: at) { return false }
             if !frameFillsView, canvas.grabsTouch(at: at) { return false }
         }
         return super.gestureRecognizerShouldBegin(g)
@@ -389,6 +392,10 @@ final class CropCanvas: UIView {
     }
 
     /// True when a touch here starts a frame drag (a handle or inside the frame).
+    func handleGrabs(at p: CGPoint) -> Bool {
+        handles.contains { $0.frame.contains(p) }
+    }
+
     func grabsTouch(at p: CGPoint) -> Bool {
         handles.contains { $0.frame.contains(p) } || moveArea.frame.contains(p)
     }
