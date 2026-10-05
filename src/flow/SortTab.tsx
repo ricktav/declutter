@@ -6,6 +6,7 @@ import { GeojsonThumb } from "@/components/GeojsonThumb";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { useFlow } from "./context";
 import { LocationSheet } from "./LocationSheet";
+import { ZoomViewer } from "./ZoomViewer";
 import { EmptyState, ErrorLine, FramedPhoto, Photo } from "./ui";
 import { BackupPicker, LabFields } from "./LabParts";
 import { filterOf, useSortCards, type Card, type Filter } from "./queue";
@@ -190,10 +191,11 @@ type Row = {
   /** the AI's frame on the Photo, and the number it shares with its row */
   box?: CropBox;
   num?: number;
+  confidence?: string;
 };
 
 const LIME = "#a3e635";
-const MATCHED = "#e4e4dc";
+const MATCHED = "#3C5D41";
 
 // "Hide handled": frames of rows dismissed for now and of Things already in the
 // inventory are hidden, so only open objects keep their frame. Per device.
@@ -213,13 +215,16 @@ function storeHideHandled(on: boolean) {
   }
 }
 
+/** A frame the zoomed Photo can open a bubble for. */
+type PickedFrame = { num: number; name: string; box: CropBox; confidence?: string; isNew: boolean };
+
 /** A spotted object the AI matched to a Thing already in the inventory. */
-type MatchedFrame = { num: number; name: string; box: CropBox };
+type MatchedFrame = { num: number; name: string; box: CropBox; confidence?: string };
 
 /**
  * The AI's frames over the Photo: one per row that has a box (tap toggles that
- * row) and, unless handled ones are hidden, one per matched Thing (not
- * tappable). Numbers come from the suggestion, so hiding never renumbers.
+ * row) and, unless handled ones are hidden, one per matched Thing (moss, named,
+ * not tappable). Numbers come from the suggestion, so hiding never renumbers.
  */
 function Frames({
   rows,
@@ -227,17 +232,20 @@ function Frames({
   hideHandled,
   active,
   onTap,
+  onPick,
 }: {
   rows: Row[];
   matched: MatchedFrame[];
   hideHandled: boolean;
   active: number | null;
   onTap: (i: number) => void;
+  /** In the zoomed Photo: every frame opens its bubble instead of toggling a row. */
+  onPick?: (f: PickedFrame) => void;
 }) {
-  type F = { num: number; name: string; box: CropBox; row: number | null; checked: boolean };
+  type F = PickedFrame & { row: number | null; checked: boolean };
   const all: F[] = [
-    ...rows.flatMap((r, i) => (r.box && r.num != null ? [{ num: r.num, name: r.name, box: r.box, row: i, checked: r.checked }] : [])),
-    ...matched.map((m) => ({ ...m, row: null, checked: false })),
+    ...rows.flatMap((r, i) => (r.box && r.num != null ? [{ num: r.num, name: r.name, box: r.box, row: i, checked: r.checked, confidence: r.confidence, isNew: true }] : [])),
+    ...matched.map((m) => ({ ...m, row: null, checked: false, isNew: false })),
   ];
   // in the DOM by number; stacked by size, so a small frame inside a big one
   // stays on top and tappable
@@ -261,7 +269,7 @@ function Frames({
           <span
             aria-hidden
             className="absolute left-0 top-0 grid h-5 min-w-5 place-items-center rounded-br-md px-1 font-data text-[11px] font-bold text-[#282c20]"
-            style={{ background: f.row == null ? MATCHED : LIME }}
+            style={{ background: f.row == null ? MATCHED : LIME, color: f.row == null ? "#fff" : undefined }}
           >
             {f.num}
           </span>
@@ -270,18 +278,30 @@ function Frames({
         return row == null ? (
           <div
             key={`m${f.num}`}
-            role="img"
+            role={onPick ? "button" : "img"}
             aria-label={`Frame ${f.num}: ${f.name}, already in the inventory`}
-            className="pointer-events-none absolute rounded-sm"
+            className={cn("absolute rounded-sm", !onPick && "pointer-events-none")}
             style={style}
+            onClick={onPick ? (e) => { e.stopPropagation(); onPick(f); } : undefined}
           >
             {badge}
+            <span
+              aria-hidden
+              className="absolute bottom-full left-0 mb-px max-w-full truncate rounded-sm px-1 text-[10px] font-semibold leading-4 text-white"
+              style={{ background: MATCHED }}
+            >
+              {f.name}
+            </span>
           </div>
         ) : (
           <button
             key={`r${row}`}
             type="button"
-            onClick={() => onTap(row)}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onPick) onPick(f);
+              else onTap(row);
+            }}
             aria-label={`Frame ${f.num}: ${f.name}`}
             aria-pressed={f.checked}
             className={cn("absolute rounded-sm", !f.checked && "opacity-50", active === row && "shadow-[0_0_0_3px_rgba(0,0,0,0.45)]")}
@@ -292,6 +312,25 @@ function Frames({
         );
       })}
     </>
+  );
+}
+
+/** What the AI said about one frame, just above it (below when it is at the top edge). */
+function FrameBubble({ f }: { f: PickedFrame }) {
+  const top = Math.max(0, f.box.yPct - f.box.hPct / 2);
+  const below = top < 12;
+  return (
+    <div
+      className="pointer-events-none absolute z-[100] w-max max-w-[220px] rounded-lg bg-[#282c20]/95 px-2.5 py-1.5 text-[13px] leading-snug text-white"
+      style={{
+        left: `${Math.min(Math.max(0, f.box.xPct - f.box.wPct / 2), 70)}%`,
+        ...(below ? { top: `${Math.min(100, f.box.yPct + f.box.hPct / 2)}%`, marginTop: 6 } : { bottom: `${100 - top}%`, marginBottom: 6 }),
+      }}
+    >
+      <div className="font-semibold">{f.name}</div>
+      <div>{f.isNew ? "New" : "Already in the inventory"}</div>
+      {f.confidence && <div>Confidence: {f.confidence}</div>}
+    </div>
   );
 }
 
@@ -317,9 +356,11 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
   const matchedFrames: MatchedFrame[] = matched.flatMap((m) => {
     const box = spottedBox(m);
     const num = frameNums.get(m);
-    return box && num != null ? [{ num, name: m.matchedItemName ?? m.itemName, box }] : [];
+    return box && num != null ? [{ num, name: m.matchedItemName ?? m.itemName, box, confidence: m.confidence }] : [];
   });
   const [hideHandled, setHideHandled] = useState(loadHideHandled);
+  const [zoomed, setZoomed] = useState(false);
+  const [picked, setPicked] = useState<PickedFrame | null>(null);
 
   const initialRows = (): Row[] => (suggestion?.items ?? [])
       .filter((s) => s.isNewItem || !s.matchedItemName)
@@ -330,6 +371,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
           areaId: areas.find((a) => a.slug === s.areaSlug)?.id ?? defaultAreaId,
           checked: true,
           attributes: s.attributes,
+          confidence: s.confidence,
           ...(box ? { box, num: frameNums.get(s) } : {}),
         };
       });
@@ -384,9 +426,25 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
     <CardShell question={isGeo ? "A floor scan" : "What is it?"} onSkip={onSkip}>
       {capture.kind === "image" && capture.storageKey ? (
         <div className="flex flex-col gap-1">
-          <FramedPhoto storageKey={capture.storageKey}>
+          <FramedPhoto storageKey={capture.storageKey} onOpen={() => setZoomed(true)}>
             <Frames rows={rows} matched={matchedFrames} hideHandled={hideHandled} active={active} onTap={tapFrame} />
           </FramedPhoto>
+          {zoomed && (
+            <ZoomViewer
+              storageKey={capture.storageKey}
+              onClose={() => {
+                setZoomed(false);
+                setPicked(null);
+              }}
+            >
+              {() => (
+                <div className="absolute inset-0" onClick={() => setPicked(null)}>
+                  <Frames rows={rows} matched={matchedFrames} hideHandled={hideHandled} active={null} onTap={tapFrame} onPick={setPicked} />
+                  {picked && <FrameBubble f={picked} />}
+                </div>
+              )}
+            </ZoomViewer>
+          )}
           {(matchedFrames.length > 0 || rows.some((r) => r.box)) && (
             <label className="flex items-center justify-end gap-1.5 px-1 text-[12px] text-muted-foreground">
               <input

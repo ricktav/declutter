@@ -87,6 +87,8 @@ private struct OpensViewer: ViewModifier {
     let enabled: Bool
     /// Shows "Crop" in the viewer; called once the viewer has closed.
     var onCrop: (() -> Void)? = nil
+    /// The AI's frames, drawn over the Photo in the viewer.
+    var frames: [FrameSpec] = []
     @State private var open = false
     @State private var cropAfterClose = false
 
@@ -105,6 +107,7 @@ private struct OpensViewer: ViewModifier {
                     if let image {
                         PhotoViewer(
                             image: image,
+                            frames: frames,
                             onClose: { open = false },
                             onCrop: onCrop.map { _ in { cropAfterClose = true; open = false } }
                         )
@@ -172,6 +175,8 @@ struct FittedRemotePhoto<Overlay: View>: View {
     var api: HomeBaseAPI?
     var aspect: CGFloat = 4 / 3
     var cornerRadius: CGFloat = 12
+    /// Frames to show again in the full-screen viewer.
+    var frames: [FrameSpec] = []
     @ViewBuilder var overlay: (CGSize) -> Overlay
 
     @State private var image: UIImage?
@@ -184,7 +189,7 @@ struct FittedRemotePhoto<Overlay: View>: View {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(image.size.width / image.size.height, contentMode: .fit)
-                    .modifier(OpensViewer(image: image, enabled: true))
+                    .modifier(OpensViewer(image: image, enabled: true, frames: frames))
                     .overlay {
                         GeometryReader { geo in overlay(geo.size) }
                     }

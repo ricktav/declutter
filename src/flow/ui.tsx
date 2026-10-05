@@ -42,10 +42,13 @@ export function FramedPhoto({
   storageKey,
   children,
   maxHeight = "60dvh",
+  onOpen,
 }: {
   storageKey: string;
   children?: ReactNode;
   maxHeight?: string;
+  /** Set: tapping the picture (outside a frame) opens it full screen. */
+  onOpen?: () => void;
 }) {
   const url = trpc.attachments.url.useQuery({ key: storageKey });
   // natural width / height, known once the image has loaded; 4:3 until then
@@ -56,6 +59,7 @@ export function FramedPhoto({
       <div
         className="relative overflow-hidden rounded-xl bg-[repeating-linear-gradient(45deg,hsl(110_14%_92%)_0_8px,hsl(110_8%_86%)_8px_9px)]"
         style={{ aspectRatio: String(r), width: `min(100%, calc(${maxHeight} * ${r}))` }}
+        onClick={onOpen}
       >
         {url.data?.url && (
           <img

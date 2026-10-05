@@ -254,7 +254,7 @@ private struct DraftRow: Identifiable {
 }
 
 /// One frame to draw on the capture Photo.
-private struct FrameSpec: Identifiable {
+struct FrameSpec: Identifiable {
     let id: String
     let number: Int
     let box: PhotoBox
@@ -262,6 +262,8 @@ private struct FrameSpec: Identifiable {
     /// nil for an object already in the inventory (no row to toggle).
     let rowId: UUID?
     let checked: Bool
+    /// The AI's confidence for this object, when it gave one.
+    var confidence: String? = nil
 }
 
 private struct CaptureCard: View {
@@ -314,13 +316,15 @@ private struct CaptureCard: View {
         for row in rows {
             guard let box = row.box, let n = row.frameNumber else { continue }
             if hideHandled && !row.checked { continue }
-            out.append(FrameSpec(id: "r\(row.id)", number: n, box: box, name: row.name, rowId: row.id, checked: row.checked))
+            let conf = (suggestion?.items ?? []).enumerated().first { frameNumbering[$0.offset] == n }?.element.confidence
+            out.append(FrameSpec(id: "r\(row.id)", number: n, box: box, name: row.name, rowId: row.id, checked: row.checked, confidence: conf))
         }
+        // Things already in the inventory (moss, with their name) show when handled ones are not hidden.
         if !hideHandled {
             let numbers = frameNumbering
             for (i, item) in (suggestion?.items ?? []).enumerated() where !item.isNewItem && item.matchedItemName != nil {
                 guard let box = item.box, let n = numbers[i] else { continue }
-                out.append(FrameSpec(id: "m\(i)", number: n, box: box, name: item.matchedItemName ?? item.itemName, rowId: nil, checked: false))
+                out.append(FrameSpec(id: "m\(i)", number: n, box: box, name: item.matchedItemName ?? item.itemName, rowId: nil, checked: false, confidence: item.confidence))
             }
         }
         return out.sorted { $0.box.wPct * $0.box.hPct > $1.box.wPct * $1.box.hPct }
@@ -486,7 +490,7 @@ private struct CaptureCard: View {
     @ViewBuilder
     private var preview: some View {
         if capture.kind == .image, capture.storageKey != nil {
-            FittedRemotePhoto(storageKey: capture.storageKey, api: session.api) { size in
+            FittedRemotePhoto(storageKey: capture.storageKey, api: session.api, frames: frameSpecs) { size in
                 frames(in: size)
             }
         } else if isGeo {
@@ -520,16 +524,27 @@ private struct CaptureCard: View {
                 ZStack(alignment: .topLeading) {
                     Rectangle()
                         .strokeBorder(
-                            f.checked ? FlowTheme.lime : Color.white.opacity(0.85),
+                            f.rowId == nil ? FlowTheme.moss : (f.checked ? FlowTheme.lime : Color.white.opacity(0.85)),
                             style: StrokeStyle(lineWidth: lit ? 3 : 2, dash: f.checked ? [] : [5, 3])
                         )
                         .background(lit ? FlowTheme.lime.opacity(0.15) : Color.clear)
                         .contentShape(Rectangle().stroke(lineWidth: 16))
                         .onTapGesture { if let id = f.rowId { toggle(id) } }
-                    FrameBadge(number: f.number, on: f.checked)
+                    FrameBadge(number: f.number, on: f.checked, matched: f.rowId == nil)
                         .offset(x: -2, y: -2)
                         .contentShape(Rectangle())
                         .onTapGesture { if let id = f.rowId { toggle(id) } }
+                    if f.rowId == nil {
+                        Text(f.name)
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .padding(.horizontal, 4)
+                            .frame(height: 15)
+                            .background(FlowTheme.moss, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+                            .frame(maxWidth: w, alignment: .leading)
+                            .offset(x: 0, y: -16)
+                    }
                 }
                 .shadow(color: .black.opacity(0.35), radius: 1)
                 .allowsHitTesting(f.rowId != nil)
@@ -637,13 +652,14 @@ private struct CaptureCard: View {
 private struct FrameBadge: View {
     let number: Int
     let on: Bool
+    var matched = false
 
     var body: some View {
         Text("\(number)")
             .font(.system(size: 11, weight: .bold, design: .rounded))
-            .foregroundStyle(FlowTheme.ink)
+            .foregroundStyle(matched ? Color.white : FlowTheme.ink)
             .frame(minWidth: 18, minHeight: 18)
-            .background(on ? FlowTheme.lime : Color.white, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .background(matched ? FlowTheme.moss : (on ? FlowTheme.lime : Color.white), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 }
 
