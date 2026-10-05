@@ -52,14 +52,27 @@ app.post("/api/upload", async (c) => {
   return c.json({ key: saved.key, size: saved.size, mimeType, fileName: file.name, contentHash });
 });
 
+// one line per mutation (not queries: lists run every few seconds) so the phone's writes are visible
+app.use("/api/trpc/*", async (c, next) => {
+  if (c.req.method === "POST") {
+    const ua = c.req.header("user-agent") ?? "";
+    console.log(`[trpc] POST ${c.req.path.replace("/api/trpc/", "")} house=${c.req.header("x-house-id") ?? "-"} ua=${ua.slice(0, 40)}`);
+  }
+  await next();
+});
 app.use("/api/trpc/*", async (c) => {
   return fetchRequestHandler({
     endpoint: "/api/trpc",
     req: c.req.raw,
     router: appRouter,
     createContext,
+    // one line per failed procedure in the server log, so a client error can be traced
+    onError({ error, path, type }) {
+      console.error(`[trpc] ${type} ${path ?? "?"} ${error.code}: ${error.message.split("\n")[0].slice(0, 300)}`);
+    },
   });
 });
+
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
 // Stored uploads. Served with a content type derived from the extension
