@@ -12,8 +12,9 @@ struct SnapView: View {
     // one error line and one retry queue, kept across tab changes.
     @EnvironmentObject private var uploader: SnapUploader
     @Environment(\.scenePhase) private var scenePhase
-    // Lives as long as the Snap tab, so the session stays warm between camera opens.
-    @StateObject private var camera = SnapCamera()
+    // Owned by ContentView, so the session stays warm between camera opens and a Place
+    // plan's "Take a Photo of it" uses the same one (never a second capture session).
+    @EnvironmentObject private var camera: SnapCamera
     @State private var showCamera = false
     @State private var showScan = false
     @State private var libraryItems: [PhotosPickerItem] = []

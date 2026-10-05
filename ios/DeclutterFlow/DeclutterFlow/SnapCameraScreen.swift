@@ -436,6 +436,7 @@ struct SnapCameraScreen: View {
         .onDisappear {
             camera.visible = false
             camera.stopSoon()
+            uploader.attachError = nil
         }
         .onChange(of: scenePhase) { _, phase in
             Task {
@@ -570,9 +571,18 @@ struct SnapCameraScreen: View {
             if let captureError {
                 ErrorLine(message: captureError)
             }
-            // An attach that failed after the upload worked: not in the retry queue, so say it here.
-            if forItem != nil, uploader.failedSummary == nil, let err = uploader.error {
-                ErrorLine(message: err)
+            // An attach that failed after the upload worked: not in the retry queue, so it
+            // stays here until dismissed (the next shot does not wipe it).
+            if forItem != nil, let err = uploader.attachError {
+                HStack(spacing: 8) {
+                    ErrorLine(message: err)
+                    Button("OK") { uploader.attachError = nil }
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(FlowTheme.ink)
+                        .background(FlowTheme.cream, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
             }
             if let summary = uploader.failedSummary {
                 HStack(spacing: 8) {
@@ -705,8 +715,11 @@ struct SnapCameraScreen: View {
         uploader.lastKept = shot.preview
         let place = shotPlace
         let target = forItem.map { SnapUploader.PhotoTarget(id: $0.id, name: $0.name, roomId: $0.roomId) }
-        if target != nil { savedOfItem += 1 }
-        Task { await uploader.upload(jpeg: shot.jpeg, place: place, session: session, forItem: target) }
+        Task {
+            let ok = await uploader.upload(jpeg: shot.jpeg, place: place, session: session, forItem: target)
+            // Counts Photos that reached the Thing, not ones only in the inbox.
+            if ok, target != nil { savedOfItem += 1 }
+        }
         if !another {
             onClose()
         }

@@ -107,11 +107,60 @@ struct PlanLayout {
     }
 }
 
-enum PlanLabel {
+/// A Thing's name on the 2D plan: where it goes and how it is hit, shared by drawing and taps.
+struct PlanLabel {
+    let item: RoomItem
+    let text: String
+    /// The label's white backing, in canvas points; the text is centred in it.
+    let rect: CGRect
+
     /// A label short enough for a plan: whole names up to `max` characters, else cut with "…".
     static func short(_ name: String, max: Int = 16) -> String {
         let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.count <= max ? t : String(t.prefix(max - 1)) + "…"
+    }
+
+    static let fontSize: CGFloat = 9
+
+    private static let uiFont: UIFont = {
+        let base = UIFont.systemFont(ofSize: fontSize, weight: .semibold)
+        guard let rounded = base.fontDescriptor.withDesign(.rounded) else { return base }
+        return UIFont(descriptor: rounded, size: fontSize)
+    }()
+
+    static func textSize(_ text: String) -> CGSize {
+        let s = (text as NSString).size(withAttributes: [.font: uiFont])
+        return CGSize(width: ceil(s.width), height: ceil(s.height))
+    }
+
+    /// Inside a footprint that holds the label even turned by its rotation, else below it,
+    /// else above it when below would cover a label already placed; always inside the canvas.
+    static func place(_ placed: [(RoomItem, ItemPos)], layout: PlanLayout, canvas: CGSize) -> [PlanLabel] {
+        var out: [PlanLabel] = []
+        for (it, p) in placed {
+            let text = short(it.name)
+            let t = textSize(text)
+            let lw = t.width + 6, lh = t.height + 2
+            let a = p.rotDeg * .pi / 180
+            let c = abs(cos(a)), sn = abs(sin(a))
+            // The label stays upright; the box is turned. It fits when its corners do.
+            let inside = lw / 2 * c + lh / 2 * sn <= p.wM * layout.s / 2 - 1
+                && lw / 2 * sn + lh / 2 * c <= p.dM * layout.s / 2 - 1
+            let bounds = layout.box(p).boundingRect
+            func backing(_ centre: CGPoint) -> CGRect {
+                CGRect(x: centre.x - lw / 2, y: centre.y - lh / 2, width: lw, height: lh)
+            }
+            var rect = inside
+                ? backing(layout.centre(p))
+                : backing(CGPoint(x: bounds.midX, y: bounds.maxY + lh / 2 + 1))
+            if !inside, out.contains(where: { $0.rect.intersects(rect) }) {
+                rect = backing(CGPoint(x: bounds.midX, y: bounds.minY - lh / 2 - 1))
+            }
+            rect.origin.x = min(max(rect.origin.x, 1), max(canvas.width - lw - 1, 1))
+            rect.origin.y = min(max(rect.origin.y, 1), max(canvas.height - lh - 1, 1))
+            out.append(PlanLabel(item: it, text: text, rect: rect))
+        }
+        return out
     }
 }
 
@@ -123,8 +172,9 @@ struct FloorPlan2D: View {
     var onTapItem: ((RoomItem) -> Void)? = nil
     var onMove: ((RoomItem, ItemPos) -> Void)? = nil
 
-    /// The finger's travel while dragging the moving Thing, in points.
-    @State private var drag: CGSize = .zero
+    /// The finger's travel while dragging the moving Thing, in points. A gesture state, so a
+    /// drag the system cancels (a sheet or scroll taking over) puts the box back by itself.
+    @GestureState private var drag: CGSize = .zero
 
     /// Where the moving Thing ends up for a drag of `t` points: whole centimetres, centre kept in the room.
     private func moved(_ p: ItemPos, by t: CGSize, layout: PlanLayout) -> ItemPos {
@@ -136,27 +186,44 @@ struct FloorPlan2D: View {
         return q
     }
 
+    /// Every placed Thing with the footprint it is drawn at (the moving one follows the finger).
+    private func footprints(layout: PlanLayout, offset: CGSize) -> [(RoomItem, ItemPos)] {
+        items.compactMap { it in
+            guard var p = it.pos else { return nil }
+            if it.id == movingId, offset != .zero { p = moved(p, by: offset, layout: layout) }
+            return (it, p)
+        }
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let layout = PlanLayout(size: proxy.size, geometry: geometry)
             let offset = drag // read here, so a drag redraws the Canvas
+            let placed = footprints(layout: layout, offset: offset)
+            let labels = PlanLabel.place(placed, layout: layout, canvas: proxy.size)
             Canvas { context, _ in
-                draw(in: &context, layout: layout, offset: offset)
+                draw(in: &context, layout: layout, placed: placed, labels: labels)
             }
             .contentShape(Rectangle())
             .onTapGesture(coordinateSpace: .local) { location in
-                guard movingId == nil, let onTapItem, let it = layout.hit(items, at: location) else { return }
-                onTapItem(it)
+                guard movingId == nil, let onTapItem else { return }
+                // Labels are drawn on top, so they win; the last drawn is the topmost.
+                if let label = labels.last(where: { $0.rect.insetBy(dx: -3, dy: -3).contains(location) }) {
+                    onTapItem(label.item)
+                } else if let it = layout.hit(items, at: location) {
+                    onTapItem(it)
+                }
             }
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                    .onChanged { v in drag = v.translation }
+                    .updating($drag) { v, state, _ in state = v.translation }
                     .onEnded { v in
-                        defer { drag = .zero }
                         guard let id = movingId,
                               let it = items.first(where: { $0.id == id }),
                               let p = it.pos,
                               hypot(v.translation.width, v.translation.height) > 2 else { return }
+                        // The parent sets the new pos synchronously, in the same update that
+                        // resets `drag`, so the box never jumps back for a frame.
                         onMove?(it, moved(p, by: v.translation, layout: layout))
                     },
                 including: movingId != nil && onMove != nil ? .all : .subviews
@@ -165,7 +232,7 @@ struct FloorPlan2D: View {
         .padding(4)
     }
 
-    private func draw(in context: inout GraphicsContext, layout: PlanLayout, offset: CGSize) {
+    private func draw(in context: inout GraphicsContext, layout: PlanLayout, placed: [(RoomItem, ItemPos)], labels: [PlanLabel]) {
         let s = layout.s
         let floor = Path(CGRect(x: layout.ox, y: layout.oy, width: geometry.widthM * s, height: geometry.depthM * s))
         context.fill(floor, with: .color(Color(hex: 0xF0F2EA)))
@@ -189,12 +256,8 @@ struct FloorPlan2D: View {
         }
 
         // Footprints first, then every label on top, so a label is never under another box.
-        var placed: [(RoomItem, Path)] = []
-        for it in items {
-            guard var p = it.pos else { continue }
-            if it.id == movingId, offset != .zero { p = moved(p, by: offset, layout: layout) }
+        for (it, p) in placed {
             let box = layout.box(p)
-            placed.append((it, box))
             let selected = it.id == selectedId
             if it.isDetected {
                 context.fill(box, with: .color(FlowTheme.moss.opacity(selected ? 0.3 : 0.12)))
@@ -208,30 +271,12 @@ struct FloorPlan2D: View {
             }
         }
 
-        var taken: [CGRect] = []
-        for (it, box) in placed {
-            let text = Text(PlanLabel.short(it.name))
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                .foregroundColor(it.isDetected ? FlowTheme.muted : FlowTheme.ink)
-            let resolved = context.resolve(text)
-            let size = resolved.measure(in: CGSize(width: 160, height: 20))
-            let bounds = box.boundingRect
-            func backing(_ at: CGPoint) -> CGRect {
-                CGRect(x: at.x - size.width / 2 - 3, y: at.y - size.height / 2 - 1, width: size.width + 6, height: size.height + 2)
-            }
-            // Inside a box that fits the label, else below the box, else above it when
-            // below would cover a label already drawn (two small Things side by side).
-            let inside = bounds.width >= size.width + 6 && bounds.height >= size.height + 4
-            var at = inside
-                ? CGPoint(x: bounds.midX, y: bounds.midY)
-                : CGPoint(x: bounds.midX, y: bounds.maxY + size.height / 2 + 2)
-            if !inside, taken.contains(where: { $0.intersects(backing(at)) }) {
-                at = CGPoint(x: bounds.midX, y: bounds.minY - size.height / 2 - 2)
-            }
-            let back = backing(at)
-            taken.append(back)
-            context.fill(Path(roundedRect: back, cornerRadius: 3), with: .color(Color.white.opacity(it.isDetected ? 0.6 : 0.8)))
-            context.draw(resolved, at: at, anchor: .center)
+        for label in labels {
+            let text = Text(label.text)
+                .font(.system(size: PlanLabel.fontSize, weight: .semibold, design: .rounded))
+                .foregroundColor(label.item.isDetected ? FlowTheme.muted : FlowTheme.ink)
+            context.fill(Path(roundedRect: label.rect, cornerRadius: 3), with: .color(Color.white.opacity(label.item.isDetected ? 0.6 : 0.8)))
+            context.draw(context.resolve(text), at: CGPoint(x: label.rect.midX, y: label.rect.midY), anchor: .center)
         }
     }
 }
@@ -246,23 +291,28 @@ struct FloorPlan3D: UIViewRepresentable {
         var items: [RoomItem] = []
         var onTapItem: ((RoomItem) -> Void)?
 
-        /// A tap on a box or its label (nodes named `item:<id>`) opens that Thing.
+        /// A tap on a box (`item:<id>`) or its label (`label:<id>`) opens that Thing. Labels are
+        /// drawn over everything, so a label under the finger wins over a nearer box.
         @objc func tapped(_ g: UITapGestureRecognizer) {
             guard let view = g.view as? SCNView, let onTapItem else { return }
             let hits = view.hitTest(g.location(in: view), options: [
                 .searchMode: SCNHitTestSearchMode.all.rawValue,
                 .ignoreHiddenNodes: true,
             ])
-            for hit in hits {
-                var node: SCNNode? = hit.node
-                while let n = node {
-                    if let name = n.name, name.hasPrefix("item:"), let id = Int(name.dropFirst(5)),
-                       let it = items.first(where: { $0.id == id }) {
-                        onTapItem(it)
-                        return
+            func thing(_ prefix: String) -> RoomItem? {
+                for hit in hits {
+                    var node: SCNNode? = hit.node
+                    while let n = node {
+                        if let name = n.name, name.hasPrefix(prefix), let id = Int(name.dropFirst(prefix.count)) {
+                            return items.first(where: { $0.id == id })
+                        }
+                        node = n.parent
                     }
-                    node = n.parent
                 }
+                return nil
+            }
+            if let it = thing("label:") ?? thing("item:") {
+                onTapItem(it)
             }
         }
     }
@@ -356,7 +406,7 @@ struct FloorPlan3D: UIViewRepresentable {
             // The label floats above the box and always faces the viewer; a sibling of the
             // box, so it does not turn with it.
             let label = Self.labelNode(PlanLabel.short(it.name, max: 22), dim: it.isDetected, height: labelHeight)
-            label.name = "item:\(it.id)"
+            label.name = "label:\(it.id)"
             label.position = SCNVector3(p.xM + p.wM / 2, height + labelHeight * 0.9, p.yM + p.dM / 2)
             scene.rootNode.addChildNode(label)
         }

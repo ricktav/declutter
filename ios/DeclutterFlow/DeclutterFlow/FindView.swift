@@ -11,6 +11,7 @@ struct FindView: View {
     @EnvironmentObject private var session: FlowSession
     /// The app's Snap uploader: "Take a Photo of it" on a Place plan uploads through it.
     @EnvironmentObject private var uploader: SnapUploader
+    @EnvironmentObject private var camera: SnapCamera
     @State private var q = ""
     @State private var scope: FindScope = .things
     @State private var open: FlowItem?
@@ -137,11 +138,13 @@ struct FindView: View {
             ThingSheet(item: item)
                 .environmentObject(session)
                 .environmentObject(uploader)
+                .environmentObject(camera)
         }
         .sheet(item: $openPlace) { r in
             RoomDetailView(place: Place(room: r))
                 .environmentObject(session)
                 .environmentObject(uploader)
+                .environmentObject(camera)
         }
         .onAppear { openFromLaunchArgument() }
         .onChange(of: session.ready) { _, _ in openFromLaunchArgument() }
@@ -189,6 +192,7 @@ struct FindView: View {
 private struct ThingSheet: View {
     @EnvironmentObject private var session: FlowSession
     @EnvironmentObject private var uploader: SnapUploader
+    @EnvironmentObject private var camera: SnapCamera
     let item: FlowItem
     @Environment(\.dismiss) private var dismiss
     @State private var roomInfo: RoomInfo?
@@ -276,6 +280,7 @@ private struct ThingSheet: View {
                 RoomDetailView(place: place)
                     .environmentObject(session)
                     .environmentObject(uploader)
+                    .environmentObject(camera)
             }
         }
         .fullScreenCover(isPresented: $showScan) {

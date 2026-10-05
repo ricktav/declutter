@@ -26,6 +26,9 @@ final class SnapUploader: ObservableObject {
     /// Photos saved (camera and library); notes are counted by SnapView.
     @Published private(set) var savedCount = 0
     @Published var error: String?
+    /// A "Photo of <Thing>" that uploaded but did not attach. Not cleared by the next upload:
+    /// it stays until the person dismisses it or the camera closes.
+    @Published var attachError: String?
     @Published private(set) var failed: [Failed] = []
     /// Small preview of the last Photo saved in the camera.
     @Published var lastKept: UIImage?
@@ -40,8 +43,9 @@ final class SnapUploader: ObservableObject {
     }
 
     /// Uploads one JPEG and files it in the inbox. `place` is the Place at the moment the
-    /// Photo was taken. With `forItem` the Photo is then attached to that Thing (the capture
-    /// stays in the inbox, as the server keeps it). On failure the Photo goes to `failed`.
+    /// Photo was taken. With `forItem` the Photo is then attached to that Thing and its
+    /// capture dismissed, so it does not wait in Sort as well. On an upload failure the Photo
+    /// goes to `failed`. True when the upload (and, with `forItem`, the attach) worked.
     @discardableResult
     func upload(jpeg: Data, place: Place, session: FlowSession, forItem: PhotoTarget? = nil) async -> Bool {
         guard let api = session.api else {
@@ -72,8 +76,16 @@ final class SnapUploader: ObservableObject {
                 do {
                     let photo = try await api.photosEnsureForCapture(captureId: row.id, roomId: forItem.roomId)
                     _ = try await api.photosAttachToItem(photoId: photo.photoId, itemId: forItem.id)
+                    // The Thing's Photo has its own file copy; dismissing the capture deletes
+                    // nothing, it only keeps the Photo out of Sort's queue.
+                    do {
+                        try await api.inboxDismiss(id: row.id)
+                    } catch {
+                        print("[snap] inbox.dismiss(\(row.id)) after attach failed: \(error.localizedDescription)")
+                    }
                 } catch {
-                    self.error = "Photo saved in the inbox, not attached to \(forItem.name): \(error.localizedDescription)"
+                    attachError = "Photo saved in the inbox, not attached to \(forItem.name): \(error.localizedDescription)"
+                    ok = false
                 }
             }
         } catch {

@@ -33,6 +33,8 @@ struct ContentView: View {
     @State private var showSettings = false
     // Above the tab switch: Snap uploads (and their retry queue) outlive a tab change.
     @StateObject private var uploader = SnapUploader()
+    // One camera session for the app: Snap and "Take a Photo of it" on a Place plan share it.
+    @StateObject private var camera = SnapCamera()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,6 +49,7 @@ struct ContentView: View {
                 case .snap:
                     SnapView(onGoSort: { tab = .sort }, onChangeHere: { showHere = true })
                         .environmentObject(uploader)
+                        .environmentObject(camera)
                 case .sort:
                     ScrollView { SortView().padding(.vertical, 4) }
                 case .act:
@@ -54,6 +57,7 @@ struct ContentView: View {
                 case .find:
                     FindView()
                         .environmentObject(uploader)
+                        .environmentObject(camera)
                 }
             }
             .padding(.horizontal, 16)

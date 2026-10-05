@@ -377,8 +377,11 @@ struct RoomItem: Codable, Identifiable, Hashable {
     var verificationStatus: VerificationStatus?
     var status: ItemStatus?
     var attributes: [String: AttributeValue]?
+    /// The room the Thing is really in. `rooms.get` rolls up Things of child rooms with `pos`
+    /// shifted into this room's frame; such a pos must never be saved back.
+    var ownerRoomId: Int?
 
-    enum CodingKeys: String, CodingKey { case id, name, pos, verificationStatus, status, attributes }
+    enum CodingKeys: String, CodingKey { case id, name, pos, verificationStatus, status, attributes, ownerRoomId }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -388,6 +391,13 @@ struct RoomItem: Codable, Identifiable, Hashable {
         verificationStatus = try? c.decodeIfPresent(VerificationStatus.self, forKey: .verificationStatus)
         status = try? c.decodeIfPresent(ItemStatus.self, forKey: .status)
         attributes = try? c.decodeIfPresent([String: AttributeValue].self, forKey: .attributes)
+        ownerRoomId = try? c.decodeIfPresent(Int.self, forKey: .ownerRoomId)
+    }
+
+    /// True when the Thing sits in a child room of `roomId` (its pos here is shifted).
+    func isRolledUp(into roomId: Int?) -> Bool {
+        guard let ownerRoomId, let roomId else { return false }
+        return ownerRoomId != roomId
     }
 
     /// A scan or AI made it and nobody confirmed it yet: the plan draws it dimmed and dashed.

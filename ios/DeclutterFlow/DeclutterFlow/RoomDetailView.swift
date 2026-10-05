@@ -4,6 +4,7 @@ import SwiftUI
 struct RoomDetailView: View {
     @EnvironmentObject private var session: FlowSession
     @EnvironmentObject private var uploader: SnapUploader
+    @EnvironmentObject private var camera: SnapCamera
     @Environment(\.dismiss) private var dismiss
 
     let place: Place
@@ -30,7 +31,9 @@ struct RoomDetailView: View {
     }
 
     var body: some View {
-        FlowSheet(title: place.room.isEmpty ? "Place" : place.room, onClose: { dismiss() }, detent: $detent) {
+        FlowSheet(title: place.room.isEmpty ? "Place" : place.room, onClose: { dismiss() }, detent: $detent,
+                  detents: movingId != nil ? [.large] : [.medium, .large],
+                  scrollDisabled: movingId != nil) {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Place")
@@ -60,7 +63,7 @@ struct RoomDetailView: View {
                         selectedId: selected?.id,
                         movingId: movingId,
                         onTapItem: { selected = $0 },
-                        onMove: { it, pos in Task { await move(it, to: pos) } }
+                        onMove: { it, pos in move(it, to: pos) }
                     )
                     if movingId == nil, !(info?.planItems.isEmpty ?? true) {
                         Text("Tap a Thing on the plan to check it, take a Photo of it or move it.")
@@ -113,16 +116,32 @@ struct RoomDetailView: View {
         .sheet(item: $selected) { it in
             PlanThingSheet(
                 item: it,
+                ownerRoomName: ownerRoomName(of: it),
                 onChanged: { await reload() },
                 onMove: {
                     selected = nil
-                    movingId = it.id
+                    undoResult = nil
                     detent = .large
+                    movingId = it.id
                 }
             )
             .environmentObject(session)
             .environmentObject(uploader)
+            .environmentObject(camera)
         }
+        .onChange(of: scan) { _, on in
+            if on {
+                undoResult = nil
+                // The LiDAR scan needs the camera to itself.
+                Task { await camera.stop() }
+            }
+        }
+    }
+
+    /// The child room a rolled-up Thing really sits in; nil for a Thing of this Place.
+    private func ownerRoomName(of it: RoomItem) -> String? {
+        guard it.isRolledUp(into: place.roomId), let owner = it.ownerRoomId else { return nil }
+        return session.rooms.first(where: { $0.id == owner })?.name ?? "its own Place"
     }
 
     private func moveBanner(_ id: Int) -> some View {
@@ -133,7 +152,10 @@ struct RoomDetailView: View {
             Text("Drag \(name) on the plan. Each release saves.")
                 .font(.system(size: 13, weight: .medium))
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Done") { movingId = nil }
+            Button("Done") {
+                movingId = nil
+                detent = .medium
+            }
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -231,7 +253,9 @@ struct RoomDetailView: View {
         }
     }
 
-    private func load() async {
+    /// `withSession`: also reload the session (once), else only when the plan shows Things
+    /// the session does not know yet (a fresh scan made them; their sheets need them).
+    private func load(withSession: Bool = false) async {
         defer { loaded = true }
         guard let api = session.api, let id = place.roomId else { return }
         do {
@@ -241,47 +265,54 @@ struct RoomDetailView: View {
         }
         // An older server has no scan history; the plan still works.
         scans = (try? await api.roomsScans(roomId: id)) ?? []
-        // A fresh scan made Things the session has not loaded yet; their sheets need them.
         let known = Set(session.items.map(\.id))
-        if info?.planItems.contains(where: { !known.contains($0.id) }) == true {
+        if withSession || info?.planItems.contains(where: { !known.contains($0.id) }) == true {
             await session.refresh()
         }
     }
 
     /// After a change on this Place: the plan, its scans and every list in the app.
+    /// An earlier "Scan undone" line no longer describes the Place, so it goes.
     private func reload() async {
-        await load()
-        await session.refresh()
+        undoResult = nil
+        await load(withSession: true)
     }
 
-    private func move(_ it: RoomItem, to pos: ItemPos) async {
-        guard let api = session.api else { return }
-        // Show the box where it was dropped right away; the reload confirms it.
+    /// Called from the drag's end: the box takes its new place in this same update (no
+    /// frame where it jumps back), then the save runs.
+    private func move(_ it: RoomItem, to pos: ItemPos) {
+        // A Thing of a child room carries a pos shifted into this Place's frame: never save it.
+        guard !it.isRolledUp(into: place.roomId), let api = session.api else { return }
         if let i = info?.items?.firstIndex(where: { $0.id == it.id }) {
             info?.items?[i].pos = pos
         }
         error = nil
-        do {
-            try await api.itemsSetPos(id: it.id, pos: pos)
-        } catch {
-            self.error = "Could not move \(it.name): \(error.localizedDescription)"
+        Task {
+            do {
+                try await api.itemsSetPos(id: it.id, pos: pos)
+            } catch {
+                self.error = "Could not move \(it.name): \(error.localizedDescription)"
+            }
+            await reload()
         }
-        await reload()
     }
 
     private func undo(_ scanId: Int) async {
         guard let api = session.api else { return }
         undoing = true
         error = nil
+        var result: String?
         do {
             let r = try await api.roomsRevertScan(scanId: scanId)
-            undoResult = "Scan undone: \(r.restored) restored, \(r.deleted) deleted, \(r.kept) kept."
+            result = "Scan undone: \(r.restored) restored, \(r.deleted) deleted, \(r.kept) kept."
             confirmUndo = nil
             movingId = nil
+            detent = .medium
         } catch {
             self.error = error.localizedDescription
         }
         undoing = false
         await reload()
+        undoResult = result
     }
 }

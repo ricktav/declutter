@@ -5,25 +5,33 @@ import SwiftUI
 struct PlanThingSheet: View {
     @EnvironmentObject private var session: FlowSession
     @EnvironmentObject private var uploader: SnapUploader
+    /// The app's one camera (ContentView owns it); a second capture session would fight it.
+    @EnvironmentObject private var camera: SnapCamera
     @Environment(\.dismiss) private var dismiss
 
     let item: RoomItem
+    /// Set when the Thing is in a child room of this Place: its pos here is shifted, so it
+    /// can only be moved on that room's own plan.
+    var ownerRoomName: String? = nil
     var onChanged: () async -> Void
     /// Close this sheet and drag the Thing's box on the plan.
     var onMove: () -> Void
 
-    @StateObject private var camera = SnapCamera()
     @State private var name: String
+    /// The name as last saved: the title, and what the Save button compares with.
+    @State private var savedName: String
     @State private var status: VerificationStatus?
     @State private var busy = false
     @State private var error: String?
     @State private var showCamera = false
 
-    init(item: RoomItem, onChanged: @escaping () async -> Void, onMove: @escaping () -> Void) {
+    init(item: RoomItem, ownerRoomName: String? = nil, onChanged: @escaping () async -> Void, onMove: @escaping () -> Void) {
         self.item = item
+        self.ownerRoomName = ownerRoomName
         self.onChanged = onChanged
         self.onMove = onMove
         _name = State(initialValue: item.name)
+        _savedName = State(initialValue: item.name)
         _status = State(initialValue: item.verificationStatus)
     }
 
@@ -31,8 +39,6 @@ struct PlanThingSheet: View {
     private var flowItem: FlowItem? {
         session.items.first(where: { $0.id == item.id })
     }
-
-    private var savedName: String { flowItem?.name ?? item.name }
 
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -114,10 +120,19 @@ struct PlanThingSheet: View {
                 }
                 .disabled(busy || flowItem == nil)
 
-                actionButton("Move on the plan", systemImage: "arrow.up.and.down.and.arrow.left.and.right", fg: FlowTheme.ink, bg: Color.white, border: true) {
-                    onMove()
+                if let ownerRoomName {
+                    Text("Move it in \(ownerRoomName)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(FlowTheme.muted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color(hex: 0xD5D9CD)))
+                } else {
+                    actionButton("Move on the plan", systemImage: "arrow.up.and.down.and.arrow.left.and.right", fg: FlowTheme.ink, bg: Color.white, border: true) {
+                        onMove()
+                    }
+                    .disabled(busy || item.pos == nil)
                 }
-                .disabled(busy || item.pos == nil)
 
                 ErrorLine(message: error)
             }
@@ -189,6 +204,7 @@ struct PlanThingSheet: View {
         do {
             try await api.itemsRename(id: item.id, name: n)
             name = n
+            savedName = n
             await onChanged()
         } catch {
             self.error = error.localizedDescription
