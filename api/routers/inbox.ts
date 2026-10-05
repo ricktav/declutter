@@ -1,11 +1,13 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { createHash } from "crypto";
 import { eq, desc, isNull, and, inArray, sql } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type RoomGeometry } from "@db/schema";
+import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type RoomGeometry, type ItemPos } from "@db/schema";
 import { parseGeojsonFloor, FURNITURE_KIND_MAP } from "../lib/geojsonFloor";
+import { matchScanItems, type ScanPoly } from "../lib/scanMerge";
 import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
@@ -36,6 +38,16 @@ const detectObjectsSchema = z.object({
 });
 
 const MAX_REFERENCE_PHOTOS = 20;
+
+/** topic, display name and height for a scan polygon kind */
+function scanMeta(kind: string): { topic: string; label: string; hM?: number } {
+  return FURNITURE_KIND_MAP[kind] ?? { topic: "furniture", label: kind || "Item" };
+}
+
+/** YYYY-MM-DD in local time (attribute dates are calendar days, not UTC) */
+function localDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 /** crude name-similarity, same approach as the items router */
 function nameScore(a: string, b: string): number {
@@ -676,6 +688,8 @@ export const inboxRouter = createRouter({
       const roomName = target?.name ?? input.roomName!.trim();
       const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.captureId) });
       if (!cap?.storageKey) throw new Error("Capture has no file to import.");
+      // a capture is one timestamped scan; a new situation is a new capture
+      if (cap.status === "processed") throw new TRPCError({ code: "BAD_REQUEST", message: "This capture was already imported." });
 
       let geojson: unknown;
       try {
@@ -687,6 +701,20 @@ export const inboxRouter = createRouter({
       const parsed = parseGeojsonFloor(geojson as { features: { geometry: { type: string; coordinates: unknown }; properties: Record<string, unknown> }[] });
       if (!parsed) throw new Error("No wall geometry found in this file.");
       const { walls, furniturePolys, widthM, depthM } = parsed;
+
+      const polys: ScanPoly[] = furniturePolys.map((poly) => {
+        const meta = scanMeta(poly.kind);
+        const xs = poly.ring.map((p) => p[0]);
+        const ys = poly.ring.map((p) => p[1]);
+        return {
+          kind: poly.kind,
+          label: meta.label,
+          xM: +Math.min(...xs).toFixed(2),
+          yM: +Math.min(...ys).toFixed(2),
+          wM: Math.max(0.1, +(Math.max(...xs) - Math.min(...xs)).toFixed(2)),
+          dM: Math.max(0.1, +(Math.max(...ys) - Math.min(...ys)).toFixed(2)),
+        };
+      });
 
       // same houseId-then-name match as rooms.upsertFromScan, so re-running
       // an import for the same house+name updates in place
@@ -701,68 +729,124 @@ export const inboxRouter = createRouter({
         openings: [] as RoomGeometry["openings"],
       };
       const areaRows = await db.select().from(areas);
-      const { roomId, created } = await db.transaction(async (tx) => {
-      let roomId: number;
-      if (match) {
-        await tx.update(rooms).set(values).where(eq(rooms.id, match.id));
-        roomId = match.id;
-      } else {
-        const [{ id }] = await tx.insert(rooms).values(values).$returningId();
-        roomId = id;
-      }
+      const today = localDate(new Date());
+      const counts = await db.transaction(async (tx) => {
+        let roomId: number;
+        if (match) {
+          await tx.update(rooms).set(values).where(eq(rooms.id, match.id));
+          roomId = match.id;
+        } else {
+          const [{ id }] = await tx.insert(rooms).values(values).$returningId();
+          roomId = id;
+        }
 
-      const areaBySlug = new Map(areaRows.map((a) => [a.slug, a.id]));
-      const nameCounts: Record<string, number> = {};
-      let created = 0;
-      for (const poly of furniturePolys) {
-        const meta = FURNITURE_KIND_MAP[poly.kind] ?? { topic: "furniture", label: poly.kind || "Item" };
-        const areaId = areaBySlug.get(meta.topic);
-        if (!areaId) continue;
-        nameCounts[meta.label] = (nameCounts[meta.label] ?? 0) + 1;
-        const n = nameCounts[meta.label];
-        const name = n > 1 ? `${meta.label} ${n}` : meta.label;
+        // A rescan is a new version of the same room: Things a scan put here
+        // before are matched by scan_kind and moved, never inserted again.
+        const roomThings = match ? await tx.select().from(items).where(eq(items.roomId, match.id)) : [];
+        const active = roomThings.filter((t) => t.status === "active" && t.verificationStatus !== "rejected");
+        const byId = new Map(active.map((t) => [t.id, t]));
+        const { matched, unmatchedPolys, missingItemIds } = matchScanItems(
+          active.map((t) => ({ id: t.id, name: t.name, scanKind: t.attributes?.scan_kind != null ? String(t.attributes.scan_kind) : null, pos: t.pos ?? null })),
+          polys,
+        );
 
-        const xs = poly.ring.map((p) => p[0]);
-        const ys = poly.ring.map((p) => p[1]);
-        const xM = +Math.min(...xs).toFixed(2);
-        const yM = +Math.min(...ys).toFixed(2);
-        const wM = +(Math.max(...xs) - Math.min(...xs)).toFixed(2);
-        const dM = +(Math.max(...ys) - Math.min(...ys)).toFixed(2);
+        let moved = 0;
+        for (const m of matched) {
+          const t = byId.get(m.itemId)!;
+          const meta = scanMeta(m.poly.kind);
+          const old = t.pos!;
+          const hM = meta.hM ?? old.hM;
+          const pos: ItemPos = {
+            ...old,
+            xM: m.poly.xM,
+            yM: m.poly.yM,
+            wM: m.poly.wM,
+            dM: m.poly.dM,
+            ...(hM != null ? { hM } : {}),
+          };
+          const rest = { ...(t.attributes ?? {}) };
+          delete rest["scan.missing_at"];
+          // a legacy scan Thing (matched by name) learns its kind, so a later
+          // rename cannot lose the match
+          const attributes = { ...rest, scan_kind: m.poly.kind };
+          await tx.update(items).set({ pos, attributes }).where(eq(items.id, t.id));
+          if (m.movedM > 0.05) {
+            moved++;
+            await logEvent(
+              {
+                entityType: "item",
+                entityId: t.id,
+                action: "moved",
+                summary: `Moved by the ${roomName} rescan (${m.movedM.toFixed(2)} m)`,
+                actor: "system",
+              },
+              tx,
+            );
+          }
+        }
 
-        await tx.insert(items).values({
-          areaId,
-          houseId: targetHouseId,
-          roomId,
-          name,
-          status: "active",
-          verificationStatus: "detected",
-          pos: {
-            xM,
-            yM,
-            wM: Math.max(0.1, wM),
-            dM: Math.max(0.1, dM),
-            rotDeg: 0,
-            ...(meta.hM != null ? { hM: meta.hM } : {}),
+        // new Things continue each label's counter after the room's existing
+        // ones ("Chair 3" after "Chair" and "Chair 2"), so names stay unique
+        const areaBySlug = new Map(areaRows.map((a) => [a.slug, a.id]));
+        const nameCounts: Record<string, number> = {};
+        for (const t of roomThings) {
+          const m = /^(.*?)(?:\s+(\d+))?$/.exec(t.name.trim())!;
+          const label = m[1].toLowerCase();
+          nameCounts[label] = Math.max(nameCounts[label] ?? 0, m[2] ? Number(m[2]) : 1);
+        }
+        let created = 0;
+        for (const poly of unmatchedPolys) {
+          const meta = scanMeta(poly.kind);
+          const areaId = areaBySlug.get(meta.topic);
+          if (!areaId) continue;
+          const key = meta.label.toLowerCase();
+          const n = (nameCounts[key] = (nameCounts[key] ?? 0) + 1);
+          const name = n > 1 ? `${meta.label} ${n}` : meta.label;
+
+          await tx.insert(items).values({
+            areaId,
+            houseId: targetHouseId,
+            roomId,
+            name,
+            status: "active",
+            verificationStatus: "detected",
+            attributes: { scan_kind: poly.kind },
+            pos: {
+              xM: poly.xM,
+              yM: poly.yM,
+              wM: poly.wM,
+              dM: poly.dM,
+              rotDeg: 0,
+              ...(meta.hM != null ? { hM: meta.hM } : {}),
+            },
+            description: `Auto-detected from the ${roomName} floor scan (MappedIn export) - not yet reviewed.`,
+          });
+          created++;
+        }
+
+        // not detected this time: flag only; position, room and verification stay
+        for (const id of missingItemIds) {
+          const t = byId.get(id)!;
+          await tx.update(items).set({ attributes: { ...(t.attributes ?? {}), "scan.missing_at": today } }).where(eq(items.id, id));
+        }
+
+        await tx.update(captures).set({ status: "processed" }).where(eq(captures.id, input.captureId));
+        await logEvent(
+          {
+            entityType: "room",
+            entityId: roomId,
+            action: match ? "rescanned" : "created",
+            summary: match
+              ? `Room "${roomName}" rescanned: ${matched.length} matched (${moved} moved), ${created} new, ${missingItemIds.length} missing`
+              : `Room "${roomName}" created from inbox geojson scan (${created} item(s) detected)`,
+            actor: "system",
+            payload: { captureId: input.captureId, matched: matched.length, moved, created, missing: missingItemIds.length },
           },
-          description: `Auto-detected from the ${roomName} floor scan (MappedIn export) - not yet reviewed.`,
-        });
-        created++;
-      }
-
-      await tx.update(captures).set({ status: "processed" }).where(eq(captures.id, input.captureId));
-      await logEvent(
-        {
-          entityType: "room",
-          entityId: roomId,
-          action: match ? "rescanned" : "created",
-          summary: `Room "${roomName}" ${match ? "updated" : "created"} from inbox geojson scan (${created} item(s) detected)`,
-          actor: "system",
-        },
-        tx,
-      );
-      return { roomId, created };
+          tx,
+        );
+        return { roomId, created, matched: matched.length, moved, missing: missingItemIds.length };
       });
-      return { ok: true, roomId, created };
+      return { ok: true, ...counts };
     }),
 
   dismiss: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
