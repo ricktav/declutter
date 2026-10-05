@@ -248,6 +248,47 @@ actor HomeBaseAPI {
         return try await client.mutation("photos.attachToItem", input: Input(photoId: photoId, itemId: itemId), as: AttachPhotoResult.self)
     }
 
+    /// A Thing's Photos, newest first (whole Photos and cutouts).
+    func photosListForItem(itemId: Int) async throws -> [ItemPhoto] {
+        struct Input: Encodable { var itemId: Int }
+        return try await client.query("photos.listForItem", input: Input(itemId: itemId), as: [ItemPhoto].self)
+    }
+
+    /// Where a Thing is marked on Photos (scene Photos included), each with its Photo.
+    func pinsListForItem(itemId: Int) async throws -> [ItemPin] {
+        struct Input: Encodable { var itemId: Int }
+        return try await client.query("pins.listForItem", input: Input(itemId: itemId), as: [ItemPin].self)
+    }
+
+    /// The original (capture) behind a Photo, for cropping it again.
+    func photosSourcePhoto(photoId: Int) async throws -> SourcePhotoResult {
+        struct Input: Encodable { var photoId: Int }
+        return try await client.query("photos.sourcePhoto", input: Input(photoId: photoId), as: SourcePhotoResult.self)
+    }
+
+    /// Crops a cutout again from its original with a new frame; the Photo keeps its id.
+    func photosRecrop(photoId: Int, box: PhotoBox) async throws -> RecropResult {
+        struct Input: Encodable {
+            var photoId: Int
+            var box: PhotoBox
+        }
+        return try await client.mutation("photos.recrop", input: Input(photoId: photoId, box: box), as: RecropResult.self)
+    }
+
+    /// Crops a new cutout for a Thing out of a Photo (its original when it has one).
+    func photosCreateCutout(itemId: Int, sourcePhotoId: Int, box: PhotoBox) async throws -> CreateCutoutResult {
+        struct Input: Encodable {
+            var itemId: Int
+            var sourcePhotoId: Int
+            var box: PhotoBox
+        }
+        return try await client.mutation(
+            "photos.createCutout",
+            input: Input(itemId: itemId, sourcePhotoId: sourcePhotoId, box: box),
+            as: CreateCutoutResult.self
+        )
+    }
+
     func uploadInboxPhoto(jpeg: Data, fileName: String) async throws -> UploadedFile {
         try await client.upload(file: jpeg, fileName: fileName, mimeType: "image/jpeg", scope: "inbox")
     }

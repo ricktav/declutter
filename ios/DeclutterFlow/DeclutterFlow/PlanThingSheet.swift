@@ -25,6 +25,8 @@ struct PlanThingSheet: View {
     @State private var error: String?
     @State private var showCamera = false
     @State private var snapNote: String?
+    /// Bumped by the cover's zoom viewer: the Photos strip opens Crop on the cover.
+    @State private var cropCover = 0
 
     init(item: RoomItem, ownerRoomName: String? = nil, onChanged: @escaping () async -> Void, onMove: @escaping () -> Void) {
         self.item = item
@@ -59,10 +61,13 @@ struct PlanThingSheet: View {
         FlowSheet(title: savedName, onClose: { dismiss() }) {
             VStack(alignment: .leading, spacing: 12) {
                 if let key = flowItem?.imageKey {
-                    RemotePhoto(storageKey: key, api: session.api)
+                    RemotePhoto(storageKey: key, api: session.api, onCrop: { cropCover += 1 })
                         .frame(maxWidth: .infinity)
                         .frame(height: 140)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                ThingPhotosStrip(itemId: item.id, itemName: savedName, coverKey: flowItem?.imageKey, cropCoverRequest: cropCover) {
+                    await onChanged()
                 }
 
                 VStack(alignment: .leading, spacing: 8) {

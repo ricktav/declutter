@@ -35,6 +35,22 @@ enum PhotoLoading {
             return nil
         }
     }
+
+    /// Loads an image by the URL the server handed out (e.g. `photos.sourcePhoto`), cached
+    /// by that URL.
+    static func load(url relativeOrAbsolute: String, api: HomeBaseAPI) async -> UIImage? {
+        let cacheKey = "url:" + relativeOrAbsolute
+        if let cached = PhotoCache.shared.image(for: cacheKey) { return cached }
+        do {
+            guard let url = await api.resolvePhotoURL(relativeOrAbsolute) else { return nil }
+            let data = try await api.download(url)
+            guard let ui = UIImage(data: data) else { return nil }
+            PhotoCache.shared.store(ui, for: cacheKey)
+            return ui
+        } catch {
+            return nil
+        }
+    }
 }
 
 /// Opens the loaded image in `PhotoViewer` on a tap. Left off where a tap already means
@@ -42,16 +58,29 @@ enum PhotoLoading {
 private struct OpensViewer: ViewModifier {
     let image: UIImage?
     let enabled: Bool
+    /// Shows "Crop" in the viewer; called once the viewer has closed.
+    var onCrop: (() -> Void)? = nil
     @State private var open = false
+    @State private var cropAfterClose = false
 
     func body(content: Content) -> some View {
         if enabled {
             content
                 .contentShape(Rectangle())
                 .onTapGesture { if image != nil { open = true } }
-                .fullScreenCover(isPresented: $open) {
+                .fullScreenCover(isPresented: $open, onDismiss: {
+                    // A full-screen cover can only open once this one is gone.
+                    if cropAfterClose {
+                        cropAfterClose = false
+                        onCrop?()
+                    }
+                }) {
                     if let image {
-                        PhotoViewer(image: image, onClose: { open = false })
+                        PhotoViewer(
+                            image: image,
+                            onClose: { open = false },
+                            onCrop: onCrop.map { _ in { cropAfterClose = true; open = false } }
+                        )
                     }
                 }
         } else {
@@ -66,6 +95,8 @@ struct RemotePhoto: View {
     var cornerRadius: CGFloat = 12
     /// Tap opens the full-screen viewer.
     var zoomable: Bool = true
+    /// Set when this is one of a Thing's Photos: the viewer then offers "Crop".
+    var onCrop: (() -> Void)? = nil
 
     @State private var image: UIImage?
     @State private var failed = false
@@ -91,7 +122,7 @@ struct RemotePhoto: View {
         }
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .modifier(OpensViewer(image: image, enabled: zoomable))
+        .modifier(OpensViewer(image: image, enabled: zoomable, onCrop: onCrop))
         .task(id: storageKey) { await load() }
     }
 

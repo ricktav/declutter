@@ -7,6 +7,8 @@ import UIKit
 struct PhotoViewer: View {
     let image: UIImage
     var onClose: () -> Void
+    /// Set when the Photo is one of a Thing's: shows "Crop" (the caller closes the viewer).
+    var onCrop: (() -> Void)? = nil
 
     /// 0…1 while a swipe-down is in progress; fades the black background.
     @State private var dragProgress: CGFloat = 0
@@ -29,6 +31,20 @@ struct PhotoViewer: View {
             .padding(16)
             .opacity(1 - dragProgress)
             .accessibilityLabel("Close the Photo")
+            if let onCrop {
+                Button(action: onCrop) {
+                    Label("Crop", systemImage: "crop")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(FlowTheme.ink)
+                        .background(FlowTheme.lime, in: Capsule())
+                }
+                .padding(16)
+                .opacity(1 - dragProgress)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .accessibilityLabel("Crop the Photo")
+            }
         }
         .statusBarHidden()
         .presentationBackground(.clear)

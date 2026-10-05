@@ -525,3 +525,101 @@ enum SellKeys {
     static let soldAt = "sell.sold_at"
     static let donateTo = "donate.to"
 }
+
+/// A `photos` row as `photos.listForItem` returns it (and `pins.listForItem` joins on).
+/// `cropBox` is set on a cutout: the frame it was cropped with, in percent of its original
+/// (the capture `sourceCaptureId` names). A whole Photo has `cropBox` null.
+struct ItemPhoto: Codable, Identifiable, Hashable {
+    var id: Int
+    var itemId: Int?
+    var areaId: Int?
+    var roomId: Int?
+    var title: String?
+    var storageKey: String
+    var mimeType: String?
+    var size: Int?
+    var sourceCaptureId: Int?
+    var cropBox: PhotoBox?
+    var createdAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, itemId, areaId, roomId, title, storageKey, mimeType, size, sourceCaptureId, cropBox, createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        itemId = try c.decodeIfPresent(Int.self, forKey: .itemId)
+        areaId = try c.decodeIfPresent(Int.self, forKey: .areaId)
+        roomId = try c.decodeIfPresent(Int.self, forKey: .roomId)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        storageKey = try c.decode(String.self, forKey: .storageKey)
+        mimeType = try c.decodeIfPresent(String.self, forKey: .mimeType)
+        size = try? c.decodeIfPresent(Int.self, forKey: .size)
+        sourceCaptureId = try c.decodeIfPresent(Int.self, forKey: .sourceCaptureId)
+        // A malformed frame reads as "no frame", never as a broken Photo.
+        if let b = try? c.decodeIfPresent(PhotoBox.self, forKey: .cropBox), b.isUsable {
+            cropBox = b
+        } else {
+            cropBox = nil
+        }
+        createdAt = try? c.decodeIfPresent(Date.self, forKey: .createdAt)
+    }
+
+    var isCutout: Bool { cropBox != nil }
+}
+
+/// `photos.sourcePhoto`: the original a cutout was cropped from (its capture), or
+/// `available: false` when the Photo has none or the file is gone.
+struct SourcePhotoResult: Codable {
+    var available: Bool
+    var url: String?
+    var cropBox: PhotoBox?
+
+    enum CodingKeys: String, CodingKey { case available, url, cropBox }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = try c.decode(Bool.self, forKey: .available)
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        if let b = try? c.decodeIfPresent(PhotoBox.self, forKey: .cropBox), b.isUsable {
+            cropBox = b
+        } else {
+            cropBox = nil
+        }
+    }
+}
+
+/// `photos.recrop`: the cutout's new file.
+struct RecropResult: Codable {
+    var ok: Bool
+    var storageKey: String
+}
+
+/// `photos.createCutout`. `created: false` means the Thing already had a cutout from the
+/// same original; `id` is that Photo, left as it was.
+struct CreateCutoutResult: Codable {
+    var id: Int
+    var storageKey: String
+    var created: Bool
+}
+
+/// A `pins.listForItem` row: where the Thing is marked on a Photo, with that Photo.
+struct ItemPin: Codable, Identifiable, Hashable {
+    var id: Int
+    var photoId: Int
+    var xPct: Double
+    var yPct: Double
+    var wPct: Double?
+    var hPct: Double?
+    var label: String?
+    var itemId: Int?
+    var photo: ItemPhoto?
+
+    /// The pin as a frame (centre + size), when it has a size.
+    var box: PhotoBox? {
+        guard let wPct, let hPct else { return nil }
+        let b = PhotoBox(xPct: xPct, yPct: yPct, wPct: wPct, hPct: hPct)
+        return b.isUsable ? b : nil
+    }
+}

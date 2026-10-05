@@ -199,6 +199,8 @@ private struct ThingSheet: View {
     @State private var deciding = false
     @State private var showRoom = false
     @State private var showScan = false
+    /// Bumped by the cover's zoom viewer: the Photos strip opens Crop on the cover.
+    @State private var cropCover = 0
 
     private var live: FlowItem {
         session.items.first(where: { $0.id == item.id }) ?? item
@@ -215,8 +217,11 @@ private struct ThingSheet: View {
         FlowSheet(title: live.name, onClose: { dismiss() }) {
             VStack(alignment: .leading, spacing: 12) {
                 if live.imageKey != nil {
-                    RemotePhoto(storageKey: live.imageKey, api: session.api)
+                    RemotePhoto(storageKey: live.imageKey, api: session.api, onCrop: { cropCover += 1 })
                         .aspectRatio(4 / 3, contentMode: .fit)
+                }
+                ThingPhotosStrip(itemId: live.id, itemName: live.name, coverKey: live.imageKey, cropCoverRequest: cropCover) {
+                    await session.refresh()
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where")

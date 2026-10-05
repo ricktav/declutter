@@ -36,6 +36,8 @@
 		A0000000000000000000026F /* FloorPlanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000007B /* FloorPlanView.swift */; };
 		A00000000000000000000270 /* RoomDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000007C /* RoomDetailView.swift */; };
 		A00000000000000000000290 /* PlanThingSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000090 /* PlanThingSheet.swift */; };
+		A00000000000000000000292 /* ThingPhotosStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000092 /* ThingPhotosStrip.swift */; };
+		A00000000000000000000291 /* PhotoCropScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000091 /* PhotoCropScreen.swift */; };
 		A00000000000000000000280 /* RoomPlan.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000080 /* RoomPlan.framework */; };
 		A00000000000000000000281 /* ARKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000081 /* ARKit.framework */; };
 		A00000000000000000000282 /* SceneKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000082 /* SceneKit.framework */; };
@@ -73,6 +75,8 @@
 		A0000000000000000000007B /* FloorPlanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorPlanView.swift; sourceTree = "<group>"; };
 		A0000000000000000000007C /* RoomDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomDetailView.swift; sourceTree = "<group>"; };
 		A00000000000000000000090 /* PlanThingSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanThingSheet.swift; sourceTree = "<group>"; };
+		A00000000000000000000092 /* ThingPhotosStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThingPhotosStrip.swift; sourceTree = "<group>"; };
+		A00000000000000000000091 /* PhotoCropScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCropScreen.swift; sourceTree = "<group>"; };
 		A00000000000000000000080 /* RoomPlan.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = RoomPlan.framework; path = System/Library/Frameworks/RoomPlan.framework; sourceTree = SDKROOT; };
 		A00000000000000000000081 /* ARKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ARKit.framework; path = System/Library/Frameworks/ARKit.framework; sourceTree = SDKROOT; };
 		A00000000000000000000082 /* SceneKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SceneKit.framework; path = System/Library/Frameworks/SceneKit.framework; sourceTree = SDKROOT; };
@@ -140,6 +144,8 @@
 				A0000000000000000000007B /* FloorPlanView.swift */,
 				A0000000000000000000007C /* RoomDetailView.swift */,
 				A00000000000000000000090 /* PlanThingSheet.swift */,
+				A00000000000000000000092 /* ThingPhotosStrip.swift */,
+				A00000000000000000000091 /* PhotoCropScreen.swift */,
 				A0000000000000000000000A /* Assets.xcassets */,
 				A0000000000000000000000B /* Info.plist */,
 			);
@@ -253,6 +259,8 @@
 				A0000000000000000000026F /* FloorPlanView.swift in Sources */,
 				A00000000000000000000270 /* RoomDetailView.swift in Sources */,
 				A00000000000000000000290 /* PlanThingSheet.swift in Sources */,
+				A00000000000000000000292 /* ThingPhotosStrip.swift in Sources */,
+				A00000000000000000000291 /* PhotoCropScreen.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
