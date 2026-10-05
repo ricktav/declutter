@@ -48,20 +48,22 @@ enum SortSkipStore {
     }
 
     /// Moves `id` to the end of the stored list; built from the stored list, so skips that are
-    /// not visible now (another filter, not loaded yet) keep their place.
+    /// not visible now (another filter, not loaded yet) keep their place. Keeps the last 300.
     static func skip(_ id: String) -> [String] {
         var ids = load().filter { $0 != id }
         ids.append(id)
+        ids = Array(ids.suffix(300))
         save(ids)
         return ids
     }
 
-    /// Drops capture cards ("c<id>") whose capture is no longer pending; other cards stay.
-    static func prune(pendingCaptureIds: Set<Int>) -> [String] {
+    /// Drops capture cards ("c<id>") seen leaving the queue (listed with a status other than
+    /// pending). A capture missing from the loaded window is kept; other cards stay.
+    static func prune(handledCaptureIds: Set<Int>) -> [String] {
         let ids = load()
         let kept = ids.filter { id in
             guard id.hasPrefix("c"), let n = Int(id.dropFirst()) else { return true }
-            return pendingCaptureIds.contains(n)
+            return !handledCaptureIds.contains(n)
         }
         if kept != ids { save(kept) }
         return kept
@@ -152,7 +154,7 @@ struct SortView: View {
             }
         }
         .onAppear { prune() }
-        .onChange(of: session.pendingCaptures.map(\.id)) { _, _ in prune() }
+        .onChange(of: session.captures.filter { $0.status != .pending }.map(\.id)) { _, _ in prune() }
         .onChange(of: session.ready) { _, _ in prune() }
     }
 
@@ -210,7 +212,7 @@ struct SortView: View {
 
     private func prune() {
         guard session.ready else { return }
-        skipped = SortSkipStore.prune(pendingCaptureIds: Set(session.pendingCaptures.map(\.id)))
+        skipped = SortSkipStore.prune(handledCaptureIds: Set(session.captures.filter { $0.status != .pending }.map(\.id)))
     }
 }
 
@@ -246,6 +248,20 @@ private struct DraftRow: Identifiable {
     var checked: Bool
     var attributes: [String: String]?
     var box: PhotoBox? = nil
+    /// The frame's number: its place among the suggestion's framed objects, so it stays the same
+    /// whatever is hidden.
+    var frameNumber: Int? = nil
+}
+
+/// One frame to draw on the capture Photo.
+private struct FrameSpec: Identifiable {
+    let id: String
+    let number: Int
+    let box: PhotoBox
+    let name: String
+    /// nil for an object already in the inventory (no row to toggle).
+    let rowId: UUID?
+    let checked: Bool
 }
 
 private struct CaptureCard: View {
@@ -263,6 +279,8 @@ private struct CaptureCard: View {
     @State private var asking = false
     /// The row whose frame was tapped last.
     @State private var highlighted: UUID?
+    /// Leave out frames of rows that are unticked or already in the inventory.
+    @AppStorage("flow.sort.hideHandled") private var hideHandled = true
 
     private var suggestion: TriageSuggestion? { FlowLogic.usableSuggestion(capture) }
     private var isGeo: Bool { FlowLogic.isFloorScan(capture) }
@@ -270,10 +288,42 @@ private struct CaptureCard: View {
         suggestion?.items.filter { !$0.isNewItem && $0.matchedItemName != nil } ?? []
     }
     /// Frame number per row id, 1-based, in row order; rows without a frame have none.
-    private var frameNumbers: [UUID: Int] {
-        var out: [UUID: Int] = [:]
-        for row in rows where row.box != nil { out[row.id] = out.count + 1 }
+    /// Frame number per suggestion item index (1-based, in suggestion order, framed items only).
+    private var frameNumbering: [Int: Int] {
+        var out: [Int: Int] = [:]
+        for (i, item) in (suggestion?.items ?? []).enumerated() where item.box != nil {
+            out[i] = out.count + 1
+        }
         return out
+    }
+
+    /// Names of objects already in the inventory, with their frame number when they have one.
+    private var matchedLabels: [String] {
+        let numbers = frameNumbering
+        return (suggestion?.items ?? []).enumerated().compactMap { i, item in
+            guard !item.isNewItem, let name = item.matchedItemName else { return nil }
+            return numbers[i].map { "\(name) (\($0))" } ?? name
+        }
+    }
+
+    private var hasFrames: Bool { suggestion?.items.contains { $0.box != nil } ?? false }
+
+    /// Frames to draw, largest first so a small frame inside a big one stays on top.
+    private var frameSpecs: [FrameSpec] {
+        var out: [FrameSpec] = []
+        for row in rows {
+            guard let box = row.box, let n = row.frameNumber else { continue }
+            if hideHandled && !row.checked { continue }
+            out.append(FrameSpec(id: "r\(row.id)", number: n, box: box, name: row.name, rowId: row.id, checked: row.checked))
+        }
+        if !hideHandled {
+            let numbers = frameNumbering
+            for (i, item) in (suggestion?.items ?? []).enumerated() where !item.isNewItem && item.matchedItemName != nil {
+                guard let box = item.box, let n = numbers[i] else { continue }
+                out.append(FrameSpec(id: "m\(i)", number: n, box: box, name: item.matchedItemName ?? item.itemName, rowId: nil, checked: false))
+            }
+        }
+        return out.sorted { $0.box.wPct * $0.box.hPct > $1.box.wPct * $1.box.hPct }
     }
 
     private var chosen: [DraftRow] {
@@ -283,6 +333,13 @@ private struct CaptureCard: View {
     var body: some View {
         CardShell(question: isGeo ? "A floor scan" : "What is it?", onSkip: onSkip) {
             preview
+            if !isGeo, hasFrames {
+                Toggle("Hide handled", isOn: $hideHandled)
+                    .font(.system(size: 12, design: .rounded))
+                    .foregroundStyle(FlowTheme.muted)
+                    .tint(FlowTheme.moss)
+                    .controlSize(.mini)
+            }
             if isGeo {
                 Text("Floor scans are imported in the Workbench inbox. This Lens stays on Things you can hold.")
                     .font(.system(size: 13))
@@ -312,13 +369,13 @@ private struct CaptureCard: View {
                     .disabled(asking)
                 }
                 if !matched.isEmpty {
-                    Text("Already in the inventory: \(matched.compactMap(\.matchedItemName).joined(separator: ", "))")
+                    Text("Already in the inventory: \(matchedLabels.joined(separator: ", "))")
                         .font(.system(size: 12))
                         .foregroundStyle(FlowTheme.muted)
                 }
                 ForEach($rows) { $row in
                     HStack(alignment: .top, spacing: 8) {
-                        if let n = frameNumbers[row.id] {
+                        if let n = row.frameNumber {
                             FrameBadge(number: n, on: row.checked)
                                 .padding(.top, 6)
                         }
@@ -450,35 +507,38 @@ private struct CaptureCard: View {
         }
     }
 
-    /// One frame per row with a box, at the same place on the image at any size. A tap toggles
-    /// the row and highlights it.
+    /// The frames, at the same place on the image at any size. Only a frame's border (16 pt
+    /// wide) and its number take a tap, which toggles and highlights the row; a tap inside the
+    /// frame reaches the Photo and opens the viewer.
     private func frames(in size: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
-            ForEach(rows) { row in
-                if let box = row.box, let n = frameNumbers[row.id] {
-                    let r = box.rect(in: size)
-                    let lit = highlighted == row.id
-                    Button {
-                        toggle(row.id)
-                    } label: {
-                        ZStack(alignment: .topLeading) {
-                            Rectangle()
-                                .strokeBorder(
-                                    row.checked ? FlowTheme.lime : Color.white.opacity(0.85),
-                                    style: StrokeStyle(lineWidth: lit ? 3 : 2, dash: row.checked ? [] : [5, 3])
-                                )
-                                .background(lit ? FlowTheme.lime.opacity(0.15) : Color.clear)
-                                .contentShape(Rectangle())
-                            FrameBadge(number: n, on: row.checked)
-                                .offset(x: -2, y: -2)
-                        }
-                        .shadow(color: .black.opacity(0.35), radius: 1)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: max(r.width, 22), height: max(r.height, 22))
-                    .position(x: r.midX, y: r.midY)
-                    .accessibilityLabel("Frame \(n): \(row.name)")
+            ForEach(frameSpecs) { f in
+                let r = f.box.rect(in: size)
+                let lit = f.rowId != nil && highlighted == f.rowId
+                let w = max(r.width, 22)
+                let h = max(r.height, 22)
+                ZStack(alignment: .topLeading) {
+                    Rectangle()
+                        .strokeBorder(
+                            f.checked ? FlowTheme.lime : Color.white.opacity(0.85),
+                            style: StrokeStyle(lineWidth: lit ? 3 : 2, dash: f.checked ? [] : [5, 3])
+                        )
+                        .background(lit ? FlowTheme.lime.opacity(0.15) : Color.clear)
+                        .contentShape(Rectangle().stroke(lineWidth: 16))
+                        .onTapGesture { if let id = f.rowId { toggle(id) } }
+                    FrameBadge(number: f.number, on: f.checked)
+                        .offset(x: -2, y: -2)
+                        .contentShape(Rectangle())
+                        .onTapGesture { if let id = f.rowId { toggle(id) } }
                 }
+                .shadow(color: .black.opacity(0.35), radius: 1)
+                .allowsHitTesting(f.rowId != nil)
+                .frame(width: w, height: h)
+                .position(x: r.midX, y: r.midY)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Frame \(f.number): \(f.name)")
+                .accessibilityAddTraits(f.rowId != nil ? .isButton : [])
+                .accessibilityAction { if let id = f.rowId { toggle(id) } }
             }
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
@@ -503,15 +563,17 @@ private struct CaptureCard: View {
 
     private func seedRowsFromSuggestion() {
         guard let suggestion else { return }
-        rows = suggestion.items
-            .filter { $0.isNewItem || $0.matchedItemName == nil }
-            .map { s in
+        let numbers = frameNumbering
+        rows = suggestion.items.enumerated()
+            .filter { $0.element.isNewItem || $0.element.matchedItemName == nil }
+            .map { i, s in
                 DraftRow(
                     name: s.itemName,
                     areaId: session.areas.first(where: { $0.slug == s.areaSlug })?.id ?? session.areas.first?.id,
                     checked: true,
                     attributes: s.attributes,
-                    box: s.box
+                    box: s.box,
+                    frameNumber: numbers[i]
                 )
             }
     }

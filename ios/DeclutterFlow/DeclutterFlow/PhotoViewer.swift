@@ -163,12 +163,13 @@ final class ZoomScrollView: UIScrollView, UIScrollViewDelegate {
     }
 
     @objc private func handleDismissPan(_ g: UIPanGestureRecognizer) {
-        let dy = max(0, g.translation(in: self).y)
+        // Measured in the superview: this view itself moves with the drag.
+        let dy = max(0, g.translation(in: superview).y)
         switch g.state {
         case .changed:
             transform = CGAffineTransform(translationX: 0, y: dy)
             onDrag?(min(dy / 300, 1))
-        case .ended where dy > 120 || g.velocity(in: self).y > 900:
+        case .ended where dy > 120 || g.velocity(in: superview).y > 900:
             onDismiss?()
         case .ended, .cancelled, .failed:
             UIView.animate(withDuration: 0.2) { self.transform = .identity }
