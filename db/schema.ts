@@ -356,6 +356,10 @@ export interface TriageSpottedItem {
   isNewItem: boolean;
   attributes?: Record<string, string>;
   confidence: "high" | "medium" | "low";
+  /** where the object is in the capture's photo, same percent convention as
+   * CropBox and pins.detect (centre + size); missing or null when the model
+   * gave none or an invalid one */
+  box?: CropBox | null;
 }
 
 export interface TriageSuggestion {

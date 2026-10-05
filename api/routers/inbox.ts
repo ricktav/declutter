@@ -5,7 +5,7 @@ import { eq, desc, isNull, and, inArray, sql } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type RoomGeometry } from "@db/schema";
+import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type CropBox, type RoomGeometry } from "@db/schema";
 import { parseGeojsonFloor } from "../lib/geojsonFloor";
 import { type ScanPoly } from "../lib/scanMerge";
 import { mergeScanObjects, scanMeta, localDate } from "../lib/scanObjects";
@@ -14,12 +14,12 @@ import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
-import { readFileBytes, copyStoredFile, deleteStoredFile, withNewFile } from "../lib/filestore";
+import { readFileBytes, copyStoredFile, deleteStoredFile, putFile, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 import { setItemLocation } from "../lib/location";
-import { coverPhotos, ensureLocationPhotoForCapture, ensurePinForCutout } from "../lib/photos";
+import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -53,6 +53,37 @@ function nameScore(a: string, b: string): number {
   return shared / Math.min(A.size, B.size);
 }
 
+/** A frame on the photo in percent of the image (centre + size), the
+ * CropBox / pins.detect convention: inside 0-100 and never zero-sized. */
+export const cropBoxSchema = z.object({
+  xPct: z.number().min(0).max(100),
+  yPct: z.number().min(0).max(100),
+  wPct: z.number().positive().max(100),
+  hPct: z.number().positive().max(100),
+});
+
+/** a spotted object's box as the model gave it, or null when it gave none or
+ * an invalid one: one bad box costs that frame, never the whole triage */
+export function cleanBox(v: unknown): CropBox | null {
+  const r = cropBoxSchema.safeParse(v);
+  return r.success ? r.data : null;
+}
+
+// The model-facing box: plain numbers (strict structured outputs keep every
+// key required; bounds are in the descriptions), missing or invalid -> null.
+const triageBoxSchema = z.preprocess(
+  (v) => cleanBox(v),
+  z
+    .object({
+      xPct: z.number().describe("box CENTER, 0-100% of image width"),
+      yPct: z.number().describe("box CENTER, 0-100% of image height"),
+      wPct: z.number().describe("box width, 0-100% of image width"),
+      hPct: z.number().describe("box height, 0-100% of image height"),
+    })
+    .nullable()
+    .describe("tight bounding box around the object itself in the photo, or null when there is no photo or the object is not visible in it"),
+);
+
 const triageItemSchema = z.object({
   itemName: z.string().describe("short, specific name for this spotted object"),
   areaSlug: z.string().describe("slug of the best-matching area/topic for this object"),
@@ -60,6 +91,7 @@ const triageItemSchema = z.object({
   isNewItem: z.boolean(),
   attributes: z.record(z.string(), z.string()).describe("extracted attribute key/values, empty object if none obvious"),
   confidence: z.enum(["high", "medium", "low"]),
+  box: triageBoxSchema,
 });
 
 const triageSchema = z.object({
@@ -88,7 +120,7 @@ async function buildTriageContent(cap: CaptureRow): Promise<
     ...allItems.slice(0, 200).map((i) => `- ${i.id} — ${i.name}`),
   ].join("\n");
 
-  let textPrompt = `You are triaging a capture into a home inventory system.\n\n${context}\n\nCAPTURE (kind: ${cap.kind}):\n${cap.rawText ?? ""}\n${cap.url ? `URL: ${cap.url}` : ""}\n\nList every distinct physical object worth inventorying that's visible - not just the single most prominent one. For each: which area/topic does it belong to? Is it an existing item (give its id) or new? Extract obvious attributes (e.g. for computers: cpu, ram, storage, os, role). Also suggest the floor/room this was likely taken in if you can tell (e.g. from an existing matched item's known location, or visible context), otherwise leave them null - don't guess at a location with nothing to go on.`;
+  let textPrompt = `You are triaging a capture into a home inventory system.\n\n${context}\n\nCAPTURE (kind: ${cap.kind}):\n${cap.rawText ?? ""}\n${cap.url ? `URL: ${cap.url}` : ""}\n\nList every distinct physical object worth inventorying that's visible - not just the single most prominent one. For each: which area/topic does it belong to? Is it an existing item (give its id) or new? Extract obvious attributes (e.g. for computers: cpu, ram, storage, os, role). When there is a photo, give each object a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height (box null when there is no photo). Also suggest the floor/room this was likely taken in if you can tell (e.g. from an existing matched item's known location, or visible context), otherwise leave them null - don't guess at a location with nothing to go on.`;
 
   const parts: Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }> = [
     { type: "text", text: textPrompt },
@@ -109,7 +141,12 @@ async function buildTriageContent(cap: CaptureRow): Promise<
  * matched item's own location when the model didn't already (everything in
  * one photo is almost certainly the same room, same logic as Detect
  * Objects uses for its location default). */
-export async function resolveSuggestion(object: z.infer<typeof triageSchema>, houseId: number | null): Promise<TriageSuggestion> {
+/** a triage answer as parsed; `box` may be missing (older answers) or invalid */
+type RawTriage = Omit<z.infer<typeof triageSchema>, "items"> & {
+  items: Array<Omit<z.infer<typeof triageItemSchema>, "box"> & { box?: unknown }>;
+};
+
+export async function resolveSuggestion(object: RawTriage, houseId: number | null): Promise<TriageSuggestion> {
   const db = getDb();
   const ids = [...new Set(object.items.map((i) => i.matchedItemId).filter((id): id is number => id != null))];
   const matched = ids.length ? await db.select().from(items).where(inArray(items.id, ids)) : [];
@@ -145,6 +182,7 @@ export async function resolveSuggestion(object: z.infer<typeof triageSchema>, ho
       isNewItem: it.isNewItem,
       attributes: it.attributes,
       confidence: it.confidence,
+      box: cleanBox(it.box),
     })),
   };
 }
@@ -163,7 +201,7 @@ const TRIAGE_JSON_SHAPE = `{
   "floor": string or null,
   "room": string or null,
   "items": [
-    { "itemName": string, "areaSlug": string, "matchedItemId": number or null, "isNewItem": boolean, "attributes": { "key": "value", ... }, "confidence": "high" | "medium" | "low" },
+    { "itemName": string, "areaSlug": string, "matchedItemId": number or null, "isNewItem": boolean, "attributes": { "key": "value", ... }, "confidence": "high" | "medium" | "low", "box": { "xPct": number, "yPct": number, "wPct": number, "hPct": number } or null },
     ...
   ]
 }`;
@@ -545,7 +583,9 @@ export const inboxRouter = createRouter({
    * new item for each one not already matched, sharing one location (it's
    * all the same photo, almost certainly the same room). An existing match
    * is just acknowledged, not re-photographed - the whole-scene photo isn't
-   * a useful addition to an item that's already catalogued. */
+   * a useful addition to an item that's already catalogued. An item with a
+   * triage `box` (image captures only) is pinned on the capture's location
+   * photo, and a new one gets the crop instead of the whole scene. */
   acceptMany: procedure
     .input(
       z.object({
@@ -559,6 +599,9 @@ export const inboxRouter = createRouter({
               itemId: z.number().nullable(),
               itemName: z.string().min(1),
               attributes: z.record(z.string(), z.string()).optional(),
+              /** the triage frame of this object: pins it on the capture's
+               * photo, and a new Thing gets the crop as its photo */
+              box: cropBoxSchema.nullable().optional(),
             }),
           )
           .min(1),
@@ -574,6 +617,12 @@ export const inboxRouter = createRouter({
           if (!cap) throw new Error("capture not found");
 
           let created = 0;
+          // boxes only mean something on an image capture's own photo
+          const framed = cap.kind === "image" && cap.storageKey != null;
+          let locationPhotoId: number | null = null;
+          const locationPhoto = async () =>
+            (locationPhotoId ??= (await ensureLocationPhotoInTx(tx, cap.id, input.roomId, copies)).photoId);
+          let capBytes: Uint8Array | null = null;
           for (const it of input.items) {
             let itemId = it.itemId;
             if (!itemId) {
@@ -597,7 +646,36 @@ export const inboxRouter = createRouter({
                 summary: `Item "${it.itemName}" created from inbox capture`,
               }, tx);
 
-              if (cap.rawText || cap.url || cap.storageKey) {
+              if (framed && it.box) {
+                // the crop is the Thing's photo (like inbox.fileObject); the
+                // whole scene stays reachable through the pin on the location photo
+                capBytes ??= await readFileBytes(cap.storageKey!);
+                const cropped = await cropPercent(capBytes, it.box);
+                const saved = await putFile({
+                  bytes: new Uint8Array(cropped),
+                  fileName: `items/${itemId}/cutout-${Date.now()}.jpg`,
+                  contentType: "image/jpeg",
+                });
+                copies.push(saved.key);
+                await tx.insert(photos).values({
+                  itemId,
+                  areaId: it.areaId,
+                  title: `Cutout: ${it.itemName}`,
+                  storageKey: saved.key,
+                  mimeType: "image/jpeg",
+                  size: saved.size,
+                  sourceCaptureId: cap.id,
+                  cropBox: it.box,
+                });
+                await logEvent({
+                  entityType: "item",
+                  entityId: itemId,
+                  action: "cutout-added",
+                  summary: `Cutout "${it.itemName}" added to item #${itemId} from capture #${cap.id}`,
+                  payload: { box: it.box },
+                }, tx);
+                await ensurePinForCutout(tx, { sourcePhotoId: await locationPhoto(), itemId, box: it.box, label: it.itemName });
+              } else if (cap.rawText || cap.url || cap.storageKey) {
                 // the item gets its own copy of the file: a capture and a
                 // photo/link must never share one storage key (deleting one
                 // would delete the other's bytes)
@@ -628,10 +706,23 @@ export const inboxRouter = createRouter({
                   });
                 }
               }
-            } else if (it.attributes && Object.keys(it.attributes).length) {
-              const existing = await tx.query.items.findFirst({ where: eq(items.id, itemId) });
-              const merged = { ...(existing?.attributes ?? {}), ...it.attributes };
-              await tx.update(items).set({ attributes: merged }).where(eq(items.id, itemId));
+            } else {
+              if (it.attributes && Object.keys(it.attributes).length) {
+                const existing = await tx.query.items.findFirst({ where: eq(items.id, itemId) });
+                const merged = { ...(existing?.attributes ?? {}), ...it.attributes };
+                await tx.update(items).set({ attributes: merged }).where(eq(items.id, itemId));
+              }
+              // an existing Thing is not re-photographed, but it is seen here
+              if (framed && it.box) {
+                const sourcePhotoId = await locationPhoto();
+                await ensurePinForCutout(tx, {
+                  sourcePhotoId,
+                  itemId,
+                  box: it.box,
+                  label: it.itemName,
+                  summary: `Pin "${it.itemName}" added to photo #${sourcePhotoId} for item #${itemId} from triage`,
+                });
+              }
             }
           }
 
