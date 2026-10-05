@@ -23,10 +23,28 @@ enum RoomPlanGeometry {
         return ScanPlanFrame.build(raw: raw, objects: objects, wallHeight: height)
     }
 
-    /// The contract's kind: the category's case name (`table`, `washerDryer`); a case a
-    /// newer RoomPlan adds passes through as its own description.
+    /// The contract's kind strings, spelled out so they never depend on reflection
+    /// metadata; a case a newer RoomPlan adds passes through as its own description.
     private static func kindName(_ category: CapturedRoom.Object.Category) -> String {
-        String(String(describing: category).prefix(32))
+        switch category {
+        case .storage: return "storage"
+        case .refrigerator: return "refrigerator"
+        case .stove: return "stove"
+        case .bed: return "bed"
+        case .sink: return "sink"
+        case .washerDryer: return "washerDryer"
+        case .toilet: return "toilet"
+        case .bathtub: return "bathtub"
+        case .oven: return "oven"
+        case .dishwasher: return "dishwasher"
+        case .table: return "table"
+        case .sofa: return "sofa"
+        case .chair: return "chair"
+        case .fireplace: return "fireplace"
+        case .television: return "television"
+        case .stairs: return "stairs"
+        @unknown default: return String(String(describing: category).prefix(32))
+        }
     }
 
     /// A surface's centre line on the floor, in metres. RoomPlan is ARKit's frame:
