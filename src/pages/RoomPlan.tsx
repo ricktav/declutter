@@ -85,6 +85,7 @@ export default function RoomPlanPage() {
 
   const selectItem = (itemId: number) => {
     setSelectedId(itemId);
+    cancelCameraPlace();
     setSelectedCameraId(null);
     setConfirmRemoveCamera(false);
     setAttaching(false);
@@ -225,10 +226,18 @@ export default function RoomPlanPage() {
   // the item view) asks suggestCamera for a start, draws it as a ghost, and
   // the next plan click stands the photo there with the suggested heading.
   const roomPhotos = trpc.photos.roomPhotos.useQuery({ roomId: id }, { enabled: Number.isFinite(id) });
-  const fullPhotos = useMemo(() => (roomPhotos.data ?? []).filter((p) => !p.isCutout), [roomPhotos.data]);
+  // a full image, or a Thing's own uncropped photo that stands somewhere
+  // (a Thing's photo is a poor pin canvas but still a viewpoint); never a crop
+  const fullPhotos = useMemo(
+    () => (roomPhotos.data ?? []).filter((p) => !p.isCrop && (!p.isCutout || p.camera != null)),
+    [roomPhotos.data],
+  );
   // a capture's location photo can be listed here while filed in no room, or
   // another: each row's own roomId says; a camera only stands in its room
-  const onPlanPhotos = useMemo(() => fullPhotos.filter((p) => p.camera != null && p.roomId === id), [fullPhotos, id]);
+  const onPlanPhotos = useMemo(
+    () => (roomPhotos.data ?? []).filter((p) => p.camera != null && p.roomId === id && !p.isCrop),
+    [roomPhotos.data, id],
+  );
   const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const [confirmRemoveCamera, setConfirmRemoveCamera] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);

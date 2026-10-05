@@ -28,7 +28,7 @@ export interface Placement {
   parentName: string | null;
   /** placed on the plan, and so in 3D: roomId and pos are both set */
   onPlan: boolean;
-  /** confirmed pins only; roomId and isCutout are the pin's photo's (a camera stands only on a full photo with a room) */
+  /** confirmed pins only; roomId, isCutout and isCrop are the pin's photo's (a camera stands only on an uncropped photo with a room) */
   pins: Array<{
     pinId: number;
     photoId: number;
@@ -37,6 +37,8 @@ export interface Placement {
     camera: PhotoCamera | null;
     roomId: number | null;
     isCutout: boolean;
+    /** the photo is a crop (cropBox set); a crop never gets a camera */
+    isCrop: boolean;
   }>;
   /** photos with this itemId */
   photos: number;
@@ -68,6 +70,7 @@ export async function placementFor(db: Db, itemId: number): Promise<Placement> {
     camera: pin.camera ?? null,
     roomId: pin.roomId ?? null,
     isCutout: cropBox != null,
+    isCrop: cropBox != null,
   }));
   const pinnedIds = new Set(pins.map((p) => p.photoId));
   const [{ n: photoCount }] = await db.select({ n: count() }).from(photos).where(eq(photos.itemId, itemId));
@@ -103,8 +106,11 @@ export interface RoomPhoto {
    * cutout can belong to another room, or none; a camera only stands in this
    * room's frame */
   roomId: number | null;
-  /** a crop, or another Thing's own photo: a poor pin canvas (a crop never gets a camera) */
+  /** a crop, or another Thing's own photo: a poor pin canvas */
   isCutout: boolean;
+  /** a crop (cropBox set): never a camera. A Thing's own uncropped photo is
+   * a cutout but can stand on the plan, so markers test this, not isCutout. */
+  isCrop: boolean;
   camera: PhotoCamera | null;
   /** confirmed pins on the photo */
   pinCount: number;
@@ -116,12 +122,14 @@ export interface RoomPhoto {
  * that cutouts were cropped from), each with its camera. With forItemId, that Thing's own photos
  * are left out (the photos it could still be pinned in). A cutout is a poor
  * pin canvas and not a viewpoint, so full images rank first, then newest
- * first; the limit applies after that ordering. Shared by items.placement
- * and photos.roomPhotos. */
+ * first; the limit applies after that ordering. With withCameras, the
+ * room's uncropped Thing-owned photos that stand in it (camera set) are added
+ * too, ranked with the full images, so the plan draws every camera in the
+ * room. Shared by items.placement and photos.roomPhotos. */
 export async function roomPhotosFor(
   db: Db,
   roomId: number,
-  opts: { forItemId?: number; limit?: number } = {},
+  opts: { forItemId?: number; limit?: number; withCameras?: boolean } = {},
 ): Promise<RoomPhoto[]> {
   const others = await db
     .select({ id: items.id })
@@ -157,12 +165,20 @@ export async function roomPhotosFor(
         captureIds.length ? or(eq(photos.roomId, roomId), inArray(photos.sourceCaptureId, captureIds)) : eq(photos.roomId, roomId),
       ),
     );
-  const byId = new Map<number, (typeof itemless)[number] & { isCutout: boolean }>();
-  for (const p of [...itemless, ...cutouts]) {
-    if (!byId.has(p.id)) byId.set(p.id, { ...p, isCutout: p.cropBox != null || p.itemId != null });
+  const standing = opts.withCameras
+    ? await db
+        .select(cols)
+        .from(photos)
+        .where(and(eq(photos.roomId, roomId), isNotNull(photos.itemId), isNull(photos.cropBox), isNotNull(photos.camera)))
+    : [];
+  const byId = new Map<number, (typeof itemless)[number] & { isCutout: boolean; isCrop: boolean }>();
+  for (const p of [...itemless, ...cutouts, ...standing]) {
+    if (!byId.has(p.id)) byId.set(p.id, { ...p, isCutout: p.cropBox != null || p.itemId != null, isCrop: p.cropBox != null });
   }
+  // a viewpoint (a full image, or a Thing's uncropped photo with a camera) ranks first
+  const rank = (p: { isCutout: boolean; isCrop: boolean; camera: unknown }) => Number(p.isCutout && !(p.camera != null && !p.isCrop));
   const picked = [...byId.values()]
-    .sort((a, b) => Number(a.isCutout) - Number(b.isCutout) || +b.createdAt - +a.createdAt || b.id - a.id)
+    .sort((a, b) => rank(a) - rank(b) || +b.createdAt - +a.createdAt || b.id - a.id)
     .slice(0, opts.limit ?? ROOM_PHOTOS_MAX);
   if (!picked.length) return [];
 
@@ -184,6 +200,7 @@ export async function roomPhotosFor(
     itemName: p.itemId != null ? (nameBy.get(p.itemId) ?? null) : null,
     roomId: p.roomId ?? null,
     isCutout: p.isCutout,
+    isCrop: p.isCrop,
     camera: p.camera ?? null,
     pinCount: pinsBy.get(p.id) ?? 0,
   }));

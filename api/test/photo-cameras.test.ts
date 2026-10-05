@@ -128,6 +128,14 @@ describe("room changes reset the camera", () => {
     await api.photos.setCamera({ id: p, camera: cam });
     await api.photos.attachToItem({ photoId: p, itemId: kettle });
     expect(await cameraOf(p)).toEqual(cam);
+    // a Thing's own uncropped photo still stands on the plan: roomPhotos lists it, not as a crop
+    expect((await api.photos.roomPhotos({ roomId: keuken })).find((r) => r.photoId === p)).toMatchObject({
+      itemId: kettle,
+      roomId: keuken,
+      isCutout: true,
+      isCrop: false,
+      camera: cam,
+    });
     // a Thing in another room: the photo keeps its own room, and its camera
     const chest = await thing("Chest", { roomId: zolder });
     const q = await photo({ roomId: keuken });
@@ -195,10 +203,10 @@ describe("photos.roomPhotos", () => {
 
     const rows = await api.photos.roomPhotos({ roomId: keuken });
     expect(rows).toEqual([
-      { photoId: newer, title: "Newer", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, camera: null, pinCount: 2 },
-      { photoId: location, title: "Location photo", storageKey: expect.any(String), itemId: null, itemName: null, roomId: zolder, isCutout: false, camera: null, pinCount: 0 },
-      { photoId: older, title: "Older", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, camera: cam, pinCount: 0 },
-      { photoId: cut, title: "Kettle cut", storageKey: expect.any(String), itemId: kettle, itemName: "Kettle", roomId: null, isCutout: true, camera: null, pinCount: 0 },
+      { photoId: newer, title: "Newer", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, isCrop: false, camera: null, pinCount: 2 },
+      { photoId: location, title: "Location photo", storageKey: expect.any(String), itemId: null, itemName: null, roomId: zolder, isCutout: false, isCrop: false, camera: null, pinCount: 0 },
+      { photoId: older, title: "Older", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, isCrop: false, camera: cam, pinCount: 0 },
+      { photoId: cut, title: "Kettle cut", storageKey: expect.any(String), itemId: kettle, itemName: "Kettle", roomId: null, isCutout: true, isCrop: true, camera: null, pinCount: 0 },
     ]);
 
     // items.placement shares the query: same rows minus the Thing's own photos, plus hasPinForItem; pins carry camera
@@ -208,7 +216,7 @@ describe("photos.roomPhotos", () => {
       [older, cam, false],
     ]);
     expect(pl.pins).toEqual([
-      { pinId: expect.any(Number), photoId: newer, title: "Newer", label: "kettle", camera: null, roomId: keuken, isCutout: false },
+      { pinId: expect.any(Number), photoId: newer, title: "Newer", label: "kettle", camera: null, roomId: keuken, isCutout: false, isCrop: false },
     ]);
   });
 

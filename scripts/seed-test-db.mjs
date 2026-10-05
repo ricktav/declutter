@@ -74,7 +74,7 @@ await c.query("update items set pos = ? where id = ?", [JSON.stringify({ xM: 0.4
 await c.query("update items set pos = ? where id = ?", [JSON.stringify({ xM: 1.0, yM: 0.5, wM: 0.3, dM: 0.3, rotDeg: 0 }), toaster]);
 const overview = await jpeg(160, 140, 110);
 const keukenOverview = await ins("insert into photos (itemId, roomId, storageKey, mimeType, size, title) values (null, ?, ?, 'image/jpeg', ?, 'Keuken overview')", [keuken, overview.key, overview.size]);
-// it was taken near the bottom wall, looking up the room (+y) at the kettle wall
+// it was taken near the bottom wall, looking up the plan (heading 90 = -y) at the kettle wall
 await c.query("update photos set camera = ? where id = ?", [
   JSON.stringify({ xM: 1.6, yM: 3.8, headingDeg: 90, fovDeg: 60, heightM: 1.5 }),
   keukenOverview,

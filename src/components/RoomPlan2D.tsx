@@ -227,11 +227,16 @@ export function RoomPlan2D({
         next.yM = round2(clamp(camDrag.start.yM + (loc.y - camDrag.startLoc.y) / S, 0, depthM));
       } else {
         // screen y grows down the plan: a direction (dx, dy) is atan2(-dy, dx)
-        const a = (Math.atan2(-(loc.y - py(camDrag.start.yM)), loc.x - px(camDrag.start.xM)) * 180) / Math.PI;
+        const angleAt = (p: { x: number; y: number }) =>
+          (Math.atan2(-(p.y - py(camDrag.start.yM)), p.x - px(camDrag.start.xM)) * 180) / Math.PI;
+        const offOf = (deg: number) => Math.abs(((normDeg(deg - camDrag.start.headingDeg) + 180) % 360) - 180);
+        const a = angleAt(loc);
         if (e.shiftKey) {
-          // the handle drags an edge of the wedge: fov = twice the angle off the heading
-          const off = Math.abs(((normDeg(a - camDrag.start.headingDeg) + 180) % 360) - 180);
-          next.fovDeg = clamp(Math.round((2 * off) / 5) * 5, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
+          // the handle drags an edge of the wedge: the fov grows by twice the
+          // angle gained off the heading since the drag began, so a press
+          // without moving keeps the fov
+          const fov = camDrag.start.fovDeg + 2 * (offOf(a) - offOf(angleAt(camDrag.startLoc)));
+          next.fovDeg = clamp(Math.round(fov / 5) * 5, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
         } else {
           next.headingDeg = normDeg(Math.round(a));
         }
@@ -289,6 +294,18 @@ export function RoomPlan2D({
     onPosChange?.(drag.id, pos);
   };
 
+  /** The browser took the pointer away (a touch scroll, a system gesture):
+   * drop every drag without writing anything. */
+  const onDragCancel = () => {
+    cutStartRef.current = null;
+    setCutRect(null);
+    camDragRef.current = null;
+    setCamDraft(null);
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (drag) placeItemGroup(drag.id, drag.startPos);
+  };
+
   return (
     <div className="w-full flex items-center justify-center overflow-hidden rounded-lg border border-border bg-white" style={{ aspectRatio: "1 / 1" }}>
       <svg
@@ -300,6 +317,7 @@ export function RoomPlan2D({
         className="touch-none"
         onPointerMove={onDragMove}
         onPointerUp={onDragEnd}
+        onPointerCancel={onDragCancel}
       >
       {xTicks.map((x) => (
         <text

@@ -1021,7 +1021,7 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
                     <span className="text-[11px] text-violet-700" title="This photo stands on its room's plan as a camera">
                       · on the plan
                     </span>
-                  ) : pin.roomId != null && !pin.isCutout ? (
+                  ) : pin.roomId != null && !pin.isCrop ? (
                     <Link
                       to={`/rooms/${pin.roomId}?placePhoto=${pin.photoId}`}
                       className="text-[11px] text-primary hover:underline"

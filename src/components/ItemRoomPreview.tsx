@@ -52,7 +52,7 @@ export function ItemRoomPreview({
     () =>
       (roomPhotos.data ?? []).flatMap((p) =>
         // a capture's location photo filed in another room lists here too; its camera stands in that room
-        p.camera && !p.isCutout && p.roomId === roomId ? [{ id: p.photoId, title: p.title ?? "Photo", camera: p.camera }] : [],
+        p.camera && p.roomId === roomId && !p.isCrop ? [{ id: p.photoId, title: p.title ?? "Photo", camera: p.camera }] : [],
       ),
     [roomPhotos.data, roomId],
   );

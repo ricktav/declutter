@@ -122,7 +122,7 @@ export const photosRouter = createRouter({
       { bytes: new Uint8Array(cropped), fileName: `items/${photo.itemId ?? "photo"}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
       async (file) => {
         await db.transaction(async (tx) => {
-          await tx.update(photos).set({ storageKey: file.key, size: file.size, cropBox: input.box }).where(eq(photos.id, input.photoId));
+          await tx.update(photos).set({ storageKey: file.key, size: file.size, cropBox: input.box, camera: null }).where(eq(photos.id, input.photoId));
           await logEvent(
             {
               entityType: "photo",
@@ -262,10 +262,11 @@ export const photosRouter = createRouter({
     .input(z.object({ id: z.number(), camera: cameraInput.nullable() }))
     .mutation(({ input }) => setPhotoCamera(getDb(), input)),
 
-  /** A room's photos with their cameras: full photos first, newest first, max 60. */
+  /** A room's photos with their cameras: full photos first, newest first, max 60.
+   * Also a Thing's uncropped photos that stand in the room (camera set). */
   roomPhotos: procedure
     .input(z.object({ roomId: z.number() }))
-    .query(({ input }) => roomPhotosFor(getDb(), input.roomId, { limit: ROOM_PHOTOS_LIST_MAX })),
+    .query(({ input }) => roomPhotosFor(getDb(), input.roomId, { limit: ROOM_PHOTOS_LIST_MAX, withCameras: true })),
 
   /** A starting camera from the photo's pinned, placed Things (basis "pins"),
    * or the room's centre facing +x (basis "center"). Writes nothing. */

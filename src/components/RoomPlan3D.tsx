@@ -209,7 +209,17 @@ export function RoomPlan3D({
     const scene = sceneRef.current, camera = cameraRef.current, controls = controlsRef.current;
     if (!scene || !camera || !controls) return;
 
-    if (roomGroupRef.current) scene.remove(roomGroupRef.current);
+    if (roomGroupRef.current) {
+      // free the old room's GPU buffers before dropping it
+      roomGroupRef.current.traverse((o) => {
+        const m = o as THREE.Mesh;
+        m.geometry?.dispose();
+        const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else mat?.dispose();
+      });
+      scene.remove(roomGroupRef.current);
+    }
     const W = widthM, D = depthM, WH = wallHeightM ?? DEFAULT_WALL_HEIGHT;
     const roomGroup = new THREE.Group();
     roomGroup.userData = { widthM: W, depthM: D };
