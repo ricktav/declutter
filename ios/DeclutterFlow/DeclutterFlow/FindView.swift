@@ -104,7 +104,7 @@ struct FindView: View {
                                 open = it
                             } label: {
                                 HStack(spacing: 12) {
-                                    RemotePhoto(storageKey: it.imageKey, api: session.api, cornerRadius: 8)
+                                    RemotePhoto(storageKey: it.imageKey, api: session.api, cornerRadius: 8, zoomable: false)
                                         .frame(width: 56, height: 56)
                                     VStack(alignment: .leading, spacing: 2) {
                                         HStack {

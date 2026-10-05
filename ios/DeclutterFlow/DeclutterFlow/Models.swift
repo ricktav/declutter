@@ -208,6 +208,52 @@ struct TriageSpottedItem: Codable, Hashable {
     var isNewItem: Bool
     var attributes: [String: String]?
     var confidence: String?
+    /// Where the AI saw it on the Photo; nil when the model gave no frame.
+    var box: PhotoBox?
+
+    enum CodingKeys: String, CodingKey {
+        case itemName, areaSlug, matchedItemId, matchedItemName, isNewItem, attributes, confidence, box
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        itemName = try c.decode(String.self, forKey: .itemName)
+        areaSlug = try c.decode(String.self, forKey: .areaSlug)
+        matchedItemId = try c.decodeIfPresent(Int.self, forKey: .matchedItemId)
+        matchedItemName = try c.decodeIfPresent(String.self, forKey: .matchedItemName)
+        isNewItem = try c.decode(Bool.self, forKey: .isNewItem)
+        attributes = try c.decodeIfPresent([String: String].self, forKey: .attributes)
+        confidence = try c.decodeIfPresent(String.self, forKey: .confidence)
+        // A malformed frame drops the frame, never the suggestion.
+        if let b = try? c.decodeIfPresent(PhotoBox.self, forKey: .box), b.isUsable {
+            box = b
+        } else {
+            box = nil
+        }
+    }
+}
+
+/// A frame on a Photo: centre x/y and width/height in percent of the image (the `CropBox`
+/// convention of `pins.detect`).
+struct PhotoBox: Codable, Hashable {
+    var xPct: Double
+    var yPct: Double
+    var wPct: Double
+    var hPct: Double
+
+    /// The frame in a view of `size` that shows the whole image (aspect-fit, same aspect).
+    func rect(in size: CGSize) -> CGRect {
+        CGRect(
+            x: (xPct - wPct / 2) / 100 * size.width,
+            y: (yPct - hPct / 2) / 100 * size.height,
+            width: wPct / 100 * size.width,
+            height: hPct / 100 * size.height
+        )
+    }
+
+    var isUsable: Bool {
+        [xPct, yPct, wPct, hPct].allSatisfy { $0.isFinite } && wPct > 0 && hPct > 0
+    }
 }
 
 struct UploadedFile: Codable {
@@ -383,8 +429,10 @@ struct AcceptItemInput: Encodable {
     var itemId: Int?
     var itemName: String
     var attributes: [String: String]?
+    /// The frame this Thing came from; the server pins and crops it on the capture's Photo.
+    var box: PhotoBox? = nil
 
-    enum CodingKeys: String, CodingKey { case areaId, itemId, itemName, attributes }
+    enum CodingKeys: String, CodingKey { case areaId, itemId, itemName, attributes, box }
 
     /// The server requires `itemId` and accepts null (null = a new Thing). Synthesized
     /// Encodable would leave a nil out, which the server rejects as "Required".
@@ -394,6 +442,7 @@ struct AcceptItemInput: Encodable {
         try c.encode(itemId, forKey: .itemId)
         try c.encode(itemName, forKey: .itemName)
         try c.encodeIfPresent(attributes, forKey: .attributes)
+        try c.encodeIfPresent(box, forKey: .box)
     }
 }
 

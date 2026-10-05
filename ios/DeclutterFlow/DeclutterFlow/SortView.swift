@@ -35,10 +35,45 @@ private enum SortCard: Identifiable {
     }
 }
 
+/// Skipped Sort cards, per device, in the order they were skipped (`flow.sort.skipped`).
+enum SortSkipStore {
+    static let key = "flow.sort.skipped"
+
+    static func load() -> [String] {
+        UserDefaults.standard.stringArray(forKey: key) ?? []
+    }
+
+    static func save(_ ids: [String]) {
+        UserDefaults.standard.set(ids, forKey: key)
+    }
+
+    /// Moves `id` to the end of the stored list; built from the stored list, so skips that are
+    /// not visible now (another filter, not loaded yet) keep their place.
+    static func skip(_ id: String) -> [String] {
+        var ids = load().filter { $0 != id }
+        ids.append(id)
+        save(ids)
+        return ids
+    }
+
+    /// Drops capture cards ("c<id>") whose capture is no longer pending; other cards stay.
+    static func prune(pendingCaptureIds: Set<Int>) -> [String] {
+        let ids = load()
+        let kept = ids.filter { id in
+            guard id.hasPrefix("c"), let n = Int(id.dropFirst()) else { return true }
+            return pendingCaptureIds.contains(n)
+        }
+        if kept != ids { save(kept) }
+        return kept
+    }
+}
+
 struct SortView: View {
     @EnvironmentObject private var session: FlowSession
     @State private var filter: SortFilter = .all
-    @State private var skipped: [String] = []
+    @State private var skipped: [String] = SortSkipStore.load()
+    /// A card picked from the strip; shown first until it is filed or skipped.
+    @State private var picked: String?
 
     private var cards: [SortCard] {
         let captures = session.pendingCaptures
@@ -55,7 +90,22 @@ struct SortView: View {
 
     private var ordered: [SortCard] {
         let visible = cards.filter { filter == .all || $0.kind == filter }
-        return visible.filter { !skipped.contains($0.id) } + visible.filter { skipped.contains($0.id) }
+        let skippedInOrder = skipped.compactMap { id in visible.first { $0.id == id } }
+        let list = visible.filter { !skipped.contains($0.id) } + skippedInOrder
+        if let picked, let card = list.first(where: { $0.id == picked }) {
+            return [card] + list.filter { $0.id != picked }
+        }
+        return list
+    }
+
+    /// Pending captures for the strip: the queue order, skipped ones last in skip order.
+    private var stripCaptures: [FlowCapture] {
+        let all = cards.compactMap { card -> FlowCapture? in
+            if case .capture(let c) = card { return c } else { return nil }
+        }
+        let open = all.filter { !skipped.contains("c\($0.id)") }
+        let later = skipped.compactMap { id in all.first { "c\($0.id)" == id } }
+        return open + later
     }
 
     var body: some View {
@@ -66,6 +116,10 @@ struct SortView: View {
                         Chip(title: "\(f.label) \(count(f))", selected: filter == f) { filter = f }
                     }
                 }
+            }
+
+            if session.ready, stripCaptures.count >= 2 {
+                pickStrip
             }
 
             if !session.ready {
@@ -97,11 +151,66 @@ struct SortView: View {
                 )
             }
         }
+        .onAppear { prune() }
+        .onChange(of: session.pendingCaptures.map(\.id)) { _, _ in prune() }
+        .onChange(of: session.ready) { _, _ in prune() }
+    }
+
+    private var pickStrip: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Pick a Photo")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(FlowTheme.muted)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(stripCaptures) { cap in
+                        let id = "c\(cap.id)"
+                        let current = ordered.first?.id == id
+                        Button {
+                            pick(id)
+                        } label: {
+                            stripThumb(cap)
+                                .frame(width: 64, height: 64)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(current ? FlowTheme.ink : Color(hex: 0xD5D9CD), lineWidth: current ? 3 : 1)
+                                )
+                                .opacity(skipped.contains(id) && !current ? 0.6 : 1)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(current ? "Current Photo" : "Pick this Photo")
+                    }
+                }
+                .padding(2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stripThumb(_ cap: FlowCapture) -> some View {
+        if cap.kind == .image, cap.storageKey != nil {
+            RemotePhoto(storageKey: cap.storageKey, api: session.api, cornerRadius: 8, zoomable: false)
+        } else {
+            Image(systemName: FlowLogic.isFloorScan(cap) ? "map" : (cap.url != nil ? "link" : "doc.text"))
+                .foregroundStyle(FlowTheme.muted)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(hex: 0xF0F2EA), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    private func pick(_ id: String) {
+        picked = id
+        if filter != .all && filter != .capture { filter = .all }
     }
 
     private func skip(_ card: SortCard) {
-        skipped.removeAll { $0 == card.id }
-        skipped.append(card.id)
+        if picked == card.id { picked = nil }
+        skipped = SortSkipStore.skip(card.id)
+    }
+
+    private func prune() {
+        guard session.ready else { return }
+        skipped = SortSkipStore.prune(pendingCaptureIds: Set(session.pendingCaptures.map(\.id)))
     }
 }
 
@@ -136,6 +245,7 @@ private struct DraftRow: Identifiable {
     var areaId: Int?
     var checked: Bool
     var attributes: [String: String]?
+    var box: PhotoBox? = nil
 }
 
 private struct CaptureCard: View {
@@ -151,12 +261,21 @@ private struct CaptureCard: View {
     @State private var error: String?
     @State private var busy = false
     @State private var asking = false
+    /// The row whose frame was tapped last.
+    @State private var highlighted: UUID?
 
     private var suggestion: TriageSuggestion? { FlowLogic.usableSuggestion(capture) }
     private var isGeo: Bool { FlowLogic.isFloorScan(capture) }
     private var matched: [TriageSpottedItem] {
         suggestion?.items.filter { !$0.isNewItem && $0.matchedItemName != nil } ?? []
     }
+    /// Frame number per row id, 1-based, in row order; rows without a frame have none.
+    private var frameNumbers: [UUID: Int] {
+        var out: [UUID: Int] = [:]
+        for row in rows where row.box != nil { out[row.id] = out.count + 1 }
+        return out
+    }
+
     private var chosen: [DraftRow] {
         rows.filter { $0.checked && !$0.name.trimmingCharacters(in: .whitespaces).isEmpty && $0.areaId != nil }
     }
@@ -199,6 +318,10 @@ private struct CaptureCard: View {
                 }
                 ForEach($rows) { $row in
                     HStack(alignment: .top, spacing: 8) {
+                        if let n = frameNumbers[row.id] {
+                            FrameBadge(number: n, on: row.checked)
+                                .padding(.top, 6)
+                        }
                         Toggle("", isOn: $row.checked).labelsHidden().tint(FlowTheme.moss)
                         VStack(alignment: .leading, spacing: 4) {
                             TextField("Name", text: $row.name)
@@ -219,7 +342,11 @@ private struct CaptureCard: View {
                     .padding(8)
                     .background(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(row.checked ? FlowTheme.moss : Color(hex: 0xD5D9CD))
+                            .fill(highlighted == row.id ? FlowTheme.lime.opacity(0.25) : Color.clear)
+                    )
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(row.checked ? FlowTheme.moss : Color(hex: 0xD5D9CD), lineWidth: highlighted == row.id ? 2 : 1)
                     )
                     .opacity(row.checked ? 1 : 0.6)
                 }
@@ -302,8 +429,9 @@ private struct CaptureCard: View {
     @ViewBuilder
     private var preview: some View {
         if capture.kind == .image, capture.storageKey != nil {
-            RemotePhoto(storageKey: capture.storageKey, api: session.api)
-                .aspectRatio(4 / 3, contentMode: .fit)
+            FittedRemotePhoto(storageKey: capture.storageKey, api: session.api) { size in
+                frames(in: size)
+            }
         } else if isGeo {
             Text("GeoJSON floor scan")
                 .font(.system(size: 13))
@@ -320,6 +448,46 @@ private struct CaptureCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(hex: 0xF0F2EA), in: RoundedRectangle(cornerRadius: 12))
         }
+    }
+
+    /// One frame per row with a box, at the same place on the image at any size. A tap toggles
+    /// the row and highlights it.
+    private func frames(in size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(rows) { row in
+                if let box = row.box, let n = frameNumbers[row.id] {
+                    let r = box.rect(in: size)
+                    let lit = highlighted == row.id
+                    Button {
+                        toggle(row.id)
+                    } label: {
+                        ZStack(alignment: .topLeading) {
+                            Rectangle()
+                                .strokeBorder(
+                                    row.checked ? FlowTheme.lime : Color.white.opacity(0.85),
+                                    style: StrokeStyle(lineWidth: lit ? 3 : 2, dash: row.checked ? [] : [5, 3])
+                                )
+                                .background(lit ? FlowTheme.lime.opacity(0.15) : Color.clear)
+                                .contentShape(Rectangle())
+                            FrameBadge(number: n, on: row.checked)
+                                .offset(x: -2, y: -2)
+                        }
+                        .shadow(color: .black.opacity(0.35), radius: 1)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: max(r.width, 22), height: max(r.height, 22))
+                    .position(x: r.midX, y: r.midY)
+                    .accessibilityLabel("Frame \(n): \(row.name)")
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
+
+    private func toggle(_ id: UUID) {
+        guard let i = rows.firstIndex(where: { $0.id == id }) else { return }
+        rows[i].checked.toggle()
+        highlighted = id
     }
 
     private func seed() {
@@ -342,7 +510,8 @@ private struct CaptureCard: View {
                     name: s.itemName,
                     areaId: session.areas.first(where: { $0.slug == s.areaSlug })?.id ?? session.areas.first?.id,
                     checked: true,
-                    attributes: s.attributes
+                    attributes: s.attributes,
+                    box: s.box
                 )
             }
     }
@@ -373,7 +542,13 @@ private struct CaptureCard: View {
                 id: capture.id,
                 roomId: place.roomId,
                 items: chosen.map {
-                    AcceptItemInput(areaId: $0.areaId!, itemId: nil, itemName: $0.name.trimmingCharacters(in: .whitespaces), attributes: $0.attributes)
+                    AcceptItemInput(
+                        areaId: $0.areaId!,
+                        itemId: nil,
+                        itemName: $0.name.trimmingCharacters(in: .whitespaces),
+                        attributes: $0.attributes,
+                        box: $0.box
+                    )
                 }
             )
             await session.refresh()
@@ -393,6 +568,20 @@ private struct CaptureCard: View {
             self.error = error.localizedDescription
         }
         busy = false
+    }
+}
+
+/// The number shared by a frame on the Photo and its row.
+private struct FrameBadge: View {
+    let number: Int
+    let on: Bool
+
+    var body: some View {
+        Text("\(number)")
+            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .foregroundStyle(FlowTheme.ink)
+            .frame(minWidth: 18, minHeight: 18)
+            .background(on ? FlowTheme.lime : Color.white, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 }
 

@@ -19,10 +19,53 @@ final class PhotoCache: ObservableObject {
     }
 }
 
+/// Loads a Photo by storage key, from the memory cache when it is there.
+@MainActor
+enum PhotoLoading {
+    static func load(_ storageKey: String, api: HomeBaseAPI) async -> UIImage? {
+        if let cached = PhotoCache.shared.image(for: storageKey) { return cached }
+        do {
+            let result = try await api.photosURL(key: storageKey)
+            guard let rel = result.url, let url = await api.resolvePhotoURL(rel) else { return nil }
+            let data = try await api.download(url)
+            guard let ui = UIImage(data: data) else { return nil }
+            PhotoCache.shared.store(ui, for: storageKey)
+            return ui
+        } catch {
+            return nil
+        }
+    }
+}
+
+/// Opens the loaded image in `PhotoViewer` on a tap. Left off where a tap already means
+/// something else (a row that opens a Thing, a strip that picks a Photo).
+private struct OpensViewer: ViewModifier {
+    let image: UIImage?
+    let enabled: Bool
+    @State private var open = false
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .contentShape(Rectangle())
+                .onTapGesture { if image != nil { open = true } }
+                .fullScreenCover(isPresented: $open) {
+                    if let image {
+                        PhotoViewer(image: image, onClose: { open = false })
+                    }
+                }
+        } else {
+            content
+        }
+    }
+}
+
 struct RemotePhoto: View {
     let storageKey: String?
     var api: HomeBaseAPI?
     var cornerRadius: CGFloat = 12
+    /// Tap opens the full-screen viewer.
+    var zoomable: Bool = true
 
     @State private var image: UIImage?
     @State private var failed = false
@@ -48,30 +91,63 @@ struct RemotePhoto: View {
         }
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .modifier(OpensViewer(image: image, enabled: zoomable))
         .task(id: storageKey) { await load() }
     }
 
     private func load() async {
         guard let storageKey, let api else { return }
-        if let cached = PhotoCache.shared.image(for: storageKey) {
-            image = cached
-            return
+        failed = false
+        if let ui = await PhotoLoading.load(storageKey, api: api) {
+            image = ui
+        } else {
+            failed = true
         }
-        do {
-            let result = try await api.photosURL(key: storageKey)
-            guard let rel = result.url, let url = await api.resolvePhotoURL(rel) else {
-                failed = true
-                return
+    }
+}
+
+/// A Photo shown whole (aspect-fit) inside a box of `aspect`, with `overlay` laid over exactly
+/// the image's own rectangle, so percent coordinates on the image line up at any size.
+/// Tapping the image (outside anything the overlay handles) opens the viewer.
+struct FittedRemotePhoto<Overlay: View>: View {
+    let storageKey: String?
+    var api: HomeBaseAPI?
+    var aspect: CGFloat = 4 / 3
+    var cornerRadius: CGFloat = 12
+    @ViewBuilder var overlay: (CGSize) -> Overlay
+
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        ZStack {
+            HatchBackground()
+            if let image, image.size.width > 0, image.size.height > 0 {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(image.size.width / image.size.height, contentMode: .fit)
+                    .modifier(OpensViewer(image: image, enabled: true))
+                    .overlay {
+                        GeometryReader { geo in overlay(geo.size) }
+                    }
+            } else if storageKey == nil {
+                Image(systemName: "photo").font(.title2).foregroundStyle(FlowTheme.muted)
+            } else if failed {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(FlowTheme.muted)
+            } else {
+                ProgressView().tint(FlowTheme.moss)
             }
-            let data = try await api.download(url)
-            if let ui = UIImage(data: data) {
-                PhotoCache.shared.store(ui, for: storageKey)
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .task(id: storageKey) {
+            guard let storageKey, let api else { return }
+            failed = false
+            if let ui = await PhotoLoading.load(storageKey, api: api) {
                 image = ui
             } else {
                 failed = true
             }
-        } catch {
-            failed = true
         }
     }
 }
