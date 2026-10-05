@@ -8,7 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		A00000000000000000000258 /* ActView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000064 /* ActView.swift */; };
-		A00000000000000000000259 /* CameraPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000065 /* CameraPicker.swift */; };
+		A00000000000000000000283 /* SnapCameraScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000084 /* SnapCameraScreen.swift */; };
+		A00000000000000000000284 /* SnapUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000085 /* SnapUploader.swift */; };
 		A0000000000000000000025A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000066 /* ContentView.swift */; };
 		A0000000000000000000025B /* DeclutterFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000067 /* DeclutterFlowApp.swift */; };
 		A0000000000000000000025C /* FindView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000068 /* FindView.swift */; };
@@ -41,7 +42,8 @@
 /* Begin PBXFileReference section */
 		A00000000000000000000009 /* DeclutterFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeclutterFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000000000000000000064 /* ActView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActView.swift; sourceTree = "<group>"; };
-		A00000000000000000000065 /* CameraPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPicker.swift; sourceTree = "<group>"; };
+		A00000000000000000000084 /* SnapCameraScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapCameraScreen.swift; sourceTree = "<group>"; };
+		A00000000000000000000085 /* SnapUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapUploader.swift; sourceTree = "<group>"; };
 		A00000000000000000000066 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A00000000000000000000067 /* DeclutterFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeclutterFlowApp.swift; sourceTree = "<group>"; };
 		A00000000000000000000068 /* FindView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindView.swift; sourceTree = "<group>"; };
@@ -107,7 +109,6 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000064 /* ActView.swift */,
-				A00000000000000000000065 /* CameraPicker.swift */,
 				A00000000000000000000066 /* ContentView.swift */,
 				A00000000000000000000067 /* DeclutterFlowApp.swift */,
 				A00000000000000000000068 /* FindView.swift */,
@@ -123,6 +124,8 @@
 				A00000000000000000000072 /* SharedUI.swift */,
 				A00000000000000000000073 /* SnapPlaceStore.swift */,
 				A00000000000000000000074 /* SnapView.swift */,
+				A00000000000000000000084 /* SnapCameraScreen.swift */,
+				A00000000000000000000085 /* SnapUploader.swift */,
 				A00000000000000000000075 /* SortView.swift */,
 				A00000000000000000000076 /* TRPCClient.swift */,
 				A00000000000000000000077 /* Theme.swift */,
@@ -217,7 +220,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A00000000000000000000258 /* ActView.swift in Sources */,
-				A00000000000000000000259 /* CameraPicker.swift in Sources */,
 				A0000000000000000000025A /* ContentView.swift in Sources */,
 				A0000000000000000000025B /* DeclutterFlowApp.swift in Sources */,
 				A0000000000000000000025C /* FindView.swift in Sources */,
@@ -233,6 +235,8 @@
 				A00000000000000000000266 /* SharedUI.swift in Sources */,
 				A00000000000000000000267 /* SnapPlaceStore.swift in Sources */,
 				A00000000000000000000268 /* SnapView.swift in Sources */,
+				A00000000000000000000283 /* SnapCameraScreen.swift in Sources */,
+				A00000000000000000000284 /* SnapUploader.swift in Sources */,
 				A00000000000000000000269 /* SortView.swift in Sources */,
 				A0000000000000000000026A /* TRPCClient.swift in Sources */,
 				A0000000000000000000026B /* Theme.swift in Sources */,

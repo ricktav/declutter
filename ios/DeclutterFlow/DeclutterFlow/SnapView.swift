@@ -7,9 +7,10 @@ struct SnapView: View {
     var onChangeHere: () -> Void
 
     @State private var note = ""
-    @State private var busy = 0
-    @State private var savedCount = 0
-    @State private var error: String?
+    // Shared with the camera screen: one counter, one spinner, one error line.
+    @StateObject private var uploader = SnapUploader()
+    // Lives as long as the Snap tab, so the session stays warm between camera opens.
+    @StateObject private var camera = SnapCamera()
     @State private var showCamera = false
     @State private var showScan = false
     @State private var libraryItems: [PhotosPickerItem] = []
@@ -54,11 +55,7 @@ struct SnapView: View {
 
                 VStack(spacing: 12) {
                     Button {
-                        if CameraPicker.isAvailable {
-                            showCamera = true
-                        } else {
-                            error = "No camera on this device. Pick a Photo from the library."
-                        }
+                        showCamera = true
                     } label: {
                         ZStack {
                             Circle()
@@ -67,7 +64,7 @@ struct SnapView: View {
                             Circle()
                                 .fill(FlowTheme.moss)
                                 .frame(width: 112, height: 112)
-                            if busy > 0 {
+                            if uploader.busy > 0 {
                                 ProgressView().tint(FlowTheme.cream)
                             } else {
                                 Image(systemName: "camera.fill")
@@ -131,10 +128,24 @@ struct SnapView: View {
                     .opacity(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
                 }
 
-                ErrorLine(message: error)
+                ErrorLine(message: uploader.error)
+
+                if let summary = uploader.failedSummary {
+                    HStack(spacing: 8) {
+                        Text(summary)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: 0x9B1C1C))
+                        Spacer()
+                        Button("Retry") {
+                            Task { await uploader.retryFailed(session: session) }
+                        }
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .disabled(uploader.busy > 0)
+                    }
+                }
 
                 HStack {
-                    (Text(savedCount > 0 ? "+\(savedCount) saved · " : "")
+                    (Text(uploader.savedCount > 0 ? "+\(uploader.savedCount) saved · " : "")
                         .foregroundStyle(FlowTheme.lime)
                         .fontWeight(.semibold)
                     + Text("\(pending.count)").fontWeight(.bold)
@@ -166,18 +177,17 @@ struct SnapView: View {
             .padding(.vertical, 8)
         }
         .fullScreenCover(isPresented: $showCamera) {
-            CameraPicker(
-                onImage: { image in
-                    showCamera = false
-                    Task { await upload(image: image) }
-                },
-                onCancel: { showCamera = false }
-            )
-            .ignoresSafeArea()
+            SnapCameraScreen(camera: camera, uploader: uploader, onClose: { showCamera = false })
+                .environmentObject(session)
         }
         .fullScreenCover(isPresented: $showScan) {
             RoomScanFlow(initialPlace: session.here, setsHere: true)
                 .environmentObject(session)
+        }
+        .onAppear { camera.prepare() }
+        .onChange(of: showScan) { _, scanning in
+            // The LiDAR scan needs the camera to itself.
+            if scanning { camera.stop() }
         }
         .onChange(of: libraryItems) { _, items in
             guard !items.isEmpty else { return }
@@ -191,45 +201,18 @@ struct SnapView: View {
             do {
                 if let data = try await item.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {
-                    await upload(image: image)
+                    await uploader.upload(image: image, session: session)
                 }
             } catch {
-                self.error = error.localizedDescription
+                uploader.error = error.localizedDescription
             }
         }
-    }
-
-    private func upload(image: UIImage) async {
-        guard let api = session.api, let jpeg = PhotoJPEG.encode(image) else {
-            error = "Could not encode that Photo."
-            return
-        }
-        busy += 1
-        error = nil
-        do {
-            let up = try await api.uploadInboxPhoto(jpeg: jpeg, fileName: PhotoJPEG.fileName())
-            let kind: CaptureKind = up.mimeType.hasPrefix("image/") ? .image : .file
-            let row = try await api.inboxCreate(
-                kind: kind,
-                storageKey: up.key,
-                fileName: up.fileName,
-                mimeType: up.mimeType
-            )
-            if session.here.hasRoom {
-                SnapPlaceStore.set(row.id, place: session.here)
-            }
-            savedCount += 1
-            await session.refresh()
-        } catch {
-            self.error = error.localizedDescription
-        }
-        busy -= 1
     }
 
     private func addNote() async {
         let t = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, let api = session.api else { return }
-        error = nil
+        uploader.error = nil
         do {
             let isURL = t.range(of: #"^https?://"#, options: [.regularExpression, .caseInsensitive]) != nil
             let row = try await api.inboxCreate(
@@ -241,10 +224,10 @@ struct SnapView: View {
                 SnapPlaceStore.set(row.id, place: session.here)
             }
             note = ""
-            savedCount += 1
+            uploader.noteSaved()
             await session.refresh()
         } catch {
-            self.error = error.localizedDescription
+            uploader.error = error.localizedDescription
         }
     }
 }
