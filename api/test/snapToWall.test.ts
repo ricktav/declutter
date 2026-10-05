@@ -40,6 +40,32 @@ describe("snapPosToWalls", () => {
     expect(snapPosToWalls({ ...p, rotDeg: 0 }, box, 4, 3)!.side).toBe("left");
   });
 
+  it("pulls back a Thing whose centre is already through the wall, never pushes it out", () => {
+    const r = snapPosToWalls(pos(-0.28, 1.2, 0.5), box, 4, 3)!; // centre x -0.03
+    expect(r.side).toBe("left");
+    expect(r.movedM).toBeCloseTo(0.28);
+    expect(r.pos.xM).toBeCloseTo(0);
+  });
+
+  it("returns movedM 0 for a Thing already flush", () => {
+    const r = snapPosToWalls(pos(0, 1.2), box, 4, 3)!;
+    expect(r).toMatchObject({ side: "left", movedM: 0 });
+    expect(r.pos.xM).toBe(0);
+  });
+
+  it("on a tie the first wall segment in order wins", () => {
+    // 0.2 from the top wall (segment 0) and 0.2 from the left wall (segment 3)
+    const r = snapPosToWalls(pos(0.2, 0.2), box, 4, 3)!;
+    expect(r.side).toBe("top");
+    expect(r.pos).toMatchObject({ xM: 0.2, yM: 0 });
+  });
+
+  it("uses the outer box only when the room has no straight wall segments", () => {
+    // one straight wall far away: no box fallback to the left edge
+    const far: RoomGeometry["walls"] = [{ points: [[4, 0], [4, 3]] }];
+    expect(snapPosToWalls(pos(0.2, 1.2), far, 4, 3)).toBeNull();
+  });
+
   it("returns null when no wall is within 0.5 m", () => {
     expect(snapPosToWalls(pos(1.5, 1.2), box, 4, 3)).toBeNull();
   });

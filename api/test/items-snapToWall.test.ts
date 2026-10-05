@@ -58,6 +58,14 @@ describe("items.snapToWall", () => {
     expect(r.movedM).toBeCloseTo(0.3);
   });
 
+  it("answers movedM 0 for a Thing already flush, without writing an event", async () => {
+    const { db, caller, kantoor, thing } = await seed();
+    const id = await thing("Kast", kantoor, { xM: 0, yM: 1, wM: 0.8, dM: 0.5, rotDeg: 0 });
+    const r = await caller.items.snapToWall({ id });
+    expect(r).toMatchObject({ movedM: 0, wall: { side: "left" }, pos: { xM: 0, yM: 1 } });
+    expect(await db.select().from(events).where(and(eq(events.entityId, id), eq(events.action, "moved")))).toHaveLength(0);
+  });
+
   it("refuses with PRECONDITION_FAILED when no wall is within 0.5 m", async () => {
     const { caller, kantoor, thing } = await seed();
     const id = await thing("Tafel", kantoor, { xM: 1.5, yM: 1, wM: 1, dM: 0.8, rotDeg: 0 });

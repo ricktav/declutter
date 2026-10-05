@@ -59,16 +59,24 @@ function linesOf(walls: RoomGeometry["walls"] | null | undefined): Line[] {
   return out;
 }
 
-/** The nearest wall line within SNAP_MAX_M, as the signed gap to close (positive = move +x/+y). */
-function nearest(fp: ReturnType<typeof footprint>, lines: Line[]) {
+/**
+ * The nearest wall line within SNAP_MAX_M, as the signed gap to close
+ * (positive = move +x/+y). On a tie the first segment in wall order wins.
+ * The room side of each line is the side the room's interior point is on,
+ * never the Thing's own centre: a Thing mostly through the wall is pulled
+ * back in, not pushed out.
+ */
+function nearest(fp: ReturnType<typeof footprint>, lines: Line[], inside: { x: number; y: number }) {
   let best: { shift: number; axis: "x" | "y"; side: WallSide; kind: WallKind } | null = null;
   for (const l of lines) {
     const [c, h, lo, hi] = l.axis === "x" ? [fp.cx, fp.hx, fp.cy - fp.hy, fp.cy + fp.hy] : [fp.cy, fp.hy, fp.cx - fp.hx, fp.cx + fp.hx];
     if (l.to < lo - SPAN_TOL_M || l.from > hi + SPAN_TOL_M) continue; // the wall does not reach the Thing
-    // the room side of the wall is the side the footprint's centre is on;
-    // gap > 0: open space between edge and wall; gap < 0: the edge is through the wall
+    // gap > 0: open space between edge and wall; gap < 0: the edge is through the wall.
+    // An interior point on the line itself (a partition) says nothing: use the Thing's centre.
+    const ref = l.axis === "x" ? inside.x : inside.y;
+    const roomAfter = Math.abs(ref - l.at) > 1e-6 ? ref > l.at : c >= l.at;
     let gap: number, shift: number, side: WallSide;
-    if (c >= l.at) {
+    if (roomAfter) {
       gap = c - h - l.at;
       shift = -gap;
       side = l.axis === "x" ? "left" : "top";
@@ -78,7 +86,7 @@ function nearest(fp: ReturnType<typeof footprint>, lines: Line[]) {
       side = l.axis === "x" ? "right" : "bottom";
     }
     if (Math.abs(gap) > SNAP_MAX_M) continue;
-    if (!best || Math.abs(shift) < Math.abs(best.shift)) best = { shift, axis: l.axis, side, kind: l.kind };
+    if (!best || Math.abs(shift) < Math.abs(best.shift) - 1e-9) best = { shift, axis: l.axis, side, kind: l.kind };
   }
   return best;
 }
@@ -87,7 +95,7 @@ function nearest(fp: ReturnType<typeof footprint>, lines: Line[]) {
  * Moves a Thing so its footprint's nearest edge sits flush against the
  * nearest axis-aligned wall within 0.5 m (pulling it back when a scan put it
  * partly through the wall). Doors and windows count as their wall's line.
- * Without a qualifying wall segment it falls back to the room's outer box.
+ * Only a room without straight wall segments falls back to its outer box.
  * Only xM/yM change. null = no wall within 0.5 m.
  */
 export function snapPosToWalls(
@@ -97,15 +105,25 @@ export function snapPosToWalls(
   depthM: number | null | undefined,
 ): SnapResult | null {
   const fp = footprint(pos);
-  let best = nearest(fp, linesOf(walls));
-  if (!best && widthM != null && depthM != null && widthM > 0 && depthM > 0) {
+  const lines = linesOf(walls);
+  const hasBox = widthM != null && depthM != null && widthM > 0 && depthM > 0;
+  let best: ReturnType<typeof nearest> = null;
+  if (lines.length) {
+    // the room's interior: the centre of its walls' bounding box (else of its outer box)
+    const pts = (walls ?? []).flatMap((w) => w.points ?? []);
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+    const inside = pts.length
+      ? { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 }
+      : { x: (widthM ?? 0) / 2, y: (depthM ?? 0) / 2 };
+    best = nearest(fp, lines, inside);
+  } else if (hasBox) {
     const box: Line[] = [
       { axis: "x", at: 0, from: 0, to: depthM, kind: "wall" },
       { axis: "x", at: widthM, from: 0, to: depthM, kind: "wall" },
       { axis: "y", at: 0, from: 0, to: widthM, kind: "wall" },
       { axis: "y", at: depthM, from: 0, to: widthM, kind: "wall" },
     ];
-    best = nearest(fp, box);
+    best = nearest(fp, box, { x: widthM / 2, y: depthM / 2 });
   }
   if (!best) return null;
   const next: ItemPos = { ...pos };

@@ -414,6 +414,9 @@ export const itemsRouter = createRouter({
     }
     const snap = snapPosToWalls(pos, room.walls, room.widthM, room.depthM);
     if (!snap) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No wall within 0.5 m" });
+    const wall = { kind: snap.kind, side: snap.side };
+    // already flush: nothing to write, nothing to log
+    if (snap.pos.xM === pos.xM && snap.pos.yM === pos.yM) return { pos, movedM: 0, wall };
     await db.transaction(async (tx) => {
       await tx.update(items).set({ pos: snap.pos }).where(eq(items.id, it.id));
       await logEvent(
@@ -422,12 +425,12 @@ export const itemsRouter = createRouter({
           entityId: it.id,
           action: "moved",
           summary: `Snapped to the ${snap.side} wall (${snap.movedM} m)`,
-          payload: { posBefore: pos, posAfter: snap.pos, wall: { kind: snap.kind, side: snap.side } },
+          payload: { posBefore: pos, posAfter: snap.pos, wall },
         },
         tx,
       );
     });
-    return { pos: snap.pos, movedM: snap.movedM, wall: { kind: snap.kind, side: snap.side } };
+    return { pos: snap.pos, movedM: snap.movedM, wall };
   }),
 
   /**

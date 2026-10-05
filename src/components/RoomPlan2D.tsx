@@ -263,8 +263,10 @@ export function RoomPlan2D({
 
     if (drag.kind === "move") {
       const dx = (loc.x - drag.startLoc.x) / S, dy = (loc.y - drag.startLoc.y) / S;
-      next.xM = round2(clamp(drag.startPos.xM + dx, 0, widthM - drag.startPos.wM));
-      next.yM = round2(clamp(drag.startPos.yM + dy, 0, depthM - drag.startPos.dM));
+      // a Thing that starts through a wall may stay there: the start widens the range
+      const sx = drag.startPos.xM, sy = drag.startPos.yM;
+      next.xM = round2(clamp(sx + dx, Math.min(0, sx), Math.max(widthM - drag.startPos.wM, sx)));
+      next.yM = round2(clamp(sy + dy, Math.min(0, sy), Math.max(depthM - drag.startPos.dM, sy)));
     } else if (drag.kind === "resize") {
       next.wM = Math.max(0.1, round2((loc.x - PAD) / S - drag.startPos.xM));
       next.dM = Math.max(0.1, round2((loc.y - PAD) / S - drag.startPos.yM));
