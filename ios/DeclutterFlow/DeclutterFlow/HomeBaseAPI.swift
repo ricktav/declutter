@@ -158,6 +158,39 @@ actor HomeBaseAPI {
         return try await client.query("rooms.get", input: Input(id: id), as: RoomInfo?.self)
     }
 
+    /// Store a LiDAR (RoomPlan) scan as a room's plan. The server matches by houseId + name,
+    /// so pass the picked room's own name to update it instead of creating a second room.
+    func roomsUpsertFromScan(houseId: Int, name: String, floor: String?, geometry: RoomGeometryPayload) async throws -> UpsertScanResult {
+        struct Geometry: Encodable {
+            var walls: [RoomWall]
+            var openings: [RoomOpening]
+        }
+        struct Input: Encodable {
+            var houseId: Int
+            var name: String
+            var source: String
+            var widthM: Double
+            var depthM: Double
+            var wallHeightM: Double
+            var floor: String?
+            var geometry: Geometry
+        }
+        return try await client.mutation(
+            "rooms.upsertFromScan",
+            input: Input(
+                houseId: houseId,
+                name: name,
+                source: "roomplan",
+                widthM: geometry.widthM,
+                depthM: geometry.depthM,
+                wallHeightM: geometry.wallHeightM,
+                floor: floor,
+                geometry: Geometry(walls: geometry.walls, openings: geometry.openings)
+            ),
+            as: UpsertScanResult.self
+        )
+    }
+
     func uploadInboxPhoto(jpeg: Data, fileName: String) async throws -> UploadedFile {
         try await client.upload(file: jpeg, fileName: fileName, mimeType: "image/jpeg", scope: "inbox")
     }

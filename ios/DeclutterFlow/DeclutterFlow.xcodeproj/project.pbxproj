@@ -28,6 +28,14 @@
 		A0000000000000000000026A /* TRPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000076 /* TRPCClient.swift */; };
 		A0000000000000000000026B /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000077 /* Theme.swift */; };
 		A00000000000000000000014 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000000A /* Assets.xcassets */; };
+		A0000000000000000000026C /* RoomPlanGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000078 /* RoomPlanGeometry.swift */; };
+		A0000000000000000000026D /* RoomCaptureScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000079 /* RoomCaptureScreen.swift */; };
+		A0000000000000000000026E /* RoomScanFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000007A /* RoomScanFlow.swift */; };
+		A0000000000000000000026F /* FloorPlanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000007B /* FloorPlanView.swift */; };
+		A00000000000000000000270 /* RoomDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000007C /* RoomDetailView.swift */; };
+		A00000000000000000000280 /* RoomPlan.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000080 /* RoomPlan.framework */; };
+		A00000000000000000000281 /* ARKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000081 /* ARKit.framework */; };
+		A00000000000000000000282 /* SceneKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000082 /* SceneKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -54,6 +62,14 @@
 		A00000000000000000000077 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		A0000000000000000000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A0000000000000000000000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A00000000000000000000078 /* RoomPlanGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomPlanGeometry.swift; sourceTree = "<group>"; };
+		A00000000000000000000079 /* RoomCaptureScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomCaptureScreen.swift; sourceTree = "<group>"; };
+		A0000000000000000000007A /* RoomScanFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomScanFlow.swift; sourceTree = "<group>"; };
+		A0000000000000000000007B /* FloorPlanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorPlanView.swift; sourceTree = "<group>"; };
+		A0000000000000000000007C /* RoomDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomDetailView.swift; sourceTree = "<group>"; };
+		A00000000000000000000080 /* RoomPlan.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = RoomPlan.framework; path = System/Library/Frameworks/RoomPlan.framework; sourceTree = SDKROOT; };
+		A00000000000000000000081 /* ARKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ARKit.framework; path = System/Library/Frameworks/ARKit.framework; sourceTree = SDKROOT; };
+		A00000000000000000000082 /* SceneKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SceneKit.framework; path = System/Library/Frameworks/SceneKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +77,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A00000000000000000000280 /* RoomPlan.framework in Frameworks */,
+				A00000000000000000000281 /* ARKit.framework in Frameworks */,
+				A00000000000000000000282 /* SceneKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -72,6 +91,7 @@
 			children = (
 				A00000000000000000000008 /* DeclutterFlow */,
 				A00000000000000000000007 /* Products */,
+				A00000000000000000000083 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -106,10 +126,25 @@
 				A00000000000000000000075 /* SortView.swift */,
 				A00000000000000000000076 /* TRPCClient.swift */,
 				A00000000000000000000077 /* Theme.swift */,
+				A00000000000000000000078 /* RoomPlanGeometry.swift */,
+				A00000000000000000000079 /* RoomCaptureScreen.swift */,
+				A0000000000000000000007A /* RoomScanFlow.swift */,
+				A0000000000000000000007B /* FloorPlanView.swift */,
+				A0000000000000000000007C /* RoomDetailView.swift */,
 				A0000000000000000000000A /* Assets.xcassets */,
 				A0000000000000000000000B /* Info.plist */,
 			);
 			path = DeclutterFlow;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000083 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000080 /* RoomPlan.framework */,
+				A00000000000000000000081 /* ARKit.framework */,
+				A00000000000000000000082 /* SceneKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -201,6 +236,11 @@
 				A00000000000000000000269 /* SortView.swift in Sources */,
 				A0000000000000000000026A /* TRPCClient.swift in Sources */,
 				A0000000000000000000026B /* Theme.swift in Sources */,
+				A0000000000000000000026C /* RoomPlanGeometry.swift in Sources */,
+				A0000000000000000000026D /* RoomCaptureScreen.swift in Sources */,
+				A0000000000000000000026E /* RoomScanFlow.swift in Sources */,
+				A0000000000000000000026F /* FloorPlanView.swift in Sources */,
+				A00000000000000000000270 /* RoomDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

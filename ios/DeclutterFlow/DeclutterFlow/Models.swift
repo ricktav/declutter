@@ -234,16 +234,109 @@ struct OkResult: Codable {
 
 struct PhotoURL: Codable { var url: String? }
 
+/// One polyline of a room plan, in metres from the room's origin (`RoomGeometry.walls`).
+struct RoomWall: Codable, Hashable {
+    var points: [[Double]]
+    /// "wall", "door" or "window"; absent means "wall".
+    var kind: String?
+}
+
+/// An edge-based opening (`RoomGeometry.openings`). RoomPlan scans send none.
+struct RoomOpening: Codable, Hashable {
+    var edge: String
+    var offsetM: Double
+    var widthM: Double
+    var connectsTo: Int?
+}
+
+/// A Thing's footprint on its room's plan (`items.pos`).
+struct ItemPos: Codable, Hashable {
+    var xM: Double
+    var yM: Double
+    var wM: Double
+    var dM: Double
+    var rotDeg: Double
+    var hM: Double?
+}
+
+/// `rooms.get`: the room row plus its Things. Geometry fields decode leniently,
+/// so a room imported from another source (MappedIn) never breaks the sheet.
 struct RoomInfo: Codable, Identifiable {
     var id: Int
     var name: String
     var houseId: Int?
+    var floor: String?
+    var source: String?
+    var widthM: Double?
+    var depthM: Double?
+    var wallHeightM: Double?
+    var walls: [RoomWall]?
+    var openings: [RoomOpening]?
     var items: [RoomItem]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, houseId, floor, source, widthM, depthM, wallHeightM, walls, openings, items
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        houseId = try c.decodeIfPresent(Int.self, forKey: .houseId)
+        floor = try? c.decodeIfPresent(String.self, forKey: .floor)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        widthM = try? c.decodeIfPresent(Double.self, forKey: .widthM)
+        depthM = try? c.decodeIfPresent(Double.self, forKey: .depthM)
+        wallHeightM = try? c.decodeIfPresent(Double.self, forKey: .wallHeightM)
+        walls = try? c.decodeIfPresent([RoomWall].self, forKey: .walls)
+        openings = try? c.decodeIfPresent([RoomOpening].self, forKey: .openings)
+        items = try c.decodeIfPresent([RoomItem].self, forKey: .items)
+    }
+
+    var hasPlan: Bool {
+        (widthM ?? 0) > 0.1 && (depthM ?? 0) > 0.1 && !(walls ?? []).isEmpty
+    }
+
+    var geometryPayload: RoomGeometryPayload? {
+        guard hasPlan, let w = widthM, let d = depthM, let walls else { return nil }
+        return RoomGeometryPayload(
+            walls: walls,
+            openings: openings ?? [],
+            widthM: w,
+            depthM: d,
+            wallHeightM: wallHeightM ?? 2.4
+        )
+    }
 }
 
 struct RoomItem: Codable, Identifiable {
     var id: Int
     var name: String
+    var pos: ItemPos?
+
+    enum CodingKeys: String, CodingKey { case id, name, pos }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        pos = try? c.decodeIfPresent(ItemPos.self, forKey: .pos)
+    }
+}
+
+/// A room plan in metres, as drawn by `FloorPlanView` and sent to `rooms.upsertFromScan`.
+struct RoomGeometryPayload: Codable, Hashable {
+    var walls: [RoomWall]
+    var openings: [RoomOpening]
+    var widthM: Double
+    var depthM: Double
+    var wallHeightM: Double
+}
+
+/// `rooms.upsertFromScan` returns `{ id, created }`.
+struct UpsertScanResult: Codable {
+    var id: Int
+    var created: Bool
 }
 
 struct AcceptItemInput: Encodable {

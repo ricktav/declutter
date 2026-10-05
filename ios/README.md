@@ -47,6 +47,7 @@ If `APP_TOKEN` is unset on the server, leave the token field empty. Only do that
 |---|---|---|
 | Photo library | Works (Photos picker) | Works |
 | Camera | Not available — use the library | Works (back camera) |
+| LiDAR Place scan | Not supported (shows “Needs a LiDAR iPhone”) | Needs an iPhone/iPad **Pro** with LiDAR (`RoomCaptureSession.isSupported`) |
 | LAN HTTP | Works if the Mac can reach the server | Needs Local Network permission |
 
 ## ATS, local network, cleartext HTTP
@@ -58,7 +59,7 @@ This target sets:
 - `NSAllowsArbitraryLoads = YES` so a configurable LAN IP (for example `10.50.0.10`) works. `NSAllowsLocalNetworking` alone is **not** enough for a numeric LAN address.
 - `NSAllowsLocalNetworking = YES`
 - `NSLocalNetworkUsageDescription` — iOS 14+ local-network prompt
-- Camera and photo-library usage strings
+- Camera and photo-library usage strings (the camera string also covers the LiDAR Place scan)
 
 If you put HomeBase behind HTTPS (or Tailscale Serve), you can tighten ATS later. Prefer HTTPS if the server is reachable off your LAN.
 
@@ -69,10 +70,10 @@ The phone and the server must be on the same network (or a VPN). A `localhost` U
 | Tab | Behavior |
 |---|---|
 | **Settings** | Base URL + APP_TOKEN (Keychain) + House (sent as `x-house-id`) + `ping` |
-| **Snap** | Camera / library → `POST /api/upload` (`file`, `scope=inbox`) → `inbox.create`. Optional Place (“where you are”). Notes and links. |
+| **Snap** | Camera / library → `POST /api/upload` (`file`, `scope=inbox`) → `inbox.create`. Optional Place (“where you are”). Notes and links. **Scan this Place** (RoomPlan LiDAR) → `rooms.upsertFromScan` (`source: "roomplan"`, the picked room's own house and name, so it updates that room). |
 | **Sort** | Inbox Photos: AI triage, name / kind, Place, file (`inbox.acceptMany`) or dismiss. Check (`items.setVerification`). Place (`items.update` with `roomId`). |
 | **Act** | Keep / sell / donate / toss / later (`items.setDecision`). Sell list / donate box / toss run. **Gone** (`items.setArchived`). Later returns after 7 days. |
-| **Find** | Search Things by name, Place, or kind. Decision on the Thing sheet. `rooms.get` when a room plan exists. |
+| **Find** | Search Things or Places. Decision on the Thing sheet. A Place (`rooms.get`) shows its 2D / 3D plan when one exists, or offers a LiDAR scan. |
 
 Tabs match web Flow. Photos load through `photos.url` plus the same Bearer token (the relative `/uploads/…` URL is not enough on its own).
 
@@ -80,7 +81,8 @@ Tabs match web Flow. Photos load through `photos.url` plus the same Bearer token
 
 - No Computer-lab **Lens** (backup checks, lab attributes, `items.listRelations`).
 - No Sell-list money fields (`sell.ask_price`, channel, listed/sold dates) — Decision and Gone only.
-- No floor-scan import, GeoJSON thumb, or room-plan pin canvas (`ItemRoomPreview` / annotate).
+- No GeoJSON / MappedIn floor-scan import and no pin-on-plan canvas (`ItemRoomPreview` / annotate); the Workbench owns those.
+- The LiDAR scan stores wall/door/window polylines only. It does not file furniture as Things.
 - No Workbench, wiki, ideas, or kanban.
 - No “open in Workbench” in-app browser.
 - App icon is a placeholder (empty 1024pt slot).
@@ -89,7 +91,7 @@ Tabs match web Flow. Photos load through `photos.url` plus the same Bearer token
 
 tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany` (`roomId`), `inbox.dismiss`, `items.listAll`,
 `items.update` (`roomId`), `items.setVerification`, `items.setArchived`, `items.setDecision`, `items.patchAttributes`
-(client ready, unused in V1 UI), `houses.list`, `areas.list`, `rooms.list`, `rooms.ensure`, `rooms.get`, `photos.url`.
+(client ready, unused in V1 UI), `houses.list`, `areas.list`, `rooms.list`, `rooms.ensure`, `rooms.get`, `rooms.upsertFromScan`, `photos.url`.
 Header `x-house-id` from Settings.
 
 HTTP: `POST /api/upload`.
