@@ -7,8 +7,11 @@ struct SnapView: View {
     var onChangeHere: () -> Void
 
     @State private var note = ""
-    // Shared with the camera screen: one counter, one spinner, one error line.
-    @StateObject private var uploader = SnapUploader()
+    @State private var notesSaved = 0
+    // Shared with the camera screen and owned by ContentView: one counter, one spinner,
+    // one error line and one retry queue, kept across tab changes.
+    @EnvironmentObject private var uploader: SnapUploader
+    @Environment(\.scenePhase) private var scenePhase
     // Lives as long as the Snap tab, so the session stays warm between camera opens.
     @StateObject private var camera = SnapCamera()
     @State private var showCamera = false
@@ -16,6 +19,16 @@ struct SnapView: View {
     @State private var libraryItems: [PhotosPickerItem] = []
 
     private var pending: [FlowCapture] { session.pendingCaptures }
+
+    /// "+3 Photos · +1 note saved · " or empty.
+    private var savedLine: String {
+        let photos = uploader.savedCount
+        let parts = [
+            photos > 0 ? "+\(photos) Photo\(photos == 1 ? "" : "s")" : nil,
+            notesSaved > 0 ? "+\(notesSaved) note\(notesSaved == 1 ? "" : "s")" : nil,
+        ].compactMap { $0 }
+        return parts.isEmpty ? "" : parts.joined(separator: " · ") + " saved · "
+    }
 
     private var scanCaption: String {
         guard let id = session.here.roomId else { return "Pick a Place, then walk the walls" }
@@ -55,6 +68,8 @@ struct SnapView: View {
 
                 VStack(spacing: 12) {
                     Button {
+                        // Start now so startRunning overlaps the cover animation.
+                        Task { await camera.start() }
                         showCamera = true
                     } label: {
                         ZStack {
@@ -91,7 +106,13 @@ struct SnapView: View {
 
                     // Only on a LiDAR device; elsewhere the Place sheet in Find explains why.
                     if LiDARScan.isSupported {
-                        Button { showScan = true } label: {
+                        Button {
+                            // The LiDAR scan needs the camera to itself.
+                            Task {
+                                await camera.stop()
+                                showScan = true
+                            }
+                        } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "cube.transparent")
                                 VStack(alignment: .leading, spacing: 2) {
@@ -145,7 +166,7 @@ struct SnapView: View {
                 }
 
                 HStack {
-                    (Text(uploader.savedCount > 0 ? "+\(uploader.savedCount) saved · " : "")
+                    (Text(savedLine)
                         .foregroundStyle(FlowTheme.lime)
                         .fontWeight(.semibold)
                     + Text("\(pending.count)").fontWeight(.bold)
@@ -177,17 +198,20 @@ struct SnapView: View {
             .padding(.vertical, 8)
         }
         .fullScreenCover(isPresented: $showCamera) {
-            SnapCameraScreen(camera: camera, uploader: uploader, onClose: { showCamera = false })
+            SnapCameraScreen(camera: camera, onClose: { showCamera = false })
                 .environmentObject(session)
+                .environmentObject(uploader)
         }
         .fullScreenCover(isPresented: $showScan) {
             RoomScanFlow(initialPlace: session.here, setsHere: true)
                 .environmentObject(session)
         }
         .onAppear { camera.prepare() }
-        .onChange(of: showScan) { _, scanning in
-            // The LiDAR scan needs the camera to itself.
-            if scanning { camera.stop() }
+        .onChange(of: scenePhase) { _, phase in
+            // Never keep the camera on while Flow is not in front.
+            if phase != .active {
+                Task { await camera.stop() }
+            }
         }
         .onChange(of: libraryItems) { _, items in
             guard !items.isEmpty else { return }
@@ -224,7 +248,7 @@ struct SnapView: View {
                 SnapPlaceStore.set(row.id, place: session.here)
             }
             note = ""
-            uploader.noteSaved()
+            notesSaved += 1
             await session.refresh()
         } catch {
             uploader.error = error.localizedDescription

@@ -50,10 +50,23 @@ final class SnapCameraEngine: NSObject, @unchecked Sendable {
         }
     }
 
-    func stop() {
+    /// Stops without waiting (deinit).
+    func stopNow() {
         queue.async { [self] in
             if session.isRunning {
                 session.stopRunning()
+            }
+        }
+    }
+
+    /// Returns once the session has stopped, so another screen can take the camera.
+    func stop() async {
+        await withCheckedContinuation { cont in
+            queue.async { [self] in
+                if session.isRunning {
+                    session.stopRunning()
+                }
+                cont.resume()
             }
         }
     }
@@ -93,6 +106,18 @@ final class SnapCameraEngine: NSObject, @unchecked Sendable {
         guard let device = Self.backCamera() else { return "No camera on this device." }
         session.beginConfiguration()
         defer { session.commitConfiguration() }
+        if let problem = addInputAndOutput(device) {
+            // Leave a clean session behind so the next open can try again.
+            session.inputs.forEach { session.removeInput($0) }
+            session.outputs.forEach { session.removeOutput($0) }
+            return problem
+        }
+        configured = true
+        return nil
+    }
+
+    /// Runs on `queue` inside begin/commitConfiguration.
+    private func addInputAndOutput(_ device: AVCaptureDevice) -> String? {
         session.sessionPreset = .photo
         do {
             let input = try AVCaptureDeviceInput(device: device)
@@ -101,10 +126,20 @@ final class SnapCameraEngine: NSObject, @unchecked Sendable {
         } catch {
             return error.localizedDescription
         }
+        // A multi-camera device starts at its widest lens (zoom 1 = ultra-wide). Open at the
+        // main lens like the Camera app; the device still switches to ultra-wide for close-ups.
+        if device.isVirtualDevice {
+            do {
+                try device.lockForConfiguration()
+                device.videoZoomFactor = device.virtualDeviceSwitchOverVideoZoomFactors.first.map { CGFloat(truncating: $0) } ?? 1
+                device.unlockForConfiguration()
+            } catch {
+                // Keep the default zoom.
+            }
+        }
         guard session.canAddOutput(output) else { return "The camera cannot take Photos." }
         session.addOutput(output)
         output.maxPhotoQualityPrioritization = .balanced
-        configured = true
         return nil
     }
 
@@ -148,7 +183,7 @@ enum SnapCameraError: LocalizedError {
 // MARK: - Model (main actor)
 
 /// The camera as SnapView and SnapCameraScreen see it. SnapView owns one, so the session
-/// stays configured and running while the Snap tab is open: the second open is instant.
+/// stays configured while the Snap tab is open and a reopen soon after a close is instant.
 @MainActor
 final class SnapCamera: ObservableObject {
     enum State: Equatable {
@@ -158,17 +193,37 @@ final class SnapCamera: ObservableObject {
 
     @Published private(set) var state: State = .idle
     let engine = SnapCameraEngine()
+    /// True while the camera screen is on screen; an interruption that ends then restarts it.
+    var visible = false
     private var rotation: AVCaptureDevice.RotationCoordinator?
     private var rotationObservation: NSKeyValueObservation?
     private weak var previewLayer: AVCaptureVideoPreviewLayer?
     private var idleStop: Task<Void, Never>?
+    private var starting: Task<Void, Never>?
+    /// Bumped by every stop, so a start that finishes after a stop does not report running.
+    private var generation = 0
+    private var observers: [NSObjectProtocol] = []
 
-    /// Stop a camera nobody looked at for this long (battery); restarting is fast.
-    private static let idleSeconds: UInt64 = 120
+    /// Keep running this long after the screen closes (battery); restarting is fast.
+    private static let idleSeconds: UInt64 = 10
+
+    init() {
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [.AVCaptureSessionRuntimeError, .AVCaptureSessionWasInterrupted]
+        for name in names {
+            observers.append(center.addObserver(forName: name, object: engine.session, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.lost() }
+            })
+        }
+        observers.append(center.addObserver(forName: .AVCaptureSessionInterruptionEnded, object: engine.session, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.resumeIfVisible() }
+        })
+    }
 
     deinit {
         idleStop?.cancel()
-        engine.stop()
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        engine.stopNow()
     }
 
     var hasCamera: Bool { SnapCameraEngine.backCamera() != nil }
@@ -179,8 +234,21 @@ final class SnapCamera: ObservableObject {
         engine.prepare()
     }
 
+    /// Starts the session; a second call while one is under way waits for the first.
     func start() async {
         idleStop?.cancel()
+        idleStop = nil
+        if let starting {
+            await starting.value
+            return
+        }
+        let task = Task { await run() }
+        starting = task
+        await task.value
+        starting = nil
+    }
+
+    private func run() async {
         guard hasCamera else {
             state = .noCamera
             return
@@ -199,34 +267,52 @@ final class SnapCamera: ObservableObject {
             return
         }
         if state != .running { state = .starting }
-        switch await engine.start() {
+        let gen = generation
+        let result = await engine.start()
+        guard gen == generation else {
+            // Stopped while starting: leave it stopped.
+            await engine.stop()
+            return
+        }
+        switch result {
         case .running: state = .running
         case .failed(let message): state = .failed(message)
         }
     }
 
-    /// The camera screen closed: keep running for a while so the next open is instant.
+    /// The camera screen closed: keep running briefly so a quick reopen is instant.
     func stopSoon() {
         idleStop?.cancel()
         idleStop = Task { [weak self] in
             try? await Task.sleep(nanoseconds: Self.idleSeconds * 1_000_000_000)
             guard !Task.isCancelled else { return }
-            self?.stop()
+            await self?.stop()
         }
     }
 
-    /// Stop now (another screen needs the camera, e.g. the LiDAR scan).
-    func stop() {
+    /// Stops now and returns once the session is down (e.g. before the LiDAR scan).
+    func stop() async {
         idleStop?.cancel()
         idleStop = nil
-        engine.stop()
+        generation += 1
         if state == .running || state == .starting { state = .idle }
+        await engine.stop()
+    }
+
+    /// A runtime error or an interruption stopped the session; the next open restarts it.
+    private func lost() {
+        if state == .running || state == .starting { state = .idle }
+    }
+
+    private func resumeIfVisible() {
+        guard visible else { return }
+        Task { await start() }
     }
 
     /// Hooks a preview layer to the session and keeps it level.
     func attach(_ layer: AVCaptureVideoPreviewLayer) {
         layer.session = engine.session
-        layer.videoGravity = .resizeAspectFill
+        layer.videoGravity = .resizeAspect
         rotationObservation = nil
         rotation = nil
         guard let device = SnapCameraEngine.backCamera() else { return }
@@ -272,12 +358,14 @@ struct CameraPreview: UIViewRepresentable {
 
 // MARK: - Screen
 
-/// Stay-open camera for Snap: take a Photo, then Delete, Keep, or Keep and take another.
+/// Stay-open camera for Snap: take a Photo, then Delete, Save, or Save and take another.
 /// Uploads run in the background through the shared `SnapUploader`.
+/// Preview and review use the same 3:4 frame as the saved Photo, so what you see is what is saved.
 struct SnapCameraScreen: View {
     @EnvironmentObject private var session: FlowSession
+    @EnvironmentObject private var uploader: SnapUploader
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var camera: SnapCamera
-    @ObservedObject var uploader: SnapUploader
     var onClose: () -> Void
 
     private struct Shot {
@@ -294,44 +382,74 @@ struct SnapCameraScreen: View {
         session.here.hasRoom ? FlowLogic.placeLabel(session.here, houses: session.houses) : "No Place set"
     }
 
+    private var savedLabel: String {
+        uploader.savedCount == 1 ? "1 Photo saved" : "\(uploader.savedCount) Photos saved"
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            content
-
-            if let shot {
-                Color.clear
-                    .overlay(
-                        Image(uiImage: shot.preview)
-                            .resizable()
-                            .scaledToFill()
-                    )
-                    .clipped()
-                    .ignoresSafeArea()
-            }
-
-            Color.white
-                .opacity(flash ? 0.7 : 0)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-
             VStack(spacing: 12) {
                 topBar
-                Spacer()
-                errors
-                if shot != nil {
-                    decisionBar
-                } else {
-                    shutterBar
+                    .padding(.horizontal, 16)
+                Spacer(minLength: 0)
+                frame
+                Spacer(minLength: 0)
+                Group {
+                    if shot != nil {
+                        decisionBar
+                    } else {
+                        shutterBar
+                    }
                 }
+                .padding(.horizontal, 16)
             }
-            .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
         .statusBarHidden()
         .task { await camera.start() }
-        .onDisappear { camera.stopSoon() }
+        .onAppear { camera.visible = true }
+        .onDisappear {
+            camera.visible = false
+            camera.stopSoon()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            Task {
+                if phase == .active {
+                    await camera.start()
+                } else {
+                    await camera.stop()
+                }
+            }
+        }
+    }
+
+    /// Live preview or the frozen Photo, both letterboxed in a 3:4 frame.
+    private var frame: some View {
+        Color.black
+            .aspectRatio(3.0 / 4.0, contentMode: .fit)
+            .overlay { content }
+            .overlay {
+                if let shot {
+                    ZStack {
+                        Color.black
+                        Image(uiImage: shot.preview)
+                            .resizable()
+                            .scaledToFit()
+                    }
+                }
+            }
+            .overlay {
+                Color.white
+                    .opacity(flash ? 0.7 : 0)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottom) {
+                errors
+                    .padding(12)
+            }
+            .clipped()
     }
 
     @ViewBuilder
@@ -339,7 +457,6 @@ struct SnapCameraScreen: View {
         switch camera.state {
         case .running:
             CameraPreview(camera: camera)
-                .ignoresSafeArea()
         case .idle, .starting:
             ProgressView().tint(FlowTheme.cream)
         case .noCamera:
@@ -394,7 +511,7 @@ struct SnapCameraScreen: View {
             .font(.system(size: 13, weight: .medium))
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color.black.opacity(0.5), in: Capsule())
+            .background(Color.white.opacity(0.12), in: Capsule())
 
             Spacer(minLength: 8)
 
@@ -404,7 +521,7 @@ struct SnapCameraScreen: View {
                     .foregroundStyle(FlowTheme.cream)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(Color.black.opacity(0.5), in: Capsule())
+                    .background(Color.white.opacity(0.12), in: Capsule())
             }
             .accessibilityLabel("Close the camera")
         }
@@ -412,21 +529,23 @@ struct SnapCameraScreen: View {
 
     @ViewBuilder
     private var errors: some View {
-        if let captureError {
-            ErrorLine(message: captureError)
-        }
-        if let summary = uploader.failedSummary {
-            HStack(spacing: 8) {
-                ErrorLine(message: [summary, uploader.error].compactMap { $0 }.joined(separator: " "))
-                Button("Retry") {
-                    Task { await uploader.retryFailed(session: session) }
+        VStack(spacing: 6) {
+            if let captureError {
+                ErrorLine(message: captureError)
+            }
+            if let summary = uploader.failedSummary {
+                HStack(spacing: 8) {
+                    ErrorLine(message: [summary, uploader.error].compactMap { $0 }.joined(separator: " "))
+                    Button("Retry") {
+                        Task { await uploader.retryFailed(session: session) }
+                    }
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .foregroundStyle(FlowTheme.ink)
+                    .background(FlowTheme.lime, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .disabled(uploader.busy > 0)
                 }
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .foregroundStyle(FlowTheme.ink)
-                .background(FlowTheme.lime, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .disabled(uploader.busy > 0)
             }
         }
     }
@@ -446,11 +565,13 @@ struct SnapCameraScreen: View {
                 .frame(width: 52, height: 52)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.6)))
-                Text("\(uploader.savedCount) saved")
+                Text(savedLabel)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(FlowTheme.lime)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            .frame(width: 80)
+            .frame(width: 96)
 
             Spacer()
 
@@ -478,7 +599,7 @@ struct SnapCameraScreen: View {
                         .foregroundStyle(FlowTheme.cream)
                 }
             }
-            .frame(width: 80)
+            .frame(width: 96)
         }
         .padding(.bottom, 8)
     }
@@ -488,11 +609,11 @@ struct SnapCameraScreen: View {
             decisionButton("Delete", systemImage: "trash", fg: FlowTheme.cream, bg: FlowTheme.toss) {
                 shot = nil
             }
-            decisionButton("Keep", systemImage: "checkmark", fg: FlowTheme.ink, bg: FlowTheme.cream) {
-                keep(another: false)
+            decisionButton("Save", systemImage: "checkmark", fg: FlowTheme.ink, bg: FlowTheme.cream) {
+                save(another: false)
             }
-            decisionButton("Keep, another", systemImage: "camera.fill", fg: FlowTheme.ink, bg: FlowTheme.lime) {
-                keep(another: true)
+            decisionButton("Save, another", systemImage: "camera.fill", fg: FlowTheme.ink, bg: FlowTheme.lime) {
+                save(another: true)
             }
         }
         .padding(.bottom, 8)
@@ -537,7 +658,7 @@ struct SnapCameraScreen: View {
         }
     }
 
-    private func keep(another: Bool) {
+    private func save(another: Bool) {
         guard let shot else { return }
         self.shot = nil
         uploader.lastKept = shot.preview

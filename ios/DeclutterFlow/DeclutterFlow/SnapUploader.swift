@@ -3,6 +3,7 @@ import UIKit
 
 /// Uploads Snap Photos to the inbox. Shared by `SnapView` and `SnapCameraScreen`, so the
 /// "saved" counter, the busy spinner and upload errors are the same on both screens.
+/// ContentView owns it, above the tab switch, so a failed Photo survives a tab change.
 @MainActor
 final class SnapUploader: ObservableObject {
     /// A Photo that did not upload; it stays here so it can be retried.
@@ -13,10 +14,11 @@ final class SnapUploader: ObservableObject {
     }
 
     @Published private(set) var busy = 0
+    /// Photos saved (camera and library); notes are counted by SnapView.
     @Published private(set) var savedCount = 0
     @Published var error: String?
     @Published private(set) var failed: [Failed] = []
-    /// Small preview of the last Photo kept in the camera.
+    /// Small preview of the last Photo saved in the camera.
     @Published var lastKept: UIImage?
 
     /// Library path: encode a picked image, then upload it.
@@ -73,11 +75,6 @@ final class SnapUploader: ObservableObject {
         for f in queue {
             await upload(jpeg: f.jpeg, place: f.place, session: session)
         }
-    }
-
-    /// A note or a link was saved; counts with the Photos.
-    func noteSaved() {
-        savedCount += 1
     }
 
     var failedSummary: String? {

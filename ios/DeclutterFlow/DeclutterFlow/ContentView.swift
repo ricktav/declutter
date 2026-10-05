@@ -31,6 +31,8 @@ struct ContentView: View {
     @State private var tab: FlowTab = FlowTab(rawValue: UserDefaults.standard.string(forKey: "flow.initialTab") ?? "") ?? .snap
     @State private var showHere = false
     @State private var showSettings = false
+    // Above the tab switch: Snap uploads (and their retry queue) outlive a tab change.
+    @StateObject private var uploader = SnapUploader()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,6 +46,7 @@ struct ContentView: View {
                 switch tab {
                 case .snap:
                     SnapView(onGoSort: { tab = .sort }, onChangeHere: { showHere = true })
+                        .environmentObject(uploader)
                 case .sort:
                     ScrollView { SortView().padding(.vertical, 4) }
                 case .act:
@@ -139,6 +142,16 @@ struct ContentView: View {
                     .foregroundStyle(tab == t ? FlowTheme.ink : FlowTheme.muted)
                     .background(tab == t ? FlowTheme.lime : Color.white)
                     .overlay(alignment: .topTrailing) {
+                        if t == .snap, !uploader.failed.isEmpty {
+                            Text("\(uploader.failed.count)")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(FlowTheme.toss, in: Capsule())
+                                .offset(x: -18, y: 4)
+                                .accessibilityLabel("\(uploader.failed.count) Photos did not upload")
+                        }
                         if t == .sort, session.sortCount > 0 {
                             Text("\(session.sortCount)")
                                 .font(.system(size: 10, weight: .semibold))
