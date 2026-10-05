@@ -51,9 +51,10 @@ export function ItemRoomPreview({
   const cameras = useMemo<CameraMarker[]>(
     () =>
       (roomPhotos.data ?? []).flatMap((p) =>
-        p.camera && !p.isCutout ? [{ id: p.photoId, title: p.title ?? "Photo", camera: p.camera }] : [],
+        // a capture's location photo filed in another room lists here too; its camera stands in that room
+        p.camera && !p.isCutout && p.roomId === roomId ? [{ id: p.photoId, title: p.title ?? "Photo", camera: p.camera }] : [],
       ),
-    [roomPhotos.data],
+    [roomPhotos.data, roomId],
   );
   const openCamera = onOpenCamera ?? setOpenPhotoId;
   const openPhoto = openPhotoId != null ? roomPhotos.data?.find((p) => p.photoId === openPhotoId) : undefined;

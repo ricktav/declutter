@@ -1017,6 +1017,19 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
                     {pin.title ?? `photo #${pin.photoId}`}
                   </Link>
                   {pin.label && <span className="text-muted-foreground text-[11px]">as “{pin.label}”</span>}
+                  {pin.camera ? (
+                    <span className="text-[11px] text-violet-700" title="This photo stands on its room's plan as a camera">
+                      · on the plan
+                    </span>
+                  ) : pin.roomId != null && !pin.isCutout ? (
+                    <Link
+                      to={`/rooms/${pin.roomId}?placePhoto=${pin.photoId}`}
+                      className="text-[11px] text-primary hover:underline"
+                      title="Stand this photo on its room's plan, looking where it was taken"
+                    >
+                      Place
+                    </Link>
+                  ) : null}
                 </div>
               ))}
             </div>

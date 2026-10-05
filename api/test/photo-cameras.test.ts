@@ -165,13 +165,19 @@ describe("room changes reset the camera", () => {
 });
 
 describe("photos.roomPhotos", () => {
-  it("lists full photos first, newest first, with camera, owner and confirmed pin count", async () => {
+  it("lists full photos first, newest first, with camera, own roomId, owner and confirmed pin count", async () => {
     const { db, keuken, zolder, thing, photo, api } = await seed();
     const kettle = await thing("Kettle", { roomId: keuken });
     const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: await writeTestJpeg() }).$returningId();
     const older = await photo({ roomId: keuken, title: "Older", createdAt: new Date("2026-01-01T10:00:00Z") });
     const newer = await photo({ roomId: keuken, title: "Newer", createdAt: new Date("2026-02-01T10:00:00Z") });
-    const location = await photo({ sourceCaptureId: capId, title: "Location photo", createdAt: new Date("2026-01-15T10:00:00Z") });
+    // a capture's location photo filed in another room still lists here, with its own roomId
+    const location = await photo({
+      sourceCaptureId: capId,
+      roomId: zolder,
+      title: "Location photo",
+      createdAt: new Date("2026-01-15T10:00:00Z"),
+    });
     const cut = await photo({
       itemId: kettle,
       sourceCaptureId: capId,
@@ -189,10 +195,10 @@ describe("photos.roomPhotos", () => {
 
     const rows = await api.photos.roomPhotos({ roomId: keuken });
     expect(rows).toEqual([
-      { photoId: newer, title: "Newer", storageKey: expect.any(String), itemId: null, itemName: null, isCutout: false, camera: null, pinCount: 2 },
-      { photoId: location, title: "Location photo", storageKey: expect.any(String), itemId: null, itemName: null, isCutout: false, camera: null, pinCount: 0 },
-      { photoId: older, title: "Older", storageKey: expect.any(String), itemId: null, itemName: null, isCutout: false, camera: cam, pinCount: 0 },
-      { photoId: cut, title: "Kettle cut", storageKey: expect.any(String), itemId: kettle, itemName: "Kettle", isCutout: true, camera: null, pinCount: 0 },
+      { photoId: newer, title: "Newer", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, camera: null, pinCount: 2 },
+      { photoId: location, title: "Location photo", storageKey: expect.any(String), itemId: null, itemName: null, roomId: zolder, isCutout: false, camera: null, pinCount: 0 },
+      { photoId: older, title: "Older", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, camera: cam, pinCount: 0 },
+      { photoId: cut, title: "Kettle cut", storageKey: expect.any(String), itemId: kettle, itemName: "Kettle", roomId: null, isCutout: true, camera: null, pinCount: 0 },
     ]);
 
     // items.placement shares the query: same rows minus the Thing's own photos, plus hasPinForItem; pins carry camera
@@ -201,7 +207,9 @@ describe("photos.roomPhotos", () => {
       [newer, null, true],
       [older, cam, false],
     ]);
-    expect(pl.pins).toEqual([{ pinId: expect.any(Number), photoId: newer, title: "Newer", label: "kettle", camera: null }]);
+    expect(pl.pins).toEqual([
+      { pinId: expect.any(Number), photoId: newer, title: "Newer", label: "kettle", camera: null, roomId: keuken, isCutout: false },
+    ]);
   });
 
   it("caps the list at 60", async () => {
@@ -209,6 +217,24 @@ describe("photos.roomPhotos", () => {
     const key = await writeTestJpeg();
     await db.insert(photos).values(Array.from({ length: 65 }, (_, i) => ({ storageKey: key, roomId: keuken, title: `P${i}` })));
     expect(await api.photos.roomPhotos({ roomId: keuken })).toHaveLength(60);
+  });
+});
+
+describe("photos.listAll", () => {
+  it("carries each photo's camera and whether it is a cutout; captures have neither", async () => {
+    const { db, keuken, thing, photo, api } = await seed();
+    const kettle = await thing("Kettle", { roomId: keuken });
+    const placed = await photo({ roomId: keuken, title: "Placed" });
+    const bare = await photo({ roomId: keuken, title: "Bare" });
+    const cut = await photo({ itemId: kettle, cropBox: { xPct: 10, yPct: 10, wPct: 20, hPct: 20 } });
+    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: await writeTestJpeg() }).$returningId();
+    await api.photos.setCamera({ id: placed, camera: cam });
+
+    const byKey = new Map((await api.photos.listAll()).map((r) => [`${r.source}:${r.id}`, r]));
+    expect(byKey.get(`photo:${placed}`)).toMatchObject({ roomId: keuken, isCutout: false, camera: cam });
+    expect(byKey.get(`photo:${bare}`)).toMatchObject({ isCutout: false, camera: null });
+    expect(byKey.get(`photo:${cut}`)).toMatchObject({ isCutout: true, camera: null });
+    expect(byKey.get(`capture:${capId}`)).toMatchObject({ isCutout: false, camera: null });
   });
 });
 

@@ -275,6 +275,10 @@ export interface CatalogRow {
   houseId: number | null;
   areaName: string | null;
   isItemCover: boolean;
+  /** a crop of a Thing (cropBox set): never a camera */
+  isCutout: boolean;
+  /** where the photo stands on its room's plan (photos.camera); null for captures */
+  camera: PhotoCamera | null;
 }
 
 /** The Photos page catalog: every photo whatever its state (item photo,
@@ -313,6 +317,8 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
       houseId: room?.houseId ?? it?.houseId ?? null,
       areaName: it ? (areaById.get(it.areaId)?.name ?? null) : null,
       isItemCover: p.itemId != null && covers.get(p.itemId)?.id === p.id,
+      isCutout: p.cropBox != null,
+      camera: p.camera ?? null,
     };
   });
 
@@ -337,6 +343,8 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
       houseId: null,
       areaName: null,
       isItemCover: false,
+      isCutout: false,
+      camera: null,
     }));
 
   return [...photoRows, ...captureRows].sort((a, b) => +b.createdAt - +a.createdAt);

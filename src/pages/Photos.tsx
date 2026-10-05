@@ -5,10 +5,13 @@ import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { timeAgo } from "@/lib/format";
-import { Search, Loader2, MapPin, LayoutGrid, Link2, X } from "lucide-react";
+import { Search, Loader2, MapPin, LayoutGrid, Link2, X, Camera } from "lucide-react";
 import { usePersistedState } from "@/hooks/use-persisted-state";
 import { AttachPhotoDialog, type AttachTarget } from "@/components/AttachPhotoDialog";
 import { cn } from "@/lib/utils";
+import type { PhotoCamera } from "@db/schema";
+
+const NO_ROOMS: RoomOption[] = [];
 
 type SortBy = "location" | "recent" | "area";
 type Photo = {
@@ -26,7 +29,11 @@ type Photo = {
   roomName: string | null;
   floor: string | null;
   areaName: string | null;
+  isCutout: boolean;
+  /** where the photo stands on its room's plan */
+  camera: PhotoCamera | null;
 };
+type RoomOption = { id: number; name: string; floor: string | null };
 type Placement = { pinCount: number; onPlan: boolean };
 
 /** Where a Thing stands: pinned in a photo, placed on its room's plan. Grey
@@ -69,11 +76,14 @@ function PlacementBadges({ placement }: { placement: Placement }) {
 function PhotoTile({
   photo,
   placement,
+  rooms,
   onZoom,
   onAttach,
 }: {
   photo: Photo;
   placement: Placement | undefined;
+  /** the session house's rooms: an inbox capture has none yet, so "Place on the plan" asks */
+  rooms: RoomOption[];
   onZoom: (photo: Photo) => void;
   onAttach: (target: AttachTarget) => void;
 }) {
@@ -87,6 +97,13 @@ function PhotoTile({
     onSuccess: (res) => navigate(`/annotate/${res.photoId}${pinQuery}`),
   });
   const inBucket = photo.itemId == null;
+  // "Place on the plan": the plan page stands a photo id in its own room. A
+  // capture gets its photo (with the chosen room) first; a cutout never.
+  const ensureForPlace = trpc.photos.ensureForCapture.useMutation({
+    onSuccess: (res, vars) => navigate(`/rooms/${vars.roomId}?placePhoto=${res.photoId}`),
+  });
+  const [pickRoom, setPickRoom] = useState(false);
+  const canPlace = photo.source === "capture" ? rooms.length > 0 : photo.roomId != null && !photo.isCutout;
 
   const caption =
     photo.source === "capture"
@@ -98,6 +115,14 @@ function PhotoTile({
       <Thumb storageKey={photo.storageKey} size="lg" />
       <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{caption}</div>
       <div className="font-data text-[10px] text-muted-foreground">{timeAgo(photo.createdAt)}</div>
+      {photo.camera && (
+        <span
+          className="mr-1 inline-flex items-center gap-0.5 rounded bg-violet-50 px-1.5 text-[10px] font-medium text-violet-700"
+          title="This photo stands on its room's plan as a camera"
+        >
+          <Camera className="h-2.5 w-2.5" /> on the plan
+        </span>
+      )}
       {photo.itemStatus === "archived" && (
         <span className="inline-block text-[10px] font-medium text-muted-foreground bg-muted rounded px-1.5">
           archived
@@ -144,7 +169,7 @@ function PhotoTile({
         // shows the row, the next Tab reaches its buttons); always on touch
         // screens, which cannot hover. invisible rather than opacity-0, so a
         // hidden button cannot be clicked by accident
-        <div className="invisible mt-1 flex gap-1 group-hover/tile:visible group-focus-within/tile:visible [@media(hover:none)]:visible">
+        <div className="invisible mt-1 flex flex-wrap gap-1 group-hover/tile:visible group-focus-within/tile:visible [@media(hover:none)]:visible">
           <button
             type="button"
             className="flex-1 flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50"
@@ -173,6 +198,48 @@ function PhotoTile({
             {ensureForPin.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <MapPin className="h-3 w-3" />} Pin
             a Thing…
           </button>
+          {canPlace &&
+            (pickRoom ? (
+              <select
+                autoFocus
+                aria-label="Room to place the photo in"
+                className="basis-full rounded border border-border bg-white px-1 py-1 text-[11px]"
+                disabled={ensureForPlace.isPending}
+                defaultValue=""
+                onChange={(e) => {
+                  const roomId = Number(e.target.value);
+                  if (roomId > 0) ensureForPlace.mutate({ captureId: photo.captureId!, roomId });
+                }}
+                onBlur={() => !ensureForPlace.isPending && setPickRoom(false)}
+              >
+                <option value="" disabled>
+                  {ensureForPlace.isPending ? "Opening the plan…" : "Which room?"}
+                </option>
+                {rooms.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.floor ? `${r.name} · ${r.floor}` : r.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <button
+                type="button"
+                className="basis-full flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50"
+                onClick={() =>
+                  photo.source === "capture"
+                    ? setPickRoom(true)
+                    : navigate(`/rooms/${photo.roomId}?placePhoto=${photo.id}`)
+                }
+                title={
+                  photo.source === "capture"
+                    ? "Choose its room, then stand this photo on the room's plan"
+                    : "Stand this photo on its room's plan, looking where it was taken"
+                }
+              >
+                <Camera className="h-3 w-3" /> Place on the plan{photo.source === "capture" ? "…" : ""}
+              </button>
+            ))}
+          {ensureForPlace.error && <p className="basis-full text-[10px] text-destructive">{ensureForPlace.error.message}</p>}
         </div>
       )}
       {photo.storageKey && (
@@ -203,6 +270,7 @@ function FullImage({ storageKey }: { storageKey: string }) {
 export default function PhotosPage() {
   const photos = trpc.photos.listAll.useQuery();
   const houses = trpc.houses.list.useQuery();
+  const rooms = trpc.rooms.list.useQuery(); // the session house's rooms, for a capture's "Place on the plan"
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = usePersistedState<SortBy>("photos.sortBy", "location");
   const [showObjects, setShowObjects] = usePersistedState("photos.showObjects", true);
@@ -370,6 +438,7 @@ export default function PhotosPage() {
                   key={`${p.source}-${p.id}`}
                   photo={p}
                   placement={p.itemId != null ? placementOf.get(p.itemId) : undefined}
+                  rooms={rooms.data ?? NO_ROOMS}
                   onZoom={setZoomed}
                   onAttach={setAttachTarget}
                 />

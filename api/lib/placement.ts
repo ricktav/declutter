@@ -28,8 +28,16 @@ export interface Placement {
   parentName: string | null;
   /** placed on the plan, and so in 3D: roomId and pos are both set */
   onPlan: boolean;
-  /** confirmed pins only */
-  pins: Array<{ pinId: number; photoId: number; title: string | null; label: string; camera: PhotoCamera | null }>;
+  /** confirmed pins only; roomId and isCutout are the pin's photo's (a camera stands only on a full photo with a room) */
+  pins: Array<{
+    pinId: number;
+    photoId: number;
+    title: string | null;
+    label: string;
+    camera: PhotoCamera | null;
+    roomId: number | null;
+    isCutout: boolean;
+  }>;
   /** photos with this itemId */
   photos: number;
   /** non-cutouts first, then newest first, max ROOM_PHOTOS_MAX */
@@ -41,12 +49,26 @@ export async function placementFor(db: Db, itemId: number): Promise<Placement> {
   if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Thing not found." });
   const room = item.roomId != null ? await db.query.rooms.findFirst({ where: eq(rooms.id, item.roomId) }) : undefined;
 
-  const pins = await db
-    .select({ pinId: photoPins.id, photoId: photoPins.photoId, title: photos.title, label: photoPins.label, camera: photos.camera })
+  const pinRows = await db
+    .select({
+      pinId: photoPins.id,
+      photoId: photoPins.photoId,
+      title: photos.title,
+      label: photoPins.label,
+      camera: photos.camera,
+      roomId: photos.roomId,
+      cropBox: photos.cropBox,
+    })
     .from(photoPins)
     .innerJoin(photos, eq(photos.id, photoPins.photoId))
     .where(and(eq(photoPins.itemId, itemId), eq(photoPins.status, "confirmed")))
     .orderBy(desc(photoPins.createdAt), desc(photoPins.id));
+  const pins = pinRows.map(({ cropBox, ...pin }) => ({
+    ...pin,
+    camera: pin.camera ?? null,
+    roomId: pin.roomId ?? null,
+    isCutout: cropBox != null,
+  }));
   const pinnedIds = new Set(pins.map((p) => p.photoId));
   const [{ n: photoCount }] = await db.select({ n: count() }).from(photos).where(eq(photos.itemId, itemId));
   const parent = item.parentId != null ? await db.query.items.findFirst({ where: eq(items.id, item.parentId) }) : undefined;
@@ -77,6 +99,10 @@ export interface RoomPhoto {
   storageKey: string;
   itemId: number | null;
   itemName: string | null;
+  /** the photo's own room (photos.roomId): a capture's location photo or a
+   * cutout can belong to another room, or none; a camera only stands in this
+   * room's frame */
+  roomId: number | null;
   /** a crop, or another Thing's own photo: a poor pin canvas (a crop never gets a camera) */
   isCutout: boolean;
   camera: PhotoCamera | null;
@@ -113,6 +139,7 @@ export async function roomPhotosFor(
     itemId: photos.itemId,
     cropBox: photos.cropBox,
     camera: photos.camera,
+    roomId: photos.roomId,
   };
   const cutouts = otherIds.length
     ? await db
@@ -155,6 +182,7 @@ export async function roomPhotosFor(
     storageKey: p.storageKey,
     itemId: p.itemId ?? null,
     itemName: p.itemId != null ? (nameBy.get(p.itemId) ?? null) : null,
+    roomId: p.roomId ?? null,
     isCutout: p.isCutout,
     camera: p.camera ?? null,
     pinCount: pinsBy.get(p.id) ?? 0,

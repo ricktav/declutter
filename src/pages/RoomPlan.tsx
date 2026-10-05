@@ -226,22 +226,13 @@ export default function RoomPlanPage() {
   // the next plan click stands the photo there with the suggested heading.
   const roomPhotos = trpc.photos.roomPhotos.useQuery({ roomId: id }, { enabled: Number.isFinite(id) });
   const fullPhotos = useMemo(() => (roomPhotos.data ?? []).filter((p) => !p.isCutout), [roomPhotos.data]);
-  // roomPhotos rows carry no roomId (a capture's location photo can be
-  // listed here while filed in no room, or another): photos.get says, and
-  // brings the thumbnail URL with it.
-  const photoDetails = trpc.useQueries((t) => fullPhotos.map((p) => t.photos.get({ id: p.photoId })));
-  const photoInfo = new Map(
-    fullPhotos.map((p, i) => {
-      const d = photoDetails[i]?.data;
-      return [p.photoId, { roomId: d?.photo?.roomId ?? null, url: d?.url ?? null, loaded: d != null }] as const;
-    }),
-  );
-  const photoTitle = (p: { photoId: number; title: string | null }) => p.title || `Photo #${p.photoId}`;
-  const onPlanPhotos = fullPhotos.filter((p) => p.camera != null && photoInfo.get(p.photoId)?.roomId === id);
+  // a capture's location photo can be listed here while filed in no room, or
+  // another: each row's own roomId says; a camera only stands in its room
+  const onPlanPhotos = useMemo(() => fullPhotos.filter((p) => p.camera != null && p.roomId === id), [fullPhotos, id]);
   const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const [confirmRemoveCamera, setConfirmRemoveCamera] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [zoomPhoto, setZoomPhoto] = useState<{ url: string; title: string } | null>(null);
+  const [zoomPhoto, setZoomPhoto] = useState<{ storageKey: string; title: string } | null>(null);
   const selectedCamera = onPlanPhotos.find((p) => p.photoId === selectedCameraId) ?? null;
 
   const placePhotoRaw = Number(searchParams.get("placePhoto"));
@@ -355,6 +346,15 @@ export default function RoomPlanPage() {
     setConfirmRemoveCamera(false);
     setCameraError(null);
     setSelectedId(null);
+  };
+  // 3D draws the placed photos only (no ghost), memoised: the 3D scene rebuilds when its cameras change
+  const cameras3d = useMemo<CameraMarker[]>(
+    () => (roomSized ? onPlanPhotos.map((p) => ({ id: p.photoId, title: photoTitle(p), camera: p.camera! })) : []),
+    [roomSized, onPlanPhotos],
+  );
+  const openCameraPhoto = (photoId: number) => {
+    const p = onPlanPhotos.find((x) => x.photoId === photoId);
+    if (p) setZoomPhoto({ storageKey: p.storageKey, title: photoTitle(p) });
   };
   const cameraMarkers: CameraMarker[] = roomSized
     ? [
@@ -643,12 +643,18 @@ export default function RoomPlanPage() {
                   active={view === "3d"}
                   pinMode={pinMode || placing != null}
                   onPinPlace={onPlanClick}
+                  cameras={cameras3d}
+                  selectedCameraId={selectedCameraId}
+                  onSelectCamera={(photoId) => {
+                    selectCamera(photoId);
+                    openCameraPhoto(photoId);
+                  }}
                 />
               </div>
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {view === "2d"
                   ? "Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize. A photo's dot moves it, the handle at its view's tip aims it (shift = wider or narrower). The ⟲/⟳ buttons above only rotate the view, not the data."
-                  : "Drag to orbit · scroll to zoom · click an item to select it."}
+                  : "Drag to orbit · scroll to zoom · click an item to select it, a photo's cone to open it."}
               </p>
               {room.data.items.some((it) => !it.pos && placeable(it)) && (
                 <div className="mt-3 text-[12px] text-muted-foreground">
@@ -710,8 +716,7 @@ export default function RoomPlanPage() {
                   </p>
                   <ul className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                     {fullPhotos.map((p) => {
-                      const info = photoInfo.get(p.photoId);
-                      const here = info?.roomId === id;
+                      const here = p.roomId === id;
                       const onPlan = here && p.camera != null;
                       const title = photoTitle(p);
                       return (
@@ -721,11 +726,7 @@ export default function RoomPlanPage() {
                             onPlan && selectedCameraId === p.photoId ? "border-violet-400" : "border-border"
                           }`}
                         >
-                          {info?.url ? (
-                            <img src={info.url} alt="" className="h-12 w-12 shrink-0 rounded object-cover bg-muted" />
-                          ) : (
-                            <div className="h-12 w-12 shrink-0 rounded bg-muted" />
-                          )}
+                          <PhotoThumb storageKey={p.storageKey} />
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-foreground" title={title}>
                               {title}
@@ -734,7 +735,7 @@ export default function RoomPlanPage() {
                               {p.pinCount > 0 ? `${p.pinCount} pinned` : "no pins"}
                             </p>
                           </div>
-                          {!info?.loaded ? null : onPlan ? (
+                          {onPlan ? (
                             <button
                               type="button"
                               disabled={!roomSized}
@@ -759,9 +760,9 @@ export default function RoomPlanPage() {
                                 <Camera className="h-3 w-3 mr-0.5" /> Place
                               </Button>
                             </span>
-                          ) : info.roomId != null ? (
+                          ) : p.roomId != null ? (
                             <Link
-                              to={`/rooms/${info.roomId}?placePhoto=${p.photoId}`}
+                              to={`/rooms/${p.roomId}?placePhoto=${p.photoId}`}
                               className="shrink-0 px-1 text-[11px] text-primary hover:underline"
                             >
                               in another room →
@@ -860,11 +861,11 @@ export default function RoomPlanPage() {
                 <CameraCard
                   title={photoTitle(selectedCamera)}
                   camera={selectedCamera.camera!}
-                  url={photoInfo.get(selectedCamera.photoId)?.url ?? null}
+                  storageKey={selectedCamera.storageKey}
                   busy={setCamera.isPending}
                   error={cameraError}
                   confirmRemove={confirmRemoveCamera}
-                  onOpen={(url) => setZoomPhoto({ url, title: photoTitle(selectedCamera) })}
+                  onOpen={() => setZoomPhoto({ storageKey: selectedCamera.storageKey, title: photoTitle(selectedCamera) })}
                   onSuggest={() => void suggestForSelected()}
                   onRemove={async () => {
                     if (!confirmRemoveCamera) {
@@ -995,9 +996,7 @@ export default function RoomPlanPage() {
             </aside>
           </div>
           <ZoomOverlay open={zoomPhoto != null} onClose={() => setZoomPhoto(null)} title={zoomPhoto?.title}>
-            {zoomPhoto && (
-              <img src={zoomPhoto.url} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
-            )}
+            {zoomPhoto && <FullPhoto storageKey={zoomPhoto.storageKey} />}
           </ZoomOverlay>
         </>
       )}
@@ -1010,16 +1009,17 @@ export default function RoomPlanPage() {
 function CameraCard(props: {
   title: string;
   camera: PhotoCamera;
-  url: string | null;
+  storageKey: string;
   busy: boolean;
   error: string | null;
   confirmRemove: boolean;
-  onOpen: (url: string) => void;
+  onOpen: () => void;
   onSuggest: () => void;
   onRemove: () => void;
   onClose: () => void;
 }) {
-  const { title, camera, url } = props;
+  const { title, camera } = props;
+  const url = trpc.photos.url.useQuery({ key: props.storageKey }).data?.url ?? null;
   return (
     <>
       <div className="flex items-start justify-between gap-2">
@@ -1029,7 +1029,7 @@ function CameraCard(props: {
         </button>
       </div>
       {url ? (
-        <button type="button" className="mt-2 block w-full" title="Open" onClick={() => props.onOpen(url)}>
+        <button type="button" className="mt-2 block w-full" title="Open" onClick={props.onOpen}>
           <img src={url} alt="" className="w-full max-h-40 rounded object-cover bg-muted" />
         </button>
       ) : (
@@ -1040,7 +1040,7 @@ function CameraCard(props: {
         {Math.round(camera.fovDeg)}°
       </p>
       <div className="mt-3 flex flex-wrap gap-1.5">
-        <Button size="sm" variant="outline" className="h-7 text-[12px]" disabled={!url} onClick={() => url && props.onOpen(url)}>
+        <Button size="sm" variant="outline" className="h-7 text-[12px]" disabled={!url} onClick={props.onOpen}>
           <Maximize2 className="h-3.5 w-3.5 mr-1" /> Open
         </Button>
         <Button size="sm" variant="outline" className="h-7 text-[12px]" disabled={props.busy} onClick={props.onSuggest}>
@@ -1060,6 +1060,25 @@ function CameraCard(props: {
       </div>
     </>
   );
+}
+
+const photoTitle = (p: { photoId: number; title: string | null }) => p.title || `Photo #${p.photoId}`;
+
+/** A photo row's thumbnail. */
+function PhotoThumb({ storageKey }: { storageKey: string }) {
+  const url = trpc.photos.url.useQuery({ key: storageKey }).data?.url;
+  return url ? (
+    <img src={url} alt="" className="h-12 w-12 shrink-0 rounded object-cover bg-muted" />
+  ) : (
+    <div className="h-12 w-12 shrink-0 rounded bg-muted" />
+  );
+}
+
+/** The full-size photo behind a marker, for the zoom overlay. */
+function FullPhoto({ storageKey }: { storageKey: string }) {
+  const url = trpc.photos.url.useQuery({ key: storageKey }).data?.url;
+  if (!url) return null;
+  return <img src={url} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />;
 }
 
 /** Width x depth for a room without a plan; saving gives the room its 2D
