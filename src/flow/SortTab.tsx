@@ -36,10 +36,9 @@ function storeSkipped(keys: string[]) {
 }
 
 /** The frame the AI drew around a spotted Thing (centre + size, percent of the
- * image), or null when it gave none or an unusable one. `box` lands on
- * TriageSpottedItem with sort-triage-boxes; read it loosely until then. */
-function spottedBox(s: unknown): CropBox | null {
-  const b = (s as { box?: CropBox | null }).box;
+ * image), or null when it gave none or an unusable one. */
+function spottedBox(s: { box?: CropBox | null }): CropBox | null {
+  const b = s.box;
   if (!b) return null;
   const ok = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 100;
   return ok(b.xPct) && ok(b.yPct) && ok(b.wPct) && ok(b.hPct) && b.wPct > 0 && b.hPct > 0 ? b : null;
@@ -305,7 +304,6 @@ function RowNumber({ num }: { num?: number }) {
   );
 }
 
-type AcceptItems = Parameters<ReturnType<typeof trpc.inbox.acceptMany.useMutation>["mutate"]>[0]["items"];
 
 function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => void }) {
   const { areas, here, locations, lens, refresh } = useFlow();
@@ -533,15 +531,14 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
                 accept.mutate({
                   id: capture.id,
                   roomId: validPlace.roomId,
-                  // `box` (pin + cutout on the server) lands with sort-triage-boxes; until
-                  // then the API's input type lacks it and zod strips it on the way in
+                  // a framed row also gets a pin in the scene Photo and a cutout as its own Photo
                   items: chosen.map((r) => ({
                     areaId: r.areaId!,
                     itemId: null,
                     itemName: r.name.trim(),
                     attributes: r.attributes,
                     ...(r.box ? { box: r.box } : {}),
-                  })) as AcceptItems,
+                  })),
                 })
               }
               className="rounded-xl bg-[#282c20] py-3 font-data text-[14px] font-semibold text-[#f4f4ed] disabled:opacity-40"
