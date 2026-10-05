@@ -11,6 +11,15 @@ final class SnapUploader: ObservableObject {
         let id = UUID()
         let jpeg: Data
         let place: Place
+        /// The Thing this Photo was taken of ("Take a Photo of it"); nil for a plain Snap.
+        let forItem: PhotoTarget?
+    }
+
+    /// A Thing a Photo is for: after the inbox upload it is attached to this Thing.
+    struct PhotoTarget: Hashable {
+        let id: Int
+        let name: String
+        let roomId: Int?
     }
 
     @Published private(set) var busy = 0
@@ -31,12 +40,13 @@ final class SnapUploader: ObservableObject {
     }
 
     /// Uploads one JPEG and files it in the inbox. `place` is the Place at the moment the
-    /// Photo was taken. On failure the Photo goes to `failed` for a retry.
+    /// Photo was taken. With `forItem` the Photo is then attached to that Thing (the capture
+    /// stays in the inbox, as the server keeps it). On failure the Photo goes to `failed`.
     @discardableResult
-    func upload(jpeg: Data, place: Place, session: FlowSession) async -> Bool {
+    func upload(jpeg: Data, place: Place, session: FlowSession, forItem: PhotoTarget? = nil) async -> Bool {
         guard let api = session.api else {
             error = "Set a server address in Settings."
-            failed.append(Failed(jpeg: jpeg, place: place))
+            failed.append(Failed(jpeg: jpeg, place: place, forItem: forItem))
             return false
         }
         busy += 1
@@ -56,9 +66,19 @@ final class SnapUploader: ObservableObject {
             }
             savedCount += 1
             ok = true
+            if let forItem {
+                // The Photo is safe in the inbox now; a failed attach is not retried as an
+                // upload (that would make a second capture). It can be attached in Sort.
+                do {
+                    let photo = try await api.photosEnsureForCapture(captureId: row.id, roomId: forItem.roomId)
+                    _ = try await api.photosAttachToItem(photoId: photo.photoId, itemId: forItem.id)
+                } catch {
+                    self.error = "Photo saved in the inbox, not attached to \(forItem.name): \(error.localizedDescription)"
+                }
+            }
         } catch {
             self.error = error.localizedDescription
-            failed.append(Failed(jpeg: jpeg, place: place))
+            failed.append(Failed(jpeg: jpeg, place: place, forItem: forItem))
         }
         busy -= 1
         // Serial snaps: reload the lists once the last upload of a burst is done.
@@ -73,7 +93,7 @@ final class SnapUploader: ObservableObject {
         let queue = failed
         failed = []
         for f in queue {
-            await upload(jpeg: f.jpeg, place: f.place, session: session)
+            await upload(jpeg: f.jpeg, place: f.place, session: session, forItem: f.forItem)
         }
     }
 

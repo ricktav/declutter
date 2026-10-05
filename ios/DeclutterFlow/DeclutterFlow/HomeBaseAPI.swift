@@ -84,6 +84,24 @@ actor HomeBaseAPI {
         _ = try await client.mutationKeepingNulls("items.update", input: Input(id: id, roomId: Nullable(roomId)), as: OkResult.self)
     }
 
+    /// Rename a Thing (`items.update` with `name` only; nothing else changes).
+    func itemsRename(id: Int, name: String) async throws {
+        struct Input: Encodable {
+            var id: Int
+            var name: String
+        }
+        _ = try await client.mutation("items.update", input: Input(id: id, name: name), as: OkResult.self)
+    }
+
+    /// Move a Thing's footprint on its room's plan (`items.update` with `pos`; the room stays).
+    func itemsSetPos(id: Int, pos: ItemPos) async throws {
+        struct Input: Encodable {
+            var id: Int
+            var pos: ItemPos
+        }
+        _ = try await client.mutation("items.update", input: Input(id: id, pos: pos), as: OkResult.self)
+    }
+
     func itemsSetVerification(id: Int, status: VerificationStatus) async throws {
         struct Input: Encodable {
             var id: Int
@@ -192,6 +210,35 @@ actor HomeBaseAPI {
             ),
             as: UpsertScanResult.self
         )
+    }
+
+    /// A room's recorded scans, newest first.
+    func roomsScans(roomId: Int) async throws -> [RoomScanRow] {
+        struct Input: Encodable { var roomId: Int }
+        return try await client.query("rooms.scans", input: Input(roomId: roomId), as: [RoomScanRow].self)
+    }
+
+    /// Undo a room's latest scan (the server refuses any other).
+    func roomsRevertScan(scanId: Int) async throws -> RevertScanResult {
+        struct Input: Encodable { var scanId: Int }
+        return try await client.mutation("rooms.revertScan", input: Input(scanId: scanId), as: RevertScanResult.self)
+    }
+
+    /// The bare Photo of an inbox capture (find-or-create), so it can be attached to a Thing.
+    func photosEnsureForCapture(captureId: Int, roomId: Int?) async throws -> EnsurePhotoResult {
+        struct Input: Encodable {
+            var captureId: Int
+            var roomId: Int?
+        }
+        return try await client.mutation("photos.ensureForCapture", input: Input(captureId: captureId, roomId: roomId), as: EnsurePhotoResult.self)
+    }
+
+    func photosAttachToItem(photoId: Int, itemId: Int) async throws -> AttachPhotoResult {
+        struct Input: Encodable {
+            var photoId: Int
+            var itemId: Int
+        }
+        return try await client.mutation("photos.attachToItem", input: Input(photoId: photoId, itemId: itemId), as: AttachPhotoResult.self)
     }
 
     func uploadInboxPhoto(jpeg: Data, fileName: String) async throws -> UploadedFile {

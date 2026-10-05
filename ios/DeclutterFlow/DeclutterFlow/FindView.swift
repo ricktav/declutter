@@ -9,6 +9,8 @@ private enum FindScope: String, CaseIterable, Identifiable {
 
 struct FindView: View {
     @EnvironmentObject private var session: FlowSession
+    /// The app's Snap uploader: "Take a Photo of it" on a Place plan uploads through it.
+    @EnvironmentObject private var uploader: SnapUploader
     @State private var q = ""
     @State private var scope: FindScope = .things
     @State private var open: FlowItem?
@@ -134,10 +136,12 @@ struct FindView: View {
         .sheet(item: $open) { item in
             ThingSheet(item: item)
                 .environmentObject(session)
+                .environmentObject(uploader)
         }
         .sheet(item: $openPlace) { r in
             RoomDetailView(place: Place(room: r))
                 .environmentObject(session)
+                .environmentObject(uploader)
         }
         .onAppear { openFromLaunchArgument() }
         .onChange(of: session.ready) { _, _ in openFromLaunchArgument() }
@@ -184,6 +188,7 @@ struct FindView: View {
 
 private struct ThingSheet: View {
     @EnvironmentObject private var session: FlowSession
+    @EnvironmentObject private var uploader: SnapUploader
     let item: FlowItem
     @Environment(\.dismiss) private var dismiss
     @State private var roomInfo: RoomInfo?
@@ -235,7 +240,7 @@ private struct ThingSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(hex: 0xD5D9CD)))
 
                 if let geo = roomInfo?.geometryPayload {
-                    FloorPlanView(geometry: geo, items: roomInfo?.items ?? [])
+                    FloorPlanView(geometry: geo, items: roomInfo?.planItems ?? [])
                     Button { showRoom = true } label: {
                         Text("Open Place · 2D / 3D")
                             .font(.system(size: 13, weight: .semibold))
@@ -270,6 +275,7 @@ private struct ThingSheet: View {
             if let place {
                 RoomDetailView(place: place)
                     .environmentObject(session)
+                    .environmentObject(uploader)
             }
         }
         .fullScreenCover(isPresented: $showScan) {

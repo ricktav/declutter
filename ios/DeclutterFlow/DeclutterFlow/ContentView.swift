@@ -53,6 +53,7 @@ struct ContentView: View {
                     ActView()
                 case .find:
                     FindView()
+                        .environmentObject(uploader)
                 }
             }
             .padding(.horizontal, 16)

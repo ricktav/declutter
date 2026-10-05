@@ -142,6 +142,8 @@ struct Chip: View {
 struct FlowSheet<Content: View>: View {
     let title: String
     var onClose: () -> Void
+    /// Set to drive the sheet's height from the content (e.g. large while dragging on a plan).
+    var detent: Binding<PresentationDetent>? = nil
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -169,8 +171,20 @@ struct FlowSheet<Content: View>: View {
             }
         }
         .background(FlowTheme.page)
-        .presentationDetents([.medium, .large])
+        .modifier(SheetDetents(detent: detent))
         .presentationDragIndicator(.hidden)
+    }
+}
+
+private struct SheetDetents: ViewModifier {
+    var detent: Binding<PresentationDetent>?
+
+    func body(content: Content) -> some View {
+        if let detent {
+            content.presentationDetents([.medium, .large], selection: detent)
+        } else {
+            content.presentationDetents([.medium, .large])
+        }
     }
 }
 

@@ -315,6 +315,8 @@ struct ItemPos: Codable, Hashable {
     var dM: Double
     var rotDeg: Double
     var hM: Double?
+    /// Height of the footprint's base above the floor; sent back unchanged on a move.
+    var baseM: Double?
 }
 
 /// `rooms.get`: the room row plus its Things. Geometry fields decode leniently,
@@ -367,19 +369,66 @@ struct RoomInfo: Codable, Identifiable {
     }
 }
 
-struct RoomItem: Codable, Identifiable {
+/// A Thing in `rooms.get`: the full item row (verification, status, attributes) plus its footprint.
+struct RoomItem: Codable, Identifiable, Hashable {
     var id: Int
     var name: String
     var pos: ItemPos?
+    var verificationStatus: VerificationStatus?
+    var status: ItemStatus?
+    var attributes: [String: AttributeValue]?
 
-    enum CodingKeys: String, CodingKey { case id, name, pos }
+    enum CodingKeys: String, CodingKey { case id, name, pos, verificationStatus, status, attributes }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(Int.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         pos = try? c.decodeIfPresent(ItemPos.self, forKey: .pos)
+        verificationStatus = try? c.decodeIfPresent(VerificationStatus.self, forKey: .verificationStatus)
+        status = try? c.decodeIfPresent(ItemStatus.self, forKey: .status)
+        attributes = try? c.decodeIfPresent([String: AttributeValue].self, forKey: .attributes)
     }
+
+    /// A scan or AI made it and nobody confirmed it yet: the plan draws it dimmed and dashed.
+    var isDetected: Bool { verificationStatus == .detected }
+
+    /// Shown on the plan: active and not rejected (Flow never shows rejected Things).
+    var isOnPlan: Bool { verificationStatus != .rejected && status != .archived }
+}
+
+extension RoomInfo {
+    /// The Things the plan draws and lists.
+    var planItems: [RoomItem] { (items ?? []).filter(\.isOnPlan) }
+}
+
+/// A row of `rooms.scans`: one recorded scan of a room, newest first.
+struct RoomScanRow: Codable, Identifiable, Hashable {
+    var id: Int
+    var source: String
+    var scanDate: Date?
+    var createdAt: Date?
+    var revertedAt: Date?
+    var counts: ScanThingCounts
+}
+
+/// `rooms.revertScan`.
+struct RevertScanResult: Codable {
+    var restored: Int
+    var deleted: Int
+    var kept: Int
+}
+
+/// `photos.ensureForCapture`.
+struct EnsurePhotoResult: Codable {
+    var photoId: Int
+}
+
+/// `photos.attachToItem`.
+struct AttachPhotoResult: Codable {
+    var photoId: Int
+    var itemId: Int
+    var roomId: Int?
 }
 
 /// A room plan in metres, as drawn by `FloorPlanView` and sent to `rooms.upsertFromScan`.

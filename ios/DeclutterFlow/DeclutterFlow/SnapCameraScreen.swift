@@ -374,6 +374,8 @@ struct SnapCameraScreen: View {
     @EnvironmentObject private var uploader: SnapUploader
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var camera: SnapCamera
+    /// "Take a Photo of it": each saved Photo is also attached to this Thing.
+    var forItem: FlowItem? = nil
     var onClose: () -> Void
 
     private struct Shot {
@@ -385,13 +387,26 @@ struct SnapCameraScreen: View {
     @State private var capturing = false
     @State private var flash = false
     @State private var captureError: String?
+    /// Photos saved on this screen of `forItem`.
+    @State private var savedOfItem = 0
+
+    /// The Place the Photo is filed under: the Thing's own Place when it is for a Thing.
+    private var shotPlace: Place {
+        if let forItem, let roomId = forItem.roomId {
+            if let r = session.rooms.first(where: { $0.id == roomId }) { return Place(room: r) }
+            return Place(roomId: roomId, houseId: forItem.roomRef?.houseId ?? forItem.houseId, floor: forItem.floor ?? "", room: forItem.room ?? "")
+        }
+        return session.here
+    }
 
     private var placeLabel: String {
-        session.here.hasRoom ? FlowLogic.placeLabel(session.here, houses: session.houses) : "No Place set"
+        if let forItem { return "Photo of \(forItem.name)" }
+        return session.here.hasRoom ? FlowLogic.placeLabel(session.here, houses: session.houses) : "No Place set"
     }
 
     private var savedLabel: String {
-        uploader.savedCount == 1 ? "1 Photo saved" : "\(uploader.savedCount) Photos saved"
+        let n = forItem == nil ? uploader.savedCount : savedOfItem
+        return n == 1 ? "1 Photo saved" : "\(n) Photos saved"
     }
 
     var body: some View {
@@ -524,11 +539,11 @@ struct SnapCameraScreen: View {
     private var topBar: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "mappin")
+                Image(systemName: forItem == nil ? "mappin" : "camera.viewfinder")
                     .foregroundStyle(FlowTheme.lime)
                 Text(placeLabel)
                     .lineLimit(1)
-                    .foregroundStyle(session.here.hasRoom ? FlowTheme.cream : FlowTheme.mutedText)
+                    .foregroundStyle(forItem != nil || session.here.hasRoom ? FlowTheme.cream : FlowTheme.mutedText)
             }
             .font(.system(size: 13, weight: .medium))
             .padding(.horizontal, 12)
@@ -554,6 +569,10 @@ struct SnapCameraScreen: View {
         VStack(spacing: 6) {
             if let captureError {
                 ErrorLine(message: captureError)
+            }
+            // An attach that failed after the upload worked: not in the retry queue, so say it here.
+            if forItem != nil, uploader.failedSummary == nil, let err = uploader.error {
+                ErrorLine(message: err)
             }
             if let summary = uploader.failedSummary {
                 HStack(spacing: 8) {
@@ -684,8 +703,10 @@ struct SnapCameraScreen: View {
         guard let shot else { return }
         self.shot = nil
         uploader.lastKept = shot.preview
-        let place = session.here
-        Task { await uploader.upload(jpeg: shot.jpeg, place: place, session: session) }
+        let place = shotPlace
+        let target = forItem.map { SnapUploader.PhotoTarget(id: $0.id, name: $0.name, roomId: $0.roomId) }
+        if target != nil { savedOfItem += 1 }
+        Task { await uploader.upload(jpeg: shot.jpeg, place: place, session: session, forItem: target) }
         if !another {
             onClose()
         }
