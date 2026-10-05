@@ -1,15 +1,17 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { eq, desc, or, and, asc } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, photos, itemLinks, relations, tasks, ideaItems, ideas, events, houses, ITEM_DECISIONS, type ItemPos } from "@db/schema";
+import { areas, items, photos, itemLinks, relations, tasks, ideaItems, ideas, events, houses, rooms, ITEM_DECISIONS, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { getModel } from "../lib/ai";
 import { roomSummary, setItemLocation } from "../lib/location";
 import { coverPhotos, linkAsLegacy, photoAsLegacy } from "../lib/photos";
 import { placementFor, placementSummaryFor } from "../lib/placement";
+import { snapPosToWalls } from "../lib/snapToWall";
 
 /** crude name-similarity: shared significant tokens */
 function nameScore(a: string, b: string): number {
@@ -389,6 +391,44 @@ export const itemsRouter = createRouter({
       });
       return { ok: true };
     }),
+
+  /**
+   * Snap to wall: an explicit, per-Thing action (never automatic). A LiDAR
+   * scan sees a cabinet's front, not its back, so wall-backed furniture
+   * lands 0.2-0.36 m off the wall, or partly through it. This moves the
+   * Thing's footprint flush against the nearest axis-aligned wall within
+   * 0.5 m of the room it belongs to directly; only xM/yM change.
+   */
+  snapToWall: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    const db = getDb();
+    const [it] = await db.select().from(items).where(eq(items.id, input.id));
+    if (!it) throw new TRPCError({ code: "NOT_FOUND", message: "Thing not found." });
+    const pos = it.pos as ItemPos | null;
+    if (it.roomId == null || !pos) throw new TRPCError({ code: "NOT_FOUND", message: "This Thing has no place on a plan." });
+    // the Thing's own room, never rooms.get's rollup: a Thing shown in a
+    // parent's overview has its pos in its own (child) room's frame
+    const [room] = await db.select().from(rooms).where(eq(rooms.id, it.roomId));
+    if (!room) throw new TRPCError({ code: "NOT_FOUND", message: "The Thing's room no longer exists." });
+    if (!room.walls?.length && (room.widthM == null || room.depthM == null)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "The Thing's room has no plan to snap to." });
+    }
+    const snap = snapPosToWalls(pos, room.walls, room.widthM, room.depthM);
+    if (!snap) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No wall within 0.5 m" });
+    await db.transaction(async (tx) => {
+      await tx.update(items).set({ pos: snap.pos }).where(eq(items.id, it.id));
+      await logEvent(
+        {
+          entityType: "item",
+          entityId: it.id,
+          action: "moved",
+          summary: `Snapped to the ${snap.side} wall (${snap.movedM} m)`,
+          payload: { posBefore: pos, posAfter: snap.pos, wall: { kind: snap.kind, side: snap.side } },
+        },
+        tx,
+      );
+    });
+    return { pos: snap.pos, movedM: snap.movedM, wall: { kind: snap.kind, side: snap.side } };
+  }),
 
   /**
    * The verification gate: distinguishes an item a human actually looked at

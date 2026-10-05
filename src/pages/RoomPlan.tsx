@@ -66,6 +66,21 @@ export default function RoomPlanPage() {
     },
   });
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Snap to wall: an explicit per-Thing action; the note is tied to the Thing it was for
+  const [snapNote, setSnapNote] = useState<{ itemId: number; text: string; error: boolean } | null>(null);
+  const snapToWall = trpc.items.snapToWall.useMutation({
+    onSuccess: (r, vars) => {
+      void utils.rooms.get.invalidate({ id });
+      void utils.items.listAll.invalidate();
+      setSnapNote({ itemId: vars.id, text: `Snapped to the ${r.wall.side} wall · ${r.movedM} m`, error: false });
+    },
+    onError: (e, vars) => setSnapNote({ itemId: vars.id, text: e.message, error: true }),
+  });
+  useEffect(() => {
+    if (!snapNote || snapNote.error) return;
+    const t = setTimeout(() => setSnapNote(null), 4000);
+    return () => clearTimeout(t);
+  }, [snapNote]);
   const [view, setView] = useState<"2d" | "3d">("2d");
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
   const [cutMode, setCutMode] = useState(false);
@@ -1142,6 +1157,26 @@ export default function RoomPlanPage() {
                     <p className="mt-3 inline-flex items-center gap-1 text-[12px] text-emerald-700">
                       <Check className="h-3.5 w-3.5" /> Confirmed
                     </p>
+                  )}
+
+                  {selectedItem.ownerRoomId === room.data.id && selectedItem.pos && (
+                    <div className="mt-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-[12px]"
+                        disabled={snapToWall.isPending}
+                        onClick={() => {
+                          setSnapNote(null);
+                          snapToWall.mutate({ id: selectedItem.id });
+                        }}
+                      >
+                        Snap to wall
+                      </Button>
+                      {snapNote?.itemId === selectedItem.id && (
+                        <p className={`mt-1 text-[11px] ${snapNote.error ? "text-destructive" : "text-emerald-700"}`}>{snapNote.text}</p>
+                      )}
+                    </div>
                   )}
 
                   {selectedItem.ownerRoomId === room.data.id && (

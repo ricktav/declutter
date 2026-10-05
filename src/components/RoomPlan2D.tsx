@@ -170,7 +170,7 @@ export function RoomPlan2D({
     const svg = svgRef.current;
     const g = svg?.querySelector<SVGGElement>(`g[data-item-id="${id}"]`);
     if (!g) return;
-    const x = px(Math.max(0, p.xM)), y = py(Math.max(0, p.yM)), w = p.wM * S, d = p.dM * S;
+    const x = px(p.xM), y = py(p.yM), w = p.wM * S, d = p.dM * S;
     g.setAttribute("transform", `rotate(${-p.rotDeg} ${x + w / 2} ${y + d / 2})`);
     g.querySelector("rect")?.setAttribute("x", String(x));
     g.querySelector("rect")?.setAttribute("y", String(y));
@@ -266,11 +266,11 @@ export function RoomPlan2D({
       next.xM = round2(clamp(drag.startPos.xM + dx, 0, widthM - drag.startPos.wM));
       next.yM = round2(clamp(drag.startPos.yM + dy, 0, depthM - drag.startPos.dM));
     } else if (drag.kind === "resize") {
-      next.wM = Math.max(0.1, round2((loc.x - PAD) / S - Math.max(0, drag.startPos.xM)));
-      next.dM = Math.max(0.1, round2((loc.y - PAD) / S - Math.max(0, drag.startPos.yM)));
+      next.wM = Math.max(0.1, round2((loc.x - PAD) / S - drag.startPos.xM));
+      next.dM = Math.max(0.1, round2((loc.y - PAD) / S - drag.startPos.yM));
     } else {
-      const cx = px(Math.max(0, drag.startPos.xM) + drag.startPos.wM / 2);
-      const cy = py(Math.max(0, drag.startPos.yM) + drag.startPos.dM / 2);
+      const cx = px(drag.startPos.xM + drag.startPos.wM / 2);
+      const cy = py(drag.startPos.yM + drag.startPos.dM / 2);
       const a = (Math.atan2(loc.y - cy, loc.x - cx) * 180) / Math.PI;
       const rot = (((-(a + 90)) % 360) + 360) % 360;
       next.rotDeg = e.shiftKey ? +rot.toFixed(1) : Math.round(rot / 15) * 15 % 360;
@@ -413,7 +413,7 @@ export function RoomPlan2D({
 
       {placed.map((it) => {
         const p = it.pos;
-        const x = px(Math.max(0, p.xM)), y = py(Math.max(0, p.yM)), w = p.wM * S, d = p.dM * S;
+        const x = px(p.xM), y = py(p.yM), w = p.wM * S, d = p.dM * S;
         const isSel = it.id === selectedId;
         return (
           <g
@@ -453,7 +453,7 @@ export function RoomPlan2D({
       })}
 
       {(moves ?? []).map((m, i) => {
-        const centre = (p: ItemPos) => ({ x: px(Math.max(0, p.xM) + p.wM / 2), y: py(Math.max(0, p.yM) + p.dM / 2) });
+        const centre = (p: ItemPos) => ({ x: px(p.xM + p.wM / 2), y: py(p.yM + p.dM / 2) });
         const a = centre(m.from), b = centre(m.to);
         const len = Math.hypot(b.x - a.x, b.y - a.y);
         if (len < 2) return null;
@@ -557,7 +557,7 @@ export function RoomPlan2D({
         <>
           {(() => {
             const p = selected.pos;
-            const x = px(Math.max(0, p.xM)), y = py(Math.max(0, p.yM)), w = p.wM * S, d = p.dM * S;
+            const x = px(p.xM), y = py(p.yM), w = p.wM * S, d = p.dM * S;
             return (
               <>
                 <line x1={x + w / 2} y1={y} x2={x + w / 2} y2={y - 16} stroke="#4da3ff" strokeWidth={1} />
