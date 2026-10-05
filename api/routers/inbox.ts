@@ -5,9 +5,10 @@ import { eq, desc, isNull, and, inArray, sql } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type RoomGeometry, type ItemPos, type RoomScanChange } from "@db/schema";
-import { parseGeojsonFloor, FURNITURE_KIND_MAP } from "../lib/geojsonFloor";
-import { matchScanItems, type ScanPoly } from "../lib/scanMerge";
+import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type RoomGeometry } from "@db/schema";
+import { parseGeojsonFloor } from "../lib/geojsonFloor";
+import { type ScanPoly } from "../lib/scanMerge";
+import { mergeScanObjects, scanMeta, localDate } from "../lib/scanObjects";
 import { recordRoomScan, snapshotRoom } from "../lib/roomScans";
 import { logEvent } from "../lib/events";
 import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
@@ -39,16 +40,6 @@ const detectObjectsSchema = z.object({
 });
 
 const MAX_REFERENCE_PHOTOS = 20;
-
-/** topic, display name and height for a scan polygon kind */
-function scanMeta(kind: string): { topic: string; label: string; hM?: number } {
-  return FURNITURE_KIND_MAP[kind] ?? { topic: "furniture", label: kind || "Item" };
-}
-
-/** YYYY-MM-DD in local time (attribute dates are calendar days, not UTC) */
-function localDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 
 /** crude name-similarity, same approach as the items router */
 function nameScore(a: string, b: string): number {
@@ -729,7 +720,6 @@ export const inboxRouter = createRouter({
         walls,
         openings: [] as RoomGeometry["openings"],
       };
-      const areaRows = await db.select().from(areas);
       const today = localDate(new Date());
       const counts = await db.transaction(async (tx) => {
         // the early check is for a fast error; this locked read stops two
@@ -739,7 +729,6 @@ export const inboxRouter = createRouter({
         let roomId: number;
         // the room as it was, so this scan can be compared and undone (null: the scan creates it)
         const geometryBefore = match ? await snapshotRoom(tx, match.id) : null;
-        const changes: RoomScanChange[] = [];
         if (match) {
           await tx.update(rooms).set(values).where(eq(rooms.id, match.id));
           roomId = match.id;
@@ -748,118 +737,15 @@ export const inboxRouter = createRouter({
           roomId = id;
         }
 
-        // A rescan is a new version of the same room: Things a scan put here
-        // before are matched by scan_kind and moved, never inserted again.
-        const roomThings = match ? await tx.select().from(items).where(eq(items.roomId, match.id)).orderBy(items.id) : [];
-        // rejected Things take part, so a false positive the scanner keeps
-        // finding matches its rejected Thing and is left alone, not re-created
-        const active = roomThings.filter((t) => t.status === "active");
-        const byId = new Map(active.map((t) => [t.id, t]));
-        const { matched, unmatchedPolys, missingItemIds } = matchScanItems(
-          active.map((t) => ({ id: t.id, name: t.name, scanKind: t.attributes?.scan_kind != null ? String(t.attributes.scan_kind) : null, pos: t.pos ?? null })),
+        const { changes, counts: merged } = await mergeScanObjects(tx, {
+          roomId,
+          houseId: targetHouseId,
+          roomName,
           polys,
-        );
-
-        let moved = 0;
-        for (const m of matched) {
-          const t = byId.get(m.itemId)!;
-          if (t.verificationStatus === "rejected") {
-            changes.push({ itemId: t.id, action: "matched", posBefore: t.pos ?? null, posAfter: t.pos ?? null });
-            continue;
-          }
-          const meta = scanMeta(m.poly.kind);
-          const old = t.pos!;
-          const hM = meta.hM ?? old.hM;
-          const pos: ItemPos = {
-            ...old,
-            xM: m.poly.xM,
-            yM: m.poly.yM,
-            wM: m.poly.wM,
-            dM: m.poly.dM,
-            ...(hM != null ? { hM } : {}),
-          };
-          const rest = { ...(t.attributes ?? {}) };
-          delete rest["scan.missing_at"];
-          // a legacy scan Thing (matched by name) learns its kind, so a later
-          // rename cannot lose the match
-          const attributes = { ...rest, scan_kind: m.poly.kind };
-          await tx.update(items).set({ pos, attributes }).where(eq(items.id, t.id));
-          changes.push({
-            itemId: t.id,
-            action: m.movedM > 0.05 ? "moved" : "matched",
-            posBefore: old,
-            posAfter: pos,
-            attrsBefore: { scan_kind: t.attributes?.scan_kind ?? null, "scan.missing_at": t.attributes?.["scan.missing_at"] ?? null },
-          });
-          if (m.movedM > 0.05) {
-            moved++;
-            await logEvent(
-              {
-                entityType: "item",
-                entityId: t.id,
-                action: "moved",
-                summary: `Moved by the ${roomName} rescan (${m.movedM.toFixed(2)} m)`,
-                actor: "system",
-              },
-              tx,
-            );
-          }
-        }
-
-        // new Things continue each label's counter after the room's existing
-        // ones ("Chair 3" after "Chair" and "Chair 2"), so names stay unique
-        const areaBySlug = new Map(areaRows.map((a) => [a.slug, a.id]));
-        const nameCounts: Record<string, number> = {};
-        for (const t of roomThings) {
-          const m = /^(.*?)(?:\s+(\d+))?$/.exec(t.name.trim())!;
-          const label = m[1].toLowerCase();
-          nameCounts[label] = Math.max(nameCounts[label] ?? 0, m[2] ? Number(m[2]) : 1);
-        }
-        let created = 0;
-        for (const poly of unmatchedPolys) {
-          const meta = scanMeta(poly.kind);
-          const areaId = areaBySlug.get(meta.topic);
-          if (!areaId) continue;
-          const key = meta.label.toLowerCase();
-          const n = (nameCounts[key] = (nameCounts[key] ?? 0) + 1);
-          const name = n > 1 ? `${meta.label} ${n}` : meta.label;
-
-          const pos: ItemPos = {
-            xM: poly.xM,
-            yM: poly.yM,
-            wM: poly.wM,
-            dM: poly.dM,
-            rotDeg: 0,
-            ...(meta.hM != null ? { hM: meta.hM } : {}),
-          };
-          const [{ id: newId }] = await tx.insert(items).values({
-            areaId,
-            houseId: targetHouseId,
-            roomId,
-            name,
-            status: "active",
-            verificationStatus: "detected",
-            attributes: { scan_kind: poly.kind },
-            pos,
-            description: `Auto-detected from the ${roomName} floor scan (MappedIn export) - not yet reviewed.`,
-          }).$returningId();
-          changes.push({ itemId: newId, action: "created", posBefore: null, posAfter: pos });
-          created++;
-        }
-
-        // not detected this time: flag only; position, room and verification stay
-        const missing = missingItemIds.filter((id) => byId.get(id)!.verificationStatus !== "rejected");
-        for (const id of missing) {
-          const t = byId.get(id)!;
-          await tx.update(items).set({ attributes: { ...(t.attributes ?? {}), "scan.missing_at": today } }).where(eq(items.id, id));
-          changes.push({
-            itemId: id,
-            action: "missing",
-            posBefore: t.pos ?? null,
-            posAfter: t.pos ?? null,
-            attrsBefore: { "scan.missing_at": t.attributes?.["scan.missing_at"] ?? null },
-          });
-        }
+          detectedFrom: "floor scan (MappedIn export)",
+          today,
+        });
+        const { moved, created } = merged;
 
         await recordRoomScan(tx, {
           roomId,
@@ -879,14 +765,14 @@ export const inboxRouter = createRouter({
             entityId: roomId,
             action: match ? "rescanned" : "created",
             summary: match
-              ? `Room "${roomName}" rescanned: ${matched.length} matched (${moved} moved), ${created} new, ${missing.length} missing`
+              ? `Room "${roomName}" rescanned: ${merged.matched} matched (${moved} moved), ${created} new, ${merged.missing} missing`
               : `Room "${roomName}" created from inbox geojson scan (${created} item(s) detected)`,
             actor: "system",
-            payload: { captureId: input.captureId, matched: matched.length, moved, created, missing: missing.length },
+            payload: { captureId: input.captureId, matched: merged.matched, moved, created, missing: merged.missing },
           },
           tx,
         );
-        return { roomId, created, matched: matched.length, moved, missing: missing.length };
+        return { roomId, created, matched: merged.matched, moved, missing: merged.missing };
       });
       return { ok: true, ...counts };
     }),

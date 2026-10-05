@@ -3,9 +3,12 @@ import { eq, and, ne, sql, isNotNull, desc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { rooms, items, photos, roomScans, type RoomGeometry, type ItemPos } from "@db/schema";
+import { rooms, items, photos, roomScans, type RoomGeometry, type ItemPos, type RoomScanChange } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { recordRoomScan, revertRoomScanTx, scanCounts, snapshotRoom } from "../lib/roomScans";
+import { FURNITURE_KIND_MAP } from "../lib/geojsonFloor";
+import { type ScanPoly } from "../lib/scanMerge";
+import { mergeScanObjects, type ScanThingCounts } from "../lib/scanObjects";
 import { releaseStoredFiles } from "../lib/entities";
 import { ensureRoom, setItemLocation } from "../lib/location";
 
@@ -25,6 +28,37 @@ const geometryInput = z.object({
     }),
   ),
 });
+
+/** One object RoomPlan found, as a footprint in the plan frame of the walls. */
+const scanObjectInput = z.object({
+  kind: z.string().trim().min(1).max(32),
+  xM: z.number().finite(),
+  yM: z.number().finite(),
+  // contract: >= 0.1; thinner (a wall-mounted TV) is widened to 0.1, not refused
+  wM: z.number().finite().nonnegative(),
+  dM: z.number().finite().nonnegative(),
+  rotDeg: z.number().finite().optional(),
+  hM: z.number().finite().nonnegative().optional(),
+});
+
+const round2 = (n: number) => +n.toFixed(2);
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** A RoomPlan object as a scan polygon: known kinds take the map's label, unknown ones their own name capitalised. */
+function objectPoly(o: z.infer<typeof scanObjectInput>): ScanPoly {
+  return {
+    kind: o.kind,
+    label: FURNITURE_KIND_MAP[o.kind]?.label ?? capitalise(o.kind),
+    xM: round2(o.xM),
+    yM: round2(o.yM),
+    wM: Math.max(0.1, round2(o.wM)),
+    dM: Math.max(0.1, round2(o.dM)),
+    ...(o.rotDeg != null ? { rotDeg: round2(o.rotDeg) } : {}),
+    ...(o.hM != null ? { hM: round2(o.hM) } : {}),
+  };
+}
+
+const DETECTED_FROM = { roomplan: "LiDAR scan (RoomPlan)", mappedin: "floor scan (MappedIn export)", manual: "scan" } as const;
 
 /**
  * Liang-Barsky segment-vs-axis-aligned-box clip. A wall spanning a whole
@@ -306,6 +340,9 @@ export const roomsRouter = createRouter({
         wallHeightM: z.number().optional(),
         floor: z.string().nullable().optional(),
         geometry: geometryInput,
+        // the objects the scanner found; absent or empty = a geometry-only scan
+        // that leaves the room's Things alone
+        objects: z.array(scanObjectInput).max(200).optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -326,55 +363,55 @@ export const roomsRouter = createRouter({
         walls: input.geometry.walls as RoomGeometry["walls"],
         openings: input.geometry.openings as RoomGeometry["openings"],
       };
+      const polys = (input.objects ?? []).map(objectPoly);
 
-      // every scan is a recorded version: geometry before and after, no Thing changes
+      // every scan is a recorded version: geometry before and after, and what
+      // its objects did to the room's Things (the GeoJSON import's merge)
       return db.transaction(async (tx) => {
+        const before = match ? await snapshotRoom(tx, match.id) : null;
+        let id: number;
         if (match) {
-          const before = await snapshotRoom(tx, match.id);
           await tx.update(rooms).set(values).where(eq(rooms.id, match.id));
-          await recordRoomScan(tx, {
-            roomId: match.id,
-            houseId: input.houseId,
-            source: input.source,
-            scanDate: values.scanDate,
-            before,
-            after: await snapshotRoom(tx, match.id),
-            changes: [],
-          });
-          await logEvent(
-            {
-              entityType: "room",
-              entityId: match.id,
-              action: "rescanned",
-              summary: `Room "${input.name}" geometry updated from ${input.source} scan`,
-              actor: "system",
-            },
-            tx,
-          );
-          return { id: match.id, created: false };
+          id = match.id;
+        } else {
+          [{ id }] = await tx.insert(rooms).values(values).$returningId();
         }
-
-        const [{ id }] = await tx.insert(rooms).values(values).$returningId();
+        let things: ScanThingCounts = { matched: 0, moved: 0, created: 0, missing: 0 };
+        let changes: RoomScanChange[] = [];
+        if (polys.length) {
+          ({ changes, counts: things } = await mergeScanObjects(tx, {
+            roomId: id,
+            houseId: input.houseId,
+            roomName: input.name,
+            polys,
+            detectedFrom: DETECTED_FROM[input.source],
+            areaFallback: true,
+          }));
+        }
         await recordRoomScan(tx, {
           roomId: id,
           houseId: input.houseId,
           source: input.source,
           scanDate: values.scanDate,
-          before: null,
+          before,
           after: await snapshotRoom(tx, id),
-          changes: [],
+          changes,
         });
         await logEvent(
           {
             entityType: "room",
             entityId: id,
-            action: "created",
-            summary: `Room "${input.name}" created from ${input.source} scan`,
+            action: match ? "rescanned" : "created",
+            summary: match
+              ? `Room "${input.name}" geometry updated from ${input.source} scan` +
+                (polys.length ? `: ${things.matched} matched (${things.moved} moved), ${things.created} new, ${things.missing} missing` : "")
+              : `Room "${input.name}" created from ${input.source} scan` + (polys.length ? ` (${things.created} item(s) detected)` : ""),
             actor: "system",
+            ...(polys.length ? { payload: { ...things } } : {}),
           },
           tx,
         );
-        return { id, created: true };
+        return { id, created: !match, things };
       });
     }),
 

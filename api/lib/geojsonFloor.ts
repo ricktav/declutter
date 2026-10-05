@@ -75,4 +75,11 @@ export const FURNITURE_KIND_MAP: Record<string, { topic: string; label: string; 
   sofa: { topic: "furniture", label: "Sofa", hM: 0.85 },
   storage: { topic: "furniture", label: "Storage", hM: 1.2 },
   stairs: { topic: "furniture", label: "Stairs", hM: 0 },
+  // RoomPlan categories the MappedIn export does not use
+  refrigerator: { topic: "appliances", label: "Fridge", hM: 1.8 },
+  bed: { topic: "furniture", label: "Bed", hM: 0.5 },
+  washerDryer: { topic: "appliances", label: "Washer", hM: 0.85 },
+  bathtub: { topic: "furniture", label: "Bathtub", hM: 0.6 },
+  dishwasher: { topic: "appliances", label: "Dishwasher", hM: 0.85 },
+  fireplace: { topic: "furniture", label: "Fireplace", hM: 1.0 },
 };

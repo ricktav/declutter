@@ -12,7 +12,18 @@ export type ScanCandidate = {
 
 /** One furniture polygon of the new scan: its bounding box in metres, in the
  * room frame, plus the exporter's kind and the display label for that kind. */
-export type ScanPoly = { kind: string; label: string; xM: number; yM: number; wM: number; dM: number };
+export type ScanPoly = {
+  kind: string;
+  label: string;
+  xM: number;
+  yM: number;
+  wM: number;
+  dM: number;
+  /** rotation about the footprint centre (a RoomPlan object); absent for GeoJSON polygons */
+  rotDeg?: number;
+  /** measured height (a RoomPlan object); absent = the kind's estimate */
+  hM?: number;
+};
 
 /** A Thing counts as the same Thing when its footprint centre moved at most
  * this far (or half its diagonal, for big things like a sofa or table). */
