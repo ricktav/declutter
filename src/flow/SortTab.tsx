@@ -194,45 +194,101 @@ type Row = {
 };
 
 const LIME = "#a3e635";
+const MATCHED = "#e4e4dc";
 
-/** The AI's frames over the Photo, one per row that has a box; tap toggles that row. */
-function Frames({ rows, active, onTap }: { rows: Row[]; active: number | null; onTap: (i: number) => void }) {
+// "Hide handled": frames of rows dismissed for now and of Things already in the
+// inventory are hidden, so only open objects keep their frame. Per device.
+const HIDE_HANDLED_KEY = "flow.sort.hideHandled";
+function loadHideHandled(): boolean {
+  try {
+    return localStorage.getItem(HIDE_HANDLED_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+function storeHideHandled(on: boolean) {
+  try {
+    localStorage.setItem(HIDE_HANDLED_KEY, on ? "1" : "0");
+  } catch {
+    // storage unavailable - the toggle lasts until a reload
+  }
+}
+
+/** A spotted object the AI matched to a Thing already in the inventory. */
+type MatchedFrame = { num: number; name: string; box: CropBox };
+
+/**
+ * The AI's frames over the Photo: one per row that has a box (tap toggles that
+ * row) and, unless handled ones are hidden, one per matched Thing (not
+ * tappable). Numbers come from the suggestion, so hiding never renumbers.
+ */
+function Frames({
+  rows,
+  matched,
+  hideHandled,
+  active,
+  onTap,
+}: {
+  rows: Row[];
+  matched: MatchedFrame[];
+  hideHandled: boolean;
+  active: number | null;
+  onTap: (i: number) => void;
+}) {
+  type F = { num: number; name: string; box: CropBox; row: number | null; checked: boolean };
+  const all: F[] = [
+    ...rows.flatMap((r, i) => (r.box && r.num != null ? [{ num: r.num, name: r.name, box: r.box, row: i, checked: r.checked }] : [])),
+    ...matched.map((m) => ({ ...m, row: null, checked: false })),
+  ];
   // in the DOM by number; stacked by size, so a small frame inside a big one
   // stays on top and tappable
-  const framed = rows
-    .map((r, i) => ({ r, i }))
-    .filter((x) => x.r.box)
-    .sort((a, b) => a.r.num! - b.r.num!);
-  const bySize = [...framed].sort((a, b) => b.r.box!.wPct * b.r.box!.hPct - a.r.box!.wPct * a.r.box!.hPct);
+  const framed = all.filter((f) => !hideHandled || (f.row != null && f.checked)).sort((a, b) => a.num - b.num);
+  const bySize = [...framed].sort((a, b) => b.box.wPct * b.box.hPct - a.box.wPct * a.box.hPct);
   return (
     <>
-      {framed.map(({ r, i }) => {
-        const b = r.box!;
+      {framed.map((f) => {
+        const b = f.box;
         const left = Math.max(0, b.xPct - b.wPct / 2);
         const top = Math.max(0, b.yPct - b.hPct / 2);
-        return (
-          <button
-            key={i}
-            type="button"
-            onClick={() => onTap(i)}
-            aria-label={`Frame ${r.num}: ${r.name}`}
-            aria-pressed={r.checked}
-            className={cn("absolute rounded-sm", !r.checked && "opacity-50", active === i && "shadow-[0_0_0_3px_rgba(0,0,0,0.45)]")}
-            style={{
-              left: `${left}%`,
-              top: `${top}%`,
-              width: `${Math.min(100, b.xPct + b.wPct / 2) - left}%`,
-              height: `${Math.min(100, b.yPct + b.hPct / 2) - top}%`,
-              zIndex: 1 + bySize.findIndex((x) => x.i === i),
-              border: `2px ${r.checked ? "solid" : "dashed"} ${LIME}`,
-            }}
+        const style = {
+          left: `${left}%`,
+          top: `${top}%`,
+          width: `${Math.min(100, b.xPct + b.wPct / 2) - left}%`,
+          height: `${Math.min(100, b.yPct + b.hPct / 2) - top}%`,
+          zIndex: 1 + bySize.indexOf(f),
+          border: `2px ${f.checked ? "solid" : "dashed"} ${f.row == null ? MATCHED : LIME}`,
+        };
+        const badge = (
+          <span
+            aria-hidden
+            className="absolute left-0 top-0 grid h-5 min-w-5 place-items-center rounded-br-md px-1 font-data text-[11px] font-bold text-[#282c20]"
+            style={{ background: f.row == null ? MATCHED : LIME }}
           >
-            <span
-              className="absolute left-0 top-0 grid h-5 min-w-5 place-items-center rounded-br-md px-1 font-data text-[11px] font-bold text-[#282c20]"
-              style={{ background: LIME }}
-            >
-              {r.num}
-            </span>
+            {f.num}
+          </span>
+        );
+        const row = f.row;
+        return row == null ? (
+          <div
+            key={`m${f.num}`}
+            role="img"
+            aria-label={`Frame ${f.num}: ${f.name}, already in the inventory`}
+            className="pointer-events-none absolute rounded-sm"
+            style={style}
+          >
+            {badge}
+          </div>
+        ) : (
+          <button
+            key={`r${row}`}
+            type="button"
+            onClick={() => onTap(row)}
+            aria-label={`Frame ${f.num}: ${f.name}`}
+            aria-pressed={f.checked}
+            className={cn("absolute rounded-sm", !f.checked && "opacity-50", active === row && "shadow-[0_0_0_3px_rgba(0,0,0,0.45)]")}
+            style={style}
+          >
+            {badge}
           </button>
         );
       })}
@@ -256,10 +312,18 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
   const suggestion = usableSuggestion(capture);
   const defaultAreaId = (lens === "lab" ? areas.find((a) => a.slug === LAB.defaultAreaSlug)?.id : undefined) ?? areas[0]?.id ?? null;
   const matched = suggestion?.items.filter((s) => !s.isNewItem && s.matchedItemName) ?? [];
+  // frame numbers follow the suggestion's order over every boxed object, rows
+  // and matched Things alike, so hiding frames never renumbers them
+  const frameNums = new Map<object, number>();
+  for (const s of suggestion?.items ?? []) if (spottedBox(s)) frameNums.set(s, frameNums.size + 1);
+  const matchedFrames: MatchedFrame[] = matched.flatMap((m) => {
+    const box = spottedBox(m);
+    const num = frameNums.get(m);
+    return box && num != null ? [{ num, name: m.matchedItemName ?? m.itemName, box }] : [];
+  });
+  const [hideHandled, setHideHandled] = useState(loadHideHandled);
 
-  const initialRows = (): Row[] => {
-    let n = 0;
-    return (suggestion?.items ?? [])
+  const initialRows = (): Row[] => (suggestion?.items ?? [])
       .filter((s) => s.isNewItem || !s.matchedItemName)
       .map((s) => {
         const box = spottedBox(s);
@@ -268,10 +332,9 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
           areaId: areas.find((a) => a.slug === s.areaSlug)?.id ?? defaultAreaId,
           checked: true,
           attributes: s.attributes,
-          ...(box ? { box, num: ++n } : {}),
+          ...(box ? { box, num: frameNums.get(s) } : {}),
         };
       });
-  };
   const [rows, setRows] = useState<Row[]>(initialRows);
   const [extra, setExtra] = useState("");
   // the row whose frame was tapped last: outlined so the eye finds it
@@ -322,9 +385,25 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
   return (
     <CardShell question={isGeo ? "A floor scan" : "What is it?"} onSkip={onSkip}>
       {capture.kind === "image" && capture.storageKey ? (
-        <FramedPhoto storageKey={capture.storageKey}>
-          <Frames rows={rows} active={active} onTap={tapFrame} />
-        </FramedPhoto>
+        <div className="flex flex-col gap-1">
+          <FramedPhoto storageKey={capture.storageKey}>
+            <Frames rows={rows} matched={matchedFrames} hideHandled={hideHandled} active={active} onTap={tapFrame} />
+          </FramedPhoto>
+          {(matchedFrames.length > 0 || rows.some((r) => r.box)) && (
+            <label className="flex items-center justify-end gap-1.5 px-1 text-[12px] text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={hideHandled}
+                onChange={(e) => {
+                  setHideHandled(e.target.checked);
+                  storeHideHandled(e.target.checked);
+                }}
+                className="h-4 w-4 accent-[#3C5D41]"
+              />
+              Hide handled
+            </label>
+          )}
+        </div>
       ) : isGeo && capture.storageKey ? (
         <div className="mx-auto w-40">
           <GeojsonThumb storageKey={capture.storageKey} />
@@ -368,7 +447,8 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
 
           {matched.length > 0 && (
             <p className="text-[12px] text-muted-foreground">
-              Already in the inventory: {matched.map((m) => m.matchedItemName).join(", ")}
+              Already in the inventory:{" "}
+              {matched.map((m) => (frameNums.has(m) ? `${m.matchedItemName} (${frameNums.get(m)})` : m.matchedItemName)).join(", ")}
             </p>
           )}
 
