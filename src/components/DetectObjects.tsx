@@ -39,9 +39,11 @@ export function Box({
   onChange: (b: { xPct: number; yPct: number; wPct: number; hPct: number }) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ mode: "move" | "resize"; startX: number; startY: number; orig: typeof box } | null>(null);
+  type Corner = "tl" | "tr" | "bl" | "br";
+  // a corner drag moves that corner only; the opposite corner stays where it is
+  const drag = useRef<{ mode: "move" | Corner; startX: number; startY: number; orig: typeof box } | null>(null);
 
-  const onPointerDown = (e: React.PointerEvent, mode: "move" | "resize") => {
+  const onPointerDown = (e: React.PointerEvent, mode: "move" | Corner) => {
     e.stopPropagation();
     e.preventDefault();
     (e.target as Element).setPointerCapture(e.pointerId);
@@ -59,15 +61,28 @@ export function Box({
         xPct: Math.min(100, Math.max(0, d.orig.xPct + dx)),
         yPct: Math.min(100, Math.max(0, d.orig.yPct + dy)),
       });
-    } else {
-      onChange({
-        ...d.orig,
-        wPct: Math.min(100, Math.max(4, d.orig.wPct + dx)),
-        hPct: Math.min(100, Math.max(4, d.orig.hPct + dy)),
-      });
+      return;
     }
+    const o = d.orig;
+    let left = o.xPct - o.wPct / 2;
+    let right = o.xPct + o.wPct / 2;
+    let top = o.yPct - o.hPct / 2;
+    let bottom = o.yPct + o.hPct / 2;
+    const clamp = (v: number) => Math.min(100, Math.max(0, v));
+    if (d.mode === "tl" || d.mode === "bl") left = clamp(Math.min(left + dx, right - 4));
+    if (d.mode === "tr" || d.mode === "br") right = clamp(Math.max(right + dx, left + 4));
+    if (d.mode === "tl" || d.mode === "tr") top = clamp(Math.min(top + dy, bottom - 4));
+    if (d.mode === "bl" || d.mode === "br") bottom = clamp(Math.max(bottom + dy, top + 4));
+    onChange({ xPct: (left + right) / 2, yPct: (top + bottom) / 2, wPct: right - left, hPct: bottom - top });
   };
   const onPointerUp = () => (drag.current = null);
+
+  const handleClass: Record<Corner, string> = {
+    tl: "-top-1.5 -left-1.5 cursor-nwse-resize",
+    tr: "-top-1.5 -right-1.5 cursor-nesw-resize",
+    bl: "-bottom-1.5 -left-1.5 cursor-nesw-resize",
+    br: "-bottom-1.5 -right-1.5 cursor-nwse-resize",
+  };
 
   return (
     <div
@@ -86,13 +101,16 @@ export function Box({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
-      <div
-        className="absolute -bottom-1.5 -right-1.5 h-3.5 w-3.5 rounded-sm border-2 bg-white"
-        style={{ borderColor: color, cursor: "nwse-resize" }}
-        onPointerDown={(e) => onPointerDown(e, "resize")}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-      />
+      {(["tl", "tr", "bl", "br"] as const).map((corner) => (
+        <div
+          key={corner}
+          className={`absolute h-3.5 w-3.5 rounded-sm border-2 bg-white ${handleClass[corner]}`}
+          style={{ borderColor: color }}
+          onPointerDown={(e) => onPointerDown(e, corner)}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        />
+      ))}
     </div>
   );
 }
