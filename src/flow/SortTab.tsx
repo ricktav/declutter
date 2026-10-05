@@ -1,32 +1,82 @@
-import { useState, type ReactNode } from "react";
-import { Loader2, MapPin, Sparkles, Plus, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { FileText, Loader2, MapPin, Sparkles, Plus, X } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { cn } from "@/lib/utils";
 import { GeojsonThumb } from "@/components/GeojsonThumb";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { useFlow } from "./context";
 import { LocationSheet } from "./LocationSheet";
-import { EmptyState, ErrorLine, Photo } from "./ui";
+import { EmptyState, ErrorLine, FramedPhoto, Photo } from "./ui";
 import { BackupPicker, LabFields } from "./LabParts";
-import { filterOf, useSortCards, type Filter } from "./queue";
+import { filterOf, useSortCards, type Card, type Filter } from "./queue";
 import { getSnapPlace, isGeojsonKey, placeLabel, usableSuggestion, type FlowCapture, type FlowItem, type Place } from "./data";
 import { LAB, LAB_KEYS, role, roleLabel } from "./lenses";
+import type { CropBox } from "@db/schema";
+
+// Skipped cards, in skip order, kept on this device so a reload (or the phone
+// dropping the tab) does not bring them back to the front. Card keys
+// ("c12" = capture 12, "k7" = check Thing 7, ...); pruned to the live queue.
+const SKIPPED_KEY = "flow.sort.skipped";
+function loadSkipped(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(SKIPPED_KEY) ?? "[]") as unknown;
+    return Array.isArray(v) ? v.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function storeSkipped(keys: string[]) {
+  try {
+    if (keys.length) localStorage.setItem(SKIPPED_KEY, JSON.stringify(keys));
+    else localStorage.removeItem(SKIPPED_KEY);
+  } catch {
+    // storage unavailable - skips then last until a reload, as before
+  }
+}
+
+/** The frame the AI drew around a spotted Thing (centre + size, percent of the
+ * image), or null when it gave none or an unusable one. `box` lands on
+ * TriageSpottedItem with sort-triage-boxes; read it loosely until then. */
+function spottedBox(s: unknown): CropBox | null {
+  const b = (s as { box?: CropBox | null }).box;
+  if (!b) return null;
+  const ok = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 100;
+  return ok(b.xPct) && ok(b.yPct) && ok(b.wPct) && ok(b.hPct) && b.wPct > 0 && b.hPct > 0 ? b : null;
+}
 
 /** Finish the record, one card at a time: what is it, is it right, where is it. */
 export function SortTab() {
   const { lens, ready } = useFlow();
   const [filter, setFilter] = useState<Filter>("all");
-  const [skipped, setSkipped] = useState<string[]>([]);
+  const [skipped, setSkipped] = useState<string[]>(loadSkipped);
+  // a Photo picked from the strip is worked on first, until it is filed or skipped
+  const [picked, setPicked] = useState<string | null>(null);
   const cards = useSortCards();
+  // only skips of cards still in the queue count (filed or dismissed ones fall out)
+  const live = ready ? skipped.filter((k) => cards.some((c) => c.key === k)) : skipped;
+  const liveKey = live.join(",");
+  useEffect(() => {
+    if (ready) storeSkipped(liveKey ? liveKey.split(",") : []);
+  }, [ready, liveKey]);
 
   const counts: Record<Filter, number> = { all: cards.length, capture: 0, check: 0, lab: 0, place: 0 };
   for (const c of cards) counts[filterOf(c)]++;
   const visible = cards.filter((x) => filter === "all" || filterOf(x) === filter);
   // skipped cards go to the back of the line instead of disappearing
-  const ordered = [...visible.filter((x) => !skipped.includes(x.key)), ...visible.filter((x) => skipped.includes(x.key))];
-  const card = ordered[0];
+  const ordered = [
+    ...visible.filter((x) => !live.includes(x.key)),
+    ...live.map((k) => visible.find((x) => x.key === k)).filter((x): x is Card => !!x),
+  ];
+  const card = ordered.find((x) => x.key === picked) ?? ordered[0];
+  const photos = ordered.filter((x): x is Extract<Card, { kind: "capture" }> => x.kind === "capture");
 
-  const skip = () => card && setSkipped((s) => [...s.filter((k) => k !== card.key), card.key]);
+  const skip = () => {
+    if (!card) return;
+    const next = [...live.filter((k) => k !== card.key), card.key];
+    setSkipped(next);
+    storeSkipped(next);
+    setPicked(null);
+  };
 
   if (!ready) return <p className="py-10 text-center text-[13px] text-muted-foreground">Loading…</p>;
 
@@ -63,6 +113,7 @@ export function SortTab() {
         </EmptyState>
       ) : (
         <>
+          {photos.length > 1 && <PhotoStrip cards={photos} current={card.key} onPick={setPicked} />}
           {card.kind === "capture" && <CaptureCard key={card.key} capture={card.capture} onSkip={skip} />}
           {card.kind === "check" && <CheckCard key={card.key} item={card.item} onSkip={skip} />}
           {card.kind === "lab" && <LabDetailsCard key={card.key} item={card.item} onSkip={skip} />}
@@ -71,6 +122,45 @@ export function SortTab() {
           <p className="text-center font-data text-[12px] text-muted-foreground">{ordered.length} left in this list</p>
         </>
       )}
+    </div>
+  );
+}
+
+/** "Pick a Photo": the pending captures in queue order, tap one to sort it now. */
+function PhotoStrip({
+  cards,
+  current,
+  onPick,
+}: {
+  cards: Extract<Card, { kind: "capture" }>[];
+  current: string;
+  onPick: (key: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="px-1 font-data text-[12px] text-muted-foreground">Pick a Photo</span>
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {cards.map(({ key, capture }) => (
+          <button
+            key={key}
+            onClick={() => onPick(key)}
+            aria-label={`Sort capture ${capture.id}`}
+            aria-current={key === current}
+            className={cn(
+              "h-16 w-16 shrink-0 rounded-xl p-0.5 outline-none",
+              key === current ? "ring-2 ring-[#3C5D41]" : "ring-1 ring-border",
+            )}
+          >
+            {capture.kind === "image" && capture.storageKey && !isGeojsonKey(capture.storageKey) ? (
+              <Photo storageKey={capture.storageKey} className="h-full w-full rounded-[10px]" />
+            ) : (
+              <span className="grid h-full w-full place-items-center rounded-[10px] bg-muted/60 text-muted-foreground">
+                <FileText className="h-5 w-5" />
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -89,7 +179,70 @@ function CardShell({ question, children, onSkip }: { question: string; children:
   );
 }
 
-type Row = { name: string; areaId: number | null; checked: boolean; attributes?: Record<string, string> };
+type Row = {
+  name: string;
+  areaId: number | null;
+  checked: boolean;
+  attributes?: Record<string, string>;
+  /** the AI's frame on the Photo, and the number it shares with its row */
+  box?: CropBox;
+  num?: number;
+};
+
+const LIME = "#a3e635";
+
+/** The AI's frames over the Photo, one per row that has a box; tap toggles that row. */
+function Frames({ rows, active, onTap }: { rows: Row[]; active: number | null; onTap: (i: number) => void }) {
+  // big frames first, so a small one inside a big one stays on top and tappable
+  const framed = rows
+    .map((r, i) => ({ r, i }))
+    .filter((x) => x.r.box)
+    .sort((a, b) => b.r.box!.wPct * b.r.box!.hPct - a.r.box!.wPct * a.r.box!.hPct);
+  return (
+    <>
+      {framed.map(({ r, i }) => {
+        const b = r.box!;
+        const left = Math.max(0, b.xPct - b.wPct / 2);
+        const top = Math.max(0, b.yPct - b.hPct / 2);
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onTap(i)}
+            aria-label={`Frame ${r.num}: ${r.name}`}
+            aria-pressed={r.checked}
+            className={cn("absolute rounded-sm", !r.checked && "opacity-50", active === i && "shadow-[0_0_0_3px_rgba(0,0,0,0.45)]")}
+            style={{
+              left: `${left}%`,
+              top: `${top}%`,
+              width: `${Math.min(100, b.xPct + b.wPct / 2) - left}%`,
+              height: `${Math.min(100, b.yPct + b.hPct / 2) - top}%`,
+              border: `2px ${r.checked ? "solid" : "dashed"} ${LIME}`,
+            }}
+          >
+            <span
+              className="absolute left-0 top-0 grid h-5 min-w-5 place-items-center rounded-br-md px-1 font-data text-[11px] font-bold text-[#282c20]"
+              style={{ background: LIME }}
+            >
+              {r.num}
+            </span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+function RowNumber({ num }: { num?: number }) {
+  if (num == null) return null;
+  return (
+    <span className="grid h-5 min-w-5 shrink-0 place-items-center rounded-md px-1 font-data text-[11px] font-bold text-[#282c20]" style={{ background: LIME }}>
+      {num}
+    </span>
+  );
+}
+
+type AcceptItems = Parameters<ReturnType<typeof trpc.inbox.acceptMany.useMutation>["mutate"]>[0]["items"];
 
 function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => void }) {
   const { areas, here, locations, lens, refresh } = useFlow();
@@ -97,17 +250,31 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
   const defaultAreaId = (lens === "lab" ? areas.find((a) => a.slug === LAB.defaultAreaSlug)?.id : undefined) ?? areas[0]?.id ?? null;
   const matched = suggestion?.items.filter((s) => !s.isNewItem && s.matchedItemName) ?? [];
 
-  const initialRows = (): Row[] =>
-    (suggestion?.items ?? [])
+  const initialRows = (): Row[] => {
+    let n = 0;
+    return (suggestion?.items ?? [])
       .filter((s) => s.isNewItem || !s.matchedItemName)
-      .map((s) => ({
-        name: s.itemName,
-        areaId: areas.find((a) => a.slug === s.areaSlug)?.id ?? defaultAreaId,
-        checked: true,
-        attributes: s.attributes,
-      }));
+      .map((s) => {
+        const box = spottedBox(s);
+        return {
+          name: s.itemName,
+          areaId: areas.find((a) => a.slug === s.areaSlug)?.id ?? defaultAreaId,
+          checked: true,
+          attributes: s.attributes,
+          ...(box ? { box, num: ++n } : {}),
+        };
+      });
+  };
   const [rows, setRows] = useState<Row[]>(initialRows);
   const [extra, setExtra] = useState("");
+  // the row whose frame was tapped last: outlined so the eye finds it
+  const [active, setActive] = useState<number | null>(null);
+  const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const tapFrame = (i: number) => {
+    setRows((rs) => rs.map((x, j) => (j === i ? { ...x, checked: !x.checked } : x)));
+    setActive(i);
+    rowRefs.current[i]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
   const [place, setPlace] = useState<Place>(() => {
     const snapped = getSnapPlace(capture.id);
     if (snapped) return snapped;
@@ -148,7 +315,9 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
   return (
     <CardShell question={isGeo ? "A floor scan" : "What is it?"} onSkip={onSkip}>
       {capture.kind === "image" && capture.storageKey ? (
-        <Photo storageKey={capture.storageKey} className="aspect-[4/3] w-full" />
+        <FramedPhoto storageKey={capture.storageKey}>
+          <Frames rows={rows} active={active} onTap={tapFrame} />
+        </FramedPhoto>
       ) : isGeo && capture.storageKey ? (
         <div className="mx-auto w-40">
           <GeojsonThumb storageKey={capture.storageKey} />
@@ -199,7 +368,17 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
           {rows.length > 0 && (
             <div className="flex flex-col gap-2">
               {rows.map((r, i) => (
-                <div key={i} className={cn("flex items-center gap-2 rounded-xl border p-2", r.checked ? "border-[#3C5D41]" : "border-border opacity-60")}>
+                <div
+                  key={i}
+                  ref={(el) => {
+                    rowRefs.current[i] = el;
+                  }}
+                  className={cn(
+                    "flex items-center gap-2 rounded-xl border p-2 transition-shadow",
+                    r.checked ? "border-[#3C5D41]" : "border-border opacity-60",
+                    active === i && "ring-2 ring-[#a3e635]",
+                  )}
+                >
                   <input
                     type="checkbox"
                     checked={r.checked}
@@ -207,6 +386,7 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
                     className="h-5 w-5 accent-[#3C5D41]"
                     aria-label={`File ${r.name}`}
                   />
+                  <RowNumber num={r.num} />
                   <div className="flex-1 min-w-0 flex flex-col gap-1">
                     <input
                       value={r.name}
@@ -266,7 +446,15 @@ function CaptureCard({ capture, onSkip }: { capture: FlowCapture; onSkip: () => 
                 accept.mutate({
                   id: capture.id,
                   roomId: validPlace.roomId,
-                  items: chosen.map((r) => ({ areaId: r.areaId!, itemId: null, itemName: r.name.trim(), attributes: r.attributes })),
+                  // `box` (pin + cutout on the server) lands with sort-triage-boxes; until
+                  // then the API's input type lacks it and zod strips it on the way in
+                  items: chosen.map((r) => ({
+                    areaId: r.areaId!,
+                    itemId: null,
+                    itemName: r.name.trim(),
+                    attributes: r.attributes,
+                    ...(r.box ? { box: r.box } : {}),
+                  })) as AcceptItems,
                 })
               }
               className="rounded-xl bg-[#282c20] py-3 font-data text-[14px] font-semibold text-[#f4f4ed] disabled:opacity-40"

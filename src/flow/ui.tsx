@@ -1,4 +1,4 @@
-import { Component, type ReactNode } from "react";
+import { Component, useState, type ReactNode } from "react";
 import { X, ImageOff } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,48 @@ export function Photo({ storageKey, className }: { storageKey: string | null | u
           </div>
         )
       )}
+    </div>
+  );
+}
+
+/**
+ * A stored photo shown whole (never cropped), in a box with the image's own
+ * aspect ratio, so overlay children positioned in percent (frames, pins) land
+ * on the same spot of the picture at any width. Tall photos are capped at
+ * `maxHeight` and centred; the box shrinks with them, keeping the ratio.
+ */
+export function FramedPhoto({
+  storageKey,
+  children,
+  maxHeight = "60dvh",
+}: {
+  storageKey: string;
+  children?: ReactNode;
+  maxHeight?: string;
+}) {
+  const url = trpc.attachments.url.useQuery({ key: storageKey });
+  // natural width / height, known once the image has loaded; 4:3 until then
+  const [ratio, setRatio] = useState<number | null>(null);
+  const r = ratio ?? 4 / 3;
+  return (
+    <div className="flex w-full justify-center">
+      <div
+        className="relative overflow-hidden rounded-xl bg-[repeating-linear-gradient(45deg,hsl(110_14%_92%)_0_8px,hsl(110_8%_86%)_8px_9px)]"
+        style={{ aspectRatio: String(r), width: `min(100%, calc(${maxHeight} * ${r}))` }}
+      >
+        {url.data?.url && (
+          <img
+            src={url.data.url}
+            alt=""
+            className="absolute inset-0 h-full w-full"
+            onLoad={(e) => {
+              const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+              if (w > 0 && h > 0) setRatio(w / h);
+            }}
+          />
+        )}
+        {ratio != null && children}
+      </div>
     </div>
   );
 }
