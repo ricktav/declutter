@@ -249,60 +249,67 @@ export const itemsRouter = createRouter({
         });
       }
 
-      // LLM: semantic suggested-links to existing items in this area
-      let suggestedLinks: { itemId: number; reason: string }[] = [];
-      const otherSiblings = siblings.filter((s) => s.id !== id);
-      if (otherSiblings.length > 0) {
-        try {
-          const model = await getModel();
-          const linksSchema = z.object({
-            links: z.array(
-              z.object({
-                itemId: z.number().describe("id of the existing item to link to"),
-                reason: z.string().describe("one short sentence: why they belong together"),
-              }),
-            ),
-          });
-          const { object } = await generateObject({
-            model,
-            schema: linksSchema,
-            messages: [
-              {
-                role: "user",
-                content: `A new item was just added to a home inventory.\n\nNEW ITEM (area: ${input.name}'s area, name: "${input.name}"${input.description ? `, description: "${input.description}"` : ""}).\n\nEXISTING ITEMS IN THE SAME AREA (id — name${input.description ? " — description" : ""}):\n${otherSiblings
-                  .slice(0, 100)
-                  .map((s) => `- ${s.id} — ${s.name}${s.description ? ` — ${s.description.slice(0, 120)}` : ""}`)
-                  .join("\n")}\n\nWhich of these existing items does the new item have a HIGH likelihood of being related to? Suggest only links you are fairly confident about (same setup, accessory of, part of, replacement for, used together, depends on). Return an empty list if nothing is clearly related. For each suggested link give a one-sentence reason.`,
-              },
-            ],
-          });
-          const valid = new Set(otherSiblings.map((s) => s.id));
-          for (const l of object.links) {
-            if (!valid.has(l.itemId) || suggestions.includes(l.itemId)) continue;
-            await db.insert(relations).values({
-              fromItemId: id,
-              toItemId: l.itemId,
-              type: "related-to",
-              origin: "ai",
-              status: "suggested",
+      // LLM: semantic suggested-links to existing items in this area. This runs after
+      // the response: with the Claude CLI provider one call takes many seconds, and the
+      // Workbench spun on every accepted pin waiting for it. The relations and the
+      // "links-suggested" event land when the model answers; nothing reads them from
+      // this response, so suggestedLinks is reported as empty here.
+      const suggestedLinks: { itemId: number; reason: string }[] = [];
+      void (async () => {
+        // LLM: semantic suggested-links to existing items in this area
+        const otherSiblings = siblings.filter((s) => s.id !== id);
+        if (otherSiblings.length > 0) {
+          try {
+            const model = await getModel();
+            const linksSchema = z.object({
+              links: z.array(
+                z.object({
+                  itemId: z.number().describe("id of the existing item to link to"),
+                  reason: z.string().describe("one short sentence: why they belong together"),
+                }),
+              ),
             });
-            suggestions.push(l.itemId);
-            suggestedLinks.push({ itemId: l.itemId, reason: l.reason });
-          }
-          if (suggestedLinks.length) {
-            await logEvent({
-              entityType: "item",
-              entityId: id,
-              action: "links-suggested",
-              summary: `LLM suggested ${suggestedLinks.length} semantic link(s) for "${input.name}"`,
-              actor: "ai",
-              payload: { links: suggestedLinks },
+            const { object } = await generateObject({
+              model,
+              schema: linksSchema,
+              messages: [
+                {
+                  role: "user",
+                  content: `A new item was just added to a home inventory.\n\nNEW ITEM (area: ${input.name}'s area, name: "${input.name}"${input.description ? `, description: "${input.description}"` : ""}).\n\nEXISTING ITEMS IN THE SAME AREA (id — name${input.description ? " — description" : ""}):\n${otherSiblings
+                    .slice(0, 100)
+                    .map((s) => `- ${s.id} — ${s.name}${s.description ? ` — ${s.description.slice(0, 120)}` : ""}`)
+                    .join("\n")}\n\nWhich of these existing items does the new item have a HIGH likelihood of being related to? Suggest only links you are fairly confident about (same setup, accessory of, part of, replacement for, used together, depends on). Return an empty list if nothing is clearly related. For each suggested link give a one-sentence reason.`,
+                },
+              ],
             });
+            const valid = new Set(otherSiblings.map((s) => s.id));
+            for (const l of object.links) {
+              if (!valid.has(l.itemId) || suggestions.includes(l.itemId)) continue;
+              await db.insert(relations).values({
+                fromItemId: id,
+                toItemId: l.itemId,
+                type: "related-to",
+                origin: "ai",
+                status: "suggested",
+              });
+              suggestions.push(l.itemId);
+              suggestedLinks.push({ itemId: l.itemId, reason: l.reason });
+            }
+            if (suggestedLinks.length) {
+              await logEvent({
+                entityType: "item",
+                entityId: id,
+                action: "links-suggested",
+                summary: `LLM suggested ${suggestedLinks.length} semantic link(s) for "${input.name}"`,
+                actor: "ai",
+                payload: { links: suggestedLinks },
+              });
+            }
+          } catch {
+            // AI suggestions are best-effort — creation must never fail on them
           }
-        } catch {
-          // AI suggestions are best-effort — creation must never fail on them
         }
-      }
+      })();
       return { id, suggestedRelations: suggestions.length, suggestedLinks };
     }),
 
