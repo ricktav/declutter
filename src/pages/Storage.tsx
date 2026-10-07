@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import { HardDrive, Server, X } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
@@ -10,10 +11,20 @@ type Role = (typeof ROLES)[number];
 /** Every computer with its drives and volumes as blocks; click a volume for its biggest directories and its data role. */
 export default function StoragePage() {
   const { houseId, houses } = useHouse();
-  const [allHouses, setAllHouses] = useState(false);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const idParam = (key: string) => {
+    const n = Number(searchParams.get(key));
+    return Number.isInteger(n) && n > 0 ? n : NaN;
+  };
+  const volumeParam = idParam("volume");
+  const itemParam = idParam("item");
+  const [allHouses, setAllHouses] = useState(() => Number.isInteger(volumeParam) || Number.isInteger(itemParam));
+  const [selected, setSelected] = useState<number | null>(() =>
+    Number.isInteger(volumeParam) ? volumeParam : null,
+  );
   const utils = trpc.useUtils();
   const overview = trpc.storage.overview.useQuery({ houseId: allHouses ? null : houseId });
+  const o = overview.data;
   const dirs = trpc.storage.dirs.useQuery({ volumeId: selected ?? 0 }, { enabled: selected != null });
   const setRole = trpc.storage.setRole.useMutation({
     onSuccess: () => {
@@ -41,9 +52,38 @@ export default function StoragePage() {
     setSelected(volumeId);
     setConfirmRemove(false);
     setAttachError(null);
+    const next = new URLSearchParams(searchParams);
+    if (volumeId != null) next.set("volume", String(volumeId));
+    else next.delete("volume");
+    setSearchParams(next, { replace: true });
   };
 
-  const o = overview.data;
+  useEffect(() => {
+    if (Number.isInteger(volumeParam)) {
+      setSelected(volumeParam);
+      setAllHouses(true);
+    }
+  }, [volumeParam]);
+
+  useEffect(() => {
+    if (!o || !Number.isInteger(itemParam) || selected != null) return;
+    const vols: number[] = [];
+    for (const c of o.computers) {
+      if (c.id === itemParam) vols.push(...c.volumes.map((v) => v.id), ...c.drives.flatMap((d) => d.volumes.map((v) => v.id)), ...c.attached.flatMap((d) => d.volumes.map((v) => v.id)));
+      else {
+        for (const d of [...c.drives, ...c.attached]) if (d.id === itemParam) vols.push(...d.volumes.map((v) => v.id));
+      }
+    }
+    for (const d of o.externals) if (d.id === itemParam) vols.push(...d.volumes.map((v) => v.id));
+    if (vols[0] != null) select(vols[0]);
+  }, [o, itemParam, selected]);
+
+  useEffect(() => {
+    if (selected == null) return;
+    const el = document.getElementById(`storage-volume-${selected}`) ?? document.getElementById(`storage-item-${itemParam}`);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [selected, o, itemParam]);
+
   const maxBytes = useMemo(() => {
     if (!o) return 0;
     const all = [...o.computers.flatMap((c) => [c, ...c.drives, ...c.attached]), ...o.externals];
@@ -145,7 +185,7 @@ export default function StoragePage() {
           {overview.isError && <p className="text-sm text-red-600">{overview.error.message}</p>}
           {o?.computers.length === 0 && o.externals.length === 0 && <p className="text-sm text-muted-foreground">No computers, drives or NAS boxes in this house.</p>}
           {o?.computers.map((c) => (
-            <section key={c.id} className="rounded-lg border border-border bg-white p-4">
+            <section id={`storage-item-${c.id}`} className="rounded-lg border border-border bg-white p-4">
               <div className="flex items-center gap-2">
                 <Server className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-sm font-semibold">{c.name}</h2>

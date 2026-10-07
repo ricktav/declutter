@@ -8,6 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { HouseSwitcher } from "@/components/HouseSwitcher";
 import { RoomPicker } from "@/components/RoomPicker";
 import { MergeRoomsDialog } from "@/components/MergeRoomsDialog";
+import { RoomNameField } from "@/components/RoomNameField";
+import { FloorField } from "@/components/FloorField";
 import {
   LayoutDashboard,
   Inbox,
@@ -298,31 +300,28 @@ export default function Layout() {
             )}
           </NavLink>
         ))}
-        {/* separate front end (own page), so a plain link rather than a NavLink */}
-        <a href="/flow/" className={navLinkClass({ isActive: false })}>
-          <Smartphone className="h-4 w-4" />
-          <span className="flex-1">Flow</span>
-          <span className="text-[11px] opacity-60">↗</span>
-        </a>
-        {mode !== "simple" && (
-          <>
-            <SidebarSectionTitle label="Views" collapsed={viewsCollapsed} onToggle={toggleViews} />
-            {!viewsCollapsed && (
-              <div className="space-y-0.5">
-                {viewsNav.map((n) => (
-                  <NavLink key={n.to} to={n.to} className={navLinkClass} onClick={() => setMenuOpen(false)}>
-                    <n.icon className="h-4 w-4" />
-                    <span className="flex-1">{n.label}</span>
-                  </NavLink>
-                ))}
-                <a href={METERKAST_URL} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
-                  <Zap className="h-4 w-4" />
-                  <span className="flex-1">Meterkast</span>
-                  <span className="text-[11px] opacity-60">↗</span>
-                </a>
-              </div>
+        <SidebarSectionTitle label="Views" collapsed={viewsCollapsed} onToggle={toggleViews} />
+        {!viewsCollapsed && (
+          <div className="space-y-0.5">
+            {mode !== "simple" && viewsNav.map((n) => (
+              <NavLink key={n.to} to={n.to} className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                <n.icon className="h-4 w-4" />
+                <span className="flex-1">{n.label}</span>
+              </NavLink>
+            ))}
+            <a href="/flow/" className={navLinkClass({ isActive: false })}>
+              <Smartphone className="h-4 w-4" />
+              <span className="flex-1">Flow</span>
+              <span className="text-[11px] opacity-60">↗</span>
+            </a>
+            {mode !== "simple" && (
+              <a href={METERKAST_URL} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
+                <Zap className="h-4 w-4" />
+                <span className="flex-1">Meterkast</span>
+                <span className="text-[11px] opacity-60">↗</span>
+              </a>
             )}
-          </>
+          </div>
         )}
       </nav>
 
@@ -421,10 +420,23 @@ export default function Layout() {
           {editingRoom && (
             <div className="space-y-3">
               <label className="block text-[12px]">Name
-                <input id="room-rename" className="mt-1 w-full rounded border border-input px-2 py-1 text-[13px]" value={renameTo} onChange={(e) => setRenameTo(e.target.value)} />
+                <div className="mt-1">
+                  <RoomNameField
+                    value={renameTo}
+                    onChange={setRenameTo}
+                    rooms={(roomData ?? []).map((r) => ({ id: r.id, name: r.name, floor: r.floor }))}
+                    currentId={editingRoom.id}
+                    onPickExisting={(r) => setMergePair({ fromId: editingRoom.id, toId: r.id })}
+                  />
+                </div>
               </label>
               <label className="block text-[12px]">Floor
-                <input id="room-floor" className="mt-1 w-full rounded border border-input px-2 py-1 text-[13px]" value={floorTo} onChange={(e) => setFloorTo(e.target.value)} placeholder="e.g. ground, 1, attic" />
+                <FloorField
+                  id="sidebar-room-floor"
+                  value={floorTo}
+                  onChange={setFloorTo}
+                  existing={(roomData ?? []).map((r) => r.floor ?? "").filter(Boolean)}
+                />
               </label>
               <div className="text-[12px]">Or merge into another room
                 <RoomPicker value={mergeInto} onChange={setMergeInto} allowCreate={false} allowNone />

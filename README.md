@@ -43,7 +43,10 @@ photo pins) works normally.
 
 For AI features set any OpenAI-compatible provider via `LLM_BASE_URL`,
 `LLM_API_KEY`, `LLM_MODEL`, `LLM_VISION_MODEL` — e.g. xAI Grok, OpenAI, or a
-local Ollama.
+local Ollama. For Grok you can instead set `XAI_API_KEY` (official xAI env
+name); the app uses `https://api.x.ai/v1` and `grok-4.7` for chat and vision.
+Or pick **xAI Grok** on the Settings page and paste a console API key. xAI
+does not document OAuth for API access.
 
 ## Workbench Simple / Advanced (test)
 

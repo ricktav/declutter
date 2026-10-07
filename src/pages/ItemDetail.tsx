@@ -11,6 +11,7 @@ import { RecropDialog } from "@/components/RecropDialog";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { EnergySection } from "@/components/EnergySection";
+import { StorageSection } from "@/components/StorageSection";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
@@ -653,7 +654,15 @@ export default function ItemDetail() {
                       <span className="w-36 shrink-0 text-muted-foreground">
                         {defs.find((d) => d.key === k)?.label ?? k}
                       </span>
-                      <span className="font-data">{String(v)}</span>
+                      <span className="font-data">
+                        {k === "storage_gb" || k === "storage_free_gb" || k === "mount_point" ? (
+                          <Link to={`/storage?item=${it.id}`} className="text-primary hover:underline">
+                            {String(v)}
+                          </Link>
+                        ) : (
+                          String(v)
+                        )}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -772,6 +781,7 @@ export default function ItemDetail() {
             </section>
           )}
 
+          <StorageSection itemId={it.id} role={String(it.attributes?.role ?? "")} />
           <EnergySection itemId={it.id} />
 
           {/* location: house → floor → room (areas are the topic, not the place) */}

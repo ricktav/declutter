@@ -7,6 +7,10 @@ import { Home, MapPin, ChevronRight, Loader2, Camera, Box, Square, Pencil } from
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MergeRoomsDialog } from "@/components/MergeRoomsDialog";
+import { RoomNameField } from "@/components/RoomNameField";
+import { FloorField } from "@/components/FloorField";
+import { ItemPicker } from "@/components/ItemPicker";
+import { sortFloorNames } from "@/lib/floors";
 import { cn } from "@/lib/utils";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
@@ -59,9 +63,10 @@ export default function MapPage() {
     { roomId: selected?.id ?? 0 },
     { enabled: !!selected },
   );
-  const [zoomUrl, setZoomUrl] = useState<string | null>(null);
+  const [zoom, setZoom] = useState<{ url: string; photoId: number } | null>(null);
   const [editing, setEditing] = useState<Location | null>(null);
   const [renameTo, setRenameTo] = useState("");
+  const [floorTo, setFloorTo] = useState("");
   const [mergePair, setMergePair] = useState<{ fromId: number; toId: number } | null>(null);
   const utils = trpc.useUtils();
   const updateRoom = trpc.rooms.update.useMutation({
@@ -73,6 +78,21 @@ export default function MapPage() {
   });
 
   const hasPlan = (l: Location) => (l.widthM ?? 0) > 0 && (l.depthM ?? 0) > 0;
+  const roomsByHouse = useMemo(() => {
+    const list = locations.data ?? [];
+    const houseIds = [...new Set(list.map((r) => r.houseId))];
+    return houseIds.map((hid) => {
+      const rooms = list.filter((r) => r.houseId === hid);
+      const floors = sortFloorNames(rooms.map((r) => r.floor ?? "").filter(Boolean));
+      const groups: { floor: string; rooms: Location[] }[] = floors.map((floor) => ({
+        floor,
+        rooms: rooms.filter((r) => (r.floor ?? "") === floor),
+      }));
+      const unfloored = rooms.filter((r) => !r.floor);
+      if (unfloored.length) groups.push({ floor: "", rooms: unfloored });
+      return { houseId: hid, name: houseName(hid) ?? `House #${hid}`, groups };
+    });
+  }, [locations.data, houses.data]);
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
@@ -94,57 +114,64 @@ export default function MapPage() {
               No rooms yet.
             </div>
           )}
-          {locations.data?.map((l) => {
-            const key = locationKey(l);
-            const isSelected = selected && locationKey(selected) === key;
-            return (
-              <div
-                key={key}
-                className={`w-full flex items-center gap-2 rounded-md px-2 py-2 text-[13px] ${
-                  isSelected ? "bg-muted" : "hover:bg-muted/50"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => selectLocation(l)}
-                  className="flex-1 min-w-0 flex items-center gap-2 text-left"
-                >
-                  <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="flex-1 min-w-0">
-                    <span className="block truncate font-medium">{l.name}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">
-                      {[houseName(l.houseId), l.floor].filter(Boolean).join(" · ") || "—"}
-                    </span>
-                  </span>
-                  <span className="font-data text-[11px] text-muted-foreground">{l.itemCount}</span>
-                </button>
-                <Link
-                  to={hasPlan(l) ? `/rooms/${l.id}` : "#"}
-                  onClick={(e) => { if (!hasPlan(l)) e.preventDefault(); }}
-                  title={hasPlan(l) ? "Floorplan" : "No floorplan"}
-                  className={cn("shrink-0", hasPlan(l) ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
-                >
-                  <Square className="h-3.5 w-3.5" />
-                </Link>
-                <Link
-                  to={l.hasGeometry ? `/rooms/${l.id}?view=3d` : "#"}
-                  onClick={(e) => { if (!l.hasGeometry) e.preventDefault(); }}
-                  title={l.hasGeometry ? "3D model" : "No 3D model"}
-                  className={cn("shrink-0", l.hasGeometry ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
-                >
-                  <Box className="h-3.5 w-3.5" />
-                </Link>
-                <button
-                  type="button"
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                  title="Rename room"
-                  onClick={() => { setEditing(l); setRenameTo(l.name); updateRoom.reset(); }}
-                >
-                  <Pencil className="h-3 w-3" />
-                </button>
-              </div>
-            );
-          })}
+          {roomsByHouse.map((h) => (
+            <div key={h.houseId} className="mb-2">
+              {roomsByHouse.length > 1 && (
+                <div className="px-2 pt-1 micro-label text-muted-foreground">{h.name}</div>
+              )}
+              {h.groups.map((g) => (
+                <div key={`${h.houseId}-${g.floor || "nofloor"}`}>
+                  <div className="px-2 pt-1 micro-label text-muted-foreground/80">{g.floor || "no floor"}</div>
+                  {g.rooms.map((l) => {
+                    const key = locationKey(l);
+                    const isSelected = selected && locationKey(selected) === key;
+                    return (
+                      <div
+                        key={key}
+                        className={`w-full flex items-center gap-2 rounded-md px-2 py-2 text-[13px] ${
+                          isSelected ? "bg-muted" : "hover:bg-muted/50"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => selectLocation(l)}
+                          className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                        >
+                          <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <span className="flex-1 min-w-0 truncate font-medium">{l.name}</span>
+                          <span className="font-data text-[11px] text-muted-foreground">{l.itemCount}</span>
+                        </button>
+                        <Link
+                          to={hasPlan(l) ? `/rooms/${l.id}` : "#"}
+                          onClick={(e) => { if (!hasPlan(l)) e.preventDefault(); }}
+                          title={hasPlan(l) ? "Floorplan" : "No floorplan"}
+                          className={cn("shrink-0", hasPlan(l) ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
+                        >
+                          <Square className="h-3.5 w-3.5" />
+                        </Link>
+                        <Link
+                          to={l.hasGeometry ? `/rooms/${l.id}?view=3d` : "#"}
+                          onClick={(e) => { if (!l.hasGeometry) e.preventDefault(); }}
+                          title={l.hasGeometry ? "3D model" : "No 3D model"}
+                          className={cn("shrink-0", l.hasGeometry ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
+                        >
+                          <Box className="h-3.5 w-3.5" />
+                        </Link>
+                        <button
+                          type="button"
+                          className="shrink-0 text-muted-foreground hover:text-foreground"
+                          title="Rename room"
+                          onClick={() => { setEditing(l); setRenameTo(l.name); setFloorTo(l.floor ?? ""); updateRoom.reset(); }}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          ))}
         </aside>
 
         <div className="flex-1 min-w-0">
@@ -173,7 +200,7 @@ export default function MapPage() {
                     captureId={p.id}
                     roomId={selected.id}
                     onPlan={p.camera != null}
-                    onZoom={setZoomUrl}
+                    onOpen={(url, photoId) => setZoom({ url, photoId })}
                   />
                 ))}
               </div>
@@ -182,31 +209,59 @@ export default function MapPage() {
         </div>
       </div>
 
-      <ZoomOverlay open={!!zoomUrl} onClose={() => setZoomUrl(null)} title={selected?.name}>
-        {zoomUrl && <img src={zoomUrl} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />}
-      </ZoomOverlay>
+      {zoom && (
+        <MapPhotoZoom
+          url={zoom.url}
+          photoId={zoom.photoId}
+          title={selected?.name}
+          onClose={() => setZoom(null)}
+        />
+      )}
 
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename room</DialogTitle>
+            <DialogTitle>Edit room</DialogTitle>
           </DialogHeader>
           {editing && (
             <div className="space-y-3">
-              <input
-                className="w-full rounded border border-input px-2 py-1.5 text-[13px]"
-                value={renameTo}
-                onChange={(e) => setRenameTo(e.target.value)}
-              />
+              <label className="block text-[12px]">Name
+                <div className="mt-1">
+                  <RoomNameField
+                    value={renameTo}
+                    onChange={setRenameTo}
+                    rooms={(locations.data ?? [])
+                      .filter((r) => r.houseId === editing.houseId)
+                      .map((r) => ({ id: r.id, name: r.name, floor: r.floor }))}
+                    currentId={editing.id}
+                    onPickExisting={(r) => setMergePair({ fromId: editing.id, toId: r.id })}
+                  />
+                </div>
+              </label>
+              <label className="block text-[12px]">Floor
+                <FloorField
+                  id="map-room-floor"
+                  value={floorTo}
+                  onChange={setFloorTo}
+                  existing={(locations.data ?? [])
+                    .filter((r) => r.houseId === editing.houseId)
+                    .map((r) => r.floor ?? "")
+                    .filter(Boolean)}
+                />
+              </label>
               <p className="text-[12px] text-muted-foreground">
-                If the new name matches another room in this house, you will be asked to merge them.
+                Pick an existing room name from the list to merge. Floor is free text (begane grond, 1ste verdieping, zolder, …).
               </p>
               {updateRoom.isError && <p className="text-[12px] text-destructive">{updateRoom.error.message}</p>}
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
                 <Button
                   size="sm"
-                  disabled={!renameTo.trim() || updateRoom.isPending}
+                  disabled={
+                    updateRoom.isPending ||
+                    !renameTo.trim() ||
+                    (renameTo.trim() === editing.name && (floorTo.trim() || null) === (editing.floor ?? null))
+                  }
                   onClick={() => {
                     const name = renameTo.trim();
                     const clash = (locations.data ?? []).find(
@@ -216,7 +271,12 @@ export default function MapPage() {
                       setMergePair({ fromId: editing.id, toId: clash.id });
                       return;
                     }
-                    updateRoom.mutate({ id: editing.id, name });
+                    const floor = floorTo.trim() || null;
+                    updateRoom.mutate({
+                      id: editing.id,
+                      ...(name !== editing.name ? { name } : {}),
+                      ...(floor !== (editing.floor ?? null) ? { floor } : {}),
+                    });
                   }}
                 >
                   Save
@@ -249,26 +309,29 @@ function PhotoCard({
   captureId,
   roomId,
   onPlan,
-  onZoom,
+  onOpen,
 }: {
   storageKey: string;
   captureId: number;
   roomId: number;
   /** the capture's location photo stands on this room's plan as a camera */
   onPlan: boolean;
-  onZoom: (url: string) => void;
+  onOpen: (url: string, photoId: number) => void;
 }) {
   const url = trpc.photos.url.useQuery({ key: storageKey });
   const navigate = useNavigate();
   const ensure = trpc.photos.ensureForCapture.useMutation();
-  const [going, setGoing] = useState<"pin" | "place" | null>(null);
-  const go = (to: "pin" | "place") => {
+  const [going, setGoing] = useState<"pin" | "place" | "zoom" | null>(null);
+  const go = (to: "pin" | "place" | "zoom") => {
+    if (to === "zoom" && !url.data?.url) return;
     setGoing(to);
     ensure.mutate(
       { captureId, roomId },
       {
-        onSuccess: (res) =>
-          navigate(to === "pin" ? `/annotate/${res.photoId}` : `/rooms/${roomId}?placePhoto=${res.photoId}`),
+        onSuccess: (res) => {
+          if (to === "zoom") onOpen(url.data!.url!, res.photoId);
+          else navigate(to === "pin" ? `/annotate/${res.photoId}` : `/rooms/${roomId}?placePhoto=${res.photoId}`);
+        },
         onSettled: () => setGoing(null),
       },
     );
@@ -279,7 +342,7 @@ function PhotoCard({
       {url.data?.url && (
         <button
           type="button"
-          onClick={() => onZoom(url.data!.url!)}
+          onClick={() => go("zoom")}
           className="absolute top-3 right-3 h-6 w-6 flex items-center justify-center rounded bg-white/85 text-[13px] leading-none text-muted-foreground hover:text-foreground shadow-sm"
           title="Enlarge"
           aria-label="Enlarge"
@@ -288,13 +351,13 @@ function PhotoCard({
         </button>
       )}
       {url.data?.url ? (
-        <img
-          src={url.data.url}
-          alt=""
-          className="w-full aspect-video object-cover rounded cursor-zoom-in"
-          title="Double-click to enlarge"
-          onDoubleClick={() => onZoom(url.data!.url!)}
-        />
+        <button type="button" className="block w-full" onClick={() => go("zoom")} title="Open and pin">
+          <img
+            src={url.data.url}
+            alt=""
+            className="w-full aspect-video object-cover rounded cursor-zoom-in"
+          />
+        </button>
       ) : (
         <div className="w-full aspect-video rounded bg-muted/40" />
       )}
@@ -329,5 +392,130 @@ function PhotoCard({
         )}
       </button>
     </div>
+  );
+}
+
+function MapPhotoZoom({
+  url,
+  photoId,
+  title,
+  onClose,
+}: {
+  url: string;
+  photoId: number;
+  title?: string;
+  onClose: () => void;
+}) {
+  const utils = trpc.useUtils();
+  const pins = trpc.pins.listForPhoto.useQuery({ photoId });
+  const addPin = trpc.pins.add.useMutation({
+    onSuccess: () => {
+      utils.pins.listForPhoto.invalidate({ photoId });
+      utils.items.placementSummary.invalidate();
+    },
+  });
+  const [placeMode, setPlaceMode] = useState(false);
+  const [pending, setPending] = useState<{ xPct: number; yPct: number } | null>(null);
+  const [label, setLabel] = useState("");
+  const [item, setItem] = useState<{ id: number; name: string } | null>(null);
+
+  const save = () => {
+    if (!pending) return;
+    addPin.mutate(
+      {
+        photoId,
+        xPct: pending.xPct,
+        yPct: pending.yPct,
+        label: item?.name ?? label.trim(),
+        itemId: item?.id,
+      },
+      {
+        onSuccess: () => {
+          setPending(null);
+          setLabel("");
+          setItem(null);
+          setPlaceMode(false);
+        },
+      },
+    );
+  };
+
+  return (
+    <ZoomOverlay
+      open
+      onClose={onClose}
+      title={title}
+      placeMode={placeMode && pending == null}
+      onPlace={(pct) => {
+        setPending(pct);
+        setPlaceMode(false);
+      }}
+      toolbarExtra={
+        <div className="flex items-center gap-2 mr-2 min-w-0">
+          <button
+            type="button"
+            className={cn(
+              "h-8 px-2 rounded-md text-[12px] text-white/90 hover:bg-white/15",
+              placeMode && "bg-white/20",
+            )}
+            onClick={() => {
+              setPlaceMode((p) => !p);
+              setPending(null);
+            }}
+          >
+            {placeMode ? "Click the photo to pin" : "Pin"}
+          </button>
+          {pending && (
+            <div className="flex items-center gap-1.5 rounded-md bg-black/50 px-2 py-1 min-w-0">
+              <div className="w-48">
+                <ItemPicker
+                  autoFocus
+                  placeholder="link a Thing…"
+                  onSelect={(sel) => {
+                    setItem(sel);
+                    setLabel(sel.name);
+                  }}
+                />
+              </div>
+              <input
+                className="w-28 rounded border border-white/20 bg-transparent px-1.5 py-1 text-[12px] text-white"
+                placeholder="or label"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") save();
+                }}
+              />
+              <Button size="sm" className="h-7 text-[11px]" disabled={addPin.isPending} onClick={save}>
+                Save pin
+              </Button>
+              <button type="button" className="text-[11px] text-white/70" onClick={() => setPending(null)}>
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      }
+    >
+      <div data-pin-canvas className="relative inline-block max-w-full max-h-full">
+        <img src={url} alt="" draggable={false} className="max-w-full max-h-[80vh] object-contain rounded" />
+        {(pins.data ?? [])
+          .filter((p) => p.status === "confirmed")
+          .map((p) => (
+            <span
+              key={p.id}
+              className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-primary shadow"
+              style={{ left: `${p.xPct}%`, top: `${p.yPct}%` }}
+              title={p.itemName ?? p.label ?? "pin"}
+            />
+          ))}
+        {pending && (
+          <span
+            className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-amber-400 shadow"
+            style={{ left: `${pending.xPct}%`, top: `${pending.yPct}%` }}
+          />
+        )}
+      </div>
+    </ZoomOverlay>
   );
 }

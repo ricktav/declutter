@@ -17,6 +17,9 @@ export function ZoomOverlay(props: {
   title?: string;
   /** Extra controls shown at the left of the toolbar (e.g. a Pin button). */
   toolbarExtra?: ReactNode;
+  /** When true, a click on `[data-pin-canvas]` places a pin instead of panning. */
+  placeMode?: boolean;
+  onPlace?: (pct: { xPct: number; yPct: number }) => void;
   children: ReactNode;
 }) {
   if (!props.open) return null;

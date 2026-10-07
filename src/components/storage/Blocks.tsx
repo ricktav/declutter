@@ -148,6 +148,7 @@ export function DeviceBlock({
             ) : (
               <button
                 key={seg.volume.id}
+                id={`storage-volume-${seg.volume.id}`}
                 type="button"
                 onClick={() => onSelectVolume(seg.volume.id)}
                 className={cn("relative h-full shrink-0 border-r border-white/70 text-left outline-none", selectedVolumeId === seg.volume.id && "ring-2 ring-inset ring-black", isStale(seg.volume.measuredAt) && "opacity-60")}

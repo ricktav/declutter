@@ -11,7 +11,7 @@ import { type ScanPoly } from "../lib/scanMerge";
 import { mergeScanObjects, scanMeta, localDate } from "../lib/scanObjects";
 import { recordRoomScan, snapshotRoom } from "../lib/roomScans";
 import { logEvent } from "../lib/events";
-import { getModel, getSecondModel, getVisionModel } from "../lib/ai";
+import { getModel, getSecondModel, getTriageModel, getTriageVisionModel } from "../lib/ai";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { readFileBytes, copyStoredFile, deleteStoredFile, putFile, withNewFile } from "../lib/filestore";
@@ -281,7 +281,7 @@ export const inboxRouter = createRouter({
       const content = await buildTriageContent(cap);
       const suggestion = isClaudeCliDevMode()
         ? await runTriageViaClaudeCli(content, ctx.houseId)
-        : await runTriage(await getModel(), content, ctx.houseId);
+        : await runTriage(await getTriageModel(), content, ctx.houseId);
 
       await db.update(captures).set({ suggestion }).where(eq(captures.id, input.id));
       await logEvent({
@@ -419,7 +419,7 @@ export const inboxRouter = createRouter({
           })
         : (
             await generateObject({
-              model: await getVisionModel(),
+              model: await getTriageVisionModel(),
               schema: detectObjectsSchema,
               messages: [
                 {

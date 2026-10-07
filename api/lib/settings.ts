@@ -11,6 +11,8 @@ function settingsPath(): string {
   return process.env.DECLUTTER_SETTINGS_PATH || path.join(os.homedir(), ".declutter", "settings.json");
 }
 
+export type AiSlot = "a" | "b";
+
 export interface AppSettings {
   llmBaseUrl?: string;
   llmApiKey?: string;
@@ -20,6 +22,10 @@ export interface AppSettings {
   llm2ApiKey?: string;
   llm2Model?: string;
   llm2VisionModel?: string;
+  /** Which saved provider inbox.triage uses. Default A. */
+  llmTriageSlot?: AiSlot;
+  /** Which saved provider pins.detect uses. Default A. */
+  llmDetectSlot?: AiSlot;
 }
 
 export function loadSettings(): AppSettings {
