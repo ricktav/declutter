@@ -242,11 +242,19 @@ export const roomsRouter = createRouter({
 
   /**
    * Fold one room into another (the old "rename location to merge" flow).
-   * Items and location photos move; geometry moves only if the target has
-   * none; two scanned rooms cannot be merged.
+   * Items and location photos move. When both rooms have a floorplan (width
+   * and depth) or both have scanned walls (3D), the caller must pick which
+   * one stays (`keepPlanFrom` / `keepGeometryFrom`); the other is dropped.
    */
   merge: procedure
-    .input(z.object({ fromId: z.number(), toId: z.number() }))
+    .input(
+      z.object({
+        fromId: z.number(),
+        toId: z.number(),
+        keepPlanFrom: z.enum(["from", "to"]).optional(),
+        keepGeometryFrom: z.enum(["from", "to"]).optional(),
+      }),
+    )
     .mutation(async ({ input }) => {
       if (input.fromId === input.toId) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a different room to merge into." });
       const db = getDb();
@@ -254,8 +262,19 @@ export const roomsRouter = createRouter({
       const to = await db.query.rooms.findFirst({ where: eq(rooms.id, input.toId) });
       if (!from || !to) throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
       if (from.houseId !== to.houseId) throw new TRPCError({ code: "BAD_REQUEST", message: "Rooms must be in the same house to merge." });
-      if (from.walls && to.walls) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Both rooms have scanned geometry; merging would drop one scan. Delete or cut rooms on the plan instead." });
+      const hasWalls = (r: typeof from) => r.walls != null;
+      const hasPlan = (r: typeof from) => (r.widthM ?? 0) > 0 && (r.depthM ?? 0) > 0;
+      if (hasWalls(from) && hasWalls(to) && input.keepGeometryFrom == null) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Both rooms have a 3D scan. Pick which one stays (keepGeometryFrom), then merge.",
+        });
+      }
+      if (hasPlan(from) && hasPlan(to) && input.keepPlanFrom == null) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Both rooms have a floorplan. Pick which one stays (keepPlanFrom), then merge.",
+        });
       }
       // refuse merging a room into one of its own descendants (its cut sub-rooms)
       for (let cur = to, hops = 0; cur.parentRoomId != null && hops < 50; hops++) {
@@ -266,6 +285,11 @@ export const roomsRouter = createRouter({
         if (!next) break;
         cur = next;
       }
+      const geomSrc: "from" | "to" =
+        hasWalls(from) && hasWalls(to) ? input.keepGeometryFrom! : hasWalls(from) && !hasWalls(to) ? "from" : "to";
+      const planSrc: "from" | "to" =
+        hasPlan(from) && hasPlan(to) ? input.keepPlanFrom! : hasPlan(from) && !hasPlan(to) ? "from" : "to";
+      const src = (which: "from" | "to") => (which === "from" ? from : to);
       return db.transaction(async (tx) => {
         const movedItems = await tx.select().from(items).where(eq(items.roomId, from.id));
         for (const it of movedItems) {
@@ -281,23 +305,22 @@ export const roomsRouter = createRouter({
         const movedPhotos = await tx.select({ id: photos.id }).from(photos).where(eq(photos.roomId, from.id));
         if (movedPhotos.length) await tx.update(photos).set({ roomId: to.id, camera: null }).where(eq(photos.roomId, from.id)); // a camera is in the old frame
         await tx.update(rooms).set({ parentRoomId: to.id }).where(and(eq(rooms.parentRoomId, from.id), ne(rooms.id, to.id)));
-        if (from.walls && !to.walls) {
-          await tx
-            .update(rooms)
-            .set({
-              walls: from.walls,
-              openings: from.openings,
-              widthM: from.widthM,
-              depthM: from.depthM,
-              wallHeightM: from.wallHeightM,
-              source: from.source,
-              scanDate: from.scanDate,
-              floor: to.floor ?? from.floor,
-            })
-            .where(eq(rooms.id, to.id));
-        } else if (!to.floor && from.floor) {
-          await tx.update(rooms).set({ floor: from.floor }).where(eq(rooms.id, to.id));
+        const g = src(geomSrc);
+        const p = src(planSrc);
+        const patch: Record<string, unknown> = {};
+        if (geomSrc === "from") {
+          patch.walls = g.walls;
+          patch.wallHeightM = g.wallHeightM;
+          patch.source = g.source;
+          patch.scanDate = g.scanDate;
         }
+        if (planSrc === "from") {
+          patch.widthM = p.widthM;
+          patch.depthM = p.depthM;
+          patch.openings = p.openings;
+        }
+        if (!to.floor && from.floor) patch.floor = from.floor;
+        if (Object.keys(patch).length) await tx.update(rooms).set(patch).where(eq(rooms.id, to.id));
         await tx.delete(rooms).where(eq(rooms.id, from.id));
         await logEvent(
           {

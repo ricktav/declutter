@@ -20,6 +20,7 @@ import type { AttributeDef } from "@db/schema";
 import { AREA_ICONS, AREA_COLORS } from "@/lib/areaStyle";
 import { cn } from "@/lib/utils";
 import type { Area } from "@db/schema";
+import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -250,6 +251,9 @@ export default function AreaView() {
   const [q, setQ] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [view, setView] = usePersistedState<"list" | "gallery">("areaView.view", "list");
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [colFilters, setColFilters] = useState<Record<string, string>>({});
   const navigate = useNavigate();
 
   const area = trpc.areas.get.useQuery({ slug: slug! }, { enabled: !!slug });
@@ -286,9 +290,50 @@ export default function AreaView() {
     return [...keys.entries()].map(([key, label]) => ({ key, label, type: "text" as const }));
   }, [area.data, itemsList.data]);
 
-  const filtered = (itemsList.data ?? []).filter(
-    (i) => !q || i.name.toLowerCase().includes(q.toLowerCase()),
-  );
+  const categorical = useMemo(() => {
+    const out: { key: string; label: string; values: string[] }[] = [];
+    for (const c of columns) {
+      const fromDef = c.type === "select";
+      const values = [...new Set((itemsList.data ?? []).map((it) => String(it.attributes?.[c.key] ?? "")).filter(Boolean))].sort();
+      if (fromDef || c.key === "role" || (values.length >= 2 && values.length <= 12)) {
+        const opts = "options" in c && Array.isArray(c.options) ? c.options : [];
+        out.push({ key: c.key, label: c.label, values: fromDef ? [...new Set([...opts, ...values])] : values });
+      }
+    }
+    return out;
+  }, [columns, itemsList.data]);
+
+  const filtered = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    return (itemsList.data ?? []).filter((i) => {
+      if (query && !i.name.toLowerCase().includes(query)) return false;
+      for (const [k, v] of Object.entries(colFilters)) {
+        if (v && String(i.attributes?.[k] ?? "") !== v) return false;
+      }
+      return true;
+    });
+  }, [itemsList.data, q, colFilters]);
+
+  const sorted = useMemo(() => {
+    const rows = [...filtered];
+    const dir = sortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      if (sortKey === "name") return a.name.localeCompare(b.name) * dir;
+      if (sortKey === "updated") return (+new Date(a.updatedAt) - +new Date(b.updatedAt)) * dir;
+      const av = String(a.attributes?.[sortKey] ?? "");
+      const bv = String(b.attributes?.[sortKey] ?? "");
+      const an = Number(av), bn = Number(bv);
+      if (av !== "" && bv !== "" && Number.isFinite(an) && Number.isFinite(bn)) return (an - bn) * dir;
+      return av.localeCompare(bv) * dir;
+    });
+    return rows;
+  }, [filtered, sortKey, sortDir]);
+
+  const onSort = (column: string) => {
+    const next = nextSort(sortKey, sortDir, column);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+  };
 
   if (area.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
   if (!area.data) return <div className="p-8 text-sm">Topic not found.</div>;
@@ -299,7 +344,7 @@ export default function AreaView() {
         <span className="h-3 w-3 rounded-sm" style={{ background: area.data.color }} />
         <h1 className="text-2xl font-semibold tracking-tight">{area.data.name}</h1>
         <span className="font-data text-sm text-muted-foreground">
-          {filtered.length} item{filtered.length === 1 ? "" : "s"}
+          {sorted.length} item{sorted.length === 1 ? "" : "s"}
         </span>
         <div className="ml-auto flex gap-2">
           <Button
@@ -346,6 +391,23 @@ export default function AreaView() {
           />
           show archived
         </label>
+        {categorical.map((c) => (
+          <label key={c.key} className="text-[12px] text-muted-foreground">
+            {c.label}
+            <select
+              className="ml-1.5 rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
+              value={colFilters[c.key] ?? ""}
+              onChange={(e) => setColFilters((f) => ({ ...f, [c.key]: e.target.value }))}
+            >
+              <option value="">All</option>
+              {c.values.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
         <div className="ml-auto flex gap-1 rounded-md border border-border p-0.5">
           <button
             className={cn("rounded p-1", view === "list" ? "bg-muted" : "text-muted-foreground")}
@@ -366,7 +428,7 @@ export default function AreaView() {
 
       {view === "gallery" ? (
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {filtered.map((it) => (
+          {sorted.map((it) => (
             <Link
               key={it.id}
               to={`/items/${it.id}`}
@@ -386,7 +448,7 @@ export default function AreaView() {
               )}
             </Link>
           ))}
-          {filtered.length === 0 && (
+          {sorted.length === 0 && (
             <div className="col-span-full text-center text-muted-foreground py-8">
               No items yet — add one, or capture something via the inbox.
             </div>
@@ -398,16 +460,16 @@ export default function AreaView() {
           <thead>
             <tr>
               <th className="w-12" />
-              <th>Name</th>
+              <SortableTh label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               {columns.map((c) => (
-                <th key={c.key}>{c.label}</th>
+                <SortableTh key={c.key} label={c.label} column={c.key} sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               ))}
-              <th>Updated</th>
+              <SortableTh label="Updated" column="updated" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <th className="w-8" />
             </tr>
           </thead>
           <tbody>
-            {filtered.map((it) => (
+            {sorted.map((it) => (
               <tr key={it.id} className={`group ${it.status === "archived" ? "opacity-50" : ""}`}>
                 <td>
                   <Thumb storageKey={it.imageKey} />
@@ -449,7 +511,7 @@ export default function AreaView() {
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {sorted.length === 0 && (
               <tr>
                 <td colSpan={columns.length + 4} className="text-center text-muted-foreground py-8">
                   No items yet — add one, or capture something via the inbox.

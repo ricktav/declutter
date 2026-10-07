@@ -70,7 +70,7 @@ export function ConfirmDelete({
             }}
             className={cn("bg-destructive text-white hover:bg-destructive/90")}
           >
-            {pending ? "Deleting…" : confirmLabel}
+            {pending ? `${confirmLabel.replace(/\?$/, "")}…` : confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

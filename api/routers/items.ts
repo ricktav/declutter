@@ -557,6 +557,78 @@ export const itemsRouter = createRouter({
     .input(z.object({ type: z.string().min(1).max(64) }))
     .query(async ({ input }) => getDb().select().from(relations).where(eq(relations.type, input.type))),
 
+  /** Move and/or retopic many Things in one go (All items batch bar). */
+  updateMany: procedure
+    .input(
+      z.object({
+        ids: z.array(z.number()).min(1).max(200),
+        roomId: z.number().nullable().optional(),
+        areaId: z.number().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      if (input.roomId === undefined && input.areaId === undefined) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Pass roomId and/or areaId." });
+      }
+      const db = getDb();
+      const uniqueIds = [...new Set(input.ids)];
+      if (input.areaId != null) {
+        const area = await db.query.areas.findFirst({ where: eq(areas.id, input.areaId) });
+        if (!area) throw new TRPCError({ code: "BAD_REQUEST", message: "Topic not found." });
+      }
+      await db.transaction(async (tx) => {
+        for (const id of uniqueIds) {
+          const before = await tx.query.items.findFirst({ where: eq(items.id, id) });
+          if (!before) continue;
+          if (input.areaId != null && input.areaId !== before.areaId) {
+            await tx.update(items).set({ areaId: input.areaId }).where(eq(items.id, id));
+          }
+          if (input.roomId !== undefined && input.roomId !== before.roomId) {
+            if (input.roomId != null) await setItemLocation(tx, id, { roomId: input.roomId });
+            else await setItemLocation(tx, id, { roomId: null, houseId: before.houseId });
+            await tx.update(items).set({ pos: null }).where(eq(items.id, id));
+          }
+          await logEvent(
+            {
+              entityType: "item",
+              entityId: id,
+              action: "updated",
+              summary: `Item "${before.name}" batch updated`,
+              payload: { roomId: input.roomId, areaId: input.areaId },
+            },
+            tx,
+          );
+        }
+      });
+      return { ok: true as const, count: uniqueIds.length };
+    }),
+
+  /** Hard-delete many Things. Refuses the whole batch if any still has sub-objects. */
+  removeMany: procedure
+    .input(z.object({ ids: z.array(z.number()).min(1).max(200) }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const uniqueIds = [...new Set(input.ids)];
+      const blocked: string[] = [];
+      for (const id of uniqueIds) {
+        const item = await db.query.items.findFirst({ where: eq(items.id, id) });
+        const children = await db.select({ id: items.id }).from(items).where(eq(items.parentId, id));
+        if (children.length > 0) blocked.push(`"${item?.name ?? `#${id}`}" (${children.length} sub-object${children.length === 1 ? "" : "s"})`);
+      }
+      if (blocked.length) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Cannot delete until sub-objects are moved or deleted: ${blocked.join(", ")}`,
+        });
+      }
+      const files: string[] = [];
+      await db.transaction(async (tx) => {
+        for (const id of uniqueIds) files.push(...(await deleteItemTx(tx, id)));
+      });
+      await releaseStoredFiles(db, files);
+      return { ok: true as const, count: uniqueIds.length };
+    }),
+
   remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });

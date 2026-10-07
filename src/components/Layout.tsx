@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { HouseSwitcher } from "@/components/HouseSwitcher";
 import { RoomPicker } from "@/components/RoomPicker";
+import { MergeRoomsDialog } from "@/components/MergeRoomsDialog";
 import {
   LayoutDashboard,
   Inbox,
@@ -136,25 +137,25 @@ function RunningTimerPill() {
 /** The live energy dashboard on dockermac-1. */
 export const METERKAST_URL = "http://10.50.0.10/meterkast.html";
 
-const NAV = [
+const PRIMARY_NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/focus", label: "Focus", icon: ScanSearch },
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/items", label: "All Items", icon: Search },
   { to: "/photos", label: "Photos", icon: Images },
   { to: "/map", label: "Map", icon: MapPin },
-  { to: "/rooms", label: "Rooms", icon: Box },
-  { to: "/galaxy", label: "Galaxy", icon: Network },
-  { to: "/storage", label: "Storage", icon: HardDrive },
-  { to: "/ideas", label: "Ideas", icon: Lightbulb },
-  { to: "/tasks", label: "Tasks", icon: ListChecks },
-  { to: "/wiki", label: "Wiki", icon: BookOpen },
-  { to: "/activity", label: "Activity", icon: History },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
-const SIMPLE_NAV = new Set(["/focus", "/inbox", "/items", "/photos", "/rooms", "/settings"]);
-const HEAVY_PATHS = new Set(["/galaxy", "/storage", "/ideas", "/tasks", "/wiki", "/activity", "/map"]);
+const VIEWS_NAV = [
+  { to: "/galaxy", label: "Galaxy", icon: Network },
+  { to: "/storage", label: "Storage", icon: HardDrive },
+  { to: "/wiki", label: "Wiki", icon: BookOpen },
+  { to: "/activity", label: "Activity", icon: History },
+];
+
+const SIMPLE_NAV = new Set(["/focus", "/inbox", "/items", "/photos", "/map", "/settings"]);
+const HEAVY_PATHS = new Set(["/galaxy", "/storage", "/ideas", "/tasks", "/wiki", "/activity"]);
 
 function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
   const { mode, setMode } = useWorkbenchMode();
@@ -210,8 +211,23 @@ export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [areasCollapsed, toggleAreas] = useCollapsed("sidebar.areas.collapsed");
   const [locationsCollapsed, toggleLocations] = useCollapsed("sidebar.locations.collapsed");
+  const [viewsCollapsed, toggleViews] = useCollapsed("sidebar.views.collapsed", true);
+  const ideasList = trpc.ideas.list.useQuery();
+  const tasksList = trpc.tasks.list.useQuery();
+  const hasIdeas = (ideasList.data ?? []).length > 0;
+  const hasTasks = (tasksList.data ?? []).length > 0;
   const pendingCount = (inbox.data ?? []).filter((c) => c.status === "pending").length;
-  const navItems = mode === "simple" ? NAV.filter((n) => SIMPLE_NAV.has(n.to)) : NAV;
+  const primaryNav = mode === "simple" ? PRIMARY_NAV.filter((n) => SIMPLE_NAV.has(n.to)) : PRIMARY_NAV;
+  const extraPrimary = mode === "simple" ? [] : [
+    ...(hasIdeas ? [{ to: "/ideas", label: "Ideas", icon: Lightbulb }] : []),
+    ...(hasTasks ? [{ to: "/tasks", label: "Tasks", icon: ListChecks }] : []),
+  ];
+  const viewsNav = [
+    ...VIEWS_NAV,
+    ...(!hasIdeas ? [{ to: "/ideas", label: "Ideas", icon: Lightbulb }] : []),
+    ...(!hasTasks ? [{ to: "/tasks", label: "Tasks", icon: ListChecks }] : []),
+  ];
+  const [mergePair, setMergePair] = useState<{ fromId: number; toId: number } | null>(null);
 
   useEffect(() => {
     if (mode !== "simple") return;
@@ -237,14 +253,8 @@ export default function Layout() {
       setEditingRoom(null);
     },
   });
-  const mergeRoom = trpc.rooms.merge.useMutation({
-    onSuccess: () => {
-      refreshRooms();
-      setEditingRoom(null);
-    },
-  });
 
-  const busy = updateRoom.isPending || mergeRoom.isPending;
+  const busy = updateRoom.isPending;
   const nameChanged = !!editingRoom && renameTo.trim() !== editingRoom.name;
   const floorChanged = !!editingRoom && (floorTo.trim() || null) !== (editingRoom.floor ?? null);
 
@@ -276,8 +286,8 @@ export default function Layout() {
       </div>
 
       <nav className="px-2 space-y-0.5">
-        {navItems.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.end} className={navLinkClass}
+        {[...primaryNav, ...extraPrimary].map((n) => (
+          <NavLink key={n.to} to={n.to} end={"end" in n && n.end === true} className={navLinkClass}
             onClick={() => setMenuOpen(false)}>
             <n.icon className="h-4 w-4" />
             <span className="flex-1">{n.label}</span>
@@ -294,12 +304,26 @@ export default function Layout() {
           <span className="flex-1">Flow</span>
           <span className="text-[11px] opacity-60">↗</span>
         </a>
-        {/* live readings (plugs, smart meter, phases) live on the meterkast dashboard, not in HomeBase */}
-        <a href={METERKAST_URL} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
-          <Zap className="h-4 w-4" />
-          <span className="flex-1">Meterkast</span>
-          <span className="text-[11px] opacity-60">↗</span>
-        </a>
+        {mode !== "simple" && (
+          <>
+            <SidebarSectionTitle label="Views" collapsed={viewsCollapsed} onToggle={toggleViews} />
+            {!viewsCollapsed && (
+              <div className="space-y-0.5">
+                {viewsNav.map((n) => (
+                  <NavLink key={n.to} to={n.to} className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                    <n.icon className="h-4 w-4" />
+                    <span className="flex-1">{n.label}</span>
+                  </NavLink>
+                ))}
+                <a href={METERKAST_URL} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
+                  <Zap className="h-4 w-4" />
+                  <span className="flex-1">Meterkast</span>
+                  <span className="text-[11px] opacity-60">↗</span>
+                </a>
+              </div>
+            )}
+          </>
+        )}
       </nav>
 
       <div className="flex-1 overflow-y-auto">
@@ -332,7 +356,7 @@ export default function Layout() {
                     <span className="flex-1 min-w-0 truncate">{r.name}</span>
                     <span className="font-data text-[11px] opacity-60">{r.itemCount}</span>
                     <button className="shrink-0 opacity-0 group-hover:opacity-100 hover:text-[#f4f4ed]" title="Rename or merge this room"
-                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingRoom(r); setRenameTo(r.name); setFloorTo(r.floor ?? ""); setMergeInto(null); updateRoom.reset(); mergeRoom.reset(); }}>
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingRoom(r); setRenameTo(r.name); setFloorTo(r.floor ?? ""); setMergeInto(null); updateRoom.reset(); }}>
                       <Pencil className="h-3 w-3" />
                     </button>
                   </NavLink>
@@ -408,17 +432,31 @@ export default function Layout() {
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setEditingRoom(null)}>Cancel</Button>
                 {mergeInto != null && mergeInto !== editingRoom.id ? (
-                  <Button size="sm" disabled={busy} onClick={() => mergeRoom.mutate({ fromId: editingRoom.id, toId: mergeInto })}>Merge</Button>
+                  <Button size="sm" disabled={busy} onClick={() => { setMergePair({ fromId: editingRoom.id, toId: mergeInto }); }}>Merge</Button>
                 ) : (
                   <Button size="sm" disabled={busy || !renameTo.trim() || !nameChanged && !floorChanged}
-                    onClick={() => updateRoom.mutate({ id: editingRoom.id, ...(nameChanged ? { name: renameTo.trim() } : {}), ...(floorChanged ? { floor: floorTo.trim() || null } : {}) })}>Save</Button>
+                    onClick={() => {
+                      const clash = (roomData ?? []).find((r) => r.id !== editingRoom.id && r.name.trim().toLowerCase() === renameTo.trim().toLowerCase());
+                      if (clash) {
+                        setMergePair({ fromId: editingRoom.id, toId: clash.id });
+                        return;
+                      }
+                      updateRoom.mutate({ id: editingRoom.id, ...(nameChanged ? { name: renameTo.trim() } : {}), ...(floorChanged ? { floor: floorTo.trim() || null } : {}) });
+                    }}>Save</Button>
                 )}
               </div>
-              {(updateRoom.isError || mergeRoom.isError) && <div className="text-[12px] text-destructive">{(mergeRoom.error ?? updateRoom.error)?.message}</div>}
+              {updateRoom.isError && <div className="text-[12px] text-destructive">{updateRoom.error.message}</div>}
             </div>
           )}
         </DialogContent>
       </Dialog>
+      <MergeRoomsDialog
+        open={mergePair != null}
+        fromId={mergePair?.fromId ?? null}
+        toId={mergePair?.toId ?? null}
+        onClose={() => setMergePair(null)}
+        onMerged={() => { setMergePair(null); setEditingRoom(null); refreshRooms(); }}
+      />
     </div>
   );
 }

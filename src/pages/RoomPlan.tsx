@@ -51,6 +51,7 @@ export default function RoomPlanPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const id = Number(roomId);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const room = trpc.rooms.get.useQuery({ id }, { enabled: Number.isFinite(id) });
   const utils = trpc.useUtils();
   const updatePos = trpc.items.update.useMutation({
@@ -81,7 +82,7 @@ export default function RoomPlanPage() {
     const t = setTimeout(() => setSnapNote(null), 4000);
     return () => clearTimeout(t);
   }, [snapNote]);
-  const [view, setView] = useState<"2d" | "3d">("2d");
+  const [view, setView] = useState<"2d" | "3d">(searchParams.get("view") === "3d" ? "3d" : "2d");
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
   const [cutMode, setCutMode] = useState(false);
   const [pendingCut, setPendingCut] = useState<{ xM: number; yM: number; wM: number; dM: number } | null>(null);
@@ -147,7 +148,7 @@ export default function RoomPlanPage() {
   const removeRoom = trpc.rooms.remove.useMutation({
     onSuccess: () => {
       if (room.data?.parentRoomId != null) navigate(`/rooms/${room.data.parentRoomId}`);
-      else navigate("/rooms");
+      else navigate("/map");
     },
   });
   const createItem = trpc.items.create.useMutation();
@@ -158,7 +159,6 @@ export default function RoomPlanPage() {
   // (the item view's "Place on the plan"). The param is only honoured for
   // a Thing of this room without a position - anything else gets a notice
   // and nothing is written.
-  const [searchParams, setSearchParams] = useSearchParams();
   const placeParam = Number(searchParams.get("placeItem"));
   const placeParamId = Number.isInteger(placeParam) && placeParam > 0 ? placeParam : null;
   const placeParamItem = placeParamId != null ? room.data?.items.find((it) => it.id === placeParamId) : undefined;
@@ -501,8 +501,8 @@ export default function RoomPlanPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
-      <Link to="/rooms" className="flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground w-fit">
-        <ArrowLeft className="h-3.5 w-3.5" /> Rooms
+      <Link to="/map" className="flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground w-fit">
+        <ArrowLeft className="h-3.5 w-3.5" /> Map
       </Link>
 
       {room.isLoading ? (

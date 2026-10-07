@@ -107,7 +107,7 @@ function AttachmentView({
           <img
             src={url.data.url}
             alt={att.title ?? ""}
-            className="max-h-40 rounded border border-border"
+            className="max-h-80 w-full max-w-xl object-contain rounded border border-border"
             onError={() => setImgFailed(true)}
           />
         </button>
@@ -410,6 +410,10 @@ export default function ItemDetail() {
             <Sparkles className="h-3.5 w-3.5 mr-1" /> Ask AI
           </Button>
           <Button size="sm" variant="outline" className="h-8 text-[12px]"
+            onClick={startEditLoc}>
+            <MapPin className="h-3.5 w-3.5 mr-1" /> Move
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 text-[12px]"
             onClick={() => setArchived.mutate({ id: itemId, archived: it.status !== "archived" })}>
             {it.status === "archived" ? (
               <><ArchiveRestore className="h-3.5 w-3.5 mr-1" /> Restore</>
@@ -551,14 +555,22 @@ export default function ItemDetail() {
                   </>
                 )}
                 {a.entry === "photo" ? (
-                  <button
-                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive disabled:opacity-100"
-                    title="Unlink this photo from the item - it stays in the Photos pool"
-                    disabled={unlinkPhoto.isPending}
-                    onClick={() => unlinkPhoto.mutate({ id: a.id })}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                  <ConfirmDelete
+                    trigger={
+                      <button
+                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive disabled:opacity-100"
+                        title="Unlink this photo from the item - it stays in the Photos pool"
+                        disabled={unlinkPhoto.isPending}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    }
+                    title="Unlink this photo?"
+                    description="The photo stays in the Photos pool; it is only removed from this Thing."
+                    confirmLabel="Unlink"
+                    pending={unlinkPhoto.isPending}
+                    onConfirm={() => unlinkPhoto.mutate({ id: a.id })}
+                  />
                 ) : (
                   <ConfirmDelete
                     trigger={
@@ -720,10 +732,18 @@ export default function ItemDetail() {
                     <Link to={`/items/${r.otherItemId}`} className="text-primary hover:underline">
                       {r.otherItemName}
                     </Link>
-                    <button className="ml-auto text-muted-foreground hover:text-destructive"
-                      onClick={() => removeRelation.mutate({ id: r.id })}>
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    <ConfirmDelete
+                      trigger={
+                        <button className="ml-auto text-muted-foreground hover:text-destructive">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      }
+                      title="Remove this relation?"
+                      description={`Unlink ${r.otherItemName} (${r.type}).`}
+                      confirmLabel="Unlink"
+                      pending={removeRelation.isPending}
+                      onConfirm={() => removeRelation.mutate({ id: r.id })}
+                    />
                   </div>
                 ))}
               </div>
@@ -804,13 +824,21 @@ export default function ItemDetail() {
                   <Link to={`/items/${c.id}`} className="text-primary hover:underline flex-1 truncate">
                     {c.name}
                   </Link>
-                  <button
-                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
-                    title="Detach (does not delete the sub-object)"
-                    onClick={() => setParent.mutate({ id: c.id, parentId: null })}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  <ConfirmDelete
+                    trigger={
+                      <button
+                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
+                        title="Detach (does not delete the sub-object)"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    }
+                    title={`Detach “${c.name}”?`}
+                    description="It stays in the inventory; it is only unlinked as a sub-object."
+                    confirmLabel="Unlink"
+                    pending={setParent.isPending}
+                    onConfirm={() => setParent.mutate({ id: c.id, parentId: null })}
+                  />
                 </div>
               ))}
             </div>
@@ -855,8 +883,10 @@ export default function ItemDetail() {
           </section>
         </div>
 
-        {/* right column */}
+        {/* right column: placement first, then add task / add idea */}
         <div className="space-y-6">
+          <PlacementPane itemId={it.id} onPickRoom={pickRoom} />
+
           {/* tasks - collapses to a single add-button when empty, to avoid a
               permanently-empty card taking up space on most items */}
           {it.tasks.length === 0 && !addingTask ? (
@@ -934,9 +964,6 @@ export default function ItemDetail() {
               </div>
             </section>
           )}
-
-          {/* placement: photo, 2D plan, 3D */}
-          <PlacementPane itemId={it.id} onPickRoom={pickRoom} />
         </div>
       </div>
 
@@ -1001,6 +1028,13 @@ type PlacementData = inferRouterOutputs<AppRouter>["items"]["placement"];
 const PANE_ROOM_PHOTOS_MAX = 6;
 
 function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => void }) {
+  const utils = trpc.useUtils();
+  const removePin = trpc.pins.remove.useMutation({
+    onSuccess: () => {
+      utils.items.placement.invalidate();
+      utils.pins.listForItem.invalidate();
+    },
+  });
   const room = p.roomName ?? (p.roomId != null ? `room #${p.roomId}` : null);
   const canvases = p.roomPhotos.filter((r) => !r.isCutout);
   const shown = canvases.slice(0, PANE_ROOM_PHOTOS_MAX);
@@ -1038,6 +1072,22 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
                       Place
                     </Link>
                   ) : null}
+                  <ConfirmDelete
+                    trigger={
+                      <button
+                        type="button"
+                        className="ml-auto text-muted-foreground hover:text-destructive"
+                        title="Unlink this pin"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    }
+                    title="Unlink this pin?"
+                    description={`Remove the pin on “${pin.title ?? `photo #${pin.photoId}`}”. The photo stays.`}
+                    confirmLabel="Unlink"
+                    pending={removePin.isPending}
+                    onConfirm={() => removePin.mutate({ id: pin.pinId })}
+                  />
                 </div>
               ))}
             </div>

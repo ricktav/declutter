@@ -1,9 +1,13 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { trpc } from "@/providers/trpc";
 import { HousesMap } from "@/components/HousesMap";
-import { Home, MapPin, ChevronRight, Loader2, Camera } from "lucide-react";
+import { Home, MapPin, ChevronRight, Loader2, Camera, Box, Square, Pencil } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { MergeRoomsDialog } from "@/components/MergeRoomsDialog";
+import { cn } from "@/lib/utils";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
 
@@ -56,12 +60,25 @@ export default function MapPage() {
     { enabled: !!selected },
   );
   const [zoomUrl, setZoomUrl] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Location | null>(null);
+  const [renameTo, setRenameTo] = useState("");
+  const [mergePair, setMergePair] = useState<{ fromId: number; toId: number } | null>(null);
+  const utils = trpc.useUtils();
+  const updateRoom = trpc.rooms.update.useMutation({
+    onSuccess: () => {
+      utils.rooms.list.invalidate();
+      utils.rooms.get.invalidate();
+      setEditing(null);
+    },
+  });
+
+  const hasPlan = (l: Location) => (l.widthM ?? 0) > 0 && (l.depthM ?? 0) > 0;
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Map</h1>
       <p className="text-sm text-muted-foreground mt-1">
-        Pick a place to see what's pinned there — a spatial index on top of the same items, not a separate inventory.
+        Pick a Place. The map stays; each room shows whether it has a floorplan and a 3D scan. Rename a room to an existing name to merge.
       </p>
 
       <div className="mt-5">
@@ -81,22 +98,51 @@ export default function MapPage() {
             const key = locationKey(l);
             const isSelected = selected && locationKey(selected) === key;
             return (
-              <button
+              <div
                 key={key}
-                onClick={() => selectLocation(l)}
-                className={`w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-[13px] ${
+                className={`w-full flex items-center gap-2 rounded-md px-2 py-2 text-[13px] ${
                   isSelected ? "bg-muted" : "hover:bg-muted/50"
                 }`}
               >
-                <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="flex-1 min-w-0">
-                  <span className="block truncate font-medium">{l.name}</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
-                    {[houseName(l.houseId), l.floor].filter(Boolean).join(" · ") || "—"}
+                <button
+                  type="button"
+                  onClick={() => selectLocation(l)}
+                  className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                >
+                  <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate font-medium">{l.name}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {[houseName(l.houseId), l.floor].filter(Boolean).join(" · ") || "—"}
+                    </span>
                   </span>
-                </span>
-                <span className="font-data text-[11px] text-muted-foreground">{l.itemCount}</span>
-              </button>
+                  <span className="font-data text-[11px] text-muted-foreground">{l.itemCount}</span>
+                </button>
+                <Link
+                  to={hasPlan(l) ? `/rooms/${l.id}` : "#"}
+                  onClick={(e) => { if (!hasPlan(l)) e.preventDefault(); }}
+                  title={hasPlan(l) ? "Floorplan" : "No floorplan"}
+                  className={cn("shrink-0", hasPlan(l) ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
+                >
+                  <Square className="h-3.5 w-3.5" />
+                </Link>
+                <Link
+                  to={l.hasGeometry ? `/rooms/${l.id}?view=3d` : "#"}
+                  onClick={(e) => { if (!l.hasGeometry) e.preventDefault(); }}
+                  title={l.hasGeometry ? "3D model" : "No 3D model"}
+                  className={cn("shrink-0", l.hasGeometry ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
+                >
+                  <Box className="h-3.5 w-3.5" />
+                </Link>
+                <button
+                  type="button"
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  title="Rename room"
+                  onClick={() => { setEditing(l); setRenameTo(l.name); updateRoom.reset(); }}
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              </div>
             );
           })}
         </aside>
@@ -139,6 +185,54 @@ export default function MapPage() {
       <ZoomOverlay open={!!zoomUrl} onClose={() => setZoomUrl(null)} title={selected?.name}>
         {zoomUrl && <img src={zoomUrl} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />}
       </ZoomOverlay>
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename room</DialogTitle>
+          </DialogHeader>
+          {editing && (
+            <div className="space-y-3">
+              <input
+                className="w-full rounded border border-input px-2 py-1.5 text-[13px]"
+                value={renameTo}
+                onChange={(e) => setRenameTo(e.target.value)}
+              />
+              <p className="text-[12px] text-muted-foreground">
+                If the new name matches another room in this house, you will be asked to merge them.
+              </p>
+              {updateRoom.isError && <p className="text-[12px] text-destructive">{updateRoom.error.message}</p>}
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+                <Button
+                  size="sm"
+                  disabled={!renameTo.trim() || updateRoom.isPending}
+                  onClick={() => {
+                    const name = renameTo.trim();
+                    const clash = (locations.data ?? []).find(
+                      (r) => r.id !== editing.id && r.houseId === editing.houseId && r.name.trim().toLowerCase() === name.toLowerCase(),
+                    );
+                    if (clash) {
+                      setMergePair({ fromId: editing.id, toId: clash.id });
+                      return;
+                    }
+                    updateRoom.mutate({ id: editing.id, name });
+                  }}
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+      <MergeRoomsDialog
+        open={mergePair != null}
+        fromId={mergePair?.fromId ?? null}
+        toId={mergePair?.toId ?? null}
+        onClose={() => setMergePair(null)}
+        onMerged={() => { setMergePair(null); setEditing(null); }}
+      />
     </div>
   );
 }

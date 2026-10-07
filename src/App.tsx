@@ -11,7 +11,6 @@ import IdeasPage from "@/pages/Ideas";
 import TasksPage from "@/pages/Tasks";
 import ActivityPage from "@/pages/Activity";
 import AnnotatePage from "@/pages/Annotate";
-import RoomsPage from "@/pages/Rooms";
 import PhotosPage from "@/pages/Photos";
 import SettingsPage from "@/pages/Settings";
 import FocusPage from "@/pages/Focus";
@@ -43,7 +42,7 @@ export default function App() {
             <Route path="/photos" element={<PhotosPage />} />
             <Route path="/annotate/:photoId" element={<AnnotatePage />} />
             <Route path="/map" element={<MapPage />} />
-            <Route path="/rooms" element={<RoomsPage />} />
+            <Route path="/rooms" element={<Navigate to="/map" replace />} />
             <Route path="/rooms/:roomId" element={<RoomPlanPage />} />
             <Route path="/galaxy" element={<GalaxyPage />} />
             <Route path="/storage" element={<StoragePage />} />
