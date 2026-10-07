@@ -233,7 +233,7 @@ export default function AllItems() {
             description={`Permanently deletes ${batchCount} selected item${batchCount === 1 ? "" : "s"}, their attachments, tasks, relations and photo pins. This cannot be undone.`}
             confirmLabel={`Delete ${batchCount} item${batchCount === 1 ? "" : "s"}`}
             pending={removeMany.isPending}
-            onConfirm={() => removeMany.mutate({ ids: [...selected] })}
+            onConfirm={() => removeMany.mutate({ ids: selectedRows.map((i) => i.id) })}
           />
           {removeMany.isError && <span className="text-[12px] text-destructive">{removeMany.error.message}</span>}
         </div>
