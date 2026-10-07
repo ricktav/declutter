@@ -65,6 +65,17 @@ describe("items.create atomicity", () => {
   });
 });
 
+describe("items.update topic", () => {
+  it("optional areaId moves the Thing to another topic", async () => {
+    const { db, h1, areaId } = await seed();
+    const [{ id: other }] = await db.insert(areas).values({ slug: "y", name: "Y" }).$returningId();
+    const { id } = await callerFor(h1).items.create({ areaId, name: "pan" });
+    await callerFor(h1).items.update({ id, areaId: other });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect(it.areaId).toBe(other);
+  });
+});
+
 describe("items.update location", () => {
   it("roomId null keeps the house and clears the room; houseId alone unplaces into that house", async () => {
     const { db, h1, h2, areaId, keuken } = await seed();

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { useWorkbenchMode, type WorkbenchMode } from "@/context/workbenchMode";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ import {
   X,
   Settings,
   Search,
+  ScanSearch,
   MapPin,
   ChevronDown,
   ChevronRight,
@@ -136,6 +138,7 @@ export const METERKAST_URL = "http://10.50.0.10/meterkast.html";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/focus", label: "Focus", icon: ScanSearch },
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/items", label: "All Items", icon: Search },
   { to: "/photos", label: "Photos", icon: Images },
@@ -150,7 +153,45 @@ const NAV = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
+const SIMPLE_NAV = new Set(["/focus", "/inbox", "/items", "/photos", "/rooms", "/settings"]);
+const HEAVY_PATHS = new Set(["/galaxy", "/storage", "/ideas", "/tasks", "/wiki", "/activity", "/map"]);
+
+function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
+  const { mode, setMode } = useWorkbenchMode();
+  const navigate = useNavigate();
+  const pick = (next: WorkbenchMode) => {
+    setMode(next);
+    if (next === "simple") navigate("/focus");
+  };
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-2 rounded-md bg-[#32361f] p-0.5 text-[11px] font-semibold",
+        compact && "min-w-[9.5rem]",
+      )}
+      role="group"
+      aria-label="Workbench mode"
+    >
+      {(["simple", "advanced"] as const).map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => pick(m)}
+          className={cn(
+            "rounded px-2 py-1 capitalize",
+            mode === m ? "bg-[#d2ff00] text-[#282c20]" : "text-[#b4b8a5] hover:text-[#f4f4ed]",
+          )}
+        >
+          {m === "simple" ? "Simple" : "Advanced"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function Layout() {
+  const { mode } = useWorkbenchMode();
+  const location = useLocation();
   const areas = trpc.areas.list.useQuery();
   const roomList = trpc.rooms.list.useQuery(); // context house
   const roomData = roomList.data;
@@ -170,6 +211,14 @@ export default function Layout() {
   const [areasCollapsed, toggleAreas] = useCollapsed("sidebar.areas.collapsed");
   const [locationsCollapsed, toggleLocations] = useCollapsed("sidebar.locations.collapsed");
   const pendingCount = (inbox.data ?? []).filter((c) => c.status === "pending").length;
+  const navItems = mode === "simple" ? NAV.filter((n) => SIMPLE_NAV.has(n.to)) : NAV;
+
+  useEffect(() => {
+    if (mode !== "simple") return;
+    if (location.pathname === "/" || HEAVY_PATHS.has(location.pathname)) {
+      navigate("/focus", { replace: true });
+    }
+  }, [mode, location.pathname, navigate]);
 
   const [editingRoom, setEditingRoom] = useState<{ id: number; name: string; floor: string | null } | null>(null);
   const [renameTo, setRenameTo] = useState("");
@@ -221,12 +270,13 @@ export default function Layout() {
         </button>
       </div>
 
-      <div className="px-2 pb-2">
+      <div className="px-2 pb-2 space-y-2">
         <HouseSwitcher dark />
+        <WorkbenchModeToggle />
       </div>
 
       <nav className="px-2 space-y-0.5">
-        {NAV.map((n) => (
+        {navItems.map((n) => (
           <NavLink key={n.to} to={n.to} end={n.end} className={navLinkClass}
             onClick={() => setMenuOpen(false)}>
             <n.icon className="h-4 w-4" />
@@ -277,7 +327,7 @@ export default function Layout() {
               <div key={floor || "nofloor"}>
                 {byFloor.length > 1 && <div className="px-2.5 pt-1 micro-label text-[#8a8e7a]">{floor || "no floor"}</div>}
                 {list.map((r) => (
-                  <NavLink key={r.id} to={`/items?roomId=${r.id}`} className={(a) => cn(navLinkClass(a), "group")} onClick={() => setMenuOpen(false)}>
+                  <NavLink key={r.id} to={mode === "simple" ? `/focus?roomId=${r.id}` : `/items?roomId=${r.id}`} className={(a) => cn(navLinkClass(a), "group")} onClick={() => setMenuOpen(false)}>
                     <MapPin className="h-4 w-4 text-[#b4b8a5] shrink-0" />
                     <span className="flex-1 min-w-0 truncate">{r.name}</span>
                     <span className="font-data text-[11px] opacity-60">{r.itemCount}</span>
@@ -331,6 +381,9 @@ export default function Layout() {
             <Menu className="h-5 w-5" />
           </button>
           <span className="font-data text-[13px] font-semibold text-[#f4f4ed]">⌂ HomeBase</span>
+          <div className="ml-auto">
+            <WorkbenchModeToggle compact />
+          </div>
           <RunningTimerPill />
         </div>
         <Outlet context={{ navigate }} />

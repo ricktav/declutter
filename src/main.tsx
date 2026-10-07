@@ -6,6 +6,7 @@ import { TRPCProvider } from "@/providers/trpc"
 import App from './App.tsx'
 import { AuthGate } from "@/components/AuthGate"
 import { HouseProvider } from "@/context/house"
+import { WorkbenchModeProvider } from "@/context/workbenchMode"
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -13,7 +14,9 @@ createRoot(document.getElementById('root')!).render(
       <TRPCProvider>
         <AuthGate>
           <HouseProvider>
-            <App />
+            <WorkbenchModeProvider>
+              <App />
+            </WorkbenchModeProvider>
           </HouseProvider>
         </AuthGate>
       </TRPCProvider>

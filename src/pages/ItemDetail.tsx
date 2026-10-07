@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router";
+import { useWorkbenchMode } from "@/context/workbenchMode";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
@@ -133,6 +134,7 @@ export default function ItemDetail() {
   const itemId = Number(id);
   const navigate = useNavigate();
   const { openAsk } = useAsk();
+  const { mode } = useWorkbenchMode();
   const utils = trpc.useUtils();
 
   const item = trpc.items.get.useQuery({ id: itemId });
@@ -331,6 +333,12 @@ export default function ItemDetail() {
 
   return (
     <div key={itemId} className="max-w-5xl mx-auto px-6 py-8">
+      {mode === "simple" && (
+        <div className="mb-4 flex items-center gap-2 text-[13px] text-muted-foreground">
+          <Link to="/focus" className="text-primary hover:underline">← Focus</Link>
+          <span>Full Thing page (Advanced depth). Switch to Advanced in the sidebar to keep this layout.</span>
+        </div>
+      )}
       {it.verificationStatus === "detected" && (
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
           <span className="text-[13px] text-amber-900">

@@ -14,6 +14,7 @@ import AnnotatePage from "@/pages/Annotate";
 import RoomsPage from "@/pages/Rooms";
 import PhotosPage from "@/pages/Photos";
 import SettingsPage from "@/pages/Settings";
+import FocusPage from "@/pages/Focus";
 
 // Heavy, rarely-first pages: three.js, d3, leaflet and marked only load
 // when their route is visited.
@@ -34,6 +35,7 @@ export default function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/focus" element={<FocusPage />} />
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/areas/:slug" element={<AreaView />} />
             <Route path="/items" element={<AllItems />} />

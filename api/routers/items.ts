@@ -321,6 +321,7 @@ export const itemsRouter = createRouter({
         id: z.number(),
         name: z.string().min(1).optional(),
         description: z.string().nullable().optional(),
+        areaId: z.number().optional(),
         attributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
         roomId: z.number().nullable().optional(),
         houseId: z.number().nullable().optional(),
@@ -377,6 +378,7 @@ export const itemsRouter = createRouter({
         if (after?.roomId !== before?.roomId || after?.houseId !== before?.houseId) parts.push(`location set to ${label}`);
       }
       if (patch.description !== undefined) parts.push("description updated");
+      if (patch.areaId !== undefined && patch.areaId !== before?.areaId) parts.push("topic changed");
       if (patch.attributes !== undefined) parts.push("attributes updated");
       if (patch.pos !== undefined) parts.push("position updated");
 
