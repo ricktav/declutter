@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { eq, desc, or, and, asc } from "drizzle-orm";
+import { eq, desc, or, and, asc, ne, isNull } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -12,6 +12,7 @@ import { roomSummary, setItemLocation } from "../lib/location";
 import { coverPhotos, linkAsLegacy, photoAsLegacy } from "../lib/photos";
 import { placementFor, placementSummaryFor } from "../lib/placement";
 import { snapPosToWalls } from "../lib/snapToWall";
+import { commonIpv4Prefix, identityEntries, identityKind } from "../lib/identityAttrs";
 
 /** crude name-similarity: shared significant tokens */
 function nameScore(a: string, b: string): number {
@@ -565,6 +566,7 @@ export const itemsRouter = createRouter({
         .from(items)
         .where(and(eq(items.areaId, input.areaId), eq(items.status, "active")));
       const keys = new Map<string, { count: number; values: Map<string, number> }>();
+      const ipValues: string[] = [];
       for (const row of rows) {
         const attrs = row.attributes;
         if (!attrs || typeof attrs !== "object" || Array.isArray(attrs)) continue;
@@ -578,20 +580,99 @@ export const itemsRouter = createRouter({
           }
           rec.count += 1;
           const value = rawVal == null ? "" : String(rawVal).trim();
+          const kind = identityKind(key);
+          // Identity values must not be picklist choices (that invites
+          // duplicates). IP is the exception: only the common /24 prefix.
+          if (kind === "ip" && value) ipValues.push(value);
+          if (kind) continue;
           if (value) rec.values.set(value, (rec.values.get(value) ?? 0) + 1);
         }
       }
+      const ipPrefix = commonIpv4Prefix(ipValues);
       return [...keys.entries()]
         .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
         .slice(0, 100)
         .map(([key, rec]) => ({
           key,
           count: rec.count,
-          values: [...rec.values.entries()]
-            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-            .slice(0, 40)
-            .map(([value, count]) => ({ value, count })),
+          values:
+            identityKind(key) === "ip" && ipPrefix
+              ? [{ value: ipPrefix, count: rec.count }]
+              : identityKind(key)
+                ? []
+                : [...rec.values.entries()]
+                    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                    .slice(0, 40)
+                    .map(([value, count]) => ({ value, count })),
         }));
+    }),
+
+  /**
+   * Soft uniqueness check for serial / MAC / IP / hostname (and key variants)
+   * in the item's house. Does not block a save — existing data may already clash.
+   */
+  findAttributeDuplicates: procedure
+    .input(
+      z.object({
+        itemId: z.number(),
+        attributes: z.record(z.string().min(1).max(64), z.string().max(500)).optional(),
+      }),
+    )
+    .query(async ({ input }) => {
+      const db = getDb();
+      const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
+      const houseRows = await db
+        .select({
+          id: items.id,
+          name: items.name,
+          attributes: items.attributes,
+          status: items.status,
+          areaId: items.areaId,
+        })
+        .from(items)
+        .where(and(
+          ne(items.id, item.id),
+          item.houseId != null ? eq(items.houseId, item.houseId) : isNull(items.houseId),
+        ));
+      const index = new Map<string, { id: number; name: string; key: string; value: string; status: string }[]>();
+      const houseIps: string[] = [];
+      for (const row of houseRows) {
+        for (const e of identityEntries(row.attributes)) {
+          const k = `${e.kind}:${e.normalized}`;
+          const list = index.get(k) ?? [];
+          list.push({ id: row.id, name: row.name, key: e.key, value: e.value, status: row.status });
+          index.set(k, list);
+          if (e.kind === "ip") houseIps.push(e.value);
+        }
+      }
+      for (const e of identityEntries(item.attributes)) {
+        if (e.kind === "ip") houseIps.push(e.value);
+      }
+      let ipPrefix = commonIpv4Prefix(houseIps);
+      if (!ipPrefix) {
+        const topicRows = await db
+          .select({ attributes: items.attributes })
+          .from(items)
+          .where(and(eq(items.areaId, item.areaId), eq(items.status, "active")));
+        const topicIps: string[] = [];
+        for (const row of topicRows) {
+          for (const e of identityEntries(row.attributes)) {
+            if (e.kind === "ip") topicIps.push(e.value);
+          }
+        }
+        ipPrefix = commonIpv4Prefix(topicIps);
+      }
+      const mine = identityEntries(input.attributes ?? item.attributes);
+      const kindOrder = ["serial", "mac", "ip", "hostname"] as const;
+      const clashes = mine
+        .map((e) => {
+          const others = (index.get(`${e.kind}:${e.normalized}`) ?? []).slice(0, 8);
+          return others.length === 0 ? null : { kind: e.kind, key: e.key, value: e.value, others };
+        })
+        .filter((c): c is NonNullable<typeof c> => c != null)
+        .sort((a, b) => kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind));
+      return { clashes, ipPrefix };
     }),
 
   /** Every relation of one type (for example "backs-up"), for views that need all links at once. */

@@ -15,6 +15,7 @@ import { StorageSection } from "@/components/StorageSection";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
+import { cn } from "@/lib/utils";
 import {
   Sparkles,
   Archive,
@@ -40,6 +41,37 @@ import {
 import type { AttributeDef } from "@db/schema";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
+import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs";
+
+type AttrClash = inferRouterOutputs<AppRouter>["items"]["findAttributeDuplicates"]["clashes"][number];
+
+function attrValueOptions(
+  key: string,
+  rows: { key: string; values: { value: string; count: number }[] }[] | undefined,
+) {
+  const kind = identityKind(key);
+  if (kind && kind !== "ip") return [];
+  const raw = rows?.find((r) => r.key === key)?.values ?? [];
+  if (kind === "ip") return raw.filter((v) => v.value.endsWith(".") && !/^\d+\.\d+\.\d+\.\d+$/.test(v.value));
+  return raw;
+}
+
+function IdentityClashLinks({ clash }: { clash: AttrClash }) {
+  return (
+    <span>
+      Same {IDENTITY_KIND_LABELS[clash.kind].toLowerCase()} as{" "}
+      {clash.others.map((o, i) => (
+        <span key={`${o.id}-${o.key}`}>
+          {i > 0 && ", "}
+          <Link to={`/items/${o.id}`} className="underline">
+            {o.name}
+          </Link>
+          {o.status === "archived" ? " (gone)" : ""}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 /** Link to the original, uncropped photo a cutout came from — opens full-size in a new tab. */
 function SourceLink({ photoId }: { photoId: number }) {
@@ -168,6 +200,41 @@ export default function ItemDetail() {
   const [attrDraft, setAttrDraft] = useState<Record<string, string>>({});
   const [newAttrKey, setNewAttrKey] = useState("");
   const [newAttrValue, setNewAttrValue] = useState("");
+  const [dupDraft, setDupDraft] = useState<Record<string, string> | undefined>(undefined);
+  const attrDups = trpc.items.findAttributeDuplicates.useQuery(
+    { itemId, attributes: editingAttrs ? dupDraft : undefined },
+    { enabled: Number.isInteger(itemId) && itemId > 0, placeholderData: (prev) => prev },
+  );
+  useEffect(() => {
+    if (!editingAttrs) {
+      setDupDraft(undefined);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      const next: Record<string, string> = {};
+      for (const [k, v] of Object.entries(attrDraft)) if (v.trim()) next[k] = v;
+      const nk = newAttrKey.trim();
+      if (nk && newAttrValue.trim()) next[nk] = newAttrValue;
+      setDupDraft(next);
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [editingAttrs, attrDraft, newAttrKey, newAttrValue]);
+  const ipPrefix = attrDups.data?.ipPrefix ?? null;
+  useEffect(() => {
+    if (!editingAttrs || !ipPrefix) return;
+    setAttrDraft((d) => {
+      let changed = false;
+      const next = { ...d };
+      for (const k of Object.keys(next)) {
+        if (identityKind(k) === "ip" && next[k].trim() === "") {
+          next[k] = ipPrefix;
+          changed = true;
+        }
+      }
+      return changed ? next : d;
+    });
+    if (identityKind(newAttrKey) === "ip" && newAttrValue.trim() === "") setNewAttrValue(ipPrefix);
+  }, [editingAttrs, ipPrefix]);
   const [newNote, setNewNote] = useState("");
   const [newLink, setNewLink] = useState("");
   const [relType, setRelType] = useState("related-to");
@@ -193,6 +260,8 @@ export default function ItemDetail() {
     utils.items.placement.invalidate({ itemId });
     utils.items.listByArea.invalidate();
     utils.areas.list.invalidate();
+    utils.items.findAttributeDuplicates.invalidate();
+    utils.items.attributeKeysForTopic.invalidate();
   };
 
   const update = trpc.items.update.useMutation({ onSuccess: invalidate });
@@ -253,11 +322,15 @@ export default function ItemDetail() {
   const defs = (it.area?.attributeDefs as AttributeDef[] | null) ?? [];
   const usedAttrKeys = new Set(Object.keys(attrDraft));
   const topicKeyOpts = (topicAttrKeys.data ?? []).filter((r) => !usedAttrKeys.has(r.key));
-  const newKeyValOpts = (topicAttrKeys.data ?? []).find((r) => r.key === newAttrKey.trim())?.values ?? [];
+  const newKeyValOpts = attrValueOptions(newAttrKey.trim(), topicAttrKeys.data);
+  const clashes = attrDups.data?.clashes ?? [];
+  const clashFor = (key: string) => clashes.find((c) => c.key.toLowerCase() === key.trim().toLowerCase());
   const addAttrField = () => {
     const typed = newAttrKey.trim();
     if (!typed || typed in attrDraft) return;
-    setAttrDraft((d) => ({ ...d, [typed]: newAttrValue }));
+    const kind = identityKind(typed);
+    const value = newAttrValue.trim() || (kind === "ip" && ipPrefix ? ipPrefix : "");
+    setAttrDraft((d) => ({ ...d, [typed]: value }));
     setNewAttrKey("");
     setNewAttrValue("");
   };
@@ -664,14 +737,28 @@ export default function ItemDetail() {
                   </div>
                 )}
               </div>
+              {clashes.length > 0 && (
+                <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
+                  {editingAttrs && <div className="mb-0.5 font-medium">Already used in this house — you can still save.</div>}
+                  <ul className="space-y-0.5">
+                    {clashes.map((c) => (
+                      <li key={`${c.kind}-${c.key}`}>
+                        <IdentityClashLinks clash={c} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {!editingAttrs ? (
                 <div className="divide-y divide-border">
-                  {Object.entries(it.attributes ?? {}).map(([k, v]) => (
+                  {Object.entries(it.attributes ?? {}).map(([k, v]) => {
+                    const clash = clashFor(k);
+                    return (
                     <div key={k} className="flex py-1.5 text-[13px]">
                       <span className="w-36 shrink-0 text-muted-foreground">
                         {defs.find((d) => d.key === k)?.label ?? k}
                       </span>
-                      <span className="font-data">
+                      <span className="font-data min-w-0">
                         {k === "storage_gb" || k === "storage_free_gb" || k === "mount_point" ? (
                           <Link to={`/storage?item=${it.id}`} className="text-primary hover:underline">
                             {String(v)}
@@ -679,24 +766,37 @@ export default function ItemDetail() {
                         ) : (
                           String(v)
                         )}
+                        {clash && (
+                          <span className="ml-1.5 align-middle rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800">
+                            duplicate
+                          </span>
+                        )}
                       </span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="space-y-1.5">
                   {Object.entries(attrDraft).map(([k, v]) => {
                     const valListId = `attr-val-${itemId}-${k}`;
-                    const valOpts = (topicAttrKeys.data ?? []).find((r) => r.key === k)?.values ?? [];
+                    const valOpts = attrValueOptions(k, topicAttrKeys.data);
+                    const clash = clashFor(k);
+                    const ipHint = identityKind(k) === "ip" ? ipPrefix : null;
                     return (
-                    <div key={k} className="flex items-center gap-2">
+                    <div key={k} className="space-y-0.5">
+                    <div className="flex items-center gap-2">
                       <span className="w-36 shrink-0 text-[12px] text-muted-foreground truncate">
                         {defs.find((d) => d.key === k)?.label ?? k}
                       </span>
                       <input
-                        className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
+                        className={cn(
+                          "flex-1 rounded border px-2 py-1 text-[13px]",
+                          clash ? "border-amber-400" : "border-input",
+                        )}
                         list={valOpts.length ? valListId : undefined}
                         autoComplete="off"
+                        placeholder={ipHint && !v.trim() ? ipHint : undefined}
                         value={v}
                         onChange={(e) => setAttrDraft((d) => ({ ...d, [k]: e.target.value }))}
                       />
@@ -718,6 +818,12 @@ export default function ItemDetail() {
                         <X className="h-3.5 w-3.5" />
                       </button>
                     </div>
+                    {clash && (
+                      <div className="pl-36 text-[11px] text-amber-800">
+                        <IdentityClashLinks clash={clash} />
+                      </div>
+                    )}
+                    </div>
                     );
                   })}
                   <div className="flex items-center gap-2 pt-1">
@@ -727,7 +833,11 @@ export default function ItemDetail() {
                       autoComplete="off"
                       placeholder="new key"
                       value={newAttrKey}
-                      onChange={(e) => setNewAttrKey(e.target.value)}
+                      onChange={(e) => {
+                        const k = e.target.value;
+                        setNewAttrKey(k);
+                        if (identityKind(k) === "ip" && !newAttrValue.trim() && ipPrefix) setNewAttrValue(ipPrefix);
+                      }}
                       onKeyDown={(e) => { if (e.key === "Enter") addAttrField(); }}
                     />
                     {topicKeyOpts.length > 0 && (
@@ -738,10 +848,13 @@ export default function ItemDetail() {
                       </datalist>
                     )}
                     <input
-                      className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
+                      className={cn(
+                        "flex-1 rounded border px-2 py-1 text-[13px]",
+                        clashFor(newAttrKey) ? "border-amber-400" : "border-input",
+                      )}
                       list={newKeyValOpts.length ? `attr-new-val-${itemId}` : undefined}
                       autoComplete="off"
-                      placeholder="value"
+                      placeholder={identityKind(newAttrKey) === "ip" && ipPrefix ? ipPrefix : "value"}
                       value={newAttrValue}
                       onChange={(e) => setNewAttrValue(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") addAttrField(); }}
@@ -759,6 +872,11 @@ export default function ItemDetail() {
                       <Plus className="h-3 w-3 mr-0.5" /> field
                     </Button>
                   </div>
+                  {clashFor(newAttrKey) && (
+                    <div className="text-[11px] text-amber-800">
+                      <IdentityClashLinks clash={clashFor(newAttrKey)!} />
+                    </div>
+                  )}
                 </div>
               )}
             </section>
