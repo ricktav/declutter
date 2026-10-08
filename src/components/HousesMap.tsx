@@ -48,7 +48,9 @@ export function HousesMap({ onSelectHouse }: { onSelectHouse?: (houseId: number)
       maxZoom: 19,
     }).addTo(map);
     mapRef.current = map;
+    const t = window.setTimeout(() => map.invalidateSize(), 80);
     return () => {
+      window.clearTimeout(t);
       map.remove();
       mapRef.current = null;
     };

@@ -9,9 +9,11 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
+import { RoomPhotoPool } from "@/components/RoomPhotoPool";
+import { PhotoRoomSelect } from "@/components/PhotoRoomSelect";
+import { invalidatePhotoPlace } from "@/components/PhotoPlaceDialog";
 import { applyStacking } from "@/lib/roomStacking";
 import {
-  ArrowLeft,
   Loader2,
   Check,
   X,
@@ -148,7 +150,7 @@ export default function RoomPlanPage() {
   const removeRoom = trpc.rooms.remove.useMutation({
     onSuccess: () => {
       if (room.data?.parentRoomId != null) navigate(`/rooms/${room.data.parentRoomId}`);
-      else navigate("/map");
+      else navigate("/rooms");
     },
   });
   const createItem = trpc.items.create.useMutation();
@@ -269,12 +271,6 @@ export default function RoomPlanPage() {
   // the item view) asks suggestCamera for a start, draws it as a ghost, and
   // the next plan click stands the photo there with the suggested heading.
   const roomPhotos = trpc.photos.roomPhotos.useQuery({ roomId: id }, { enabled: Number.isFinite(id) });
-  // a full image, or a Thing's own uncropped photo that stands somewhere
-  // (a Thing's photo is a poor pin canvas but still a viewpoint); never a crop
-  const fullPhotos = useMemo(
-    () => (roomPhotos.data ?? []).filter((p) => !p.isCrop && (!p.isCutout || p.camera != null)),
-    [roomPhotos.data],
-  );
   // a capture's location photo can be listed here while filed in no room, or
   // another: each row's own roomId says; a camera only stands in its room
   const onPlanPhotos = useMemo(
@@ -301,7 +297,7 @@ export default function RoomPlanPage() {
         : placePhotoRow.cropBox != null
           ? "That photo is a cutout of a Thing, not a viewpoint: it does not stand on the plan."
           : placePhotoRow.roomId == null
-            ? "That photo has no room yet, so it was not placed here. Give it a room first."
+            ? "That photo has no room yet, so it was not placed here. Assign a room below."
             : placePhotoRow.roomId !== id
               ? `That photo is not in ${room.data.name}, so it was not placed here.`
               : null; // unsized: the size notice above the plan says it
@@ -336,6 +332,15 @@ export default function RoomPlanPage() {
     }
   };
 
+  const setPhotoRoom = trpc.photos.setRoom.useMutation({
+    onSuccess: (res) => {
+      invalidatePhotoPlace(utils);
+      if (res.roomId != null && res.roomId !== id) {
+        navigate(`/rooms/${res.roomId}?placePhoto=${res.id}`);
+      }
+    },
+  });
+
   const dropPlacePhotoParam = () => {
     if (!searchParams.has("placePhoto")) return;
     const next = new URLSearchParams(searchParams);
@@ -346,21 +351,6 @@ export default function RoomPlanPage() {
     setCameraPlacingManual(null);
     setCameraError(null);
     dropPlacePhotoParam();
-  };
-  const startCameraPlace = (photo: { photoId: number; title: string }) => {
-    if (!roomSized) return;
-    cancelPlace();
-    dropPlacePhotoParam();
-    setCameraError(null);
-    setCameraPlacingManual(photo);
-    setPinMode(false);
-    setPendingPin(null);
-    setCutMode(false);
-    setPendingCut(null);
-    setSelectedId(null);
-    setSelectedCameraId(null);
-    setConfirmRemoveCamera(false);
-    setView("2d");
   };
   /** The click gives the position; heading, view and height come from the
    * suggestion (the defaults when it failed). */
@@ -500,11 +490,7 @@ export default function RoomPlanPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-8">
-      <Link to="/map" className="flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground w-fit">
-        <ArrowLeft className="h-3.5 w-3.5" /> Map
-      </Link>
-
+    <div className="max-w-7xl mx-auto px-6 py-8">
       {room.isLoading ? (
         <div className="mt-6 flex items-center gap-2 text-muted-foreground text-sm">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -520,8 +506,8 @@ export default function RoomPlanPage() {
             {room.data.scanDate ? ` · scanned ${new Date(room.data.scanDate).toLocaleDateString()}` : ""}
           </p>
 
-          <div className="mt-6 flex gap-6 items-start">
-            <div className="flex-1 min-w-0 max-w-2xl">
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div className="min-w-0">
               <div className="flex items-center gap-1 mb-2 rounded-md bg-muted/50 p-0.5 w-fit">
                 <button
                   type="button"
@@ -683,8 +669,18 @@ export default function RoomPlanPage() {
                 </div>
               )}
               {placePhotoNotice && (
-                <div className="mb-1.5 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[12px] text-amber-900">
-                  <span>{placePhotoNotice}</span>
+                <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[12px] text-amber-900">
+                  <span className="flex-1 min-w-0">{placePhotoNotice}</span>
+                  {placePhotoRow?.roomId == null && placePhotoId != null && (
+                    <div className="w-44">
+                      <PhotoRoomSelect
+                        houseId={room.data.houseId}
+                        onPick={(rid) => setPhotoRoom.mutate({ id: placePhotoId, roomId: rid })}
+                        disabled={setPhotoRoom.isPending}
+                      />
+                    </div>
+                  )}
+                  {setPhotoRoom.isError && <span className="text-destructive">{setPhotoRoom.error.message}</span>}
                   <button className="ml-auto" title="Dismiss" onClick={dropPlacePhotoParam}>
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -750,24 +746,27 @@ export default function RoomPlanPage() {
                   : "Drag to orbit · scroll to zoom · click an item to select it, a photo's cone to open it."}
               </p>
               {room.data.items.some((it) => !it.pos && placeable(it)) && (
-                <div className="mt-3 text-[12px] text-muted-foreground">
-                  <p>Unplaced:{!roomSized && <span className="ml-1 text-amber-700">size the room above first.</span>}</p>
-                  <ul className="mt-1 flex flex-wrap gap-1.5">
+                <div className="mt-3">
+                  <p className="micro-label text-muted-foreground">
+                    To place · {room.data.items.filter((it) => !it.pos && placeable(it)).length}
+                    {!roomSized && <span className="ml-1 text-amber-700 font-normal">size the room above first.</span>}
+                  </p>
+                  <ul className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                     {room.data.items
                       .filter((it) => !it.pos && placeable(it))
                       .map((it) => (
                         <li
                           key={it.id}
-                          className="flex items-center gap-1 rounded border border-border bg-white pl-2 pr-0.5 py-0.5"
+                          className="flex h-8 min-w-0 items-center gap-1 rounded-md border border-border bg-white pl-2 pr-0.5"
                         >
-                          <Link to={`/items/${it.id}`} className="text-foreground hover:underline">
+                          <Link to={`/items/${it.id}`} className="min-w-0 flex-1 truncate text-[12px] text-foreground hover:underline" title={it.name}>
                             {it.name}
                           </Link>
                           {it.ownerRoomId === id ? (
                             // the title sits on a wrapper: a disabled Button has
                             // pointer-events: none, so its own title never shows
                             <span
-                              className="inline-flex"
+                              className="inline-flex shrink-0"
                               title={
                                 !roomSized
                                   ? sizeNotice
@@ -779,7 +778,7 @@ export default function RoomPlanPage() {
                               <Button
                                 size="sm"
                                 variant={placing?.id === it.id ? "default" : "outline"}
-                                className="h-5 px-1.5 text-[11px]"
+                                className="h-6 px-1.5 text-[11px]"
                                 disabled={!roomSized || it.parentId != null}
                                 onClick={() =>
                                   placing?.id === it.id ? cancelPlace() : startPlace({ id: it.id, name: it.name })
@@ -791,83 +790,13 @@ export default function RoomPlanPage() {
                           ) : (
                             <Link
                               to={`/rooms/${it.ownerRoomId}?placeItem=${it.id}`}
-                              className="px-1 text-[11px] text-primary hover:underline"
+                              className="shrink-0 truncate px-1 text-[11px] text-primary hover:underline"
                             >
                               in {it.ownerRoomName} →
                             </Link>
                           )}
                         </li>
                       ))}
-                  </ul>
-                </div>
-              )}
-              {fullPhotos.length > 0 && (
-                <div className="mt-4 text-[12px]">
-                  <p className="text-muted-foreground">
-                    Photos:
-                    {!roomSized && <span className="ml-1 text-amber-700">size the room above first.</span>}
-                  </p>
-                  <ul className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                    {fullPhotos.map((p) => {
-                      const here = p.roomId === id;
-                      const onPlan = here && p.camera != null;
-                      const title = photoTitle(p);
-                      return (
-                        <li
-                          key={p.photoId}
-                          className={`flex items-center gap-2 rounded border bg-white p-1 ${
-                            onPlan && selectedCameraId === p.photoId ? "border-violet-400" : "border-border"
-                          }`}
-                        >
-                          <PhotoThumb storageKey={p.storageKey} />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-foreground" title={title}>
-                              {title}
-                            </p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {p.pinCount > 0 ? `${p.pinCount} pinned` : "no pins"}
-                            </p>
-                          </div>
-                          {onPlan ? (
-                            <button
-                              type="button"
-                              disabled={!roomSized}
-                              onClick={() => selectCamera(p.photoId)}
-                              className="shrink-0 px-1 text-[11px] text-violet-700 hover:underline disabled:opacity-50 disabled:no-underline"
-                            >
-                              on the plan
-                            </button>
-                          ) : here ? (
-                            <span className="inline-flex shrink-0" title={!roomSized ? sizeNotice : `Stand ${title} on the plan`}>
-                              <Button
-                                size="sm"
-                                variant={cameraPlacing?.photoId === p.photoId ? "default" : "outline"}
-                                className="h-5 px-1.5 text-[11px]"
-                                disabled={!roomSized}
-                                onClick={() =>
-                                  cameraPlacing?.photoId === p.photoId
-                                    ? cancelCameraPlace()
-                                    : startCameraPlace({ photoId: p.photoId, title })
-                                }
-                              >
-                                <Camera className="h-3 w-3 mr-0.5" /> Place
-                              </Button>
-                            </span>
-                          ) : p.roomId != null ? (
-                            <Link
-                              to={`/rooms/${p.roomId}?placePhoto=${p.photoId}`}
-                              className="shrink-0 px-1 text-[11px] text-primary hover:underline"
-                            >
-                              in another room →
-                            </Link>
-                          ) : (
-                            <span className="shrink-0 px-1 text-[11px] text-muted-foreground" title="Give the photo a room first">
-                              no room
-                            </span>
-                          )}
-                        </li>
-                      );
-                    })}
                   </ul>
                 </div>
               )}
@@ -999,9 +928,8 @@ export default function RoomPlanPage() {
                   </ul>
                 </div>
               )}
-            </div>
 
-            <aside className="w-64 shrink-0 rounded-lg border border-border bg-white p-4">
+            <aside className="mt-4 w-full max-w-md rounded-lg border border-border bg-white p-4">
               {pendingPin ? (
                 <>
                   <p className="font-medium text-[14px]">Name this item</p>
@@ -1235,6 +1163,8 @@ export default function RoomPlanPage() {
                 </>
               )}
             </aside>
+            </div>
+            <RoomPhotoPool roomId={id} title={room.data.name} houseId={room.data.houseId} />
           </div>
           <ZoomOverlay open={zoomPhoto != null} onClose={() => setZoomPhoto(null)} title={zoomPhoto?.title}>
             {zoomPhoto && <FullPhoto storageKey={zoomPhoto.storageKey} />}
@@ -1304,16 +1234,6 @@ function CameraCard(props: {
 }
 
 const photoTitle = (p: { photoId: number; title: string | null }) => p.title || `Photo #${p.photoId}`;
-
-/** A photo row's thumbnail. */
-function PhotoThumb({ storageKey }: { storageKey: string }) {
-  const url = trpc.photos.url.useQuery({ key: storageKey }).data?.url;
-  return url ? (
-    <img src={url} alt="" className="h-12 w-12 shrink-0 rounded object-cover bg-muted" />
-  ) : (
-    <div className="h-12 w-12 shrink-0 rounded bg-muted" />
-  );
-}
 
 /** The full-size photo behind a marker, for the zoom overlay. */
 function FullPhoto({ storageKey }: { storageKey: string }) {

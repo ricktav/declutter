@@ -1,15 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { useWorkbenchMode, type WorkbenchMode } from "@/context/workbenchMode";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { HouseSwitcher } from "@/components/HouseSwitcher";
-import { RoomPicker } from "@/components/RoomPicker";
-import { MergeRoomsDialog } from "@/components/MergeRoomsDialog";
-import { RoomNameField } from "@/components/RoomNameField";
-import { FloorField } from "@/components/FloorField";
+import { SidebarRooms } from "@/components/SidebarRooms";
 import {
   LayoutDashboard,
   Inbox,
@@ -33,10 +28,8 @@ import {
   Settings,
   Search,
   ScanSearch,
-  MapPin,
   ChevronDown,
   ChevronRight,
-  Pencil,
   Images,
   Network,
   Smartphone,
@@ -145,7 +138,6 @@ const PRIMARY_NAV = [
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/items", label: "All Items", icon: Search },
   { to: "/photos", label: "Photos", icon: Images },
-  { to: "/map", label: "Map", icon: MapPin },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -156,7 +148,7 @@ const VIEWS_NAV = [
   { to: "/activity", label: "Activity", icon: History },
 ];
 
-const SIMPLE_NAV = new Set(["/focus", "/inbox", "/items", "/photos", "/map", "/settings"]);
+const SIMPLE_NAV = new Set(["/focus", "/inbox", "/items", "/photos", "/settings"]);
 const HEAVY_PATHS = new Set(["/galaxy", "/storage", "/ideas", "/tasks", "/wiki", "/activity"]);
 
 function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
@@ -196,17 +188,6 @@ export default function Layout() {
   const { mode } = useWorkbenchMode();
   const location = useLocation();
   const areas = trpc.areas.list.useQuery();
-  const roomList = trpc.rooms.list.useQuery(); // context house
-  const roomData = roomList.data;
-  const byFloor = useMemo(() => {
-    const groups = new Map<string, NonNullable<typeof roomData>>();
-    for (const r of roomData ?? []) {
-      const k = r.floor ?? "";
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k)!.push(r);
-    }
-    return [...groups.entries()];
-  }, [roomData]);
   const inbox = trpc.inbox.list.useQuery();
   const { openAsk } = useAsk();
   const navigate = useNavigate();
@@ -229,36 +210,12 @@ export default function Layout() {
     ...(!hasIdeas ? [{ to: "/ideas", label: "Ideas", icon: Lightbulb }] : []),
     ...(!hasTasks ? [{ to: "/tasks", label: "Tasks", icon: ListChecks }] : []),
   ];
-  const [mergePair, setMergePair] = useState<{ fromId: number; toId: number } | null>(null);
-
   useEffect(() => {
     if (mode !== "simple") return;
     if (location.pathname === "/" || HEAVY_PATHS.has(location.pathname)) {
       navigate("/focus", { replace: true });
     }
   }, [mode, location.pathname, navigate]);
-
-  const [editingRoom, setEditingRoom] = useState<{ id: number; name: string; floor: string | null } | null>(null);
-  const [renameTo, setRenameTo] = useState("");
-  const [floorTo, setFloorTo] = useState("");
-  const [mergeInto, setMergeInto] = useState<number | null>(null);
-  const utils = trpc.useUtils();
-  const refreshRooms = () => {
-    utils.rooms.list.invalidate();
-    utils.items.listAll.invalidate();
-    utils.items.get.invalidate();
-    utils.rooms.get.invalidate();
-  };
-  const updateRoom = trpc.rooms.update.useMutation({
-    onSuccess: () => {
-      refreshRooms();
-      setEditingRoom(null);
-    },
-  });
-
-  const busy = updateRoom.isPending;
-  const nameChanged = !!editingRoom && renameTo.trim() !== editingRoom.name;
-  const floorChanged = !!editingRoom && (floorTo.trim() || null) !== (editingRoom.floor ?? null);
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     cn(
@@ -344,27 +301,7 @@ export default function Layout() {
         )}
 
         <SidebarSectionTitle label="Locations" collapsed={locationsCollapsed} onToggle={toggleLocations} />
-        {!locationsCollapsed && (
-          <nav className="px-2 space-y-0.5">
-            {byFloor.map(([floor, list]) => (
-              <div key={floor || "nofloor"}>
-                {byFloor.length > 1 && <div className="px-2.5 pt-1 micro-label text-[#8a8e7a]">{floor || "no floor"}</div>}
-                {list.map((r) => (
-                  <NavLink key={r.id} to={mode === "simple" ? `/focus?roomId=${r.id}` : `/items?roomId=${r.id}`} className={(a) => cn(navLinkClass(a), "group")} onClick={() => setMenuOpen(false)}>
-                    <MapPin className="h-4 w-4 text-[#b4b8a5] shrink-0" />
-                    <span className="flex-1 min-w-0 truncate">{r.name}</span>
-                    <span className="font-data text-[11px] opacity-60">{r.itemCount}</span>
-                    <button className="shrink-0 opacity-0 group-hover:opacity-100 hover:text-[#f4f4ed]" title="Rename or merge this room"
-                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingRoom(r); setRenameTo(r.name); setFloorTo(r.floor ?? ""); setMergeInto(null); updateRoom.reset(); }}>
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                  </NavLink>
-                ))}
-              </div>
-            ))}
-            {roomList.data?.length === 0 && <div className="px-2.5 py-1 text-[12px] text-[#8a8e7a]">No rooms yet</div>}
-          </nav>
-        )}
+        {!locationsCollapsed && <SidebarRooms navLinkClass={navLinkClass} onNavigate={() => setMenuOpen(false)} />}
       </div>
 
       <div className="p-2 space-y-2">
@@ -382,7 +319,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
       {/* desktop sidebar */}
-      <aside className="hidden md:flex w-[220px] shrink-0 flex-col bg-[#282c20] text-[#e0e0d0]">
+      <aside className="hidden md:flex w-[240px] shrink-0 flex-col bg-[#282c20] text-[#e0e0d0]">
         {sidebar}
       </aside>
 
@@ -411,64 +348,6 @@ export default function Layout() {
         </div>
         <Outlet context={{ navigate }} />
       </main>
-
-      <Dialog open={!!editingRoom} onOpenChange={(o) => !o && setEditingRoom(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rename or merge room</DialogTitle>
-          </DialogHeader>
-          {editingRoom && (
-            <div className="space-y-3">
-              <label className="block text-[12px]">Name
-                <div className="mt-1">
-                  <RoomNameField
-                    value={renameTo}
-                    onChange={setRenameTo}
-                    rooms={(roomData ?? []).map((r) => ({ id: r.id, name: r.name, floor: r.floor }))}
-                    currentId={editingRoom.id}
-                    onPickExisting={(r) => setMergePair({ fromId: editingRoom.id, toId: r.id })}
-                  />
-                </div>
-              </label>
-              <label className="block text-[12px]">Floor
-                <FloorField
-                  id="sidebar-room-floor"
-                  value={floorTo}
-                  onChange={setFloorTo}
-                  existing={(roomData ?? []).map((r) => r.floor ?? "").filter(Boolean)}
-                />
-              </label>
-              <div className="text-[12px]">Or merge into another room
-                <RoomPicker value={mergeInto} onChange={setMergeInto} allowCreate={false} allowNone />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setEditingRoom(null)}>Cancel</Button>
-                {mergeInto != null && mergeInto !== editingRoom.id ? (
-                  <Button size="sm" disabled={busy} onClick={() => { setMergePair({ fromId: editingRoom.id, toId: mergeInto }); }}>Merge</Button>
-                ) : (
-                  <Button size="sm" disabled={busy || !renameTo.trim() || !nameChanged && !floorChanged}
-                    onClick={() => {
-                      const clash = (roomData ?? []).find((r) => r.id !== editingRoom.id && r.name.trim().toLowerCase() === renameTo.trim().toLowerCase());
-                      if (clash) {
-                        setMergePair({ fromId: editingRoom.id, toId: clash.id });
-                        return;
-                      }
-                      updateRoom.mutate({ id: editingRoom.id, ...(nameChanged ? { name: renameTo.trim() } : {}), ...(floorChanged ? { floor: floorTo.trim() || null } : {}) });
-                    }}>Save</Button>
-                )}
-              </div>
-              {updateRoom.isError && <div className="text-[12px] text-destructive">{updateRoom.error.message}</div>}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-      <MergeRoomsDialog
-        open={mergePair != null}
-        fromId={mergePair?.fromId ?? null}
-        toId={mergePair?.toId ?? null}
-        onClose={() => setMergePair(null)}
-        onMerged={() => { setMergePair(null); setEditingRoom(null); refreshRooms(); }}
-      />
     </div>
   );
 }

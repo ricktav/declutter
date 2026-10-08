@@ -501,7 +501,7 @@ export default function FocusPage() {
           </button>
         ))}
         {rooms.data?.length === 0 && (
-          <div className="text-[13px] text-muted-foreground">No rooms in this house yet. Create one under Rooms, or switch house.</div>
+          <div className="text-[13px] text-muted-foreground">No rooms in this house yet. Create one in Locations, or switch house.</div>
         )}
       </div>
 

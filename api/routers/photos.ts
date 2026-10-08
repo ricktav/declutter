@@ -222,7 +222,8 @@ export const photosRouter = createRouter({
 
   /** The photo pool for a room: every source capture behind the cutouts of the room's active items.
    * `camera` is the camera of the capture's location photo when that photo
-   * stands in this room (null otherwise, or when it has no location photo yet). */
+   * stands in this room (null otherwise, or when it has no location photo yet).
+   * `photoId` / `photoRoomId` are that location photo (null when none exists yet). */
   forRoom: procedure.input(z.object({ roomId: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const roomItems = await db
@@ -242,18 +243,29 @@ export const photosRouter = createRouter({
       .where(inArray(captures.id, captureIds))
       .orderBy(asc(captures.id));
     const locations = await db
-      .select({ sourceCaptureId: photos.sourceCaptureId, roomId: photos.roomId, camera: photos.camera })
+      .select({ id: photos.id, sourceCaptureId: photos.sourceCaptureId, roomId: photos.roomId, camera: photos.camera })
       .from(photos)
       .where(and(inArray(photos.sourceCaptureId, captureIds), isNull(photos.itemId), isNull(photos.cropBox)))
       .orderBy(asc(photos.id));
+    const locBy = new Map<number, { photoId: number; photoRoomId: number | null }>();
     const cameraBy = new Map<number, PhotoCamera>();
     for (const l of locations) {
-      if (l.sourceCaptureId == null || l.roomId !== input.roomId || !l.camera || cameraBy.has(l.sourceCaptureId)) continue;
+      if (l.sourceCaptureId == null) continue;
+      if (!locBy.has(l.sourceCaptureId)) locBy.set(l.sourceCaptureId, { photoId: l.id, photoRoomId: l.roomId });
+      if (l.roomId !== input.roomId || !l.camera || cameraBy.has(l.sourceCaptureId)) continue;
       cameraBy.set(l.sourceCaptureId, l.camera);
     }
     return caps
       .filter((c): c is { id: number; storageKey: string } => !!c.storageKey)
-      .map((c) => ({ ...c, camera: cameraBy.get(c.id) ?? null }));
+      .map((c) => {
+        const loc = locBy.get(c.id);
+        return {
+          ...c,
+          camera: cameraBy.get(c.id) ?? null,
+          photoId: loc?.photoId ?? null,
+          photoRoomId: loc?.photoRoomId ?? null,
+        };
+      });
   }),
 
   /** Change a Photo's Place (null clears it). A new room clears its camera

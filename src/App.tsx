@@ -20,8 +20,8 @@ import FocusPage from "@/pages/Focus";
 const RoomPlanPage = lazy(() => import("@/pages/RoomPlan"));
 const GalaxyPage = lazy(() => import("@/pages/Galaxy"));
 const StoragePage = lazy(() => import("@/pages/Storage"));
-const MapPage = lazy(() => import("@/pages/Map"));
 const WikiPage = lazy(() => import("@/pages/Wiki"));
+const RoomsRedirect = lazy(() => import("@/pages/RoomsRedirect"));
 
 function Loading() {
   return <div className="p-6 text-[13px] text-muted-foreground">Loading…</div>;
@@ -41,8 +41,8 @@ export default function App() {
             <Route path="/items/:id" element={<ItemDetail />} />
             <Route path="/photos" element={<PhotosPage />} />
             <Route path="/annotate/:photoId" element={<AnnotatePage />} />
-            <Route path="/map" element={<MapPage />} />
-            <Route path="/rooms" element={<Navigate to="/map" replace />} />
+            <Route path="/map" element={<RoomsRedirect />} />
+            <Route path="/rooms" element={<RoomsRedirect />} />
             <Route path="/rooms/:roomId" element={<RoomPlanPage />} />
             <Route path="/galaxy" element={<GalaxyPage />} />
             <Route path="/storage" element={<StoragePage />} />

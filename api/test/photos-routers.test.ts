@@ -171,7 +171,7 @@ describe("photos.listAll / forRoom", () => {
     const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: "local/test-fake-forroom-src.jpg" }).$returningId();
     await db.insert(photos).values({ itemId, storageKey: "local/test-fake-forroom-cut.jpg", sourceCaptureId: capId });
     expect(await callerFor(h1).photos.forRoom({ roomId: keuken })).toEqual([
-      { id: capId, storageKey: "local/test-fake-forroom-src.jpg", camera: null },
+      { id: capId, storageKey: "local/test-fake-forroom-src.jpg", camera: null, photoId: null, photoRoomId: null },
     ]);
     expect(await callerFor(h1).photos.forRoom({ roomId: 999999 })).toEqual([]);
   });
@@ -181,9 +181,12 @@ describe("photos.listAll / forRoom", () => {
     const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: "local/test-fake-forroom-cam.jpg" }).$returningId();
     await db.insert(photos).values({ itemId, storageKey: "local/test-fake-forroom-cam-cut.jpg", sourceCaptureId: capId });
     const camera = { xM: 1, yM: 1, headingDeg: 90, fovDeg: 60, heightM: 1.5 };
-    await db.insert(photos).values({ roomId: keuken, storageKey: "local/test-fake-forroom-cam-loc.jpg", sourceCaptureId: capId, camera });
+    const [{ id: locId }] = await db
+      .insert(photos)
+      .values({ roomId: keuken, storageKey: "local/test-fake-forroom-cam-loc.jpg", sourceCaptureId: capId, camera })
+      .$returningId();
     expect(await callerFor(h1).photos.forRoom({ roomId: keuken })).toEqual([
-      { id: capId, storageKey: "local/test-fake-forroom-cam.jpg", camera },
+      { id: capId, storageKey: "local/test-fake-forroom-cam.jpg", camera, photoId: locId, photoRoomId: keuken },
     ]);
   });
 });

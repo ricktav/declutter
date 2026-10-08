@@ -69,8 +69,8 @@ Try it: `npm run dev` → open `/` → switch to **Simple** → pick a room → 
 | `/flow/` | Flow: phone-first Snap → Sort → Act → Gone (separate front end, see above) |
 | `/items/:id` | Item 360° — attributes, photos, links and notes, relations, tasks, history |
 | `/photos` | Every photo, grouped by room or topic |
-| `/map` | A room's photo pool and pins |
-| `/rooms` | Rooms of the current house; scanned rooms open their plan |
+| `/map`, `/rooms` | Redirect to the last or first room of the selected house |
+| `/rooms/:id` | Place plan (2D/3D), photo pool and pins |
 | `/galaxy` | Bubble view of the inventory by house, floor, room or topic |
 | `/annotate/:photoId` | Photo pins, AI object detection |
 | `/ideas` | Idea board with AI task breakdown |
