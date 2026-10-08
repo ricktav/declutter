@@ -3,8 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Plus } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
+import { DUTCH_FLOOR_DEFAULTS, sortFloorNames } from "@/lib/floors";
 import { cn } from "@/lib/utils";
 
+// Flow contract: English names used for sort rank / fallback there. Workbench
+// suggestions use DUTCH_FLOOR_DEFAULTS when a house has no floors yet.
 // eslint-disable-next-line react-refresh/only-export-components
 export const DEFAULT_FLOORS = ["basement", "ground", "1", "2", "3", "attic"];
 
@@ -90,7 +93,7 @@ export function RoomPicker({
   const showCreate = allowCreate && q.length > 0 && !exact;
   const knownFloors = useMemo(() => {
     const f = [...new Set((rooms.data ?? []).map((r) => r.floor).filter((x): x is string => !!x))];
-    return f.length ? f : DEFAULT_FLOORS;
+    return f.length ? sortFloorNames(f) : DUTCH_FLOOR_DEFAULTS;
   }, [rooms.data]);
   const rowCount = matches.length + (showCreate ? 1 : 0);
   const [hlKey, setHlKey] = useState(`${q}|${rowCount}`);

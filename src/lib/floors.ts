@@ -1,7 +1,15 @@
-import { DEFAULT_FLOORS } from "@/components/RoomPicker";
+/** Generic Dutch floors shown only when a house has none yet. */
+export const DUTCH_FLOOR_DEFAULTS = [
+  "kelder",
+  "begane grond",
+  "1ste verdieping",
+  "2de verdieping",
+  "3de verdieping",
+  "zolder",
+];
 
-/** Common floor names (Dutch + the RoomPicker defaults) for Map/edit datalists. */
-export const FLOOR_SUGGESTIONS = [
+/** Sort rank: Dutch names plus English aliases that may still exist in data. */
+const FLOOR_RANK_ORDER = [
   "kelder",
   "basement",
   "begane grond",
@@ -16,12 +24,7 @@ export const FLOOR_SUGGESTIONS = [
   "attic",
 ];
 
-const RANK = new Map(
-  [...FLOOR_SUGGESTIONS, ...DEFAULT_FLOORS.filter((f) => !FLOOR_SUGGESTIONS.includes(f))].map((f, i) => [
-    f.toLowerCase(),
-    i,
-  ]),
-);
+const RANK = new Map(FLOOR_RANK_ORDER.map((f, i) => [f.toLowerCase(), i]));
 
 export function sortFloorNames(floors: string[]): string[] {
   return [...new Set(floors)].sort((a, b) => {
@@ -31,6 +34,9 @@ export function sortFloorNames(floors: string[]): string[] {
   });
 }
 
+/** Suggestions for a house: its used floors, or Dutch defaults if it has none. */
 export function floorDatalist(existing: string[]): string[] {
-  return sortFloorNames([...FLOOR_SUGGESTIONS, ...existing.filter(Boolean)]);
+  const used = [...new Set(existing.map((s) => s.trim()).filter(Boolean))];
+  if (used.length === 0) return [...DUTCH_FLOOR_DEFAULTS];
+  return sortFloorNames(used);
 }

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { trpc } from "@/providers/trpc";
+import { useHouse } from "@/context/house";
 import { HousesMap } from "@/components/HousesMap";
 import { Home, MapPin, ChevronRight, Loader2, Camera, Box, Square, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -30,9 +31,10 @@ const SESSION_KEY = "declutter.map.lastLocation";
  * of a specific attachment).
  */
 export default function MapPage() {
-  const locations = trpc.rooms.list.useQuery({ houseId: null }); // every house: this is the cross-house view
-  const houses = trpc.houses.list.useQuery();
-  const houseName = (id: number) => houses.data?.find((h) => h.id === id)?.name ?? null;
+  const { houseId, houses } = useHouse();
+  // Selected house; houseId null is the explicit all-houses (cross-house) view.
+  const locations = trpc.rooms.list.useQuery({ houseId });
+  const houseName = (id: number) => houses.find((h) => h.id === id)?.name ?? null;
   // The selected room by id, looked up in the live list: a rename shows the
   // new name, and a merged-away room falls back instead of lingering.
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -92,7 +94,7 @@ export default function MapPage() {
       if (unfloored.length) groups.push({ floor: "", rooms: unfloored });
       return { houseId: hid, name: houseName(hid) ?? `House #${hid}`, groups };
     });
-  }, [locations.data, houses.data]);
+  }, [locations.data, houses]);
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
