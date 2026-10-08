@@ -9,6 +9,7 @@ import { Search, Loader2, MapPin, LayoutGrid, Link2, X, Camera, Home } from "luc
 import { usePersistedState } from "@/hooks/use-persisted-state";
 import { AttachPhotoDialog, type AttachTarget } from "@/components/AttachPhotoDialog";
 import { PhotoPlaceDialog, type PlaceResult, type PlaceTarget } from "@/components/PhotoPlaceDialog";
+import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { cn } from "@/lib/utils";
 import type { PhotoCamera } from "@db/schema";
 
@@ -229,22 +230,20 @@ function PhotoTile({
                   ))}
                 </select>
               ) : (
-                <button
-                  type="button"
-                  className="basis-full flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50"
-                  onClick={() =>
-                    photo.source === "capture"
-                      ? setPickRoom(true)
-                      : navigate(`/rooms/${photo.roomId}?placePhoto=${photo.id}`)
-                  }
+                <PlaceOnPlanButton
+                  className="h-10 w-10"
+                  pending={ensureForPlace.isPending}
                   title={
                     photo.source === "capture"
                       ? "Choose its room, then stand this photo on the room's plan"
                       : "Stand this photo on its room's plan, looking where it was taken"
                   }
-                >
-                  <Camera className="h-3 w-3" /> Place on the plan{photo.source === "capture" ? "…" : ""}
-                </button>
+                  onClick={() =>
+                    photo.source === "capture"
+                      ? setPickRoom(true)
+                      : navigate(`/rooms/${photo.roomId}?placePhoto=${photo.id}`)
+                  }
+                />
               ))}
           </>
         )}

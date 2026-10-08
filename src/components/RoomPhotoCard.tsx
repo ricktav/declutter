@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Camera, ChevronRight, Loader2 } from "lucide-react";
+import { Camera, Loader2 } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { PhotoRoomSelect } from "@/components/PhotoRoomSelect";
+import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { invalidatePhotoPlace } from "@/components/PhotoPlaceDialog";
 
 /**
@@ -129,39 +130,29 @@ export function RoomPhotoCard({
       {elsewhere && photoId != null && (
         <Link
           to={`/rooms/${photoRoomId}?placePhoto=${photoId}`}
-          className="mt-1.5 block text-[12px] text-primary hover:underline"
+          className="mt-1.5 block truncate text-[12px] text-primary hover:underline"
         >
           In another room →
         </Link>
       )}
-      <button
-        type="button"
-        onClick={() => go("pin")}
-        disabled={busy}
-        className="mt-1.5 flex items-center gap-1 text-[12px] text-primary hover:underline disabled:opacity-50"
-      >
-        {going === "pin" ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
-          <>
-            Pin objects on this photo <ChevronRight className="h-3 w-3" />
-          </>
-        )}
-      </button>
-      <button
-        type="button"
-        onClick={() => go("place")}
-        disabled={busy || placeNeedsRoom}
-        className="mt-0.5 flex items-center gap-1 text-[12px] text-primary hover:underline disabled:opacity-50"
-      >
-        {going === "place" ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
-          <>
-            Place on the plan <ChevronRight className="h-3 w-3" />
-          </>
-        )}
-      </button>
+      <div className="mt-1.5 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => go("pin")}
+          disabled={busy}
+          title="Pin objects on this photo"
+          aria-label="Pin objects on this photo"
+          className="inline-flex h-10 flex-1 items-center justify-center rounded-md border border-input bg-background px-2 text-[12px] text-foreground hover:bg-accent disabled:opacity-50 sm:h-8"
+        >
+          {going === "pin" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Pin"}
+        </button>
+        <PlaceOnPlanButton
+          title="Place on the plan"
+          disabled={busy || placeNeedsRoom}
+          pending={going === "place"}
+          onClick={() => go("place")}
+        />
+      </div>
     </div>
   );
 }

@@ -52,7 +52,7 @@ export function RoomPhotoPool({
   const loading = captures.isLoading || roomPhotos.isLoading;
 
   return (
-    <section className="min-w-0">
+    <section className="min-w-0 overflow-x-hidden">
       <div className="micro-label text-muted-foreground mb-2">
         Photos
         {cards.length ? ` — ${cards.length}` : ""}

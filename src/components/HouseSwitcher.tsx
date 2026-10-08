@@ -18,7 +18,7 @@ export function HouseSwitcher({ dark = false }: { dark?: boolean }) {
         <select
           id={id}
           aria-label="Current house"
-          className="min-w-0 flex-1 bg-transparent outline-none"
+          className="min-w-0 flex-1 truncate bg-transparent outline-none"
           value={houseId ?? ""}
           onChange={(e) => setHouseId(e.target.value ? Number(e.target.value) : null)}
         >

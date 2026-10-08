@@ -319,7 +319,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
       {/* desktop sidebar */}
-      <aside className="hidden md:flex w-[240px] shrink-0 flex-col bg-[#282c20] text-[#e0e0d0]">
+      <aside className="hidden md:flex w-[240px] shrink-0 flex-col overflow-x-hidden bg-[#282c20] text-[#e0e0d0]">
         {sidebar}
       </aside>
 
@@ -327,14 +327,14 @@ export default function Layout() {
       {menuOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMenuOpen(false)} />
-          <aside className="absolute left-0 top-0 bottom-0 w-[260px] flex flex-col bg-[#282c20] text-[#e0e0d0]">
+          <aside className="absolute left-0 top-0 bottom-0 w-[min(260px,85vw)] flex flex-col overflow-x-hidden bg-[#282c20] text-[#e0e0d0]">
             {sidebar}
           </aside>
         </div>
       )}
 
       {/* ---- main ---- */}
-      <main className="flex-1 overflow-y-auto">
+      <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         {/* mobile top bar */}
         <div className="md:hidden sticky top-0 z-30 flex items-center gap-2 bg-[#282c20] text-[#e0e0d0] px-3 py-2">
           <button onClick={() => setMenuOpen(true)} className="p-1">

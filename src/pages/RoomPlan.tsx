@@ -11,6 +11,7 @@ import { ItemPicker } from "@/components/ItemPicker";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { RoomPhotoPool } from "@/components/RoomPhotoPool";
 import { PhotoRoomSelect } from "@/components/PhotoRoomSelect";
+import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { invalidatePhotoPlace } from "@/components/PhotoPlaceDialog";
 import { applyStacking } from "@/lib/roomStacking";
 import {
@@ -490,7 +491,7 @@ export default function RoomPlanPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 min-w-0">
       {room.isLoading ? (
         <div className="mt-6 flex items-center gap-2 text-muted-foreground text-sm">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -499,15 +500,15 @@ export default function RoomPlanPage() {
         <div className="mt-6 text-sm text-muted-foreground">Room not found.</div>
       ) : (
         <>
-          <h1 className="text-2xl font-semibold tracking-tight mt-2">{room.data.name}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight mt-2 break-words">{room.data.name}</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {room.data.widthM}×{room.data.depthM} m
             {room.data.wallHeightM != null ? ` · wall height ${room.data.wallHeightM} m` : ""} · source: {room.data.source}
             {room.data.scanDate ? ` · scanned ${new Date(room.data.scanDate).toLocaleDateString()}` : ""}
           </p>
 
-          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-            <div className="min-w-0">
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6 items-start min-w-0">
+            <div className="min-w-0 overflow-x-hidden">
               <div className="flex items-center gap-1 mb-2 rounded-md bg-muted/50 p-0.5 w-fit">
                 <button
                   type="button"
@@ -529,12 +530,13 @@ export default function RoomPlanPage() {
                   <Box className="h-3 w-3" /> 3D Twin
                 </button>
               </div>
-              <div className="flex items-center justify-between gap-1 mb-1.5">
-                <div className="flex items-center gap-1">
+              <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
+                <div className="flex flex-wrap items-center gap-1">
                   <Button
                     size="sm"
                     variant={pinMode ? "default" : "outline"}
-                    className="h-7 text-[12px]"
+                    className="h-8 text-[12px]"
+                    title={pinMode ? "Pinning…" : "Pin new item"}
                     onClick={() => {
                       cancelPlace();
                       cancelCameraPlace();
@@ -546,13 +548,15 @@ export default function RoomPlanPage() {
                       setSelectedId(null);
                     }}
                   >
-                    <MapPin className="h-3.5 w-3.5 mr-1" /> {pinMode ? "Pinning…" : "Pin new item"}
+                    <MapPin className="h-3.5 w-3.5 sm:mr-1" />
+                    <span className="hidden sm:inline">{pinMode ? "Pinning…" : "Pin new item"}</span>
                   </Button>
                   {view === "2d" && (
                     <Button
                       size="sm"
                       variant={cutMode ? "default" : "outline"}
-                      className="h-7 text-[12px]"
+                      className="h-8 text-[12px]"
+                      title={cutMode ? "Cutting…" : "Cut out room"}
                       onClick={() => {
                         cancelPlace();
                         cancelCameraPlace();
@@ -564,7 +568,8 @@ export default function RoomPlanPage() {
                         setSelectedId(null);
                       }}
                     >
-                      <Scissors className="h-3.5 w-3.5 mr-1" /> {cutMode ? "Cutting…" : "Cut out room"}
+                      <Scissors className="h-3.5 w-3.5 sm:mr-1" />
+                      <span className="hidden sm:inline">{cutMode ? "Cutting…" : "Cut out room"}</span>
                     </Button>
                   )}
                 </div>
@@ -619,26 +624,26 @@ export default function RoomPlanPage() {
                 <p className="mb-1.5 text-[11px] text-amber-700">Click anywhere on the floor to pin a new item there.</p>
               )}
               {placing && (
-                <div className="mb-1.5 flex items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-[12px] text-sky-900">
-                  {placingBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
-                  <span>
+                <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-[12px] text-sky-900">
+                  {placingBusy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <MapPin className="h-3.5 w-3.5 shrink-0" />}
+                  <span className="min-w-0">
                     Click where <b>{placing.name}</b> stands
                   </span>
                   <span className="text-muted-foreground">· Esc cancels</span>
                   {placeError && <span className="text-destructive">Not placed: {placeError}</span>}
-                  <Button size="sm" variant="outline" className="h-6 text-[11px] ml-auto" onClick={cancelPlace}>
+                  <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto" onClick={cancelPlace}>
                     Cancel
                   </Button>
                 </div>
               )}
               {cameraPlacing && (
-                <div className="mb-1.5 flex items-center gap-2 rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-[12px] text-violet-900">
+                <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-[12px] text-violet-900">
                   {cameraBusy || suggestion.isLoading ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                   ) : (
-                    <Camera className="h-3.5 w-3.5" />
+                    <Camera className="h-3.5 w-3.5 shrink-0" />
                   )}
-                  <span>
+                  <span className="min-w-0">
                     Click where <b>{cameraPlacing.title}</b> was taken
                     {suggestion.data?.basis === "pins"
                       ? " · the dashed marker is a guess from its pinned Things"
@@ -649,7 +654,7 @@ export default function RoomPlanPage() {
                   <span className="text-muted-foreground">· Esc cancels</span>
                   {suggestion.error && <span className="text-destructive">{suggestion.error.message}</span>}
                   {cameraError && <span className="text-destructive">Not placed: {cameraError}</span>}
-                  <Button size="sm" variant="outline" className="h-6 text-[11px] ml-auto" onClick={cancelCameraPlace}>
+                  <Button size="sm" variant="outline" className="h-7 text-[11px] ml-auto" onClick={cancelCameraPlace}>
                     Cancel
                   </Button>
                 </div>
@@ -672,7 +677,7 @@ export default function RoomPlanPage() {
                 <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[12px] text-amber-900">
                   <span className="flex-1 min-w-0">{placePhotoNotice}</span>
                   {placePhotoRow?.roomId == null && placePhotoId != null && (
-                    <div className="w-44">
+                    <div className="w-full max-w-[11rem] min-w-0">
                       <PhotoRoomSelect
                         houseId={room.data.houseId}
                         onPick={(rid) => setPhotoRoom.mutate({ id: placePhotoId, roomId: rid })}
@@ -751,22 +756,19 @@ export default function RoomPlanPage() {
                     To place · {room.data.items.filter((it) => !it.pos && placeable(it)).length}
                     {!roomSized && <span className="ml-1 text-amber-700 font-normal">size the room above first.</span>}
                   </p>
-                  <ul className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                  <ul className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                     {room.data.items
                       .filter((it) => !it.pos && placeable(it))
                       .map((it) => (
                         <li
                           key={it.id}
-                          className="flex h-8 min-w-0 items-center gap-1 rounded-md border border-border bg-white pl-2 pr-0.5"
+                          className="flex h-10 min-w-0 items-center gap-1 rounded-md border border-border bg-white pl-2 pr-0.5 sm:h-8"
                         >
-                          <Link to={`/items/${it.id}`} className="min-w-0 flex-1 truncate text-[12px] text-foreground hover:underline" title={it.name}>
+                          <Link to={`/items/${it.id}`} className="min-w-0 flex-1 truncate text-[13px] text-foreground hover:underline sm:text-[12px]" title={it.name}>
                             {it.name}
                           </Link>
                           {it.ownerRoomId === id ? (
-                            // the title sits on a wrapper: a disabled Button has
-                            // pointer-events: none, so its own title never shows
-                            <span
-                              className="inline-flex shrink-0"
+                            <PlaceOnPlanButton
                               title={
                                 !roomSized
                                   ? sizeNotice
@@ -774,26 +776,17 @@ export default function RoomPlanPage() {
                                     ? insideTitle(it.parentId)
                                     : `Place ${it.name} on the plan`
                               }
-                            >
-                              <Button
-                                size="sm"
-                                variant={placing?.id === it.id ? "default" : "outline"}
-                                className="h-6 px-1.5 text-[11px]"
-                                disabled={!roomSized || it.parentId != null}
-                                onClick={() =>
-                                  placing?.id === it.id ? cancelPlace() : startPlace({ id: it.id, name: it.name })
-                                }
-                              >
-                                <MapPin className="h-3 w-3 mr-0.5" /> Place
-                              </Button>
-                            </span>
+                              disabled={!roomSized || it.parentId != null}
+                              active={placing?.id === it.id}
+                              onClick={() =>
+                                placing?.id === it.id ? cancelPlace() : startPlace({ id: it.id, name: it.name })
+                              }
+                            />
                           ) : (
-                            <Link
+                            <PlaceOnPlanButton
+                              title={`Place ${it.name} on the plan of ${it.ownerRoomName}`}
                               to={`/rooms/${it.ownerRoomId}?placeItem=${it.id}`}
-                              className="shrink-0 truncate px-1 text-[11px] text-primary hover:underline"
-                            >
-                              in {it.ownerRoomName} →
-                            </Link>
+                            />
                           )}
                         </li>
                       ))}

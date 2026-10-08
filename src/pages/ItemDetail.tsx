@@ -13,6 +13,7 @@ import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { EnergySection } from "@/components/EnergySection";
 import { StorageSection } from "@/components/StorageSection";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
+import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
@@ -1245,13 +1246,11 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
                       · on the plan
                     </span>
                   ) : pin.roomId != null && !pin.isCrop ? (
-                    <Link
+                    <PlaceOnPlanButton
                       to={`/rooms/${pin.roomId}?placePhoto=${pin.photoId}`}
-                      className="text-[11px] text-primary hover:underline"
                       title="Stand this photo on its room's plan, looking where it was taken"
-                    >
-                      Place
-                    </Link>
+                      className="h-8 w-8"
+                    />
                   ) : null}
                   <ConfirmDelete
                     trigger={
@@ -1335,9 +1334,10 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
         ) : (
           <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
             Not on the plan yet
-            <Button asChild size="sm" variant="outline" className="h-6 text-[11px]">
-              <Link to={`/rooms/${p.roomId}?placeItem=${p.itemId}`}>Place on the plan</Link>
-            </Button>
+            <PlaceOnPlanButton
+              to={`/rooms/${p.roomId}?placeItem=${p.itemId}`}
+              title="Place on the plan"
+            />
           </div>
         )}
       </div>

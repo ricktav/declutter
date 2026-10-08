@@ -134,7 +134,7 @@ export function SidebarRooms({
 
   return (
     <>
-      <nav className="px-2 space-y-0.5 select-none">
+      <nav className="min-w-0 overflow-x-hidden px-2 space-y-0.5 select-none">
         {setRoomFloor.isError && (
           <div className="px-2.5 py-1 text-[11px] text-red-300">{setRoomFloor.error.message}</div>
         )}
@@ -185,7 +185,7 @@ export function SidebarRooms({
                         setDragRoom(null);
                         setDropOn(null);
                       }}
-                      className={cn("flex items-center gap-0.5", isDragging && "opacity-50")}
+                      className={cn("flex min-w-0 items-center gap-0.5", isDragging && "opacity-50")}
                     >
                       <NavLink
                         to={`/rooms/${r.id}`}
@@ -194,11 +194,11 @@ export function SidebarRooms({
                           setLastRoomId(r.id);
                           onNavigate?.();
                         }}
-                        className={(a) => cn(navLinkClass(a), "flex-1 min-w-0 cursor-grab active:cursor-grabbing")}
+                        className={(a) => cn(navLinkClass(a), "min-w-0 flex-1 gap-1.5 px-2 py-1.5 cursor-grab active:cursor-grabbing")}
                       >
                         <MapPin className="h-3.5 w-3.5 text-[#b4b8a5] shrink-0" />
-                        <span className="flex-1 min-w-0 truncate">{r.name}</span>
-                        <span className="font-data text-[11px] opacity-60">{r.itemCount}</span>
+                        <span className="min-w-0 flex-1 truncate">{r.name}</span>
+                        <span className="font-data shrink-0 text-[11px] opacity-60">{r.itemCount}</span>
                       </NavLink>
                       <NavLink
                         to={hasPlan(r) ? `/rooms/${r.id}` : "#"}
@@ -209,9 +209,9 @@ export function SidebarRooms({
                           else onNavigate?.();
                         }}
                         title={hasPlan(r) ? "Floorplan" : "No floorplan"}
-                        className={cn("shrink-0 p-0.5", hasPlan(r) ? "text-[#e0e0d0]" : "text-[#8a8e7a]/40 pointer-events-none")}
+                        className={cn("flex h-8 w-8 shrink-0 items-center justify-center", hasPlan(r) ? "text-[#e0e0d0]" : "text-[#8a8e7a]/40 pointer-events-none")}
                       >
-                        <Square className="h-3 w-3" />
+                        <Square className="h-3.5 w-3.5" />
                       </NavLink>
                       <NavLink
                         to={r.hasGeometry ? `/rooms/${r.id}?view=3d` : "#"}
@@ -222,15 +222,15 @@ export function SidebarRooms({
                           else onNavigate?.();
                         }}
                         title={r.hasGeometry ? "3D model" : "No 3D model"}
-                        className={cn("shrink-0 p-0.5", r.hasGeometry ? "text-[#e0e0d0]" : "text-[#8a8e7a]/40 pointer-events-none")}
+                        className={cn("flex h-8 w-8 shrink-0 items-center justify-center", r.hasGeometry ? "text-[#e0e0d0]" : "text-[#8a8e7a]/40 pointer-events-none")}
                       >
-                        <Box className="h-3 w-3" />
+                        <Box className="h-3.5 w-3.5" />
                       </NavLink>
                       <button
                         type="button"
                         data-no-drag
                         draggable={false}
-                        className="shrink-0 p-0.5 text-[#8a8e7a] hover:text-[#f4f4ed]"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center text-[#8a8e7a] hover:text-[#f4f4ed]"
                         title="Rename or merge this room"
                         onClick={() => {
                           setEditingRoom(r);
