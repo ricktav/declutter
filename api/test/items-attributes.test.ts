@@ -48,6 +48,33 @@ describe("items.patchAttributes", () => {
   });
 });
 
+describe("items.attributeKeysForTopic", () => {
+  it("returns keys and values by frequency for active items in that topic", async () => {
+    const db = getTestDb();
+    const [{ id: computers }] = await db.insert(areas).values({ slug: "computers", name: "Computers" }).$returningId();
+    const [{ id: kitchen }] = await db.insert(areas).values({ slug: "kitchen", name: "Kitchen" }).$returningId();
+    await db.insert(items).values([
+      { areaId: computers, name: "a", attributes: { role: "laptop", ram_gb: 16 } },
+      { areaId: computers, name: "b", attributes: { role: "desktop", storage_gb: 512 } },
+      { areaId: computers, name: "c", attributes: { role: "laptop" } },
+      { areaId: computers, name: "gone", status: "archived", attributes: { role: "nas", hostname: "old" } },
+      { areaId: kitchen, name: "pan", attributes: { material: "steel" } },
+    ]);
+    const rows = await caller().items.attributeKeysForTopic({ areaId: computers });
+    expect(rows.map((r) => r.key)).toEqual(["role", "ram_gb", "storage_gb"]);
+    expect(rows[0]).toMatchObject({
+      key: "role",
+      count: 3,
+      values: [
+        { value: "laptop", count: 2 },
+        { value: "desktop", count: 1 },
+      ],
+    });
+    expect(rows.find((r) => r.key === "hostname")).toBeUndefined();
+    expect(rows.find((r) => r.key === "material")).toBeUndefined();
+  });
+});
+
 describe("items.listRelations", () => {
   it("returns only relations of the asked type", async () => {
     const laptop = await makeItem();

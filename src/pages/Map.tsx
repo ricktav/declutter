@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type DragEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { trpc } from "@/providers/trpc";
@@ -19,6 +19,21 @@ import type { AppRouter } from "../../api/router";
 type Location = inferRouterOutputs<AppRouter>["rooms"]["list"][number];
 
 const locationKey = (l: { id: number }) => String(l.id);
+
+type RoomDrag = { id: number; houseId: number; floor: string | null };
+
+function readRoomDrag(e: DragEvent): Omit<RoomDrag, "floor"> | null {
+  try {
+    const raw = e.dataTransfer.getData("text/plain");
+    if (!raw) return null;
+    const v = JSON.parse(raw) as { kind?: string; id?: unknown; houseId?: unknown };
+    if (v.kind !== "room" || typeof v.id !== "number" || typeof v.houseId !== "number") return null;
+    if (!Number.isInteger(v.id) || !Number.isInteger(v.houseId)) return null;
+    return { id: v.id, houseId: v.houseId };
+  } catch {
+    return null;
+  }
+}
 
 // sessionStorage, not localStorage - "keep last used during the session"
 // means forgetting it again once the tab/browser closes, not forever
@@ -70,12 +85,21 @@ export default function MapPage() {
   const [renameTo, setRenameTo] = useState("");
   const [floorTo, setFloorTo] = useState("");
   const [mergePair, setMergePair] = useState<{ fromId: number; toId: number } | null>(null);
+  const [dragRoom, setDragRoom] = useState<RoomDrag | null>(null);
+  const dragRoomRef = useRef<RoomDrag | null>(null);
+  const [dropOn, setDropOn] = useState<{ houseId: number; floor: string } | null>(null);
   const utils = trpc.useUtils();
   const updateRoom = trpc.rooms.update.useMutation({
     onSuccess: () => {
       utils.rooms.list.invalidate();
       utils.rooms.get.invalidate();
       setEditing(null);
+    },
+  });
+  const setRoomFloor = trpc.rooms.update.useMutation({
+    onSuccess: () => {
+      utils.rooms.list.invalidate();
+      utils.rooms.get.invalidate();
     },
   });
 
@@ -86,15 +110,50 @@ export default function MapPage() {
     return houseIds.map((hid) => {
       const rooms = list.filter((r) => r.houseId === hid);
       const floors = sortFloorNames(rooms.map((r) => r.floor ?? "").filter(Boolean));
+      // Existing named floors only (no new floor via drag). Always keep
+      // "no floor" so a room can be dropped back to floor = null.
       const groups: { floor: string; rooms: Location[] }[] = floors.map((floor) => ({
         floor,
         rooms: rooms.filter((r) => (r.floor ?? "") === floor),
       }));
-      const unfloored = rooms.filter((r) => !r.floor);
-      if (unfloored.length) groups.push({ floor: "", rooms: unfloored });
+      groups.push({ floor: "", rooms: rooms.filter((r) => !r.floor) });
       return { houseId: hid, name: houseName(hid) ?? `House #${hid}`, groups };
     });
   }, [locations.data, houses]);
+
+  const canDropOn = (houseId: number, floor: string) => {
+    const d = dragRoomRef.current;
+    return !!d && d.houseId === houseId && (d.floor ?? "") !== floor;
+  };
+
+  const onDragOverGroup = (e: DragEvent, houseId: number, floor: string) => {
+    const d = dragRoomRef.current;
+    if (!d || d.houseId !== houseId) return;
+    e.preventDefault();
+    const ok = canDropOn(houseId, floor);
+    e.dataTransfer.dropEffect = ok ? "move" : "none";
+    setDropOn(ok ? { houseId, floor } : null);
+  };
+
+  const onDragLeaveGroup = (e: DragEvent, houseId: number, floor: string) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && e.currentTarget.contains(next)) return;
+    setDropOn((cur) => (cur?.houseId === houseId && cur.floor === floor ? null : cur));
+  };
+
+  const onDropGroup = (e: DragEvent, houseId: number, floor: string) => {
+    e.preventDefault();
+    setDropOn(null);
+    const payload = readRoomDrag(e) ?? (dragRoomRef.current ? { id: dragRoomRef.current.id, houseId: dragRoomRef.current.houseId } : null);
+    dragRoomRef.current = null;
+    setDragRoom(null);
+    if (!payload || payload.houseId !== houseId) return;
+    const current = (locations.data ?? []).find((r) => r.id === payload.id);
+    if (!current) return;
+    const next = floor || null;
+    if ((current.floor ?? null) === next) return;
+    setRoomFloor.mutate({ id: payload.id, floor: next });
+  };
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
@@ -108,7 +167,7 @@ export default function MapPage() {
       </div>
 
       <div className="flex gap-6 mt-6 items-start">
-        <aside className="w-64 shrink-0 rounded-lg border border-border bg-white p-2 space-y-0.5">
+        <aside className="w-64 shrink-0 rounded-lg border border-border bg-white p-2 space-y-0.5 select-none">
           <div className="micro-label text-muted-foreground px-2 py-1.5">Rooms</div>
           {locations.isLoading && <div className="px-2 py-2 text-[13px] text-muted-foreground">Loading…</div>}
           {locations.data?.length === 0 && (
@@ -116,62 +175,110 @@ export default function MapPage() {
               No rooms yet.
             </div>
           )}
+          {setRoomFloor.isError && (
+            <div className="px-2 py-1 text-[12px] text-destructive">{setRoomFloor.error.message}</div>
+          )}
           {roomsByHouse.map((h) => (
             <div key={h.houseId} className="mb-2">
               {roomsByHouse.length > 1 && (
                 <div className="px-2 pt-1 micro-label text-muted-foreground">{h.name}</div>
               )}
-              {h.groups.map((g) => (
-                <div key={`${h.houseId}-${g.floor || "nofloor"}`}>
-                  <div className="px-2 pt-1 micro-label text-muted-foreground/80">{g.floor || "no floor"}</div>
-                  {g.rooms.map((l) => {
-                    const key = locationKey(l);
-                    const isSelected = selected && locationKey(selected) === key;
-                    return (
-                      <div
-                        key={key}
-                        className={`w-full flex items-center gap-2 rounded-md px-2 py-2 text-[13px] ${
-                          isSelected ? "bg-muted" : "hover:bg-muted/50"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => selectLocation(l)}
-                          className="flex-1 min-w-0 flex items-center gap-2 text-left"
+              {h.groups.map((g) => {
+                const isDrop = dropOn?.houseId === h.houseId && dropOn.floor === g.floor;
+                return (
+                  <div
+                    key={`${h.houseId}-${g.floor || "nofloor"}`}
+                    onDragOver={(e) => onDragOverGroup(e, h.houseId, g.floor)}
+                    onDragLeave={(e) => onDragLeaveGroup(e, h.houseId, g.floor)}
+                    onDrop={(e) => onDropGroup(e, h.houseId, g.floor)}
+                    className={cn(
+                      "rounded-md pb-0.5 transition-colors",
+                      isDrop && "bg-primary/10 ring-2 ring-inset ring-primary",
+                    )}
+                  >
+                    <div className="px-2 pt-1 micro-label text-muted-foreground/80">{g.floor || "no floor"}</div>
+                    {g.rooms.map((l) => {
+                      const key = locationKey(l);
+                      const isSelected = selected && locationKey(selected) === key;
+                      const isDragging = dragRoom?.id === l.id;
+                      return (
+                        <div
+                          key={key}
+                          draggable
+                          onDragStart={(e) => {
+                            if ((e.target as HTMLElement).closest("[data-no-drag]")) {
+                              e.preventDefault();
+                              return;
+                            }
+                            setRoomFloor.reset();
+                            const payload: RoomDrag = { id: l.id, houseId: l.houseId, floor: l.floor ?? null };
+                            dragRoomRef.current = payload;
+                            e.dataTransfer.setData("text/plain", JSON.stringify({ kind: "room", id: l.id, houseId: l.houseId }));
+                            e.dataTransfer.effectAllowed = "move";
+                            setDragRoom(payload);
+                          }}
+                          onDragEnd={() => {
+                            dragRoomRef.current = null;
+                            setDragRoom(null);
+                            setDropOn(null);
+                          }}
+                          className={cn(
+                            "w-full flex items-center gap-2 rounded-md px-2 py-2 text-[13px]",
+                            isDragging && "opacity-50",
+                            isSelected ? "bg-muted" : "hover:bg-muted/50",
+                          )}
                         >
-                          <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          <span className="flex-1 min-w-0 truncate font-medium">{l.name}</span>
-                          <span className="font-data text-[11px] text-muted-foreground">{l.itemCount}</span>
-                        </button>
-                        <Link
-                          to={hasPlan(l) ? `/rooms/${l.id}` : "#"}
-                          onClick={(e) => { if (!hasPlan(l)) e.preventDefault(); }}
-                          title={hasPlan(l) ? "Floorplan" : "No floorplan"}
-                          className={cn("shrink-0", hasPlan(l) ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
-                        >
-                          <Square className="h-3.5 w-3.5" />
-                        </Link>
-                        <Link
-                          to={l.hasGeometry ? `/rooms/${l.id}?view=3d` : "#"}
-                          onClick={(e) => { if (!l.hasGeometry) e.preventDefault(); }}
-                          title={l.hasGeometry ? "3D model" : "No 3D model"}
-                          className={cn("shrink-0", l.hasGeometry ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
-                        >
-                          <Box className="h-3.5 w-3.5" />
-                        </Link>
-                        <button
-                          type="button"
-                          className="shrink-0 text-muted-foreground hover:text-foreground"
-                          title="Rename room"
-                          onClick={() => { setEditing(l); setRenameTo(l.name); setFloorTo(l.floor ?? ""); updateRoom.reset(); }}
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => selectLocation(l)}
+                            title="Drag to another floor"
+                            className="flex-1 min-w-0 flex items-center gap-2 text-left cursor-grab active:cursor-grabbing"
+                          >
+                            <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            <span className="flex-1 min-w-0 truncate font-medium">{l.name}</span>
+                            <span className="font-data text-[11px] text-muted-foreground">{l.itemCount}</span>
+                          </button>
+                          <Link
+                            to={hasPlan(l) ? `/rooms/${l.id}` : "#"}
+                            data-no-drag
+                            draggable={false}
+                            onClick={(e) => { if (!hasPlan(l)) e.preventDefault(); }}
+                            title={hasPlan(l) ? "Floorplan" : "No floorplan"}
+                            className={cn("shrink-0", hasPlan(l) ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
+                          >
+                            <Square className="h-3.5 w-3.5" />
+                          </Link>
+                          <Link
+                            to={l.hasGeometry ? `/rooms/${l.id}?view=3d` : "#"}
+                            data-no-drag
+                            draggable={false}
+                            onClick={(e) => { if (!l.hasGeometry) e.preventDefault(); }}
+                            title={l.hasGeometry ? "3D model" : "No 3D model"}
+                            className={cn("shrink-0", l.hasGeometry ? "text-foreground" : "text-muted-foreground/30 pointer-events-none")}
+                          >
+                            <Box className="h-3.5 w-3.5" />
+                          </Link>
+                          <button
+                            type="button"
+                            data-no-drag
+                            draggable={false}
+                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                            title="Rename room"
+                            onClick={() => { setEditing(l); setRenameTo(l.name); setFloorTo(l.floor ?? ""); updateRoom.reset(); }}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {g.rooms.length === 0 && (
+                      <div className="mx-1 mb-1 rounded border border-dashed border-border px-2 py-2 text-[12px] text-muted-foreground">
+                        Drop a room here
                       </div>
-                    );
-                  })}
-                </div>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ))}
         </aside>

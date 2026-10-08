@@ -552,6 +552,48 @@ export const itemsRouter = createRouter({
       return { ok: true, attributes: next };
     }),
 
+  /**
+   * Attribute keys (and their values) already used on active Things in a
+   * topic, most common first. ItemDetail's "add attribute" picklist uses this.
+   */
+  attributeKeysForTopic: procedure
+    .input(z.object({ areaId: z.number() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const rows = await db
+        .select({ attributes: items.attributes })
+        .from(items)
+        .where(and(eq(items.areaId, input.areaId), eq(items.status, "active")));
+      const keys = new Map<string, { count: number; values: Map<string, number> }>();
+      for (const row of rows) {
+        const attrs = row.attributes;
+        if (!attrs || typeof attrs !== "object" || Array.isArray(attrs)) continue;
+        for (const [rawKey, rawVal] of Object.entries(attrs)) {
+          const key = rawKey.trim();
+          if (!key) continue;
+          let rec = keys.get(key);
+          if (!rec) {
+            rec = { count: 0, values: new Map() };
+            keys.set(key, rec);
+          }
+          rec.count += 1;
+          const value = rawVal == null ? "" : String(rawVal).trim();
+          if (value) rec.values.set(value, (rec.values.get(value) ?? 0) + 1);
+        }
+      }
+      return [...keys.entries()]
+        .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
+        .slice(0, 100)
+        .map(([key, rec]) => ({
+          key,
+          count: rec.count,
+          values: [...rec.values.entries()]
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .slice(0, 40)
+            .map(([value, count]) => ({ value, count })),
+        }));
+    }),
+
   /** Every relation of one type (for example "backs-up"), for views that need all links at once. */
   listRelations: procedure
     .input(z.object({ type: z.string().min(1).max(64) }))

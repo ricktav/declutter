@@ -144,6 +144,10 @@ export default function ItemDetail() {
     { areaId: item.data?.areaId ?? 0 },
     { enabled: !!item.data?.areaId },
   );
+  const topicAttrKeys = trpc.items.attributeKeysForTopic.useQuery(
+    { areaId: item.data?.areaId ?? 0 },
+    { enabled: !!item.data?.areaId },
+  );
   const siblingIds = (siblings.data ?? []).map((s) => s.id);
   const siblingIndex = siblingIds.indexOf(itemId);
   const prevId = siblingIndex > 0 ? siblingIds[siblingIndex - 1] : null;
@@ -163,6 +167,7 @@ export default function ItemDetail() {
   const [editingAttrs, setEditingAttrs] = useState(false);
   const [attrDraft, setAttrDraft] = useState<Record<string, string>>({});
   const [newAttrKey, setNewAttrKey] = useState("");
+  const [newAttrValue, setNewAttrValue] = useState("");
   const [newNote, setNewNote] = useState("");
   const [newLink, setNewLink] = useState("");
   const [relType, setRelType] = useState("related-to");
@@ -246,6 +251,16 @@ export default function ItemDetail() {
   if (!item.data) return <div className="p-8 text-sm">Item not found.</div>;
   const it = item.data;
   const defs = (it.area?.attributeDefs as AttributeDef[] | null) ?? [];
+  const usedAttrKeys = new Set(Object.keys(attrDraft));
+  const topicKeyOpts = (topicAttrKeys.data ?? []).filter((r) => !usedAttrKeys.has(r.key));
+  const newKeyValOpts = (topicAttrKeys.data ?? []).find((r) => r.key === newAttrKey.trim())?.values ?? [];
+  const addAttrField = () => {
+    const typed = newAttrKey.trim();
+    if (!typed || typed in attrDraft) return;
+    setAttrDraft((d) => ({ ...d, [typed]: newAttrValue }));
+    setNewAttrKey("");
+    setNewAttrValue("");
+  };
   const suggested = it.relations.filter((r) => r.status === "suggested");
   const confirmed = it.relations.filter((r) => r.status === "confirmed");
   // photos and links/notes/files live in two tables now; the list shows
@@ -280,6 +295,8 @@ export default function ItemDetail() {
     for (const [k, v] of Object.entries(it.attributes ?? {})) draft[k] = String(v);
     for (const d of defs) if (!(d.key in draft)) draft[d.key] = "";
     setAttrDraft(draft);
+    setNewAttrKey("");
+    setNewAttrValue("");
     setEditingAttrs(true);
   };
 
@@ -641,7 +658,7 @@ export default function ItemDetail() {
                 ) : (
                   <div className="ml-auto flex gap-1">
                     <Button size="sm" className="h-6 text-[11px]" onClick={saveAttrs}>Save</Button>
-                    <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => setEditingAttrs(false)}>
+                    <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => { setEditingAttrs(false); setNewAttrKey(""); setNewAttrValue(""); }}>
                       Cancel
                     </Button>
                   </div>
@@ -668,16 +685,28 @@ export default function ItemDetail() {
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  {Object.entries(attrDraft).map(([k, v]) => (
+                  {Object.entries(attrDraft).map(([k, v]) => {
+                    const valListId = `attr-val-${itemId}-${k}`;
+                    const valOpts = (topicAttrKeys.data ?? []).find((r) => r.key === k)?.values ?? [];
+                    return (
                     <div key={k} className="flex items-center gap-2">
                       <span className="w-36 shrink-0 text-[12px] text-muted-foreground truncate">
                         {defs.find((d) => d.key === k)?.label ?? k}
                       </span>
                       <input
                         className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
+                        list={valOpts.length ? valListId : undefined}
+                        autoComplete="off"
                         value={v}
                         onChange={(e) => setAttrDraft((d) => ({ ...d, [k]: e.target.value }))}
                       />
+                      {valOpts.length > 0 && (
+                        <datalist id={valListId}>
+                          {valOpts.map((opt) => (
+                            <option key={opt.value} value={opt.value} />
+                          ))}
+                        </datalist>
+                      )}
                       <button className="text-muted-foreground hover:text-destructive"
                         onClick={() =>
                           setAttrDraft((d) => {
@@ -689,20 +718,44 @@ export default function ItemDetail() {
                         <X className="h-3.5 w-3.5" />
                       </button>
                     </div>
-                  ))}
+                    );
+                  })}
                   <div className="flex items-center gap-2 pt-1">
                     <input
                       className="w-36 rounded border border-input px-2 py-1 text-[13px]"
+                      list={topicKeyOpts.length ? `attr-key-${itemId}` : undefined}
+                      autoComplete="off"
                       placeholder="new key"
                       value={newAttrKey}
                       onChange={(e) => setNewAttrKey(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") addAttrField(); }}
                     />
+                    {topicKeyOpts.length > 0 && (
+                      <datalist id={`attr-key-${itemId}`}>
+                        {topicKeyOpts.map((opt) => (
+                          <option key={opt.key} value={opt.key} />
+                        ))}
+                      </datalist>
+                    )}
+                    <input
+                      className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
+                      list={newKeyValOpts.length ? `attr-new-val-${itemId}` : undefined}
+                      autoComplete="off"
+                      placeholder="value"
+                      value={newAttrValue}
+                      onChange={(e) => setNewAttrValue(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") addAttrField(); }}
+                    />
+                    {newKeyValOpts.length > 0 && (
+                      <datalist id={`attr-new-val-${itemId}`}>
+                        {newKeyValOpts.map((opt) => (
+                          <option key={opt.value} value={opt.value} />
+                        ))}
+                      </datalist>
+                    )}
                     <Button size="sm" variant="outline" className="h-7 text-[11px]"
-                      disabled={!newAttrKey.trim() || newAttrKey in attrDraft}
-                      onClick={() => {
-                        setAttrDraft((d) => ({ ...d, [newAttrKey.trim()]: "" }));
-                        setNewAttrKey("");
-                      }}>
+                      disabled={!newAttrKey.trim() || newAttrKey.trim() in attrDraft}
+                      onClick={addAttrField}>
                       <Plus className="h-3 w-3 mr-0.5" /> field
                     </Button>
                   </div>
