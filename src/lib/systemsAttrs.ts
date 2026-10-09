@@ -12,7 +12,10 @@
  * Services (around a machine), any of:
  *   services    JSON array of { name, kind?, status?, port?, url? }
  *               or a comma/newline list of names
- *   docker / containers   list of container names (kind docker)
+ *   docker / containers   list of container names (kind docker).
+ *               Collectors write this with services.report (not the Systems
+ *               view itself). A daily claudemux fleet HTML page can feed the
+ *               importer script; Systems never fetches that URL.
  *   units / systemd       list of unit names (kind systemd)
  *   launchd               list of launchd job names (kind launchd)
  *   svc.<name>            value = status, port, or URL

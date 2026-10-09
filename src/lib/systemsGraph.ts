@@ -46,8 +46,8 @@ export const KIND_LABEL: Record<string, string> = {
 export type ItemScope = "machines" | "network" | "all";
 export type HubType = "machine" | "network" | "other";
 
-const MAX_SVC = 16;
-const MAX_WEB = 12;
+const MAX_SVC = 48;
+const MAX_WEB = 24;
 const MAX_DISK = 16;
 
 export type GraphItem = {

@@ -582,6 +582,7 @@ export default function SystemsPage() {
   const ready = itemsQ.data && overviewQ.data;
   const leafCount = graph.nodes.filter((n) => n.type !== "center").length;
   const hubCount = graph.nodes.filter((n) => n.type === "machine" || n.type === "network" || n.type === "other").length;
+  const serviceLeaves = graph.nodes.filter((n) => n.type === "service" || n.type === "web").length;
 
   const toggleLegend = (type: string, ev: ReactMouseEvent) => {
     const multi = ev.shiftKey || ev.metaKey || ev.ctrlKey;
@@ -767,6 +768,14 @@ export default function SystemsPage() {
 
         {!ready && (
           <div className="absolute inset-0 flex items-center justify-center text-[#888] text-sm">Loading systems…</div>
+        )}
+
+        {ready && view === "services" && hubCount > 0 && serviceLeaves === 0 && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 max-w-lg rounded-[10px] border border-[#2a2a2a] bg-[rgba(26,26,26,.95)] px-4 py-2.5 text-[12px] text-[#aaa] z-10 text-center">
+            These machines have no containers or processes on file yet. Systems reads{" "}
+            <span className="text-[#e0e0e0]">docker</span>/<span className="text-[#e0e0e0]">containers</span> on the Thing
+            (or a child with role container). Import a fleet snapshot instead of wiring the HTML page into this view.
+          </div>
         )}
 
         {ready && hubCount === 0 && (
