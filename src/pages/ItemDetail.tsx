@@ -7,12 +7,11 @@ import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
-import { RecropDialog } from "@/components/RecropDialog";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { EnergySection } from "@/components/EnergySection";
 import { StorageSection } from "@/components/StorageSection";
-import { ZoomOverlay } from "@/components/ZoomOverlay";
+import { PhotoCropZoom } from "@/components/PhotoCropZoom";
 import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
@@ -76,29 +75,12 @@ function IdentityClashLinks({ clash }: { clash: AttrClash }) {
   );
 }
 
-/** Link to the original, uncropped photo a cutout came from — opens full-size in a new tab. */
-function SourceLink({ photoId }: { photoId: number }) {
-  const source = trpc.photos.sourcePhoto.useQuery({ photoId });
-  if (!source.data?.available || !source.data.url) return null;
-  return (
-    <a
-      href={source.data.url}
-      target="_blank"
-      rel="noreferrer"
-      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
-      title="View original source photo"
-    >
-      <ExternalLink className="h-3.5 w-3.5" />
-    </a>
-  );
-}
-
 function AttachmentView({
   att,
   onZoom,
 }: {
   att: { id: number; kind: string; title: string | null; content: string | null; url: string | null; storageKey: string | null };
-  onZoom?: (url: string) => void;
+  onZoom?: (photo: { id: number; storageKey: string | null }) => void;
 }) {
   const url = trpc.photos.url.useQuery(
     { key: att.storageKey! },
@@ -137,8 +119,8 @@ function AttachmentView({
         <button
           type="button"
           className="cursor-zoom-in block"
-          onClick={() => onZoom?.(url.data!.url!)}
-          title="Click to enlarge"
+          onDoubleClick={() => onZoom?.({ id: att.id, storageKey: att.storageKey })}
+          title="Double-click to enlarge"
         >
           <img
             src={url.data.url}
@@ -254,8 +236,7 @@ export default function ItemDetail() {
   const [roomId, setRoomId] = useState<number | null>(null);
   const [editingLoc, setEditingLoc] = useState(false);
   const [childName, setChildName] = useState("");
-  const [recropId, setRecropId] = useState<number | null>(null);
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxPhoto, setLightboxPhoto] = useState<{ id: number; storageKey: string | null } | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
 
   const invalidate = () => {
@@ -649,20 +630,17 @@ export default function ItemDetail() {
             {entries.map((a) => (
               <div key={`${a.entry}-${a.id}`} className="group flex items-start gap-2">
                 <div className="flex-1 min-w-0">
-                  <AttachmentView att={a} onZoom={setLightboxUrl} />
+                  <AttachmentView att={a} onZoom={setLightboxPhoto} />
                   <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
                 </div>
                 {a.kind === "image" && a.sourceCaptureId && (
-                  <>
-                    <SourceLink photoId={a.id} />
-                    <button
-                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
-                      title="Re-crop from original photo"
-                      onClick={() => setRecropId(a.id)}
-                    >
-                      <Crop className="h-3.5 w-3.5" />
-                    </button>
-                  </>
+                  <button
+                    className="text-muted-foreground hover:text-primary"
+                    title="Re-crop from original photo"
+                    onClick={() => setLightboxPhoto({ id: a.id, storageKey: a.storageKey })}
+                  >
+                    <Crop className="h-3.5 w-3.5" />
+                  </button>
                 )}
                 {a.entry === "photo" ? (
                   <ConfirmDelete
@@ -1187,13 +1165,15 @@ export default function ItemDetail() {
         </div>
       </section>
 
-      <RecropDialog photoId={recropId} open={recropId != null} onClose={() => setRecropId(null)} />
       <ChooseFromLibraryDialog itemId={itemId} open={libraryOpen} onClose={() => setLibraryOpen(false)} />
-      <ZoomOverlay open={!!lightboxUrl} onClose={() => setLightboxUrl(null)} title={it.name}>
-        {lightboxUrl && (
-          <img src={lightboxUrl} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
-        )}
-      </ZoomOverlay>
+      {lightboxPhoto && (
+        <PhotoCropZoom
+          photoId={lightboxPhoto.id}
+          storageKey={lightboxPhoto.storageKey}
+          title={it.name}
+          onClose={() => setLightboxPhoto(null)}
+        />
+      )}
     </div>
   );
 }

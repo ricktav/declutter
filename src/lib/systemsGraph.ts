@@ -1,6 +1,7 @@
 import {
   guessServiceKind,
   hubRadius,
+  volumeRadius,
   isMachineItem,
   isNetworkItem,
   isOtherComputersItem,
@@ -186,21 +187,22 @@ function volumesForMachine(c: GraphComputer | undefined): GraphVolume[] {
   return out;
 }
 
-function volumeNode(v: GraphVolume): GraphNode {
+function volumeNode(v: GraphVolume, radius: number): GraphNode {
   const usedPct = v.capacityBytes > 0 ? Math.round((v.usedBytes / v.capacityBytes) * 100) : null;
   return {
     id: `vol:${v.id}`,
     type: "volume",
     label: (v.label || v.mountPoint).slice(0, 28),
-    radius: 5,
+    radius,
     color: KIND_COLOR.volume,
     dimmed: false,
     itemId: v.itemId,
     volumeId: v.id,
-    tags: [v.dataRole ?? "volume", usedPct != null ? `${usedPct}%` : ""].filter(Boolean),
+    tags: [v.dataRole ?? "volume", usedPct != null ? `${usedPct}%` : "", `${radius}/10`].filter(Boolean),
     lines: [
       { k: "mount", v: v.mountPoint },
       { k: "used", v: `${fmtGb(v.usedBytes)} / ${fmtGb(v.capacityBytes)}` },
+      { k: "size", v: `${radius}/10` },
       ...(v.dataRole ? [{ k: "role", v: v.dataRole }] : []),
       ...(v.dirCount ? [{ k: "dirs", v: String(v.dirCount) }] : []),
     ],
@@ -245,6 +247,7 @@ function attachStorage(
   nodes: GraphNode[],
   links: GraphLink[],
   counts: Record<string, number>,
+  radiusFor: (v: GraphVolume) => number,
 ) {
   const volsByItem = new Map<number, GraphVolume[]>();
   for (const v of vols) {
@@ -260,7 +263,7 @@ function attachStorage(
     const itemVols = (volsByItem.get(itemId) ?? []).slice(0, MAX_VOL);
     if (itemId === machineId) {
       for (const v of itemVols) {
-        const leaf = volumeNode(v);
+        const leaf = volumeNode(v, radiusFor(v));
         nodes.push(leaf);
         counts.volume = (counts.volume ?? 0) + 1;
         links.push({ source: hubId, target: leaf.id, strength: 0.7, tight: true });
@@ -274,7 +277,7 @@ function attachStorage(
     disks += 1;
     links.push({ source: hubId, target: disk.id, strength: 0.3 });
     for (const v of itemVols) {
-      const leaf = volumeNode(v);
+      const leaf = volumeNode(v, radiusFor(v));
       nodes.push(leaf);
       counts.volume = (counts.volume ?? 0) + 1;
       links.push({ source: disk.id, target: leaf.id, strength: 0.7, tight: true });
@@ -464,6 +467,11 @@ export function buildSystemsGraph(opts: {
       lines: [],
     });
     const hubIdByItem = new Map<number, string>();
+    const shownVols = hubs.flatMap(({ it: m }) => volumesForMachine(computersById.get(m.id)));
+    const caps = shownVols.map((v) => v.capacityBytes).filter((b) => b > 0);
+    const minCap = caps.length ? Math.min(...caps) : 0;
+    const maxCap = caps.length ? Math.max(...caps) : 0;
+    const radiusFor = (v: GraphVolume) => volumeRadius(v.capacityBytes, minCap, maxCap);
     for (const { it: m, type } of hubs) {
       const kids = childrenByParent.get(m.id) ?? [];
       const n = makeHubNode(m, type, hubSubnodes(m, kids, computersById.get(m.id)));
@@ -492,7 +500,7 @@ export function buildSystemsGraph(opts: {
         counts.web = (counts.web ?? 0) + 1;
         links.push({ source: n.id, target: leaf.id, strength: 0.3 });
       }
-      attachStorage(n.id, m.id, volumesForMachine(computersById.get(m.id)), childDisks, nodes, links, counts);
+      attachStorage(n.id, m.id, volumesForMachine(computersById.get(m.id)), childDisks, nodes, links, counts, radiusFor);
     }
     const seenCross = new Set<string>();
     for (const r of relations ?? []) {

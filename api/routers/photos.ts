@@ -7,7 +7,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, items, photos, type PhotoCamera } from "@db/schema";
+import { captures, items, photoPins, photos, type PhotoCamera } from "@db/schema";
 import { readFileBytes, urlForKey, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
@@ -116,7 +116,8 @@ export const photosRouter = createRouter({
     if (!photo?.sourceCaptureId) {
       throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This cutout has no source photo to re-crop from." });
     }
-    const cap = await db.query.captures.findFirst({ where: eq(captures.id, photo.sourceCaptureId) });
+    const sourceCaptureId = photo.sourceCaptureId;
+    const cap = await db.query.captures.findFirst({ where: eq(captures.id, sourceCaptureId) });
     if (!cap?.storageKey) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
     const cropped = await cropPercent(await readSourceBytes(cap.storageKey), input.box);
     const saved = await withNewFile(
@@ -124,6 +125,19 @@ export const photosRouter = createRouter({
       async (file) => {
         await db.transaction(async (tx) => {
           await tx.update(photos).set({ storageKey: file.key, size: file.size, cropBox: input.box, camera: null }).where(eq(photos.id, input.photoId));
+          if (photo.itemId) {
+            const [loc] = await tx
+              .select({ id: photos.id })
+              .from(photos)
+              .where(and(eq(photos.sourceCaptureId, sourceCaptureId), isNull(photos.itemId)))
+              .limit(1);
+            if (loc) {
+              await tx
+                .update(photoPins)
+                .set({ xPct: input.box.xPct, yPct: input.box.yPct, wPct: input.box.wPct, hPct: input.box.hPct })
+                .where(and(eq(photoPins.photoId, loc.id), eq(photoPins.itemId, photo.itemId)));
+            }
+          }
           await logEvent(
             {
               entityType: "photo",

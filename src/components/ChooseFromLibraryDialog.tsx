@@ -127,11 +127,11 @@ export function ChooseFromLibraryDialog({
           <div className="flex flex-col gap-3 items-center">
             <p className="text-[12px] text-muted-foreground -mt-2">Drag to move, drag the corner to resize.</p>
             {photoUrl.data?.url && (
-              <div className="relative select-none mx-auto max-w-full">
+              <div className="relative inline-block select-none max-w-full">
                 <img
                   src={photoUrl.data.url}
                   alt="source"
-                  className="max-h-[calc(100dvh-11rem)] w-auto rounded touch-none"
+                  className="block max-h-[calc(100dvh-11rem)] max-w-full w-auto h-auto rounded touch-none"
                   draggable={false}
                 />
                 <Box box={box} color="#2d4a22" onChange={setBox} />

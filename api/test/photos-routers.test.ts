@@ -90,11 +90,16 @@ describe("photos.ensureForCapture / createCutout / recrop", () => {
     expect([cut.itemId, cut.sourceCaptureId, cut.cropBox]).toEqual([itemId, capId, box]);
     expect(await callerFor(h1).photos.sourcePhoto({ photoId: a.id })).toMatchObject({ available: true, cropBox: box });
 
+    const [pin] = await db.select().from(photoPins);
+    expect(pin).toMatchObject({ itemId, photoId, ...box });
+
     const narrower = { ...box, wPct: 20 };
     const re = await callerFor(h1).photos.recrop({ photoId: a.id, box: narrower });
     const [after] = await db.select().from(photos).where(eq(photos.id, a.id));
     expect([after.storageKey, after.cropBox]).toEqual([re.storageKey, narrower]);
     expect(fs.existsSync(keyPath(a.storageKey))).toBe(false);
+    const [pinAfter] = await db.select().from(photoPins);
+    expect(pinAfter).toMatchObject({ itemId, photoId, ...narrower });
   });
 
   it("createCutout on a whole Photo from a capture makes a new cutout and leaves the whole Photo alone", async () => {

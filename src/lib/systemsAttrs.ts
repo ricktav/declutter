@@ -154,6 +154,14 @@ export function hubRadius(subnodes: number, rating: Rating): number {
   return Math.round(Math.max(MIN, Math.min(MAX, byCount * g)));
 }
 
+/** Volume node radius on a 1–10 scale from capacity, log-relative to the set. */
+export function volumeRadius(capacityBytes: number, minCapacity: number, maxCapacity: number): number {
+  if (!(capacityBytes > 0)) return 1;
+  if (!(maxCapacity > minCapacity) || minCapacity <= 0) return 5;
+  const t = (Math.log(capacityBytes) - Math.log(minCapacity)) / (Math.log(maxCapacity) - Math.log(minCapacity));
+  return Math.round(1 + Math.max(0, Math.min(1, t)) * 9);
+}
+
 export function isMachineItem(it: {
   attributes: Attrs;
   areaSlug?: string | null;

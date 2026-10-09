@@ -87,7 +87,8 @@ export function Box({
   return (
     <div
       ref={ref}
-      className="absolute border-2 touch-none"
+      data-zoom-ignore
+      className="absolute border-2 touch-none z-10"
       style={{
         left: `${box.xPct - box.wPct / 2}%`,
         top: `${box.yPct - box.hPct / 2}%`,
@@ -262,8 +263,8 @@ export function DetectObjectsModal({
                 </div>
               </div>
             ) : imgUrl.data?.url ? (
-              <div className="relative select-none mx-auto">
-                <img src={imgUrl.data.url} alt="snap" className="max-h-[calc(100dvh-9rem)] w-auto rounded" draggable={false} />
+              <div className="relative inline-block select-none max-w-full">
+                <img src={imgUrl.data.url} alt="snap" className="block max-h-[calc(100dvh-9rem)] max-w-full w-auto h-auto rounded" draggable={false} />
                 {suggestions.map((s) => (
                   <Box
                     key={s.key}

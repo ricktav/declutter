@@ -6,10 +6,11 @@ const ZoomOverlayImpl = lazy(() => import("@/components/ZoomOverlayImpl"));
 
 /**
  * Full-screen pan/zoom view for a photo or a drawing. Wheel and trackpad
- * pinch zoom around the cursor (0.5x-8x), drag pans, double-click toggles
- * 1x / 2x, two-finger touch pinch works through pointer events; Esc, the
- * close button or a click on the dark background closes it. Renders
- * nothing (and loads nothing) while closed.
+ * pinch zoom around the cursor (0.5x-8x), drag pans, double-click on empty
+ * space returns to Fit, double-click on the photo closes it, two-finger
+ * touch pinch works through pointer events; Esc, the close button or a
+ * click on the dark background also closes it. Renders nothing (and loads
+ * nothing) while closed.
  */
 export function ZoomOverlay(props: {
   open: boolean;

@@ -26,10 +26,11 @@ function zoomAt(v: View, next: number, px: number, py: number): View {
 
 /**
  * Full-screen pan/zoom view for a photo or a drawing. Wheel and trackpad
- * pinch zoom around the cursor (0.5x-8x), drag pans, double-click toggles
- * 1x / 2x, two-finger touch pinch works through pointer events, and Esc or
- * the close button closes it. `children` are laid out centred in the
- * viewport at 1x; the stage scales them with a CSS transform.
+ * pinch zoom around the cursor (0.5x-8x), drag pans, double-click on empty
+ * space returns to Fit, double-click on the photo closes (the same gesture
+ * that opened it), two-finger touch pinch works through pointer events, and
+ * Esc or the close button also closes it. `children` are laid out centred
+ * in the viewport at 1x; the stage scales them with a CSS transform.
  */
 export default function ZoomOverlayImpl({
   open,
@@ -200,9 +201,14 @@ function ZoomStage({
   };
 
   const onDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
-    if (isIgnored(e.target) || Date.now() - openedAtRef.current < 500) return;
-    const p = local(e.clientX, e.clientY);
-    setView((v) => (Math.abs(v.s - 1) < 0.01 ? zoomAt(v, 2, p.x, p.y) : IDENTITY));
+    if (e.target instanceof Element && e.target.closest("button, a, input, select, textarea, label")) return;
+    if (Date.now() - openedAtRef.current < 500) return;
+    const empty = e.target === e.currentTarget || e.target === layerRef.current;
+    if (empty) {
+      setView(IDENTITY);
+      return;
+    }
+    onClose();
   };
 
   // a click on the dark background (not on the photo or drawing) closes,
