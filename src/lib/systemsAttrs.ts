@@ -21,10 +21,12 @@
  * kind is node | docker | systemd | launchd | other (guessed from the name
  * when omitted).
  *
- * Web access (ports / pages / URLs), any of:
+ * Web access (ports / pages / URLs / PWAs), any of:
  *   ports    JSON [{ port, proto?, path?, label?, url? }] or "80,443" or "host:8080"
- *   urls / url / web    JSON array or comma-separated URLs
+ *   urls / url / web / pwa / apps / pages / websites    JSON array or comma-separated URLs
+ *   node     list of Node processes (kind node); a value that looks like a URL is a web node
  * A port/url already named on a service is not duplicated as a web node.
+ * Child Things: role container/docker → container; role web/pwa/website/app → web.
  *
  * Disks: storage.overview volumes, plus child Things with role storage.
  *
@@ -37,6 +39,8 @@ export type Importance = (typeof IMPORTANCE)[number];
 export const MACHINE_ROLES = new Set(["laptop", "desktop", "server", "sbc", "nas"]);
 export const LAB_AREA_SLUGS = new Set(["computers", "network"]);
 export const SERVICE_ROLES = new Set(["service", "software"]);
+export const CONTAINER_ROLES = new Set(["container", "docker"]);
+export const WEB_ROLES = new Set(["web", "pwa", "website", "app"]);
 const SKIP_ROLES = new Set(["storage", "service", "software", "meter", "part"]);
 const PERIPHERAL_ROLES = new Set([
   "peripheral",
@@ -154,12 +158,28 @@ export function hubRadius(subnodes: number, rating: Rating): number {
   return Math.round(Math.max(MIN, Math.min(MAX, byCount * g)));
 }
 
-/** Volume node radius on a 1–10 scale from capacity, log-relative to the set. */
-export function volumeRadius(capacityBytes: number, minCapacity: number, maxCapacity: number): number {
-  if (!(capacityBytes > 0)) return 1;
-  if (!(maxCapacity > minCapacity) || minCapacity <= 0) return 5;
-  const t = (Math.log(capacityBytes) - Math.log(minCapacity)) / (Math.log(maxCapacity) - Math.log(minCapacity));
-  return Math.round(1 + Math.max(0, Math.min(1, t)) * 9);
+/** 1–10 by linear share of the largest volume (12 TB vs 4 TB → 10 vs 3). */
+export function volumeSizeScale(capacityBytes: number, maxCapacity: number): number {
+  if (!(capacityBytes > 0) || !(maxCapacity > 0)) return 1;
+  return Math.max(1, Math.min(10, Math.round((capacityBytes / maxCapacity) * 10)));
+}
+
+/** Pixel radius from the 1–10 scale: 6 at 1, 24 at 10, so a 12 TB blob reads as huge. */
+export function volumeRadius(capacityBytes: number, _minCapacity: number, maxCapacity: number): number {
+  const scale = volumeSizeScale(capacityBytes, maxCapacity);
+  return Math.round(6 + ((scale - 1) / 9) * 18);
+}
+
+/** Orange → red fill once a disk/volume is 80%+ full. Below that, keep the kind colour. */
+export function usedHeatColor(base: string, usedPct: number | null | undefined): string {
+  if (usedPct == null || usedPct < 80) return base;
+  const t = Math.max(0, Math.min(1, (usedPct - 80) / 20));
+  const a = [255, 159, 67];
+  const b = [220, 53, 34];
+  const r = Math.round(a[0] + (b[0] - a[0]) * t);
+  const g = Math.round(a[1] + (b[1] - a[1]) * t);
+  const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+  return `rgb(${r},${g},${bl})`;
 }
 
 export function isMachineItem(it: {
@@ -272,6 +292,10 @@ export function parseServices(attrs: Attrs): ServiceRec[] {
   for (const x of parseJsonOrList(attrs?.units)) add(asService(x, "systemd"));
   for (const x of parseJsonOrList(attrs?.systemd)) add(asService(x, "systemd"));
   for (const x of parseJsonOrList(attrs?.launchd)) add(asService(x, "launchd"));
+  for (const x of parseJsonOrList(attrs?.node)) {
+    if (typeof x === "string" && /^https?:\/\//i.test(x.trim())) continue;
+    add(asService(x, "node"));
+  }
   for (const [key, val] of Object.entries(attrs ?? {})) {
     if (!key.startsWith("svc.") || key.length < 5) continue;
     const name = key.slice(4);
@@ -325,8 +349,11 @@ export function parseWeb(attrs: Attrs): WebRec[] {
     out.push(w);
   };
   for (const x of parseJsonOrList(attrs?.ports)) add(asWeb(x));
-  for (const key of ["urls", "url", "web"] as const) {
+  for (const key of ["urls", "url", "web", "pwa", "apps", "pages", "websites", "website"] as const) {
     for (const x of parseJsonOrList(attrs?.[key])) add(asWeb(x));
+  }
+  for (const x of parseJsonOrList(attrs?.node)) {
+    if (typeof x === "string" && /^https?:\/\//i.test(x.trim())) add(asWeb(x));
   }
   return out;
 }

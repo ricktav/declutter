@@ -20,13 +20,14 @@ import { formatBytes } from "@/components/storage/Blocks";
 import { RatingStars } from "@/components/RatingStars";
 import {
   buildSystemsGraph,
+  classifyHub,
   type GraphComputer,
   type GraphItem,
   type GraphNode,
   type GraphVolume,
   type ItemScope,
 } from "@/lib/systemsGraph";
-import { type Importance, type Rating } from "@/lib/systemsAttrs";
+import { parseRating, type Importance, type Rating } from "@/lib/systemsAttrs";
 
 type SimNode = SimulationNodeDatum & GraphNode;
 type SimLink = SimulationLinkDatum<SimNode> & { strength: number; cross?: boolean; tight?: boolean };
@@ -94,6 +95,12 @@ const SCOPE_OPTS: { id: ItemScope; label: string }[] = [
   { id: "all", label: "All Computers items" },
 ];
 
+function runtimeChipLabel(k: string): string {
+  if (k === "docker") return "containers";
+  if (k === "web") return "web / PWA";
+  return k;
+}
+
 const HUB_TYPES = new Set(["center", "machine", "network", "other"]);
 const LEAF_TYPES = new Set(["service", "web", "disk", "volume"]);
 
@@ -135,6 +142,9 @@ export default function SystemsPage() {
   const [view, setView] = useState<"systems" | "services">("systems");
   const [scope, setScope] = useState<ItemScope>("machines");
   const [runtime, setRuntime] = useState<string | null>(null);
+  const [minRating, setMinRating] = useState<Rating>(1);
+  const [focusItemId, setFocusItemId] = useState<number | null>(null);
+  const [detailSide, setDetailSide] = useState<"left" | "right">("right");
   const [selected, setSelected] = useState<GraphNode | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; node: GraphNode } | null>(null);
   const [legendKinds, setLegendKinds] = useState<string[]>([]);
@@ -239,6 +249,15 @@ export default function SystemsPage() {
     return ids;
   }, [computers]);
 
+  const machineOptions = useMemo(
+    () =>
+      graphItems
+        .filter((it) => classifyHub(it, volumeItemIds) === "machine")
+        .map((it) => ({ id: it.id, name: it.name, rating: parseRating(it.attributes) }))
+        .sort((a, b) => b.rating - a.rating || a.name.localeCompare(b.name)),
+    [graphItems, volumeItemIds],
+  );
+
   const graph = useMemo(
     () =>
       buildSystemsGraph({
@@ -250,14 +269,15 @@ export default function SystemsPage() {
         relations,
         scope,
         volumeItemIds,
+        minRating,
+        focusItemId,
       }),
-    [graphItems, computers, view, runtime, centerLabel, relations, scope, volumeItemIds],
+    [graphItems, computers, view, runtime, centerLabel, relations, scope, volumeItemIds, minRating, focusItemId],
   );
 
   useEffect(() => {
     if (view !== "services") return;
-    if (runtime && graph.runtimes.includes(runtime)) return;
-    setRuntime(graph.runtimes[0] ?? null);
+    if (runtime && !graph.runtimes.includes(runtime)) setRuntime(null);
   }, [view, runtime, graph.runtimes]);
 
   const patchAttrs = trpc.items.patchAttributes.useMutation({
@@ -487,7 +507,12 @@ export default function SystemsPage() {
             tags: d.tags,
             lines: d.lines,
             href: d.href,
+            usedPct: d.usedPct,
           };
+          const { w: W } = sizeRef.current;
+          const svgEl = svgRef.current;
+          const screenX = svgEl ? ev.clientX - svgEl.getBoundingClientRect().left : ev.clientX;
+          setDetailSide(screenX > W / 2 ? "left" : "right");
           setSelected(copy);
           applyHighlight(d.id);
         }
@@ -517,14 +542,19 @@ export default function SystemsPage() {
 
     nodesRef.current = nodes;
     let fitted = false;
-    sim.on("end", () => {
-      if (fitted) return;
-      fitted = true;
+    const applyFit = (animate: boolean) => {
       const svgEl = svgRef.current;
       const z = zoomRef.current;
       if (!svgEl || !z) return;
       const { w: W, h: H } = sizeRef.current;
-      select(svgEl).transition().duration(550).call(z.transform, fitTransform(nodes, W, H));
+      const t = fitTransform(nodes, W, H);
+      if (animate) select(svgEl).transition().duration(400).call(z.transform, t);
+      else select(svgEl).call(z.transform, t);
+    };
+    applyFit(false);
+    sim.on("end", () => {
+      fitted = true;
+      applyFit(true);
     });
     sim.on("tick", () => {
       linkSel
@@ -538,6 +568,7 @@ export default function SystemsPage() {
       for (const n of nodes) {
         if (n.x != null && n.y != null) posRef.current.set(n.id, { x: n.x, y: n.y });
       }
+      if (!fitted) applyFit(false);
     });
 
     simRef.current = sim;
@@ -597,25 +628,43 @@ export default function SystemsPage() {
               {v === "systems" ? "Systems" : "Services"}
             </button>
           ))}
-          {view === "services" &&
-            graph.runtimes.map((k) => (
+          {view === "services" && (
+            <>
               <button
-                key={k}
                 type="button"
                 onClick={() => {
                   posRef.current.clear();
                   setSelected(null);
-                  setRuntime(k);
+                  setRuntime(null);
                 }}
                 className={`px-3 py-1.5 rounded-full border text-[0.8em] font-medium transition-colors ${
-                  runtime === k
+                  runtime == null
                     ? "bg-[#ff6b35] text-white border-[#ff6b35]"
                     : "bg-[#1a1a1a] text-[#888] border-[#333] hover:border-[#ff6b35] hover:text-[#ff6b35]"
                 }`}
               >
-                {k}
+                all
               </button>
-            ))}
+              {graph.runtimes.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    posRef.current.clear();
+                    setSelected(null);
+                    setRuntime(k);
+                  }}
+                  className={`px-3 py-1.5 rounded-full border text-[0.8em] font-medium transition-colors ${
+                    runtime === k
+                      ? "bg-[#ff6b35] text-white border-[#ff6b35]"
+                      : "bg-[#1a1a1a] text-[#888] border-[#333] hover:border-[#ff6b35] hover:text-[#ff6b35]"
+                  }`}
+                >
+                  {runtimeChipLabel(k)}
+                </button>
+              ))}
+            </>
+          )}
         </div>
         <div className="flex rounded-full border border-[#333] overflow-hidden text-[11px] font-medium">
           {SCOPE_OPTS.map((opt) => (
@@ -651,6 +700,40 @@ export default function SystemsPage() {
             </option>
           ))}
         </select>
+        <select
+          className="rounded-full bg-[#1a1a1a] border border-[#333] px-3 py-1.5 text-[12px] text-[#e0e0e0] max-w-[220px]"
+          value={focusItemId ?? ""}
+          title="Focus one machine and its backs-up neighbours"
+          onChange={(e) => {
+            posRef.current.clear();
+            setSelected(null);
+            setFocusItemId(e.target.value === "" ? null : Number(e.target.value));
+          }}
+        >
+          <option value="">All systems</option>
+          {machineOptions.map((m) => (
+            <option key={m.id} value={m.id}>
+              {"★".repeat(m.rating)} {m.name}
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-2 text-[12px] text-[#888] whitespace-nowrap" title="Hide machines below this rating">
+          <span className="text-[#e0e0e0] font-medium">★{minRating}+</span>
+          <input
+            type="range"
+            min={1}
+            max={5}
+            step={1}
+            value={minRating}
+            aria-label="Minimum rating"
+            className="w-20 accent-[#ff6b35]"
+            onChange={(e) => {
+              posRef.current.clear();
+              setSelected(null);
+              setMinRating(Number(e.target.value) as Rating);
+            }}
+          />
+        </label>
         <div className="ml-auto flex items-center gap-4 text-[0.8em] text-[#666]">
           <span>
             <span className="text-[#ff6b35] font-semibold">{leafCount}</span> nodes
@@ -688,13 +771,15 @@ export default function SystemsPage() {
 
         {ready && hubCount === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-[#888] text-sm px-8 text-center">
-            {houseFilter !== "all"
-              ? "No machines in this house. Try All houses — most computers live in another house."
-              : scope === "all"
-                ? "No Computers items in this house."
-                : scope === "network"
-                  ? "No machines or network gear in this house."
-                  : "No machines in this house. Peripherals stay out; network gear is under Incl. network."}
+            {focusItemId != null || minRating > 1
+              ? "No systems match this rating or selector. Lower ★ or pick All systems."
+              : houseFilter !== "all"
+                ? "No machines in this house. Try All houses — most computers live in another house."
+                : scope === "all"
+                  ? "No Computers items in this house."
+                  : scope === "network"
+                    ? "No machines or network gear in this house."
+                    : "No machines in this house. Peripherals stay out; network gear is under Incl. network."}
           </div>
         )}
 
@@ -756,7 +841,11 @@ export default function SystemsPage() {
         </div>
 
         {selected && selected.type !== "center" && (
-          <aside className="absolute top-3 right-3 w-[min(280px,calc(100%-1.5rem))] rounded-[10px] border border-[#2a2a2a] bg-[rgba(26,26,26,.95)] p-4 z-20 backdrop-blur-sm max-h-[min(70vh,520px)] overflow-y-auto">
+          <aside
+            className={`absolute top-3 w-[min(280px,calc(100%-1.5rem))] rounded-[10px] border border-[#2a2a2a] bg-[rgba(26,26,26,.95)] p-4 z-20 backdrop-blur-sm max-h-[min(70vh,520px)] overflow-y-auto ${
+              detailSide === "left" ? "left-3" : "right-3"
+            }`}
+          >
             <div className="flex items-start justify-between gap-2">
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-[#888] font-semibold">{selected.type}</div>

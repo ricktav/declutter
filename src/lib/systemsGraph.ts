@@ -2,6 +2,8 @@ import {
   guessServiceKind,
   hubRadius,
   volumeRadius,
+  volumeSizeScale,
+  usedHeatColor,
   isMachineItem,
   isNetworkItem,
   isOtherComputersItem,
@@ -10,6 +12,8 @@ import {
   parseServices,
   parseWeb,
   SERVICE_ROLES,
+  CONTAINER_ROLES,
+  WEB_ROLES,
   type Attrs,
   type Importance,
   type Rating,
@@ -34,7 +38,7 @@ export const KIND_LABEL: Record<string, string> = {
   network: "Network",
   other: "Other",
   service: "Services",
-  web: "Web / ports",
+  web: "Web / PWA",
   disk: "Disks",
   volume: "Volumes",
 };
@@ -96,6 +100,7 @@ export type GraphNode = {
   tags: string[];
   lines: { k: string; v: string }[];
   href?: string;
+  usedPct?: number | null;
 };
 
 export type GraphLink = {
@@ -151,13 +156,17 @@ function machineLines(it: GraphItem): { k: string; v: string }[] {
 
 function servicesOf(m: GraphItem, kids: GraphItem[]): ServiceRec[] {
   const fromKids: ServiceRec[] = kids
-    .filter((c) => SERVICE_ROLES.has(attr(c, "role") ?? ""))
+    .filter((c) => {
+      const role = attr(c, "role") ?? "";
+      return SERVICE_ROLES.has(role) || CONTAINER_ROLES.has(role);
+    })
     .map((c) => {
+      const role = attr(c, "role") ?? "";
       const portRaw = attr(c, "port");
       const portN = portRaw != null ? Number(portRaw) : NaN;
       return {
         name: c.name,
-        kind: attr(c, "kind") ?? guessServiceKind(c.name),
+        kind: CONTAINER_ROLES.has(role) ? "docker" : (attr(c, "kind") ?? guessServiceKind(c.name)),
         status: attr(c, "status") ?? undefined,
         port: Number.isFinite(portN) && portN > 0 ? portN : undefined,
         url: attr(c, "url") ?? undefined,
@@ -179,6 +188,29 @@ function webKey(w: WebRec): string {
   return (w.url ?? `${w.port ?? ""}:${w.label}`).toLowerCase();
 }
 
+function webOf(m: GraphItem, kids: GraphItem[]): WebRec[] {
+  const fromKids: WebRec[] = kids
+    .filter((c) => WEB_ROLES.has(attr(c, "role") ?? ""))
+    .map((c) => {
+      const portRaw = attr(c, "port");
+      const portN = portRaw != null ? Number(portRaw) : NaN;
+      return {
+        label: c.name,
+        url: attr(c, "url") ?? undefined,
+        port: Number.isFinite(portN) && portN > 0 ? portN : undefined,
+      };
+    });
+  const seen = new Set<string>();
+  const out: WebRec[] = [];
+  for (const w of [...parseWeb(m.attributes), ...fromKids]) {
+    const k = webKey(w);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(w);
+  }
+  return out;
+}
+
 function volumesForMachine(c: GraphComputer | undefined): GraphVolume[] {
   if (!c) return [];
   const out = [...c.volumes];
@@ -187,22 +219,24 @@ function volumesForMachine(c: GraphComputer | undefined): GraphVolume[] {
   return out;
 }
 
-function volumeNode(v: GraphVolume, radius: number): GraphNode {
+function volumeNode(v: GraphVolume, radius: number, scale: number): GraphNode {
   const usedPct = v.capacityBytes > 0 ? Math.round((v.usedBytes / v.capacityBytes) * 100) : null;
   return {
     id: `vol:${v.id}`,
     type: "volume",
     label: (v.label || v.mountPoint).slice(0, 28),
     radius,
-    color: KIND_COLOR.volume,
+    color: usedHeatColor(KIND_COLOR.volume, usedPct),
     dimmed: false,
     itemId: v.itemId,
     volumeId: v.id,
-    tags: [v.dataRole ?? "volume", usedPct != null ? `${usedPct}%` : "", `${radius}/10`].filter(Boolean),
+    usedPct,
+    tags: [v.dataRole ?? "volume", usedPct != null ? `${usedPct}%` : "", `${scale}/10`].filter(Boolean),
     lines: [
       { k: "mount", v: v.mountPoint },
       { k: "used", v: `${fmtGb(v.usedBytes)} / ${fmtGb(v.capacityBytes)}` },
-      { k: "size", v: `${radius}/10` },
+      { k: "size", v: `${scale}/10` },
+      ...(usedPct != null ? [{ k: "full", v: `${usedPct}%` }] : []),
       ...(v.dataRole ? [{ k: "role", v: v.dataRole }] : []),
       ...(v.dirCount ? [{ k: "dirs", v: String(v.dirCount) }] : []),
     ],
@@ -220,18 +254,24 @@ function diskNode(d: { id: number; name: string; attributes?: Attrs }): GraphNod
   const free = str("storage_free_gb");
   const mount = str("mount_point");
   const driveType = str("drive_type");
+  const gbN = gb != null ? Number(gb) : NaN;
+  const freeN = free != null ? Number(free) : NaN;
+  const usedPct =
+    Number.isFinite(gbN) && gbN > 0 && Number.isFinite(freeN) ? Math.round(((gbN - freeN) / gbN) * 100) : null;
   return {
     id: `disk:i${d.id}`,
     type: "disk",
     label: d.name.slice(0, 28),
     radius: 7,
-    color: KIND_COLOR.disk,
+    color: usedHeatColor(KIND_COLOR.disk, usedPct),
     dimmed: false,
     itemId: d.id,
-    tags: [driveType ?? "drive"].filter(Boolean),
+    usedPct,
+    tags: [driveType ?? "drive", usedPct != null ? `${usedPct}%` : ""].filter(Boolean),
     lines: [
       ...(mount ? [{ k: "mount", v: mount }] : []),
       ...(gb ? [{ k: "storage", v: free ? `${gb} GB (${free} free)` : `${gb} GB` }] : []),
+      ...(usedPct != null ? [{ k: "full", v: `${usedPct}%` }] : []),
     ],
     href: `/items/${d.id}`,
   };
@@ -247,7 +287,7 @@ function attachStorage(
   nodes: GraphNode[],
   links: GraphLink[],
   counts: Record<string, number>,
-  radiusFor: (v: GraphVolume) => number,
+  radiusFor: (v: GraphVolume) => { r: number; scale: number },
 ) {
   const volsByItem = new Map<number, GraphVolume[]>();
   for (const v of vols) {
@@ -263,7 +303,7 @@ function attachStorage(
     const itemVols = (volsByItem.get(itemId) ?? []).slice(0, MAX_VOL);
     if (itemId === machineId) {
       for (const v of itemVols) {
-        const leaf = volumeNode(v, radiusFor(v));
+        const leaf = volumeNode(v, radiusFor(v).r, radiusFor(v).scale);
         nodes.push(leaf);
         counts.volume = (counts.volume ?? 0) + 1;
         links.push({ source: hubId, target: leaf.id, strength: 0.7, tight: true });
@@ -277,7 +317,7 @@ function attachStorage(
     disks += 1;
     links.push({ source: hubId, target: disk.id, strength: 0.3 });
     for (const v of itemVols) {
-      const leaf = volumeNode(v, radiusFor(v));
+      const leaf = volumeNode(v, radiusFor(v).r, radiusFor(v).scale);
       nodes.push(leaf);
       counts.volume = (counts.volume ?? 0) + 1;
       links.push({ source: disk.id, target: leaf.id, strength: 0.7, tight: true });
@@ -331,13 +371,18 @@ export function collectRuntimes(
   volumeIds: Set<number>,
 ): string[] {
   const counts = new Map<string, number>();
+  let web = 0;
   for (const it of items) {
     if (!isMachineItem({ ...it, hasVolumes: volumeIds.has(it.id) })) continue;
-    for (const s of servicesOf(it, childrenByParent.get(it.id) ?? [])) {
+    const kids = childrenByParent.get(it.id) ?? [];
+    for (const s of servicesOf(it, kids)) {
       counts.set(s.kind, (counts.get(s.kind) ?? 0) + 1);
     }
+    web += webOf(it, kids).length;
   }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const kinds = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  if (web > 0 && !kinds.includes("web")) kinds.push("web");
+  return kinds;
 }
 
 export function classifyHub(it: GraphItem, volumeIds: Set<number>): HubType | null {
@@ -380,11 +425,20 @@ function makeHubNode(it: GraphItem, type: HubType, subnodes: number): GraphNode 
 
 function hubSubnodes(m: GraphItem, kids: GraphItem[], computer: GraphComputer | undefined): number {
   const services = servicesOf(m, kids);
-  const web = parseWeb(m.attributes);
+  const web = webOf(m, kids);
   const childDisks = kids.filter((c) => attr(c, "role") === "storage");
   const vols = volumesForMachine(computer);
   const diskIds = new Set([...vols.map((v) => v.itemId), ...childDisks.map((d) => d.id)].filter((id) => id !== m.id));
   return services.length + web.length + diskIds.size + vols.length;
+}
+
+function unusedWeb(services: ServiceRec[], web: WebRec[]): WebRec[] {
+  const used = new Set<string>();
+  for (const s of services) {
+    if (s.url) used.add(s.url.toLowerCase());
+    if (s.port != null) used.add(`:${s.port}`);
+  }
+  return web.filter((w) => !used.has(webKey(w)) && !used.has(w.port != null ? `:${w.port}` : ""));
 }
 
 export function buildSystemsGraph(opts: {
@@ -396,9 +450,13 @@ export function buildSystemsGraph(opts: {
   relations?: { fromItemId: number; toItemId: number }[];
   scope?: ItemScope;
   volumeItemIds?: Iterable<number>;
+  minRating?: Rating;
+  focusItemId?: number | null;
 }): BuiltGraph {
-  const { items, computers, view, runtime, centerLabel, relations } = opts;
+  const { items, computers, view, runtime, relations } = opts;
   const scope = opts.scope ?? "machines";
+  const minRating = opts.minRating ?? 1;
+  const focusItemId = opts.focusItemId ?? null;
   const volumeIds = new Set(opts.volumeItemIds ?? []);
   const childrenByParent = new Map<number, GraphItem[]>();
   for (const it of items) {
@@ -409,12 +467,26 @@ export function buildSystemsGraph(opts: {
   }
   const computersById = new Map(computers.map((c) => [c.id, c]));
   const runtimes = collectRuntimes(items, childrenByParent, volumeIds);
-  const hubs: { it: GraphItem; type: HubType }[] = [];
+  let hubs: { it: GraphItem; type: HubType }[] = [];
   for (const it of items) {
     const type = classifyHub(it, volumeIds);
     if (!type || !hubAllowed(type, scope)) continue;
     hubs.push({ it, type });
   }
+  if (focusItemId != null) {
+    const ids = new Set<number>([focusItemId]);
+    for (const r of relations ?? []) {
+      if (r.fromItemId === focusItemId) ids.add(r.toItemId);
+      if (r.toItemId === focusItemId) ids.add(r.fromItemId);
+    }
+    hubs = hubs.filter((h) => ids.has(h.it.id));
+  }
+  hubs = hubs.filter((h) => (focusItemId != null && h.it.id === focusItemId) || parseRating(h.it.attributes) >= minRating);
+  const focusName =
+    focusItemId != null
+      ? (hubs.find((h) => h.it.id === focusItemId)?.it.name ?? items.find((i) => i.id === focusItemId)?.name ?? null)
+      : null;
+  const centerLabel = focusName ?? opts.centerLabel;
 
   const nodes: GraphNode[] = [];
   const links: GraphLink[] = [];
@@ -424,14 +496,22 @@ export function buildSystemsGraph(opts: {
     const kind = runtime;
     const machines = hubs.filter((h) => h.type === "machine");
     const matching = (m: GraphItem) => {
-      const all = servicesOf(m, childrenByParent.get(m.id) ?? []);
-      return kind ? all.filter((s) => s.kind === kind) : all;
+      const kids = childrenByParent.get(m.id) ?? [];
+      const all = servicesOf(m, kids);
+      const webs = webOf(m, kids);
+      if (kind === "web") return { services: [] as ServiceRec[], web: webs };
+      if (kind) return { services: all.filter((s) => s.kind === kind), web: [] as WebRec[] };
+      return { services: all, web: unusedWeb(all, webs) };
     };
-    const totalLeaves = machines.reduce((s, h) => s + matching(h.it).length, 0);
+    const totalLeaves = machines.reduce((s, h) => {
+      const m = matching(h.it);
+      return s + m.services.length + m.web.length;
+    }, 0);
+    const runtimeLabel = kind === "web" ? "Web / PWA" : kind === "docker" ? "containers" : kind ?? "Services";
     nodes.push({
       id: "__center__",
       type: "center",
-      label: kind ?? "Services",
+      label: runtimeLabel,
       radius: Math.max(22, Math.min(40, hubRadius(Math.max(machines.length, totalLeaves), 4))),
       color: KIND_COLOR.runtime,
       dimmed: false,
@@ -442,8 +522,8 @@ export function buildSystemsGraph(opts: {
     // on them — otherwise live data with empty service attributes looks like
     // "no computers in this house".
     for (const { it: m } of machines) {
-      const services = matching(m);
-      const n = makeHubNode(m, "machine", services.length);
+      const { services, web } = matching(m);
+      const n = makeHubNode(m, "machine", services.length + web.length);
       nodes.push(n);
       counts.machine += 1;
       links.push({ source: "__center__", target: n.id, strength: 0.8 });
@@ -451,6 +531,12 @@ export function buildSystemsGraph(opts: {
         const leaf = serviceNode(m.id, s, i);
         nodes.push(leaf);
         counts.service += 1;
+        links.push({ source: n.id, target: leaf.id, strength: 0.3 });
+      });
+      web.slice(0, MAX_WEB).forEach((w, i) => {
+        const leaf = webNode(m.id, w, i);
+        nodes.push(leaf);
+        counts.web += 1;
         links.push({ source: n.id, target: leaf.id, strength: 0.3 });
       });
     }
@@ -471,7 +557,10 @@ export function buildSystemsGraph(opts: {
     const caps = shownVols.map((v) => v.capacityBytes).filter((b) => b > 0);
     const minCap = caps.length ? Math.min(...caps) : 0;
     const maxCap = caps.length ? Math.max(...caps) : 0;
-    const radiusFor = (v: GraphVolume) => volumeRadius(v.capacityBytes, minCap, maxCap);
+    const radiusFor = (v: GraphVolume) => ({
+      r: volumeRadius(v.capacityBytes, minCap, maxCap),
+      scale: volumeSizeScale(v.capacityBytes, maxCap),
+    });
     for (const { it: m, type } of hubs) {
       const kids = childrenByParent.get(m.id) ?? [];
       const n = makeHubNode(m, type, hubSubnodes(m, kids, computersById.get(m.id)));
@@ -482,12 +571,7 @@ export function buildSystemsGraph(opts: {
 
       const childDisks = kids.filter((c) => attr(c, "role") === "storage");
       const services = servicesOf(m, kids);
-      const usedWeb = new Set<string>();
-      for (const s of services) {
-        if (s.url) usedWeb.add(s.url.toLowerCase());
-        if (s.port != null) usedWeb.add(`:${s.port}`);
-      }
-      const web = parseWeb(m.attributes).filter((w) => !usedWeb.has(webKey(w)) && !usedWeb.has(w.port != null ? `:${w.port}` : ""));
+      const web = unusedWeb(services, webOf(m, kids));
       for (const [i, s] of services.slice(0, MAX_SVC).entries()) {
         const leaf = serviceNode(m.id, s, i);
         nodes.push(leaf);
