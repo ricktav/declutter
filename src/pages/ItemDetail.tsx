@@ -43,6 +43,8 @@ import type { AttributeDef } from "@db/schema";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
 import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs";
+import { RatingStars } from "@/components/RatingStars";
+import { isMachineItem, parseRating, type Rating } from "@/lib/systemsAttrs";
 
 type AttrClash = inferRouterOutputs<AppRouter>["items"]["findAttributeDuplicates"]["clashes"][number];
 
@@ -316,6 +318,7 @@ export default function ItemDetail() {
   });
   const setParent = trpc.items.setParent.useMutation({ onSuccess: invalidate });
   const createChild = trpc.items.create.useMutation({ onSuccess: invalidate });
+  const patchAttrs = trpc.items.patchAttributes.useMutation({ onSuccess: invalidate });
 
   if (item.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
   if (!item.data) return <div className="p-8 text-sm">Item not found.</div>;
@@ -479,6 +482,21 @@ export default function ItemDetail() {
                 update.mutate({ id: itemId, description: e.target.value });
             }}
           />
+          {isMachineItem({
+            attributes: it.attributes,
+            areaSlug: it.area?.slug,
+            parentId: it.parentId,
+            status: it.status,
+          }) && (
+            <div className="mt-1.5 flex items-center gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">Systems rating</span>
+              <RatingStars
+                value={parseRating(it.attributes)}
+                disabled={patchAttrs.isPending}
+                onChange={(n: Rating) => patchAttrs.mutate({ id: itemId, set: { rating: n } })}
+              />
+            </div>
+          )}
         </div>
         <div className="flex gap-1.5 shrink-0">
           <div className="flex rounded-md border border-input overflow-hidden mr-1" title="Prev/next item in this area (← / →)">

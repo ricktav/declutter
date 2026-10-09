@@ -27,6 +27,9 @@
  * A port/url already named on a service is not duplicated as a web node.
  *
  * Disks: storage.overview volumes, plus child Things with role storage.
+ *
+ * Rating (1–5 stars), attribute `rating`. Fallback from importance:
+ *   kern=5, ondersteunend=3, proef=2, afvoeren=1. Default 3.
  */
 export const IMPORTANCE = ["kern", "ondersteunend", "proef", "afvoeren"] as const;
 export type Importance = (typeof IMPORTANCE)[number];
@@ -121,6 +124,34 @@ export function parseImportance(attrs: Attrs): Importance | null {
   const v = attrStr(attrs, "importance")?.trim().toLowerCase();
   if (v && (IMPORTANCE as readonly string[]).includes(v)) return v as Importance;
   return null;
+}
+
+export type Rating = 1 | 2 | 3 | 4 | 5;
+
+const IMP_RATING: Record<Importance, Rating> = {
+  kern: 5,
+  ondersteunend: 3,
+  proef: 2,
+  afvoeren: 1,
+};
+
+/** 1–5 from `rating`, else importance, else 3. */
+export function parseRating(attrs: Attrs): Rating {
+  const raw = attrs?.rating;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (Number.isInteger(n) && n >= 1 && n <= 5) return n as Rating;
+  const imp = parseImportance(attrs);
+  if (imp) return IMP_RATING[imp];
+  return 3;
+}
+
+/** Hub size: subnode count (services + disks + ports + volumes) times rating. */
+export function hubRadius(subnodes: number, rating: Rating): number {
+  const MIN = 12;
+  const MAX = 36;
+  const byCount = MIN + Math.sqrt(Math.max(0, subnodes)) * 5.5;
+  const g = 0.72 + (rating / 5) * 0.48;
+  return Math.round(Math.max(MIN, Math.min(MAX, byCount * g)));
 }
 
 export function isMachineItem(it: {
@@ -293,7 +324,7 @@ export function parseWeb(attrs: Attrs): WebRec[] {
 }
 
 export function machineRadius(importance: Importance | null): number {
-  if (importance === "kern") return 22;
-  if (importance === "proef") return 12;
-  return 16;
+  if (importance === "kern") return hubRadius(4, 5);
+  if (importance === "proef") return hubRadius(1, 2);
+  return hubRadius(2, 3);
 }

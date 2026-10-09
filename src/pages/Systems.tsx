@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Link } from "react-router";
 import {
   forceCenter,
@@ -17,6 +17,7 @@ import { drag } from "d3-drag";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
 import { formatBytes } from "@/components/storage/Blocks";
+import { RatingStars } from "@/components/RatingStars";
 import {
   buildSystemsGraph,
   type GraphComputer,
@@ -25,10 +26,10 @@ import {
   type GraphVolume,
   type ItemScope,
 } from "@/lib/systemsGraph";
-import type { Importance } from "@/lib/systemsAttrs";
+import { type Importance, type Rating } from "@/lib/systemsAttrs";
 
 type SimNode = SimulationNodeDatum & GraphNode;
-type SimLink = SimulationLinkDatum<SimNode> & { strength: number; cross?: boolean };
+type SimLink = SimulationLinkDatum<SimNode> & { strength: number; cross?: boolean; tight?: boolean };
 
 const IMP_STROKE: Record<Importance, { color: string; width: number }> = {
   kern: { color: "#fff", width: 3 },
@@ -94,16 +95,36 @@ const SCOPE_OPTS: { id: ItemScope; label: string }[] = [
 ];
 
 const HUB_TYPES = new Set(["center", "machine", "network", "other"]);
+const LEAF_TYPES = new Set(["service", "web", "disk", "volume"]);
+
+function fitTransform(nodes: { x?: number; y?: number; radius: number; type: string }[], w: number, h: number) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const n of nodes) {
+    const x = n.x ?? 0;
+    const y = n.y ?? 0;
+    const label = HUB_TYPES.has(n.type) && n.type !== "center" ? 16 : 0;
+    minX = Math.min(minX, x - n.radius);
+    maxX = Math.max(maxX, x + n.radius);
+    minY = Math.min(minY, y - n.radius);
+    maxY = Math.max(maxY, y + n.radius + label);
+  }
+  if (!Number.isFinite(minX)) return zoomIdentity;
+  const margin = 24;
+  const bw = Math.max(maxX - minX, 40);
+  const bh = Math.max(maxY - minY, 40);
+  const k = Math.min(Math.max(Math.min((w - margin * 2) / bw, (h - margin * 2) / bh), 0.12), 6);
+  return zoomIdentity.translate(w / 2, h / 2).scale(k).translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
+}
 
 export default function SystemsPage() {
-  const { houseId: ctxHouseId, houses } = useHouse();
-  const [houseFilter, setHouseFilter] = useState<number | "all">(() => ctxHouseId ?? "all");
-  const [seededFor, setSeededFor] = useState(ctxHouseId);
-  if (seededFor !== ctxHouseId) {
-    setSeededFor(ctxHouseId);
-    setHouseFilter(ctxHouseId ?? "all");
-  }
-  const houseIdArg = houseFilter === "all" ? null : houseFilter;
+  const { houses } = useHouse();
+  // Default to all houses: live machines mostly sit in house 2, while the
+  // header is often Thuis (house 1). null overrides x-house-id on the server.
+  const [houseFilter, setHouseFilter] = useState<number | "all">("all");
+  const houseIdArg: number | null = houseFilter === "all" ? null : houseFilter;
 
   const itemsQ = trpc.items.listAll.useQuery({ houseId: houseIdArg });
   const overviewQ = trpc.storage.overview.useQuery({ houseId: houseIdArg });
@@ -116,8 +137,11 @@ export default function SystemsPage() {
   const [runtime, setRuntime] = useState<string | null>(null);
   const [selected, setSelected] = useState<GraphNode | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; node: GraphNode } | null>(null);
+  const [legendKinds, setLegendKinds] = useState<string[]>([]);
+  const legendKindsRef = useRef<string[]>([]);
+  legendKindsRef.current = legendKinds;
 
-  const diskVolumeId = selected?.type === "disk" ? selected.volumeId ?? null : null;
+  const diskVolumeId = selected?.volumeId ?? null;
   const dirsQ = trpc.storage.dirs.useQuery({ volumeId: diskVolumeId ?? 0 }, { enabled: diskVolumeId != null });
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -128,13 +152,15 @@ export default function SystemsPage() {
   const posRef = useRef(new Map<string, { x: number; y: number }>());
   const selectedIdRef = useRef<string | null>(null);
   const applyHighlightRef = useRef<(id: string | null) => void>(() => {});
+  const fitRef = useRef<() => void>(() => {});
+  const nodesRef = useRef<SimNode[]>([]);
   const sizeRef = useRef({ w: 960, h: 640 });
   const [size, setSize] = useState({ w: 960, h: 640 });
 
   useEffect(() => {
     selectedIdRef.current = selected?.id ?? null;
     applyHighlightRef.current(selected?.id ?? null);
-  }, [selected]);
+  }, [selected, legendKinds]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -162,6 +188,7 @@ export default function SystemsPage() {
       attributes: GraphItem["attributes"];
       room: { name: string } | null;
     }>;
+    const houseName = new Map((housesQ.data ?? houses).map((h) => [h.id, h.name]));
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -169,11 +196,12 @@ export default function SystemsPage() {
       areaSlug: r.areaSlug,
       areaName: r.areaName,
       houseId: r.houseId,
+      houseName: r.houseId != null ? houseName.get(r.houseId) ?? null : null,
       status: r.status,
       attributes: r.attributes,
       roomName: r.room?.name ?? null,
     }));
-  }, [itemsQ.data]);
+  }, [itemsQ.data, housesQ.data, houses]);
 
   const computers: GraphComputer[] = useMemo(() => {
     const o = overviewQ.data as { computers: OverviewComputer[]; externals: OverviewDevice[] } | undefined;
@@ -229,32 +257,44 @@ export default function SystemsPage() {
   useEffect(() => {
     if (view !== "services") return;
     if (runtime && graph.runtimes.includes(runtime)) return;
-    setRuntime(graph.runtimes[0] ?? "node");
+    setRuntime(graph.runtimes[0] ?? null);
   }, [view, runtime, graph.runtimes]);
+
+  const patchAttrs = trpc.items.patchAttributes.useMutation({
+    onSuccess: () => {
+      void utils.items.listAll.invalidate();
+      void utils.items.get.invalidate();
+    },
+  });
 
   useEffect(() => {
     if (!svgRef.current || !gRef.current) return;
     const svgSel = select(svgRef.current);
     const gSel = select(gRef.current);
     const z = zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.2, 4])
+      .scaleExtent([0.12, 6])
       .on("zoom", (ev) => gSel.attr("transform", (ev.transform as ZoomTransform).toString()));
     svgSel.call(z);
     zoomRef.current = z;
-    const { w, h } = sizeRef.current;
-    svgSel.call(z.transform, zoomIdentity.translate(w / 2, h / 2).scale(0.8).translate(-w / 2, -h / 2));
     return () => {
       svgSel.on(".zoom", null);
     };
   }, []);
 
-  useEffect(() => {
+  const runFit = () => {
     const svgEl = svgRef.current;
     const z = zoomRef.current;
     if (!svgEl || !z) return;
-    const { w, h } = size;
-    select(svgEl).call(z.transform, zoomIdentity.translate(w / 2, h / 2).scale(0.8).translate(-w / 2, -h / 2));
-  }, [view, runtime, houseFilter, scope, size.w, size.h]);
+    const { w, h } = sizeRef.current;
+    const t = fitTransform(nodesRef.current, w, h);
+    select(svgEl).transition().duration(550).call(z.transform, t);
+  };
+  fitRef.current = runFit;
+
+  useEffect(() => {
+    if (!nodesRef.current.length) return;
+    fitRef.current();
+  }, [size.w, size.h]);
 
   useEffect(() => {
     if (!gRef.current || !svgRef.current) return;
@@ -277,6 +317,7 @@ export default function SystemsPage() {
           .distance((d) => {
             const s = d.source as SimNode | string;
             const src = typeof s === "object" ? s : null;
+            if (d.tight) return 40;
             if (src?.type === "center") return 180;
             if (d.cross) return 250;
             return 80;
@@ -320,7 +361,7 @@ export default function SystemsPage() {
       .attr("fill", (d) => d.color)
       .attr("fill-opacity", (d) => {
         if (d.dimmed) return 0.25;
-        return d.type === "service" || d.type === "web" || d.type === "disk" ? 0.8 : 1;
+        return LEAF_TYPES.has(d.type) ? 0.8 : 1;
       })
       .attr("stroke", (d) => nodeStroke(d).color)
       .attr("stroke-width", (d) => nodeStroke(d).width)
@@ -360,7 +401,7 @@ export default function SystemsPage() {
     const leafLabel = g
       .append("g")
       .selectAll<SVGTextElement, SimNode>("text")
-      .data(nodes.filter((d) => d.type === "service" || d.type === "web" || d.type === "disk"))
+      .data(nodes.filter((d) => LEAF_TYPES.has(d.type)))
       .join("text")
       .attr("text-anchor", "start")
       .attr("dx", 10)
@@ -372,28 +413,40 @@ export default function SystemsPage() {
       .text((d) => d.label);
 
     const applyHighlight = (id: string | null) => {
-      if (!id) {
+      const kinds = new Set(legendKindsRef.current);
+      const connected = new Set<string>();
+      if (kinds.size) {
+        for (const n of nodes) if (kinds.has(n.type)) connected.add(n.id);
+        for (const l of links) {
+          const sid = typeof l.source === "object" ? l.source.id : String(l.source);
+          const tid = typeof l.target === "object" ? l.target.id : String(l.target);
+          if (connected.has(sid)) connected.add(tid);
+          if (connected.has(tid)) connected.add(sid);
+        }
+      } else if (id) {
+        connected.add(id);
+        for (const l of links) {
+          const sid = typeof l.source === "object" ? l.source.id : String(l.source);
+          const tid = typeof l.target === "object" ? l.target.id : String(l.target);
+          if (sid === id) connected.add(tid);
+          if (tid === id) connected.add(sid);
+        }
+      }
+      if (connected.size === 0) {
         nodeSel.attr("opacity", (d) => (d.dimmed ? 0.45 : 1));
         linkSel.attr("stroke-opacity", (d) => (d.cross ? 0.3 : 0.6));
         leafLabel.attr("opacity", 0);
         hubLabel.attr("opacity", (d) => (d.dimmed ? 0.4 : 1));
         return;
       }
-      const connected = new Set<string>([id]);
-      for (const l of links) {
-        const sid = typeof l.source === "object" ? l.source.id : String(l.source);
-        const tid = typeof l.target === "object" ? l.target.id : String(l.target);
-        if (sid === id) connected.add(tid);
-        if (tid === id) connected.add(sid);
-      }
       nodeSel.attr("opacity", (d) => {
         if (connected.has(d.id)) return d.dimmed ? 0.5 : 1;
-        return 0.15;
+        return 0.12;
       });
       linkSel.attr("stroke-opacity", (d) => {
         const sid = typeof d.source === "object" ? d.source.id : String(d.source);
         const tid = typeof d.target === "object" ? d.target.id : String(d.target);
-        return sid === id || tid === id ? 0.8 : 0.02;
+        return connected.has(sid) && connected.has(tid) ? 0.8 : 0.02;
       });
       leafLabel.attr("opacity", (d) => (connected.has(d.id) ? 1 : 0));
       hubLabel.attr("opacity", (d) => (connected.has(d.id) ? 1 : 0.15));
@@ -404,7 +457,7 @@ export default function SystemsPage() {
     nodeSel
       .on("mouseover", (ev: MouseEvent, d) => {
         setTooltip({ x: ev.clientX, y: ev.clientY, node: d });
-        if (!selectedIdRef.current) applyHighlight(d.id);
+        if (!selectedIdRef.current && legendKindsRef.current.length === 0) applyHighlight(d.id);
       })
       .on("mousemove", (ev: MouseEvent) => {
         setTooltip((t) => (t ? { ...t, x: ev.clientX, y: ev.clientY } : t));
@@ -429,6 +482,7 @@ export default function SystemsPage() {
             itemId: d.itemId,
             volumeId: d.volumeId,
             importance: d.importance,
+            rating: d.rating,
             kind: d.kind,
             tags: d.tags,
             lines: d.lines,
@@ -454,12 +508,24 @@ export default function SystemsPage() {
       });
 
     select(svgRef.current).on("click.deselect", () => {
-      if (selectedIdRef.current) {
+      if (selectedIdRef.current || legendKindsRef.current.length) {
         setSelected(null);
+        setLegendKinds([]);
         applyHighlight(null);
       }
     });
 
+    nodesRef.current = nodes;
+    let fitted = false;
+    sim.on("end", () => {
+      if (fitted) return;
+      fitted = true;
+      const svgEl = svgRef.current;
+      const z = zoomRef.current;
+      if (!svgEl || !z) return;
+      const { w: W, h: H } = sizeRef.current;
+      select(svgEl).transition().duration(550).call(z.transform, fitTransform(nodes, W, H));
+    });
     sim.on("tick", () => {
       linkSel
         .attr("x1", (d) => (d.source as SimNode).x ?? 0)
@@ -484,6 +550,17 @@ export default function SystemsPage() {
 
   const ready = itemsQ.data && overviewQ.data;
   const leafCount = graph.nodes.filter((n) => n.type !== "center").length;
+  const hubCount = graph.nodes.filter((n) => n.type === "machine" || n.type === "network" || n.type === "other").length;
+
+  const toggleLegend = (type: string, ev: ReactMouseEvent) => {
+    const multi = ev.shiftKey || ev.metaKey || ev.ctrlKey;
+    setSelected(null);
+    setLegendKinds((prev) => {
+      if (multi) return prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type];
+      if (prev.length === 1 && prev[0] === type) return [];
+      return [type];
+    });
+  };
 
   const refresh = () => {
     void utils.items.listAll.invalidate();
@@ -568,8 +645,9 @@ export default function SystemsPage() {
         >
           <option value="all">All houses</option>
           {houseList.map((h) => (
-            <option key={h.id} value={h.id}>
+            <option key={h.id} value={h.id} title={`house id ${h.id}`}>
               {h.name}
+              {"itemCount" in h && typeof h.itemCount === "number" ? ` (${h.itemCount})` : ""}
             </option>
           ))}
         </select>
@@ -580,6 +658,14 @@ export default function SystemsPage() {
           <span>
             <span className="text-[#ff6b35] font-semibold">{graph.links.length}</span> connections
           </span>
+          <button
+            type="button"
+            title="Fit to view"
+            onClick={() => fitRef.current()}
+            className="rounded-md border border-[#333] px-2.5 py-1 text-[#888] hover:border-[#ff6b35] hover:text-[#ff6b35]"
+          >
+            Fit
+          </button>
           <button
             type="button"
             title="Refresh data"
@@ -600,13 +686,15 @@ export default function SystemsPage() {
           <div className="absolute inset-0 flex items-center justify-center text-[#888] text-sm">Loading systems…</div>
         )}
 
-        {ready && graph.nodes.length <= 1 && (
+        {ready && hubCount === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-[#888] text-sm px-8 text-center">
-            {scope === "all"
-              ? "No Computers items in this house."
-              : scope === "network"
-                ? "No machines or network gear in this house."
-                : "No machines in this house. Peripherals stay out; network gear is under Incl. network."}
+            {houseFilter !== "all"
+              ? "No machines in this house. Try All houses — most computers live in another house."
+              : scope === "all"
+                ? "No Computers items in this house."
+                : scope === "network"
+                  ? "No machines or network gear in this house."
+                  : "No machines in this house. Peripherals stay out; network gear is under Incl. network."}
           </div>
         )}
 
@@ -637,14 +725,25 @@ export default function SystemsPage() {
         {graph.legend.length > 0 && (
           <div className="absolute bottom-5 left-5 rounded-[10px] border border-[#2a2a2a] bg-[rgba(26,26,26,.95)] p-3.5 text-[0.75em] z-10">
             <div className="font-semibold text-[#888] mb-2 uppercase tracking-wide">
-              {view === "services" ? `Runtime · ${runtime ?? "—"}` : "Systems"}
+              {view === "services" ? `Runtime · ${runtime ?? "all"}` : "Systems"}
             </div>
-            {graph.legend.map((row) => (
-              <div key={row.type} className="flex items-center gap-2 my-1 text-[#888]">
-                <span className="h-3 w-3 rounded-full shrink-0" style={{ background: row.color }} />
-                {row.label} ({row.count})
-              </div>
-            ))}
+            {graph.legend.map((row) => {
+              const on = legendKinds.includes(row.type);
+              return (
+                <button
+                  key={row.type}
+                  type="button"
+                  onClick={(e) => toggleLegend(row.type, e)}
+                  className={`flex items-center gap-2 my-0.5 w-full text-left rounded px-1 py-0.5 ${
+                    on ? "text-[#e0e0e0] bg-white/10" : "text-[#888] hover:text-[#e0e0e0]"
+                  }`}
+                  title="Click to isolate · Shift/⌘ multi-select"
+                >
+                  <span className="h-3 w-3 rounded-full shrink-0" style={{ background: row.color, opacity: legendKinds.length && !on ? 0.3 : 1 }} />
+                  {row.label} ({row.count})
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -672,8 +771,29 @@ export default function SystemsPage() {
                 ×
               </button>
             </div>
+            {selected.itemId != null && (selected.type === "machine" || selected.type === "network" || selected.type === "other") && (
+              <div className="mt-3 flex items-center gap-2">
+                <span className="text-[11px] uppercase tracking-wide text-[#888] font-semibold">Rating</span>
+                <RatingStars
+                  dark
+                  value={selected.rating ?? 3}
+                  disabled={patchAttrs.isPending}
+                  onChange={(n: Rating) => {
+                    const id = selected.itemId!;
+                    patchAttrs.mutate({ id, set: { rating: n } });
+                    setSelected((s) => {
+                      if (!s) return s;
+                      const lines = s.lines.some((l) => l.k === "rating")
+                        ? s.lines.map((l) => (l.k === "rating" ? { k: "rating", v: `${n}/5` } : l))
+                        : [...s.lines, { k: "rating", v: `${n}/5` }];
+                      return { ...s, rating: n, lines };
+                    });
+                  }}
+                />
+              </div>
+            )}
             <dl className="mt-3 space-y-1.5 text-[13px]">
-              {selected.lines.map((row) => (
+              {selected.lines.filter((row) => row.k !== "rating").map((row) => (
                 <div key={row.k} className="flex gap-2">
                   <dt className="text-[#666] w-20 shrink-0">{row.k}</dt>
                   <dd className="text-[#e0e0e0] break-all">
@@ -697,7 +817,7 @@ export default function SystemsPage() {
                 ))}
               </div>
             )}
-            {selected.type === "disk" && diskVolumeId != null && (
+            {(selected.type === "disk" || selected.type === "volume") && diskVolumeId != null && (
               <div className="mt-3 border-t border-[#2a2a2a] pt-3">
                 <div className="text-[11px] uppercase tracking-wide text-[#888] font-semibold mb-1.5">Folders</div>
                 {dirsQ.isLoading && <div className="text-[#666] text-[12px]">Loading…</div>}
@@ -726,7 +846,7 @@ export default function SystemsPage() {
                 </a>
               ) : (
                 <Link to={selected.href} className="mt-4 inline-block text-[#ff6b35] text-[13px] italic hover:underline">
-                  {selected.type === "disk" && selected.volumeId != null ? "Open on Storage →" : "Open Thing →"}
+                  {selected.volumeId != null ? "Open on Storage →" : "Open Thing →"}
                 </Link>
               ))}
           </aside>
