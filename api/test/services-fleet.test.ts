@@ -32,10 +32,10 @@ describe("parseFleetDocument JSON", () => {
 });
 
 describe("claudemux HTML fixture", () => {
-  it("reads section.host projects + services and skips matrix, cron, unreachable, external routes", () => {
+  it("reads span.hname, mtx services-table, and every div.pd-row container", () => {
     const { hosts, skippedUnreachable } = parseFleetDocumentWithMeta(snippet);
-    expect(hosts.map((h) => h.host).sort()).toEqual(["dockermac", "macmini-m4"]);
-    expect(skippedUnreachable).toEqual(["macbook-air-m2"]);
+    expect(hosts.map((h) => h.host).sort()).toEqual(["dockermac", "dockermac-2", "macmini-m4", "prodesk-rt1"]);
+    expect(skippedUnreachable).toEqual(["macbook-air-m2", "mba-m4", "mbp"]);
 
     const mini = hosts.find((h) => h.host === "macmini-m4")!;
     expect(mini.ip).toBe("10.50.0.102");
@@ -43,16 +43,63 @@ describe("claudemux HTML fixture", () => {
     expect(mini.web.map((w) => w.label)).toEqual(["Workbench", "HomeBase", "Flow", "Photos", "Ping"]);
     expect(mini.web).toHaveLength(5);
 
+    const d2 = hosts.find((h) => h.host === "dockermac-2")!;
+    expect(d2.ip).toBe("10.50.0.109");
+    expect(d2.containers.map((c) => c.name)).toEqual([
+      "caddy",
+      "uptime-kuma",
+      "ntfy",
+      "authentik",
+      "minio",
+      "gitea",
+      "changedetection",
+    ]);
+    expect(d2.web).toHaveLength(6);
+
     const dock = hosts.find((h) => h.host === "dockermac")!;
     expect(dock.ip).toBe("10.50.0.10");
-    expect(dock.containers.map((c) => c.name)).toEqual(["nginx", "caddy", "homeassistant"]);
-    expect(dock.containers[0].port).toBe(80);
-    expect(dock.web.map((w) => w.label)).toEqual(["Fleet", "Plugwise"]);
+    expect(dock.containers).toHaveLength(23);
+    expect(dock.containers[0]).toEqual({ name: "nginx", port: 80 });
+    expect(snippet.match(/class="cname[^"]*">nginx/g)?.length).toBe(2);
+    expect(dock.web).toHaveLength(20);
+
+    const pro = hosts.find((h) => h.host === "prodesk-rt1")!;
+    expect(pro.ip).toBe("10.50.0.142");
+    expect(pro.containers).toHaveLength(14);
+    expect(pro.web).toHaveLength(17);
 
     const names = hosts.flatMap((h) => [h.host, ...h.containers.map((c) => c.name)]);
     expect(names).not.toEqual(expect.arrayContaining(["ls", "echo", "docker", "plugwise", "crontab"]));
     expect(hosts.some((h) => h.web.some((w) => w.label === "Public site"))).toBe(false);
     expect(hosts.some((h) => h.web.some((w) => w.label === "should-not-import"))).toBe(false);
+  });
+
+  it("falls back to the first span in .hh-l when span.hname is missing", () => {
+    const html = `
+      <section class="host">
+        <div class="hh"><div class="hh-l"><span class="mono">lonely-box</span> host-9 · 10.50.0.9:8766 · responded</div></div>
+        <table class="mtx services-table">
+          <tr><th>label</th><th>url</th></tr>
+          <tr><td>Ping</td><td>http://10.50.0.9:1</td></tr>
+        </table>
+      </section>`;
+    const hosts = parseFleetDocument(html);
+    expect(hosts).toEqual([
+      expect.objectContaining({ host: "lonely-box", ip: "10.50.0.9", web: [expect.objectContaining({ label: "Ping" })] }),
+    ]);
+  });
+
+  it("falls back to the first container in tr.pdrow when there are no div.pd-row", () => {
+    const html = `
+      <section class="host">
+        <div class="hh"><div class="hh-l"><span class="hname mono">old-box</span> 10.9.9.9:8766</div></div>
+        <table class="projects">
+          <tr class="pdrow"><td><span class="pd-k">container</span> <span class="cname">alpha</span></td></tr>
+          <tr class="pdrow"><td><span class="pd-k">ports</span> 80</td></tr>
+          <tr class="pdrow"><td><span class="pd-k">container</span> <span class="cname">beta</span> <span class="port">:81</span></td></tr>
+        </table>
+      </section>`;
+    expect(parseFleetDocument(html)[0].containers.map((c) => c.name)).toEqual(["alpha", "beta"]);
   });
 
   it("does not treat a generic Host/Containers table as the fleet", () => {
@@ -104,5 +151,9 @@ describe("matchMachine", () => {
 
   it("prefers hostname over IP when they would disagree", () => {
     expect(matchMachine({ host: "macmini-m4", ip: "10.50.0.10" }, machines)?.id).toBe(2);
+  });
+
+  it("maps fleet hostname dockermac to dockermac-1 by exact IP", () => {
+    expect(matchMachine({ host: "dockermac", ip: "10.50.0.10" }, machines)?.id).toBe(1);
   });
 });

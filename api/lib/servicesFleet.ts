@@ -229,10 +229,35 @@ function uniqByName(xs: FleetContainer[]): FleetContainer[] {
   });
 }
 
+function extractClassBlocks(html: string, tag: string, className: string): string[] {
+  const out: string[] = [];
+  const openRe = new RegExp(`<${tag}\\b([^>]*)>`, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = openRe.exec(html))) {
+    if (!hasClass(`<${tag}${m[1]}>`, className)) continue;
+    const start = m.index + m[0].length;
+    let depth = 1;
+    const nest = new RegExp(`<${tag}\\b[^>]*>|</${tag}>`, "gi");
+    nest.lastIndex = start;
+    let n: RegExpExecArray | null;
+    while ((n = nest.exec(html))) {
+      if (n[0].slice(0, 2) === "</") depth -= 1;
+      else depth += 1;
+      if (depth === 0) {
+        out.push(html.slice(start, n.index));
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 function stripSkippedTables(html: string): string {
   return html.replace(/<table\b[\s\S]*?<\/table>/gi, (table) => {
     const open = table.match(/<table\b[^>]*>/i)?.[0] ?? "";
-    if (hasClass(open, "databases-table") || hasClass(open, "mtx")) return "";
+    if (hasClass(open, "databases-table") || hasClass(open, "timers")) return "";
+    // services tables are `class="mtx services-table"` — keep those
+    if (hasClass(open, "mtx") && !hasClass(open, "services-table")) return "";
     if (/\bdata-host\s*=/i.test(table)) return "";
     return table;
   });
@@ -243,33 +268,60 @@ function headerBlock(section: string): string {
   return start >= 0 ? section.slice(0, start) : section.slice(0, 4000);
 }
 
+function usableHostName(raw: string): string | null {
+  const name = innerText(raw);
+  if (!name || isJunkCell(name) || /^host-\d+$/i.test(name)) return null;
+  return name;
+}
+
 function headingName(header: string): string | null {
+  const hname = header.match(/<span\b[^>]*class=["'][^"']*\bhname\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
+  if (hname) {
+    const name = usableHostName(hname[1]);
+    if (name) return name;
+  }
+  const hhl = extractClassBlocks(header, "div", "hh-l")[0];
+  if (hhl) {
+    const span = hhl.match(/<span\b[^>]*>([\s\S]*?)<\/span>/i);
+    const name = usableHostName(span?.[1] ?? hhl);
+    if (name) return name;
+  }
   for (const re of [
     /<(?:h1|h2|h3)\b[^>]*>([\s\S]*?)<\/h[123]>/i,
     /<[^>]*class=["'][^"']*\bhostname\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i,
   ]) {
     const m = header.match(re);
     if (!m) continue;
-    const name = innerText(m[1]);
-    if (!name || isJunkCell(name) || /^host-\d+$/i.test(name)) continue;
-    return name;
+    const name = usableHostName(m[1]);
+    if (name) return name;
   }
   return null;
 }
 
+function parseOneContainer(block: string): FleetContainer | null {
+  const k = innerText(block.match(/<span\b[^>]*class=["'][^"']*\bpd-k\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
+  if (k.toLowerCase() !== "container") return null;
+  const name = innerText(block.match(/<span\b[^>]*class=["'][^"']*\bcname\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
+  if (!name || isJunkCell(name)) return null;
+  const portRaw = innerText(block.match(/<span\b[^>]*class=["'][^"']*\bport\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
+  const port = portOf(portRaw);
+  return { name, ...(port != null ? { port } : {}) };
+}
+
 function parsePdRows(html: string): FleetContainer[] {
   const out: FleetContainer[] = [];
-  for (const m of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
-    const open = `<tr${m[1]}>`;
-    if (!hasClass(open, "pdrow")) continue;
-    const row = m[2];
-    const k = innerText(row.match(/<span\b[^>]*class=["'][^"']*\bpd-k\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
-    if (k.toLowerCase() !== "container") continue;
-    const name = innerText(row.match(/<span\b[^>]*class=["'][^"']*\bcname\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
-    if (!name || isJunkCell(name)) continue;
-    const portRaw = innerText(row.match(/<span\b[^>]*class=["'][^"']*\bport\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
-    const port = portOf(portRaw);
-    out.push({ name, ...(port != null ? { port } : {}) });
+  const pdRows = extractClassBlocks(html, "div", "pd-row");
+  if (pdRows.length) {
+    for (const block of pdRows) {
+      const c = parseOneContainer(block);
+      if (c) out.push(c);
+    }
+  } else {
+    for (const m of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
+      if (!hasClass(`<tr${m[1]}>`, "pdrow")) continue;
+      const c = parseOneContainer(m[2]);
+      if (c) out.push(c);
+    }
   }
   return uniqByName(out);
 }
@@ -318,6 +370,7 @@ export function parseClaudemuxHosts(html: string): ParsedFleet {
     if (!hasClass(open, "host")) continue;
     const section = m[2];
     const header = headerBlock(section);
+    if (/external routes/i.test(innerText(header))) continue;
     const host = headingName(header);
     if (!host) continue;
     if (/external routes/i.test(host)) continue;
