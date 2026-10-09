@@ -19,6 +19,7 @@ import FocusPage from "@/pages/Focus";
 // when their route is visited.
 const RoomPlanPage = lazy(() => import("@/pages/RoomPlan"));
 const GalaxyPage = lazy(() => import("@/pages/Galaxy"));
+const SystemsPage = lazy(() => import("@/pages/Systems"));
 const StoragePage = lazy(() => import("@/pages/Storage"));
 const WikiPage = lazy(() => import("@/pages/Wiki"));
 const RoomsRedirect = lazy(() => import("@/pages/RoomsRedirect"));
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="/rooms" element={<RoomsRedirect />} />
             <Route path="/rooms/:roomId" element={<RoomPlanPage />} />
             <Route path="/galaxy" element={<GalaxyPage />} />
+            <Route path="/systems" element={<SystemsPage />} />
             <Route path="/storage" element={<StoragePage />} />
             <Route path="/ideas" element={<IdeasPage />} />
             <Route path="/tasks" element={<TasksPage />} />

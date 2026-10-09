@@ -72,6 +72,7 @@ Try it: `npm run dev` → open `/` → switch to **Simple** → pick a room → 
 | `/map`, `/rooms` | Redirect to the last or first room of the selected house |
 | `/rooms/:id` | Place plan (2D/3D), photo pool and pins |
 | `/galaxy` | Bubble view of the inventory by house, floor, room or topic |
+| `/systems` | Live mindmap of machines, services, ports and disks (tRPC; Systems / Services toggle) |
 | `/annotate/:photoId` | Photo pins, AI object detection |
 | `/ideas` | Idea board with AI task breakdown |
 | `/tasks` | Kanban with timers and time logs |

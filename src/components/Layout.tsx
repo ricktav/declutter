@@ -32,6 +32,7 @@ import {
   ChevronRight,
   Images,
   Network,
+  Share2,
   Smartphone,
   Zap,
   HardDrive,
@@ -143,13 +144,14 @@ const PRIMARY_NAV = [
 
 const VIEWS_NAV = [
   { to: "/galaxy", label: "Galaxy", icon: Network },
+  { to: "/systems", label: "Systems", icon: Share2 },
   { to: "/storage", label: "Storage", icon: HardDrive },
   { to: "/wiki", label: "Wiki", icon: BookOpen },
   { to: "/activity", label: "Activity", icon: History },
 ];
 
 const SIMPLE_NAV = new Set(["/focus", "/inbox", "/items", "/photos", "/settings"]);
-const HEAVY_PATHS = new Set(["/galaxy", "/storage", "/ideas", "/tasks", "/wiki", "/activity"]);
+const HEAVY_PATHS = new Set(["/galaxy", "/systems", "/storage", "/ideas", "/tasks", "/wiki", "/activity"]);
 
 function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
   const { mode, setMode } = useWorkbenchMode();
