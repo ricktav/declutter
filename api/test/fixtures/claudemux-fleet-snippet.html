@@ -1,0 +1,106 @@
+<!-- Trimmed claudemux-fleet.html shape. Fleet-wide matrix + cron must not become hosts. -->
+<table class="overview">
+  <tr>
+    <th></th>
+    <th data-host="host-10">dockermac</th>
+    <th data-host="host-102">macmini-m4</th>
+  </tr>
+  <tr>
+    <td>ls</td>
+    <td data-host="host-10">&#x2713;</td>
+    <td data-host="host-102">&#10003;</td>
+  </tr>
+  <tr>
+    <td>echo</td>
+    <td data-host="host-10">&ndash;</td>
+    <td data-host="host-102">&#x2713;</td>
+  </tr>
+  <tr>
+    <td>docker</td>
+    <td data-host="host-10">&#x2713;</td>
+    <td data-host="host-102">&ndash;</td>
+  </tr>
+  <tr>
+    <td>plugwise</td>
+    <td data-host="host-10">&#x2713;</td>
+    <td data-host="host-102">&ndash;</td>
+  </tr>
+</table>
+
+<section class="host" id="host-102">
+  <header>
+    <h2>macmini-m4</h2>
+    <div class="os">macOS</div>
+    <div class="ident">host-102 · 10.50.0.102:8766 · responded 0.4s ago</div>
+  </header>
+  <table class="projects">
+    <tr><th>Project</th><th>Detail</th></tr>
+  </table>
+  <table class="services-table">
+    <tr><th>label</th><th>url</th><th>status</th><th>code</th><th>latency</th><th>checked</th></tr>
+    <tr><td>Workbench</td><td>http://10.50.0.102:3002</td><td>up</td><td>200</td><td>12ms</td><td>now</td></tr>
+    <tr><td>HomeBase</td><td>http://10.50.0.102:3001</td><td>up</td><td>200</td><td>9ms</td><td>now</td></tr>
+    <tr><td>Flow</td><td>http://10.50.0.102:3002/flow/</td><td>up</td><td>200</td><td>8ms</td><td>now</td></tr>
+    <tr><td>Photos</td><td>http://10.50.0.102:3001/uploads</td><td>up</td><td>200</td><td>11ms</td><td>now</td></tr>
+    <tr><td>Ping</td><td>http://10.50.0.102:3001/api/trpc/ping</td><td>up</td><td>200</td><td>7ms</td><td>now</td></tr>
+  </table>
+</section>
+
+<section class="host" id="host-10">
+  <header>
+    <h2>dockermac</h2>
+    <div class="os">Linux</div>
+    <div class="ident">host-10 · 10.50.0.10:8766 · responded 1.1s ago</div>
+  </header>
+  <table class="projects">
+    <tr><th>Project</th><th>Detail</th></tr>
+    <tr class="pdrow">
+      <td><span class="pd-k">container</span> <span class="cname mono">nginx</span> <span class="port">:80</span>
+        <div class="mount">/var/www</div></td>
+    </tr>
+    <tr class="pdrow">
+      <td><span class="pd-k">ports</span> 80, 443</td>
+    </tr>
+    <tr class="pdrow">
+      <td><span class="pd-k">container</span> <span class="cname mono">caddy</span> <span class="port">:443</span></td>
+    </tr>
+    <tr class="pdrow">
+      <td><span class="pd-k">container</span> <span class="cname mono">homeassistant</span></td>
+    </tr>
+  </table>
+  <table class="services-table">
+    <tr><th>label</th><th>url</th><th>status</th><th>code</th><th>latency</th><th>checked</th></tr>
+    <tr><td>Fleet</td><td>http://10.50.0.10/claudemux-fleet.html</td><td>up</td><td>200</td><td>20ms</td><td>now</td></tr>
+    <tr><td>Plugwise</td><td>http://10.50.0.10:8088</td><td>up</td><td>200</td><td>15ms</td><td>now</td></tr>
+  </table>
+  <table class="databases-table">
+    <tr><th>db</th><th>engine</th></tr>
+    <tr><td>declutter</td><td>mysql</td></tr>
+  </table>
+  <table class="mtx">
+    <tr><th>job</th><th>schedule</th><th>ok</th></tr>
+    <tr><td>ls</td><td>crontab</td><td>&#x2713;</td></tr>
+    <tr><td>echo</td><td>20 4 * * 0</td><td>&#x2713;</td></tr>
+    <tr><td>docker</td><td>crontab</td><td>&#x2713;</td></tr>
+    <tr><td>plugwise</td><td>20 4 * * 0</td><td>&#x2713;</td></tr>
+  </table>
+</section>
+
+<section class="host unreachable" id="host-221">
+  <header>
+    <h2>macbook-air-m2</h2>
+    <div class="ident">host-221 · 10.50.0.221:8766 · unreachable</div>
+  </header>
+  <table class="services-table">
+    <tr><th>label</th><th>url</th></tr>
+    <tr><td>should-not-import</td><td>http://10.50.0.221:3000</td></tr>
+  </table>
+</section>
+
+<section class="host" id="host-109-ext">
+  <h2>External routes (host-109 vantage)</h2>
+  <table class="services-table">
+    <tr><th>label</th><th>url</th><th>status</th><th>code</th><th>latency</th><th>checked</th></tr>
+    <tr><td>Public site</td><td>https://example.com</td><td>up</td><td>200</td><td>80ms</td><td>now</td></tr>
+  </table>
+</section>

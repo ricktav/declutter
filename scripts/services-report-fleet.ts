@@ -1,15 +1,14 @@
 #!/usr/bin/env -S node --experimental-strip-types
-// Import a daily claudemux (or similar) fleet snapshot into Systems without
-// making the view fetch that page. Matches hostnames / IPs to machine Things
-// and posts services.report per host.
-//   node --experimental-strip-types scripts/services-report-fleet.ts --dry
+// Import a daily claudemux fleet snapshot into Systems without making the view
+// fetch that page. Default is a dry run (nothing written); pass --apply to post.
+//   node --experimental-strip-types scripts/services-report-fleet.ts
 //   node --experimental-strip-types scripts/services-report-fleet.ts --url http://10.50.0.10/claudemux-fleet.html
-//   node --experimental-strip-types scripts/services-report-fleet.ts --file ./fleet.html --dry
-//   --base http://localhost:3001 (default)
+//   node --experimental-strip-types scripts/services-report-fleet.ts --file ./fleet.html
+//   node --experimental-strip-types scripts/services-report-fleet.ts --apply --base http://10.50.0.102:3001
 // Reads APP_TOKEN from .env when the server has one.
 import "dotenv/config";
 import { readFileSync } from "fs";
-import { matchMachine, parseFleetDocument, type MachineHint } from "../api/lib/servicesFleet.ts";
+import { matchMachine, parseFleetDocumentWithMeta, type MachineHint } from "../api/lib/servicesFleet.ts";
 
 const argv = process.argv.slice(2);
 const args: Record<string, string | true> = {};
@@ -21,6 +20,7 @@ for (let i = 0; i < argv.length; i++) {
   args[key] = !next || next.startsWith("--") ? true : next;
 }
 
+const apply = args.apply === true && args.dry !== true;
 const base = String(args.base || "http://localhost:3001").replace(/\/$/, "");
 const file = typeof args.file === "string" ? args.file : null;
 const url =
@@ -62,9 +62,9 @@ if (file) {
   text = await res.text();
 }
 
-const hosts = parseFleetDocument(text);
+const { hosts, skippedUnreachable } = parseFleetDocumentWithMeta(text);
 if (hosts.length === 0) {
-  console.error("no hosts with containers/node/web found in the fleet document (JSON blob or host/container table).");
+  console.error("no reachable hosts with containers or services found (need section.host + tr.pdrow / services-table).");
   process.exit(1);
 }
 
@@ -82,48 +82,73 @@ const machines: MachineHint[] = items.map((it) => ({
   ip: it.attributes?.ip != null ? String(it.attributes.ip) : it.attributes?.ip_address != null ? String(it.attributes.ip_address) : null,
 }));
 
-const plan: Array<{
+const matched: Array<{
   itemId: number;
   name: string;
   host: string;
-  containers: typeof hosts[0]["containers"];
-  node?: typeof hosts[0]["node"];
-  web?: typeof hosts[0]["web"];
+  ip: string | null;
+  match: "hostname" | "ip";
+  containers: (typeof hosts)[0]["containers"];
+  web: (typeof hosts)[0]["web"];
 }> = [];
-const unmatched: string[] = [];
+const unmatched: Array<{ host: string; ip: string | null; containers: number; web: number }> = [];
+
 for (const h of hosts) {
-  const m = matchMachine(h.host, machines);
+  const m = matchMachine({ host: h.host, ip: h.ip }, machines);
   if (!m) {
-    unmatched.push(h.host);
+    unmatched.push({ host: h.host, ip: h.ip ?? null, containers: h.containers.length, web: h.web.length });
     continue;
   }
-  plan.push({
+  const hostNorm = h.host.trim().toLowerCase().replace(/\.local$/, "");
+  const hostKeys = [m.hostname, m.host, m.name].filter(Boolean).map((x) => String(x).trim().toLowerCase().replace(/\.local$/, ""));
+  const byHost = hostKeys.some((k) => k.replace(/[^a-z0-9]+/g, "") === hostNorm.replace(/[^a-z0-9]+/g, ""));
+  matched.push({
     itemId: m.id,
     name: m.name,
     host: h.host,
+    ip: h.ip ?? null,
+    match: byHost ? "hostname" : "ip",
     containers: h.containers,
-    node: h.node.length ? h.node : undefined,
-    web: h.web.length ? h.web : undefined,
+    web: h.web,
   });
 }
 
-if (args.dry) {
-  console.log(JSON.stringify({ url: url ?? file, matched: plan, unmatched }, null, 2));
+const plan = {
+  dry: !apply,
+  source: url ?? file,
+  matched: matched.map((row) => ({
+    itemId: row.itemId,
+    name: row.name,
+    host: row.host,
+    ip: row.ip,
+    match: row.match,
+    containers: row.containers.length,
+    web: row.web.length,
+    containerNames: row.containers.map((c) => c.name),
+    serviceLabels: row.web.map((w) => w.label),
+  })),
+  unmatched,
+  skippedUnreachable,
+};
+
+if (!apply) {
+  console.log(JSON.stringify(plan, null, 2));
+  console.error("dry run (pass --apply to write services.report)");
   process.exit(0);
 }
 
 let ok = 0;
-for (const row of plan) {
+for (const row of matched) {
   const report = {
     itemId: row.itemId,
     source: "fleet",
     containers: row.containers,
-    ...(row.node ? { node: row.node } : {}),
-    ...(row.web ? { web: row.web } : {}),
+    web: row.web,
   };
   await trpc("services.report", report, "POST");
   ok += 1;
-  console.log(`${row.name} (#${row.itemId}): ${row.containers.length} container(s) from ${row.host}`);
+  console.log(`${row.name} (#${row.itemId}): ${row.containers.length} container(s), ${row.web.length} service(s) from ${row.host}`);
 }
-if (unmatched.length) console.error(`unmatched hosts: ${unmatched.join(", ")}`);
+if (unmatched.length) console.error(`unmatched hosts: ${unmatched.map((u) => u.host).join(", ")}`);
+if (skippedUnreachable.length) console.error(`skipped unreachable: ${skippedUnreachable.join(", ")}`);
 console.log(`reported ${ok} machine(s) to ${base}`);

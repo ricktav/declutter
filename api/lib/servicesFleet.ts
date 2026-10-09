@@ -8,11 +8,14 @@ export type FleetContainer = {
   url?: string;
 };
 
+export type FleetWeb = { label: string; url?: string; port?: number };
+
 export type FleetHost = {
   host: string;
+  ip?: string | null;
   containers: FleetContainer[];
   node: FleetContainer[];
-  web: { label: string; url?: string; port?: number }[];
+  web: FleetWeb[];
 };
 
 export type MachineHint = {
@@ -58,7 +61,7 @@ function asContainer(x: unknown): FleetContainer | null {
   return { name, ...(status ? { status } : {}), ...(image ? { image } : {}), ...(port != null ? { port } : {}), ...(url ? { url } : {}) };
 }
 
-function asWeb(x: unknown): { label: string; url?: string; port?: number } | null {
+function asWeb(x: unknown): FleetWeb | null {
   if (typeof x === "number") return { label: `:${x}`, port: x };
   if (typeof x === "string") {
     const s = x.trim();
@@ -99,12 +102,7 @@ function hostNameOf(o: Record<string, unknown>): string | null {
 }
 
 function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "node" | "web"> {
-  const containers = [
-    ...listOf(o.containers),
-    ...listOf(o.docker),
-    ...listOf(o.services),
-    ...listOf(o.compose),
-  ]
+  const containers = [...listOf(o.containers), ...listOf(o.docker), ...listOf(o.services), ...listOf(o.compose)]
     .map(asContainer)
     .filter((c): c is FleetContainer => c != null);
   const node = listOf(o.node ?? o.nodes ?? o.processes)
@@ -112,7 +110,7 @@ function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "
     .filter((c): c is FleetContainer => c != null);
   const web = listOf(o.web ?? o.pwa ?? o.urls ?? o.pages)
     .map(asWeb)
-    .filter((w): w is NonNullable<typeof w> => w != null);
+    .filter((w): w is FleetWeb => w != null);
   const seen = new Set<string>();
   const uniq = (xs: FleetContainer[]) =>
     xs.filter((c) => {
@@ -124,16 +122,17 @@ function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "
   return { containers: uniq(containers), node: uniq(node), web };
 }
 
-function pushHost(out: FleetHost[], host: string, lists: Pick<FleetHost, "containers" | "node" | "web">) {
+function pushHost(out: FleetHost[], host: string, lists: Pick<FleetHost, "containers" | "node" | "web">, ip?: string | null) {
   if (!lists.containers.length && !lists.node.length && !lists.web.length) return;
   const prev = out.find((h) => normHost(h.host) === normHost(host));
   if (prev) {
     prev.containers.push(...lists.containers);
     prev.node.push(...lists.node);
     prev.web.push(...lists.web);
+    if (!prev.ip && ip) prev.ip = ip;
     return;
   }
-  out.push({ host, ...lists });
+  out.push({ host, ip: ip ?? null, ...lists });
 }
 
 function walk(x: unknown, out: FleetHost[], depth: number) {
@@ -147,7 +146,7 @@ function walk(x: unknown, out: FleetHost[], depth: number) {
   const host = hostNameOf(o);
   const lists = pickLists(o);
   if (host && (lists.containers.length || lists.node.length || lists.web.length)) {
-    pushHost(out, host, lists);
+    pushHost(out, host, lists, str(o.ip ?? o.address));
   }
   for (const [k, v] of Object.entries(o)) {
     if (["containers", "docker", "services", "compose", "node", "nodes", "web", "pwa", "urls", "pages"].includes(k)) continue;
@@ -162,43 +161,183 @@ function walk(x: unknown, out: FleetHost[], depth: number) {
   }
 }
 
-function decodeEntities(s: string): string {
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  ndash: "–",
+  mdash: "—",
+  times: "×",
+  check: "✓",
+};
+
+/** Decode named + numeric HTML entities. */
+export function decodeEntities(s: string): string {
   return s
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&([a-z]+);/gi, (all, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? all)
+    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => {
+      const n = Number.parseInt(h, 16);
+      return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : "";
+    })
+    .replace(/&#(\d+);/g, (_, d: string) => {
+      const n = Number(d);
+      return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : "";
+    });
 }
 
-function parseHtmlTables(html: string): FleetHost[] {
-  const out: FleetHost[] = [];
-  const tables = html.match(/<table[\s\S]*?<\/table>/gi) ?? [];
-  for (const table of tables) {
-    const rows = [...table.matchAll(/<tr[\s\S]*?<\/tr>/gi)].map((m) => m[0]);
-    if (rows.length < 2) continue;
-    const cell = (row: string) =>
-      [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) =>
-        decodeEntities(m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()),
-      );
-    const headers = cell(rows[0]).map((h) => h.toLowerCase());
-    const hostIdx = headers.findIndex((h) => /host|machine|name|node/.test(h) && !/container/.test(h));
-    const contIdx = headers.findIndex((h) => /container|docker|service|compose/.test(h));
-    if (hostIdx < 0) continue;
-    for (const row of rows.slice(1)) {
-      const cols = cell(row);
-      const host = cols[hostIdx];
-      if (!host) continue;
-      const raw = contIdx >= 0 ? cols[contIdx] : cols.filter((_, i) => i !== hostIdx).join(", ");
-      const containers = raw
-        .split(/[\n,;|]+/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((name) => ({ name }));
-      if (containers.length) pushHost(out, host, { containers, node: [], web: [] });
+const MARK_ONLY = /^[\u2713\u2714\u2717\u2718\u2610\u2611\u2612\u00d7\u2715✓✔✗✘☑☐×]+$/u;
+
+/** True when a cell is empty, a check/cross mark, or only punctuation (e.g. &ndash;). */
+export function isJunkCell(s: string): boolean {
+  const t = decodeEntities(s).replace(/[\s\u00a0]/g, "");
+  return !t || MARK_ONLY.test(t) || /^[–—\-_.·•]+$/u.test(t);
+}
+
+function innerText(html: string): string {
+  return decodeEntities(html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).trim();
+}
+
+function classList(tag: string): string {
+  const m = tag.match(/\bclass\s*=\s*["']([^"']*)["']/i);
+  return m ? ` ${m[1].toLowerCase()} ` : " ";
+}
+
+function hasClass(tag: string, name: string): boolean {
+  return classList(tag).includes(` ${name.toLowerCase()} `);
+}
+
+function looksLikeIp(s: string): boolean {
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(s.trim());
+}
+
+export function normalizeIp(s: string | null | undefined): string | null {
+  if (s == null) return null;
+  const m = String(s).trim().match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/);
+  return m ? m[1] : null;
+}
+
+function uniqByName(xs: FleetContainer[]): FleetContainer[] {
+  const seen = new Set<string>();
+  return xs.filter((c) => {
+    const k = c.name.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function stripSkippedTables(html: string): string {
+  return html.replace(/<table\b[\s\S]*?<\/table>/gi, (table) => {
+    const open = table.match(/<table\b[^>]*>/i)?.[0] ?? "";
+    if (hasClass(open, "databases-table") || hasClass(open, "mtx")) return "";
+    if (/\bdata-host\s*=/i.test(table)) return "";
+    return table;
+  });
+}
+
+function headerBlock(section: string): string {
+  const start = section.search(/<table\b/i);
+  return start >= 0 ? section.slice(0, start) : section.slice(0, 4000);
+}
+
+function headingName(header: string): string | null {
+  for (const re of [
+    /<(?:h1|h2|h3)\b[^>]*>([\s\S]*?)<\/h[123]>/i,
+    /<[^>]*class=["'][^"']*\bhostname\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i,
+  ]) {
+    const m = header.match(re);
+    if (!m) continue;
+    const name = innerText(m[1]);
+    if (!name || isJunkCell(name) || /^host-\d+$/i.test(name)) continue;
+    return name;
+  }
+  return null;
+}
+
+function parsePdRows(html: string): FleetContainer[] {
+  const out: FleetContainer[] = [];
+  for (const m of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
+    const open = `<tr${m[1]}>`;
+    if (!hasClass(open, "pdrow")) continue;
+    const row = m[2];
+    const k = innerText(row.match(/<span\b[^>]*class=["'][^"']*\bpd-k\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
+    if (k.toLowerCase() !== "container") continue;
+    const name = innerText(row.match(/<span\b[^>]*class=["'][^"']*\bcname\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
+    if (!name || isJunkCell(name)) continue;
+    const portRaw = innerText(row.match(/<span\b[^>]*class=["'][^"']*\bport\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
+    const port = portOf(portRaw);
+    out.push({ name, ...(port != null ? { port } : {}) });
+  }
+  return uniqByName(out);
+}
+
+function parseServicesTable(html: string): FleetWeb[] {
+  const out: FleetWeb[] = [];
+  for (const tm of html.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table>/gi)) {
+    const open = `<table${tm[1]}>`;
+    if (!hasClass(open, "services-table")) continue;
+    const body = tm[2];
+    const rows = [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((r) => r[1]);
+    if (!rows.length) continue;
+    const cells = (row: string) =>
+      [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => innerText(c[1]));
+    const first = cells(rows[0]).map((h) => h.toLowerCase());
+    const hasHeader = first.some((h) => /label|url|status|name/.test(h));
+    const labelIdx = hasHeader ? first.findIndex((h) => h === "label" || h === "name" || h === "service") : 0;
+    const urlIdx = hasHeader ? first.findIndex((h) => h === "url" || h === "href") : 1;
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    for (const row of dataRows) {
+      const cols = cells(row);
+      const label = (labelIdx >= 0 ? cols[labelIdx] : cols[0]) ?? "";
+      const url = (urlIdx >= 0 ? cols[urlIdx] : cols[1]) ?? "";
+      if (!label || isJunkCell(label)) continue;
+      const port = portOf(url);
+      out.push({ label, ...(url && /^https?:\/\//i.test(url) ? { url } : url ? { url } : {}), ...(port != null ? { port } : {}) });
     }
   }
-  return out;
+  const seen = new Set<string>();
+  return out.filter((w) => {
+    const k = (w.url ?? w.label).toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+export type ParsedFleet = { hosts: FleetHost[]; skippedUnreachable: string[] };
+
+/** Claudemux daily HTML: one `<section class="host">` per machine. */
+export function parseClaudemuxHosts(html: string): ParsedFleet {
+  const hosts: FleetHost[] = [];
+  const skippedUnreachable: string[] = [];
+  for (const m of html.matchAll(/<section\b([^>]*)>([\s\S]*?)<\/section>/gi)) {
+    const open = `<section${m[1]}>`;
+    if (!hasClass(open, "host")) continue;
+    const section = m[2];
+    const header = headerBlock(section);
+    const host = headingName(header);
+    if (!host) continue;
+    if (/external routes/i.test(host)) continue;
+    const unreachable =
+      hasClass(open, "unreachable") || /\bunreachable\b/i.test(innerText(header)) || /\bunreachable\b/i.test(classList(open));
+    if (unreachable) {
+      skippedUnreachable.push(host);
+      continue;
+    }
+    const ip = normalizeIp(header);
+    const body = stripSkippedTables(section);
+    const containers = parsePdRows(body);
+    const web = parseServicesTable(body);
+    if (!containers.length && !web.length) {
+      hosts.push({ host, ip, containers: [], node: [], web: [] });
+      continue;
+    }
+    pushHost(hosts, host, { containers, node: [], web }, ip);
+  }
+  return { hosts, skippedUnreachable };
 }
 
 function extractJsonBlobs(text: string): unknown[] {
@@ -222,21 +361,24 @@ function extractJsonBlobs(text: string): unknown[] {
 }
 
 export function parseFleetDocument(text: string): FleetHost[] {
+  if (/<section\b[^>]*class=["'][^"']*\bhost\b/i.test(text)) {
+    return parseClaudemuxHosts(text).hosts.filter((h) => h.containers.length || h.node.length || h.web.length);
+  }
   const out: FleetHost[] = [];
   for (const blob of extractJsonBlobs(text)) walk(blob, out, 0);
-  if (out.length === 0 && /<table/i.test(text)) {
-    for (const h of parseHtmlTables(text)) pushHost(out, h.host, h);
-  }
-  for (const h of out) {
-    const seen = new Set<string>();
-    h.containers = h.containers.filter((c) => {
-      const k = c.name.toLowerCase();
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  }
+  for (const h of out) h.containers = uniqByName(h.containers);
   return out.filter((h) => h.containers.length || h.node.length || h.web.length);
+}
+
+export function parseFleetDocumentWithMeta(text: string): ParsedFleet {
+  if (/<section\b[^>]*class=["'][^"']*\bhost\b/i.test(text)) {
+    const parsed = parseClaudemuxHosts(text);
+    return {
+      hosts: parsed.hosts.filter((h) => h.containers.length || h.node.length || h.web.length),
+      skippedUnreachable: parsed.skippedUnreachable,
+    };
+  }
+  return { hosts: parseFleetDocument(text), skippedUnreachable: [] };
 }
 
 export function normHost(s: string): string {
@@ -248,24 +390,29 @@ export function normHost(s: string): string {
     .replace(/[^a-z0-9]+/g, "");
 }
 
-/** First machine whose name, hostname, host or IP matches the fleet host label. */
-export function matchMachine(host: string, machines: MachineHint[]): MachineHint | null {
-  const n = normHost(host);
-  if (!n) return null;
-  const score = (m: MachineHint) => {
-    const keys = [m.name, m.hostname, m.host, m.ip].filter(Boolean).map((x) => normHost(String(x)));
-    if (keys.includes(n)) return 2;
-    if (keys.some((k) => k.includes(n) || n.includes(k))) return 1;
-    return 0;
-  };
-  let best: MachineHint | null = null;
-  let bestScore = 0;
-  for (const m of machines) {
-    const s = score(m);
-    if (s > bestScore) {
-      best = m;
-      bestScore = s;
+/**
+ * Match a fleet host to an inventory machine. Hostname / host / name are
+ * exact (after stripping .local). IP is exact equality only, and only used
+ * when hostname did not match — so 10.50.0.102 never hits 10.50.0.10, and
+ * "docker" never hits dockermac-1.
+ */
+export function matchMachine(
+  target: string | { host: string; ip?: string | null },
+  machines: MachineHint[],
+): MachineHint | null {
+  const t = typeof target === "string" ? { host: target, ip: looksLikeIp(target) ? target : null } : target;
+  const hostNorm = looksLikeIp(t.host) ? "" : normHost(t.host);
+  if (hostNorm) {
+    for (const m of machines) {
+      const keys = [m.hostname, m.host, m.name].filter(Boolean).map((x) => normHost(String(x)));
+      if (keys.includes(hostNorm)) return m;
     }
   }
-  return bestScore > 0 ? best : null;
+  const ip = normalizeIp(t.ip) ?? (looksLikeIp(t.host) ? normalizeIp(t.host) : null);
+  if (ip) {
+    for (const m of machines) {
+      if (normalizeIp(m.ip) === ip) return m;
+    }
+  }
+  return null;
 }
