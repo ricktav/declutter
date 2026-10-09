@@ -27,6 +27,8 @@
  * Web access (ports / pages / URLs / PWAs), any of:
  *   ports    JSON [{ port, proto?, path?, label?, url? }] or "80,443" or "host:8080"
  *   urls / url / web / pwa / apps / pages / websites    JSON array or comma-separated URLs
+ *               Fleet importer writes web as [{ label, ports, urls, status }] — one
+ *               leaf per service, not per port.
  *   node     list of Node processes (kind node); a value that looks like a URL is a web node
  * A port/url already named on a service is not duplicated as a web node.
  * Child Things: role container/docker → container; role web/pwa/website/app → web.
@@ -119,6 +121,9 @@ export type WebRec = {
   label: string;
   port?: number;
   url?: string;
+  ports?: number[];
+  urls?: string[];
+  status?: string;
 };
 
 export function attrStr(attrs: Attrs, key: string): string | null {
@@ -316,29 +321,69 @@ export function parseServices(attrs: Attrs): ServiceRec[] {
   return out;
 }
 
+function flattenUnknown(x: unknown): unknown[] {
+  if (x == null || x === "") return [];
+  if (Array.isArray(x)) return x.flatMap(flattenUnknown);
+  return [x];
+}
+
+function numList(v: unknown): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const x of flattenUnknown(v)) {
+    const n = num(x);
+    if (n == null || n <= 0 || n > 65535 || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
+function strList(v: unknown): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const x of flattenUnknown(v)) {
+    const s = String(x ?? "").trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}
+
 function asWeb(x: unknown): WebRec | null {
-  if (typeof x === "number") return { label: `:${x}`, port: x };
+  if (typeof x === "number") return { label: `:${x}`, port: x, ports: [x] };
   if (typeof x === "string") {
     const s = x.trim();
     if (!s) return null;
-    if (/^https?:\/\//i.test(s)) return { label: s.replace(/^https?:\/\//i, "").slice(0, 40), url: s };
+    if (/^https?:\/\//i.test(s)) return { label: s.replace(/^https?:\/\//i, "").slice(0, 40), url: s, urls: [s] };
     const m = s.match(/^(?:([\w.-]+):)?(\d{2,5})(\/.*)?$/);
     if (m) {
       const port = Number(m[2]);
       const host = m[1] ?? "";
       const path = m[3] ?? "";
-      return { label: host ? `${host}:${port}${path}` : `:${port}${path}`, port };
+      return { label: host ? `${host}:${port}${path}` : `:${port}${path}`, port, ports: [port] };
     }
     return { label: s };
   }
   if (!x || typeof x !== "object") return null;
   const o = x as Record<string, unknown>;
-  const port = num(o.port);
-  const url = o.url != null ? String(o.url) : undefined;
+  const ports = numList([o.port, o.ports]).sort((a, b) => a - b);
+  const urls = strList([o.url, o.urls]);
+  const status = o.status != null ? String(o.status) : undefined;
   const path = o.path != null ? String(o.path) : "";
-  const label = String(o.label ?? o.name ?? (port != null ? `:${port}${path}` : url ?? "")).trim();
+  const label = String(o.label ?? o.name ?? (ports[0] != null ? `:${ports[0]}${path}` : urls[0] ?? "")).trim();
   if (!label) return null;
-  return { label, port, url };
+  return {
+    label,
+    port: ports[0],
+    url: urls[0],
+    ...(ports.length ? { ports } : {}),
+    ...(urls.length ? { urls } : {}),
+    ...(status ? { status } : {}),
+  };
 }
 
 export function parseWeb(attrs: Attrs): WebRec[] {

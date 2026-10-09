@@ -16,6 +16,9 @@ const webRec = z.object({
   label: z.string().min(1).max(64),
   url: z.string().max(255).optional(),
   port: z.number().int().positive().max(65535).optional(),
+  urls: z.array(z.string().max(255)).max(32).optional(),
+  ports: z.array(z.number().int().positive().max(65535)).max(32).optional(),
+  status: z.string().max(32).optional(),
 });
 
 /**

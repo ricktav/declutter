@@ -8,7 +8,14 @@ export type FleetContainer = {
   url?: string;
 };
 
-export type FleetWeb = { label: string; url?: string; port?: number };
+export type FleetWeb = {
+  label: string;
+  url?: string;
+  port?: number;
+  urls?: string[];
+  ports?: number[];
+  status?: string;
+};
 
 export type FleetHost = {
   host: string;
@@ -61,6 +68,38 @@ function asContainer(x: unknown): FleetContainer | null {
   return { name, ...(status ? { status } : {}), ...(image ? { image } : {}), ...(port != null ? { port } : {}), ...(url ? { url } : {}) };
 }
 
+function flattenUnknown(x: unknown): unknown[] {
+  if (x == null || x === "") return [];
+  if (Array.isArray(x)) return x.flatMap(flattenUnknown);
+  return [x];
+}
+
+function numsOf(x: unknown): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const v of flattenUnknown(x)) {
+    const n = portOf(v);
+    if (n == null || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
+function strsOf(x: unknown): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const v of flattenUnknown(x)) {
+    const s = str(v);
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}
+
 function asWeb(x: unknown): FleetWeb | null {
   if (typeof x === "number") return { label: `:${x}`, port: x };
   if (typeof x === "string") {
@@ -72,10 +111,19 @@ function asWeb(x: unknown): FleetWeb | null {
   const o = asRecord(x);
   if (!o) return null;
   const url = str(o.url);
-  const port = portOf(o.port);
-  const label = str(o.label ?? o.name ?? (port != null ? `:${port}` : url));
+  const ports = numsOf([o.port, o.ports]);
+  const urls = strsOf([o.url, o.urls]);
+  const status = str(o.status ?? o.state);
+  const label = str(o.label ?? o.name ?? (ports[0] != null ? `:${ports[0]}` : url));
   if (!label) return null;
-  return { label, ...(url ? { url } : {}), ...(port != null ? { port } : {}) };
+  return {
+    label,
+    ...(url ? { url } : {}),
+    ...(ports[0] != null ? { port: ports[0] } : {}),
+    ...(urls.length ? { urls } : {}),
+    ...(ports.length ? { ports } : {}),
+    ...(status ? { status } : {}),
+  };
 }
 
 function listOf(x: unknown): unknown[] {
@@ -108,9 +156,11 @@ function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "
   const node = listOf(o.node ?? o.nodes ?? o.processes)
     .map(asContainer)
     .filter((c): c is FleetContainer => c != null);
-  const web = listOf(o.web ?? o.pwa ?? o.urls ?? o.pages)
-    .map(asWeb)
-    .filter((w): w is FleetWeb => w != null);
+  const web = groupWebServices(
+    listOf(o.web ?? o.pwa ?? o.urls ?? o.pages)
+      .map(asWeb)
+      .filter((w): w is FleetWeb => w != null),
+  );
   const seen = new Set<string>();
   const uniq = (xs: FleetContainer[]) =>
     xs.filter((c) => {
@@ -128,7 +178,7 @@ function pushHost(out: FleetHost[], host: string, lists: Pick<FleetHost, "contai
   if (prev) {
     prev.containers.push(...lists.containers);
     prev.node.push(...lists.node);
-    prev.web.push(...lists.web);
+    prev.web = groupWebServices([...prev.web, ...lists.web]);
     if (!prev.ip && ip) prev.ip = ip;
     return;
   }
@@ -326,6 +376,198 @@ function parsePdRows(html: string): FleetContainer[] {
   return uniqByName(out);
 }
 
+function portFromUrl(url: string | undefined): number | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    if (u.port) {
+      const n = Number(u.port);
+      if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
+    }
+  } catch {
+    /* not a URL */
+  }
+  return portOf(url);
+}
+
+/** Strip a trailing `:443` (or `:80`) from a service label. */
+export function stripPortSuffix(label: string): { name: string; port?: number } {
+  const t = label.trim();
+  const m = t.match(/^(.*):(\d{2,5})$/);
+  if (!m) return { name: t };
+  const port = Number(m[2]);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return { name: t };
+  return { name: m[1].trim(), port };
+}
+
+/** `caddy/caddy` → `caddy`. */
+function collapseProjectPrefix(name: string): string {
+  const t = name.trim().replace(/^\/+|\/+$/g, "");
+  const m = t.match(/^([^/]+)\/\1$/i);
+  return m ? m[1] : t;
+}
+
+const OK_STATUS = /^(ok|up|healthy|running|live|good)$/i;
+const DEGRADED_STATUS = /^(degraded|warn|warning|slow)$/i;
+
+function isOkStatus(s: string): boolean {
+  const t = s.trim();
+  if (OK_STATUS.test(t)) return true;
+  const n = Number(t);
+  return Number.isInteger(n) && n >= 200 && n < 400;
+}
+
+function statusRank(s: string): number {
+  if (isOkStatus(s)) return 0;
+  if (DEGRADED_STATUS.test(s)) return 1;
+  return 2;
+}
+
+/** ok if any row is ok/up/2xx; otherwise the worst status. */
+export function aggregateStatus(statuses: string[]): string | undefined {
+  const xs = statuses.map((s) => s.trim()).filter(Boolean);
+  if (!xs.length) return undefined;
+  if (xs.some(isOkStatus)) return "ok";
+  return xs.reduce((a, b) => (statusRank(b) > statusRank(a) ? b : a));
+}
+
+function lastSeg(name: string): string {
+  const i = name.lastIndexOf("/");
+  return (i >= 0 ? name.slice(i + 1) : name).toLowerCase();
+}
+
+function isGenericPortName(name: string): boolean {
+  return !name || /^port$/i.test(name) || /^host$/i.test(name);
+}
+
+function isUserLikeToken(name: string): boolean {
+  return /^[a-z][a-z0-9]{0,16}$/i.test(name);
+}
+
+type TentativeWeb = {
+  raw: FleetWeb;
+  name: string;
+  portFromLabel?: number;
+  generic: boolean;
+  userLike: boolean;
+};
+
+function analyzeWeb(w: FleetWeb): TentativeWeb {
+  const { name: stripped, port: labelPort } = stripPortSuffix(w.label);
+  const name = collapseProjectPrefix(stripped);
+  const portFromLabel = labelPort ?? w.port ?? portFromUrl(w.url);
+  const generic = isGenericPortName(name);
+  const userLike = !generic && isUserLikeToken(name) && labelPort != null;
+  return { raw: w, name: name || w.label, portFromLabel, generic, userLike };
+}
+
+function collectPorts(a: TentativeWeb): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  const add = (n: number | undefined) => {
+    if (n == null || seen.has(n)) return;
+    seen.add(n);
+    out.push(n);
+  };
+  add(a.portFromLabel);
+  add(a.raw.port);
+  add(portFromUrl(a.raw.url));
+  for (const n of a.raw.ports ?? []) add(n);
+  for (const u of a.raw.urls ?? []) add(portFromUrl(u));
+  return out;
+}
+
+function collectUrls(a: TentativeWeb): string[] {
+  return strsOf([a.raw.url, a.raw.urls]);
+}
+
+/**
+ * Merge service rows that share a base label (`caddy:443` + `caddy:80`,
+ * `portal/clawdy-portal` × N, `caddy/caddy` + `caddy`) into one service with
+ * `ports` / `urls` and an aggregated status. Nameless listeners (`port:18790`,
+ * a one-off `rick:8768`) stay as-is and are listed last.
+ */
+export function groupWebServices(rows: FleetWeb[]): FleetWeb[] {
+  const analyzed = rows.map(analyzeWeb);
+  const nameCounts = new Map<string, number>();
+  const lastCounts = new Map<string, number>();
+  for (const a of analyzed) {
+    if (a.generic) continue;
+    const n = a.name.toLowerCase();
+    nameCounts.set(n, (nameCounts.get(n) ?? 0) + 1);
+    const last = lastSeg(a.name);
+    lastCounts.set(last, (lastCounts.get(last) ?? 0) + 1);
+  }
+
+  type Bucket = { display: string; nameless: boolean; rows: TentativeWeb[] };
+  const buckets = new Map<string, Bucket>();
+  for (const a of analyzed) {
+    let key: string;
+    let nameless: boolean;
+    let display: string;
+    if (a.generic) {
+      key = `nameless:${a.raw.label.toLowerCase()}`;
+      nameless = true;
+      display = a.raw.label;
+    } else {
+      const n = a.name.toLowerCase();
+      const last = lastSeg(a.name);
+      const shared = (nameCounts.get(n) ?? 0) > 1 || (lastCounts.get(last) ?? 0) > 1;
+      if (a.userLike && !shared) {
+        key = `nameless:${a.raw.label.toLowerCase()}`;
+        nameless = true;
+        display = a.raw.label;
+      } else {
+        key = `named:${last}`;
+        nameless = false;
+        display = a.name;
+      }
+    }
+    const b = buckets.get(key);
+    if (!b) buckets.set(key, { display, nameless, rows: [a] });
+    else {
+      b.rows.push(a);
+      if (!nameless && a.name.length > b.display.length) b.display = a.name;
+    }
+  }
+
+  const named: FleetWeb[] = [];
+  const nameless: FleetWeb[] = [];
+  for (const b of buckets.values()) {
+    const ports: number[] = [];
+    const urls: string[] = [];
+    const statuses: string[] = [];
+    const seenP = new Set<number>();
+    const seenU = new Set<string>();
+    for (const a of b.rows) {
+      for (const p of collectPorts(a)) {
+        if (seenP.has(p)) continue;
+        seenP.add(p);
+        ports.push(p);
+      }
+      for (const u of collectUrls(a)) {
+        const k = u.toLowerCase();
+        if (seenU.has(k)) continue;
+        seenU.add(k);
+        urls.push(u);
+      }
+      if (a.raw.status) statuses.push(a.raw.status);
+    }
+    ports.sort((x, y) => x - y);
+    const status = aggregateStatus(statuses);
+    const rec: FleetWeb = {
+      label: b.display,
+      ...(urls[0] ? { url: urls[0] } : {}),
+      ...(ports[0] != null ? { port: ports[0] } : {}),
+      ...(urls.length ? { urls } : {}),
+      ...(ports.length ? { ports } : {}),
+      ...(status ? { status } : {}),
+    };
+    (b.nameless ? nameless : named).push(rec);
+  }
+  return [...named, ...nameless];
+}
+
 function parseServicesTable(html: string): FleetWeb[] {
   const out: FleetWeb[] = [];
   for (const tm of html.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table>/gi)) {
@@ -340,23 +582,27 @@ function parseServicesTable(html: string): FleetWeb[] {
     const hasHeader = first.some((h) => /label|url|status|name/.test(h));
     const labelIdx = hasHeader ? first.findIndex((h) => h === "label" || h === "name" || h === "service") : 0;
     const urlIdx = hasHeader ? first.findIndex((h) => h === "url" || h === "href") : 1;
+    const statusIdx = hasHeader ? first.findIndex((h) => h === "status" || h === "state") : 2;
+    const codeIdx = hasHeader ? first.findIndex((h) => h === "code") : -1;
     const dataRows = hasHeader ? rows.slice(1) : rows;
     for (const row of dataRows) {
       const cols = cells(row);
       const label = (labelIdx >= 0 ? cols[labelIdx] : cols[0]) ?? "";
       const url = (urlIdx >= 0 ? cols[urlIdx] : cols[1]) ?? "";
       if (!label || isJunkCell(label)) continue;
-      const port = portOf(url);
-      out.push({ label, ...(url && /^https?:\/\//i.test(url) ? { url } : url ? { url } : {}), ...(port != null ? { port } : {}) });
+      const statusRaw = statusIdx >= 0 ? cols[statusIdx] ?? "" : "";
+      const codeRaw = codeIdx >= 0 ? cols[codeIdx] ?? "" : "";
+      const status = !isJunkCell(statusRaw) ? statusRaw : isOkStatus(codeRaw) ? "ok" : codeRaw && !isJunkCell(codeRaw) ? codeRaw : "";
+      const port = portFromUrl(url) ?? stripPortSuffix(label).port;
+      out.push({
+        label,
+        ...(url ? { url } : {}),
+        ...(port != null ? { port } : {}),
+        ...(status ? { status } : {}),
+      });
     }
   }
-  const seen = new Set<string>();
-  return out.filter((w) => {
-    const k = (w.url ?? w.label).toLowerCase();
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  return groupWebServices(out);
 }
 
 export type ParsedFleet = { hosts: FleetHost[]; skippedUnreachable: string[] };

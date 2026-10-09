@@ -3,6 +3,7 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 import {
   decodeEntities,
+  groupWebServices,
   isJunkCell,
   matchMachine,
   parseFleetDocument,
@@ -66,7 +67,25 @@ describe("claudemux HTML fixture", () => {
     const pro = hosts.find((h) => h.host === "prodesk-rt1")!;
     expect(pro.ip).toBe("10.50.0.142");
     expect(pro.containers).toHaveLength(14);
-    expect(pro.web).toHaveLength(17);
+    expect(pro.web.map((w) => w.label)).toEqual([
+      "portal/clawdy-portal",
+      "caddy",
+      "grafana",
+      "home-assistant",
+      "MQTT",
+      "Plex",
+      "SSH",
+      "port:18790",
+      "rick:8768",
+    ]);
+    expect(pro.web).toHaveLength(9);
+    const portal = pro.web.find((w) => w.label === "portal/clawdy-portal")!;
+    expect(portal.ports).toEqual([80, 443, 3463, 3466, 3473, 3476]);
+    expect(portal.status).toBe("ok");
+    expect(pro.web.find((w) => w.label === "caddy")?.ports).toEqual([80, 443]);
+    expect(pro.web.find((w) => w.label === "grafana")?.ports).toEqual([3000, 8086]);
+    expect(pro.web.find((w) => w.label === "home-assistant")?.ports).toEqual([8123, 8199]);
+    expect(pro.web.find((w) => w.label === "home-assistant")?.status).toBe("ok");
 
     const names = hosts.flatMap((h) => [h.host, ...h.containers.map((c) => c.name)]);
     expect(names).not.toEqual(expect.arrayContaining(["ls", "echo", "docker", "plugwise", "crontab"]));
@@ -100,6 +119,39 @@ describe("claudemux HTML fixture", () => {
         </table>
       </section>`;
     expect(parseFleetDocument(html)[0].containers.map((c) => c.name)).toEqual(["alpha", "beta"]);
+  });
+
+  it("groups service rows by base label and lists nameless listeners last", () => {
+    const grouped = groupWebServices([
+      { label: "portal/clawdy-portal", url: "http://10.50.0.142:3463", port: 3463, status: "up" },
+      { label: "portal/clawdy-portal", url: "http://10.50.0.142:3466", port: 3466, status: "up" },
+      { label: "portal/clawdy-portal", url: "http://10.50.0.142:3473", port: 3473, status: "down" },
+      { label: "portal/clawdy-portal", url: "http://10.50.0.142:3476", port: 3476, status: "up" },
+      { label: "portal/clawdy-portal", url: "https://10.50.0.142:443", port: 443, status: "up" },
+      { label: "portal/clawdy-portal", url: "http://10.50.0.142:80", port: 80, status: "up" },
+      { label: "caddy/caddy:443", url: "https://10.50.0.142/", port: 443, status: "up" },
+      { label: "caddy:80", url: "http://10.50.0.142/", port: 80, status: "up" },
+      { label: "grafana:3000", url: "http://10.50.0.142:3000", port: 3000, status: "up" },
+      { label: "grafana:8086", url: "http://10.50.0.142:8086", port: 8086, status: "up" },
+      { label: "home-assistant:8123", url: "http://10.50.0.142:8123", port: 8123, status: "up" },
+      { label: "home-assistant:8199", url: "http://10.50.0.142:8199", port: 8199, status: "down" },
+      { label: "port:18790", url: "http://10.50.0.142:18790", port: 18790, status: "up" },
+      { label: "rick:8768", url: "http://10.50.0.142:8768", port: 8768, status: "up" },
+    ]);
+    expect(grouped.map((w) => w.label)).toEqual([
+      "portal/clawdy-portal",
+      "caddy",
+      "grafana",
+      "home-assistant",
+      "port:18790",
+      "rick:8768",
+    ]);
+    expect(grouped[0].ports).toEqual([80, 443, 3463, 3466, 3473, 3476]);
+    expect(grouped[0].urls).toHaveLength(6);
+    expect(grouped[0].status).toBe("ok");
+    expect(grouped.find((w) => w.label === "caddy")?.ports).toEqual([80, 443]);
+    expect(grouped.at(-2)?.label).toBe("port:18790");
+    expect(grouped.at(-1)?.label).toBe("rick:8768");
   });
 
   it("does not treat a generic Host/Containers table as the fleet", () => {

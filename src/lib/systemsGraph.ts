@@ -185,7 +185,25 @@ function servicesOf(m: GraphItem, kids: GraphItem[]): ServiceRec[] {
 }
 
 function webKey(w: WebRec): string {
-  return (w.url ?? `${w.port ?? ""}:${w.label}`).toLowerCase();
+  return (w.url ?? w.urls?.[0] ?? `${w.port ?? w.ports?.[0] ?? ""}:${w.label}`).toLowerCase();
+}
+
+function webPorts(w: WebRec): number[] {
+  const raw = [...(w.ports ?? []), ...(w.port != null ? [w.port] : [])];
+  return raw.filter((n, i, a) => a.indexOf(n) === i).sort((a, b) => a - b);
+}
+
+function webUrls(w: WebRec): string[] {
+  const raw = [...(w.urls ?? []), ...(w.url ? [w.url] : [])];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const u of raw) {
+    const k = u.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(u);
+  }
+  return out;
 }
 
 function webOf(m: GraphItem, kids: GraphItem[]): WebRec[] {
@@ -348,6 +366,8 @@ function serviceNode(machineId: number, s: ServiceRec, i: number): GraphNode {
 }
 
 function webNode(machineId: number, w: WebRec, i: number): GraphNode {
+  const ports = webPorts(w);
+  const urls = webUrls(w);
   return {
     id: `web:${machineId}:${i}:${w.label}`,
     type: "web",
@@ -356,13 +376,54 @@ function webNode(machineId: number, w: WebRec, i: number): GraphNode {
     color: KIND_COLOR.web,
     dimmed: false,
     itemId: machineId,
-    tags: [w.port != null ? `:${w.port}` : "url"],
-    lines: [
-      ...(w.port != null ? [{ k: "port", v: String(w.port) }] : []),
-      ...(w.url ? [{ k: "url", v: w.url }] : []),
+    tags: [
+      ...(w.status ? [w.status] : []),
+      ...(ports.length ? ports.map((p) => `:${p}`) : urls.length ? ["url"] : []),
     ],
-    href: w.url,
+    lines: [
+      ...(w.status ? [{ k: "status", v: w.status }] : []),
+      ...(ports.length ? [{ k: "ports", v: ports.join(", ") }] : []),
+      ...urls.map((u) => ({ k: "url", v: u })),
+    ],
+    href: urls[0],
   };
+}
+
+function portChildNodes(parent: GraphNode, w: WebRec): { nodes: GraphNode[]; links: GraphLink[] } {
+  const ports = webPorts(w);
+  if (ports.length < 2) return { nodes: [], links: [] };
+  const urls = webUrls(w);
+  const nodes: GraphNode[] = [];
+  const links: GraphLink[] = [];
+  for (const p of ports) {
+    const url = urls.find((u) => {
+      try {
+        const n = Number(new URL(u).port);
+        return n === p;
+      } catch {
+        return u.includes(`:${p}`);
+      }
+    });
+    nodes.push({
+      id: `${parent.id}:p:${p}`,
+      type: "web",
+      label: `:${p}`,
+      radius: 3.5,
+      color: KIND_COLOR.web,
+      dimmed: false,
+      itemId: parent.itemId,
+      tags: [`:${p}`],
+      lines: [{ k: "port", v: String(p) }, ...(url ? [{ k: "url", v: url }] : [])],
+      href: url,
+    });
+    links.push({ source: parent.id, target: `${parent.id}:p:${p}`, strength: 0.5, tight: true });
+  }
+  return { nodes, links };
+}
+
+function shouldExpandPorts(parentId: string, expandId: string | null | undefined): boolean {
+  if (!expandId) return false;
+  return expandId === parentId || expandId.startsWith(`${parentId}:p:`);
 }
 
 export function collectRuntimes(
@@ -438,7 +499,12 @@ function unusedWeb(services: ServiceRec[], web: WebRec[]): WebRec[] {
     if (s.url) used.add(s.url.toLowerCase());
     if (s.port != null) used.add(`:${s.port}`);
   }
-  return web.filter((w) => !used.has(webKey(w)) && !used.has(w.port != null ? `:${w.port}` : ""));
+  return web.filter((w) => {
+    if (used.has(webKey(w))) return false;
+    if (webUrls(w).some((u) => used.has(u.toLowerCase()))) return false;
+    if (webPorts(w).some((p) => used.has(`:${p}`))) return false;
+    return true;
+  });
 }
 
 export function buildSystemsGraph(opts: {
@@ -452,11 +518,14 @@ export function buildSystemsGraph(opts: {
   volumeItemIds?: Iterable<number>;
   minRating?: Rating;
   focusItemId?: number | null;
+  /** When a web leaf is selected (or one of its port children), attach port child nodes. */
+  expandNodeId?: string | null;
 }): BuiltGraph {
   const { items, computers, view, runtime, relations } = opts;
   const scope = opts.scope ?? "machines";
   const minRating = opts.minRating ?? 1;
   const focusItemId = opts.focusItemId ?? null;
+  const expandNodeId = opts.expandNodeId ?? null;
   const volumeIds = new Set(opts.volumeItemIds ?? []);
   const childrenByParent = new Map<number, GraphItem[]>();
   for (const it of items) {
@@ -538,6 +607,11 @@ export function buildSystemsGraph(opts: {
         nodes.push(leaf);
         counts.web += 1;
         links.push({ source: n.id, target: leaf.id, strength: 0.3 });
+        if (shouldExpandPorts(leaf.id, expandNodeId)) {
+          const extra = portChildNodes(leaf, w);
+          nodes.push(...extra.nodes);
+          links.push(...extra.links);
+        }
       });
     }
   } else {
@@ -583,6 +657,11 @@ export function buildSystemsGraph(opts: {
         nodes.push(leaf);
         counts.web = (counts.web ?? 0) + 1;
         links.push({ source: n.id, target: leaf.id, strength: 0.3 });
+        if (shouldExpandPorts(leaf.id, expandNodeId)) {
+          const extra = portChildNodes(leaf, w);
+          nodes.push(...extra.nodes);
+          links.push(...extra.links);
+        }
       }
       attachStorage(n.id, m.id, volumesForMachine(computersById.get(m.id)), childDisks, nodes, links, counts, radiusFor);
     }

@@ -258,6 +258,7 @@ export default function SystemsPage() {
     [graphItems, volumeItemIds],
   );
 
+  const expandNodeId = selected?.type === "web" ? selected.id : null;
   const graph = useMemo(
     () =>
       buildSystemsGraph({
@@ -271,8 +272,9 @@ export default function SystemsPage() {
         volumeItemIds,
         minRating,
         focusItemId,
+        expandNodeId,
       }),
-    [graphItems, computers, view, runtime, centerLabel, relations, scope, volumeItemIds, minRating, focusItemId],
+    [graphItems, computers, view, runtime, centerLabel, relations, scope, volumeItemIds, minRating, focusItemId, expandNodeId],
   );
 
   useEffect(() => {
@@ -891,8 +893,8 @@ export default function SystemsPage() {
               </div>
             )}
             <dl className="mt-3 space-y-1.5 text-[13px]">
-              {selected.lines.filter((row) => row.k !== "rating").map((row) => (
-                <div key={row.k} className="flex gap-2">
+              {selected.lines.filter((row) => row.k !== "rating").map((row, i) => (
+                <div key={`${row.k}-${i}`} className="flex gap-2">
                   <dt className="text-[#666] w-20 shrink-0">{row.k}</dt>
                   <dd className="text-[#e0e0e0] break-all">
                     {row.k === "url" && /^https?:\/\//i.test(row.v) ? (

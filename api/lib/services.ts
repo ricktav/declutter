@@ -21,6 +21,9 @@ export type WebRecIn = {
   label: string;
   url?: string;
   port?: number;
+  urls?: string[];
+  ports?: number[];
+  status?: string;
 };
 
 export type ServicesReportInput = {
@@ -40,10 +43,22 @@ function compactService(s: ServiceRecIn): Record<string, string | number> {
   return o;
 }
 
-function compactWeb(w: WebRecIn): Record<string, string | number> {
-  const o: Record<string, string | number> = { label: w.label };
-  if (w.url) o.url = w.url;
-  if (w.port != null) o.port = w.port;
+function compactWeb(w: WebRecIn): Record<string, string | number | string[] | number[]> {
+  const ports = [...(w.ports ?? []), ...(w.port != null ? [w.port] : [])].filter((n, i, a) => a.indexOf(n) === i).sort((a, b) => a - b);
+  const urls: string[] = [];
+  const seenU = new Set<string>();
+  for (const u of [...(w.urls ?? []), ...(w.url ? [w.url] : [])]) {
+    const k = u.toLowerCase();
+    if (!u || seenU.has(k)) continue;
+    seenU.add(k);
+    urls.push(u);
+  }
+  const o: Record<string, string | number | string[] | number[]> = { label: w.label };
+  if (urls[0]) o.url = urls[0];
+  if (ports[0] != null) o.port = ports[0];
+  if (urls.length) o.urls = urls;
+  if (ports.length) o.ports = ports;
+  if (w.status) o.status = w.status;
   return o;
 }
 

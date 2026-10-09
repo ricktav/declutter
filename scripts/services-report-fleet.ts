@@ -126,6 +126,12 @@ const plan = {
     web: row.web.length,
     containerNames: row.containers.map((c) => c.name),
     serviceLabels: row.web.map((w) => w.label),
+    services: row.web.map((w) => ({
+      label: w.label,
+      ports: w.ports ?? (w.port != null ? [w.port] : []),
+      urls: w.urls ?? (w.url ? [w.url] : []),
+      status: w.status ?? null,
+    })),
   })),
   unmatched,
   skippedUnreachable,
