@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
+import { AreaPicker } from "@/components/AreaPicker";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { EnergySection } from "@/components/EnergySection";
@@ -243,6 +244,7 @@ export default function ItemDetail() {
     utils.items.get.invalidate({ id: itemId });
     utils.items.placement.invalidate({ itemId });
     utils.items.listByArea.invalidate();
+    utils.items.listAll.invalidate();
     utils.areas.list.invalidate();
     utils.items.findAttributeDuplicates.invalidate();
     utils.items.attributeKeysForTopic.invalidate();
@@ -435,11 +437,23 @@ export default function ItemDetail() {
       {/* header */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-[12px] text-muted-foreground flex items-center gap-2">
-            <Link to={`/areas/${it.area?.slug}`} className="hover:underline">
-              {it.area?.name}
-            </Link>{" "}
-            / item #{it.id}
+          <div className="text-[12px] text-muted-foreground flex items-center gap-2 min-w-0">
+            <span className="micro-label shrink-0">Topic</span>
+            <div className="w-52 shrink-0">
+              <AreaPicker
+                value={it.areaId}
+                onChange={(id) => {
+                  if (id !== it.areaId) update.mutate({ id: itemId, areaId: id });
+                }}
+                placeholder="pick a topic…"
+              />
+            </div>
+            {it.area?.slug && (
+              <Link to={`/areas/${it.area.slug}`} className="hover:underline shrink-0">
+                Open
+              </Link>
+            )}
+            <span className="shrink-0">/ item #{it.id}</span>
             {it.status === "archived" && (
               <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                 <Archive className="h-3 w-3" /> Archived
@@ -982,7 +996,7 @@ export default function ItemDetail() {
               <div className="space-y-2">
                 <RoomPicker value={roomId} onChange={setRoomId} allowNone autoFocus houseId={it.houseId ?? undefined} />
                 <p className="text-[10px] text-muted-foreground">
-                  Area = what the thing is (computers). This = where it physically is.
+                  Topic (the picker above the name) is what the Thing is. This is where it sits.
                 </p>
               </div>
             )}
