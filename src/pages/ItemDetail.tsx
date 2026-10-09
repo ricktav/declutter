@@ -44,6 +44,7 @@ import type { AppRouter } from "../../api/router";
 import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs";
 import { RatingStars } from "@/components/RatingStars";
 import { isMachineItem, parseRating, type Rating } from "@/lib/systemsAttrs";
+import { AttrListValue, compactJsonList, isJsonListAttr, jsonListAttrLabel, prettyJsonList } from "@/components/AttrListValue";
 
 type AttrClash = inferRouterOutputs<AppRouter>["items"]["findAttributeDuplicates"]["clashes"][number];
 
@@ -352,7 +353,9 @@ export default function ItemDetail() {
 
   const startEditAttrs = () => {
     const draft: Record<string, string> = {};
-    for (const [k, v] of Object.entries(it.attributes ?? {})) draft[k] = String(v);
+    for (const [k, v] of Object.entries(it.attributes ?? {})) {
+      draft[k] = isJsonListAttr(k) ? prettyJsonList(v) : String(v);
+    }
     for (const d of defs) if (!(d.key in draft)) draft[d.key] = "";
     setAttrDraft(draft);
     setNewAttrKey("");
@@ -361,7 +364,11 @@ export default function ItemDetail() {
   };
 
   const saveAttrs = () => {
-    const cleaned = Object.fromEntries(Object.entries(attrDraft).filter(([, v]) => v !== ""));
+    const cleaned = Object.fromEntries(
+      Object.entries(attrDraft)
+        .filter(([, v]) => v !== "")
+        .map(([k, v]) => [k, isJsonListAttr(k) ? compactJsonList(v) : v]),
+    );
     update.mutate({ id: itemId, attributes: cleaned });
     setEditingAttrs(false);
   };
@@ -774,12 +781,21 @@ export default function ItemDetail() {
                 <div className="divide-y divide-border">
                   {Object.entries(it.attributes ?? {}).map(([k, v]) => {
                     const clash = clashFor(k);
+                    const label = defs.find((d) => d.key === k)?.label ?? jsonListAttrLabel(k) ?? k;
+                    if (isJsonListAttr(k)) {
+                      return (
+                        <div key={k} className="py-2 text-[13px]">
+                          <div className="mb-1 text-muted-foreground">{label}</div>
+                          <AttrListValue attrKey={k} value={v} />
+                        </div>
+                      );
+                    }
                     return (
                     <div key={k} className="flex py-1.5 text-[13px]">
                       <span className="w-36 shrink-0 text-muted-foreground">
-                        {defs.find((d) => d.key === k)?.label ?? k}
+                        {label}
                       </span>
-                      <span className="font-data min-w-0">
+                      <span className="font-data min-w-0 break-words">
                         {k === "storage_gb" || k === "storage_free_gb" || k === "mount_point" ? (
                           <Link to={`/storage?item=${it.id}`} className="text-primary hover:underline">
                             {String(v)}
@@ -806,10 +822,18 @@ export default function ItemDetail() {
                     const ipHint = identityKind(k) === "ip" ? ipPrefix : null;
                     return (
                     <div key={k} className="space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="w-36 shrink-0 text-[12px] text-muted-foreground truncate">
-                        {defs.find((d) => d.key === k)?.label ?? k}
+                    <div className={cn("flex gap-2", isJsonListAttr(k) ? "items-start" : "items-center")}>
+                      <span className="w-36 shrink-0 text-[12px] text-muted-foreground truncate pt-1">
+                        {defs.find((d) => d.key === k)?.label ?? jsonListAttrLabel(k) ?? k}
                       </span>
+                      {isJsonListAttr(k) ? (
+                        <textarea
+                          className="flex-1 min-h-[7rem] rounded border border-input px-2 py-1 font-mono text-[12px] leading-snug"
+                          value={v}
+                          spellCheck={false}
+                          onChange={(e) => setAttrDraft((d) => ({ ...d, [k]: e.target.value }))}
+                        />
+                      ) : (
                       <input
                         className={cn(
                           "flex-1 rounded border px-2 py-1 text-[13px]",
@@ -821,6 +845,7 @@ export default function ItemDetail() {
                         value={v}
                         onChange={(e) => setAttrDraft((d) => ({ ...d, [k]: e.target.value }))}
                       />
+                      )}
                       {valOpts.length > 0 && (
                         <datalist id={valListId}>
                           {valOpts.map((opt) => (
