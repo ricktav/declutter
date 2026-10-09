@@ -2,10 +2,12 @@
  * Attribute convention for the Systems mindmap. Other bots can fill these
  * without a schema change. Existing Computer Lab keys stay as they are.
  *
- * Machine (a Thing in topic Computers / Network, or role laptop/desktop/
- * server/sbc/nas, or a Lab-fed item with lab.ref):
- *   importance  kern | ondersteunend | proef | afvoeren
- *   role, ip, hostname, os, cpu, ram_gb, storage_gb, storage_free_gb
+ * Machine (role laptop/desktop/server/sbc/nas). Peripherals are never
+ * machines, even with lab.ref: peripheral, keyboard, mouse, monitor, phone,
+ * tablet, patch panel, cable, accessory.
+ * Network gear (switch, router, ap, network) is its own node kind, not a machine.
+ * No role: only if it looks like a machine (ip, hostname, mac, os, cpu, ram,
+ * storage_gb, a storage volume, or a machine role). lab.ref alone is not enough.
  *
  * Services (around a machine), any of:
  *   services    JSON array of { name, kind?, status?, port?, url? }
@@ -32,6 +34,64 @@ export type Importance = (typeof IMPORTANCE)[number];
 export const MACHINE_ROLES = new Set(["laptop", "desktop", "server", "sbc", "nas"]);
 export const LAB_AREA_SLUGS = new Set(["computers", "network"]);
 export const SERVICE_ROLES = new Set(["service", "software"]);
+const SKIP_ROLES = new Set(["storage", "service", "software", "meter", "part"]);
+const PERIPHERAL_ROLES = new Set([
+  "peripheral",
+  "keyboard",
+  "mouse",
+  "monitor",
+  "phone",
+  "tablet",
+  "patchpanel",
+  "cable",
+  "accessory",
+]);
+const NETWORK_ROLES = new Set(["switch", "router", "ap", "network", "accesspoint"]);
+
+const MACHINE_SIGNAL_KEYS = [
+  "ip",
+  "ip_address",
+  "hostname",
+  "host",
+  "mac",
+  "os",
+  "cpu",
+  "ram",
+  "ram_gb",
+  "storage_gb",
+  "storage_free_gb",
+] as const;
+
+export function normRole(role: string): string {
+  return role.trim().toLowerCase().replace(/[\s_-]+/g, "");
+}
+
+export function roleKey(attrs: Attrs): string {
+  return normRole(attrStr(attrs, "role") ?? "");
+}
+
+export function isPeripheralRole(role: string): boolean {
+  return PERIPHERAL_ROLES.has(normRole(role));
+}
+
+export function isNetworkRole(role: string): boolean {
+  return NETWORK_ROLES.has(normRole(role));
+}
+
+export function hasMachineSignal(attrs: Attrs, hasVolumes = false): boolean {
+  if (hasVolumes) return true;
+  for (const k of MACHINE_SIGNAL_KEYS) {
+    if (attrStr(attrs, k)) return true;
+  }
+  return false;
+}
+
+function isSkippedBase(it: { attributes: Attrs; parentId?: number | null; status?: string }): boolean {
+  if (it.status === "archived") return true;
+  if (attrStr(it.attributes, "lab.exclude") === "yes") return true;
+  if (it.parentId != null) return true;
+  return false;
+}
 
 export type Attrs = Record<string, string | number> | null | undefined;
 
@@ -68,15 +128,40 @@ export function isMachineItem(it: {
   areaSlug?: string | null;
   parentId?: number | null;
   status?: string;
+  hasVolumes?: boolean;
 }): boolean {
-  if (it.status === "archived") return false;
-  if (attrStr(it.attributes, "lab.exclude") === "yes") return false;
-  if (it.parentId != null) return false;
-  const role = attrStr(it.attributes, "role") ?? "";
-  if (role === "storage" || role === "service" || role === "software" || role === "meter" || role === "part") return false;
+  if (isSkippedBase(it)) return false;
+  const role = roleKey(it.attributes);
+  if (isPeripheralRole(role) || isNetworkRole(role) || SKIP_ROLES.has(role)) return false;
   if (MACHINE_ROLES.has(role)) return true;
-  if (attrStr(it.attributes, "lab.ref")) return LAB_AREA_SLUGS.has(it.areaSlug ?? "") || MACHINE_ROLES.has(role) || !role;
-  return LAB_AREA_SLUGS.has(it.areaSlug ?? "") && role !== "peripheral";
+  if (!role) return hasMachineSignal(it.attributes, it.hasVolumes === true);
+  return false;
+}
+
+export function isNetworkItem(it: {
+  attributes: Attrs;
+  parentId?: number | null;
+  status?: string;
+}): boolean {
+  if (isSkippedBase(it)) return false;
+  const role = roleKey(it.attributes);
+  if (isPeripheralRole(role)) return false;
+  return isNetworkRole(role);
+}
+
+/** Top-level Computers/Network Things that are not machines, network gear, or peripherals. */
+export function isOtherComputersItem(it: {
+  attributes: Attrs;
+  areaSlug?: string | null;
+  parentId?: number | null;
+  status?: string;
+  hasVolumes?: boolean;
+}): boolean {
+  if (isSkippedBase(it)) return false;
+  const role = roleKey(it.attributes);
+  if (isPeripheralRole(role) || SKIP_ROLES.has(role)) return false;
+  if (isMachineItem(it) || isNetworkItem(it)) return false;
+  return LAB_AREA_SLUGS.has(it.areaSlug ?? "");
 }
 
 function parseJsonOrList(raw: unknown): unknown[] {

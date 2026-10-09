@@ -1,6 +1,8 @@
 import {
   guessServiceKind,
   isMachineItem,
+  isNetworkItem,
+  isOtherComputersItem,
   machineRadius,
   parseImportance,
   parseServices,
@@ -15,6 +17,8 @@ import {
 export const KIND_COLOR: Record<string, string> = {
   center: "#ff6b35",
   machine: "#ff8c5a",
+  network: "#00cec9",
+  other: "#636e72",
   service: "#6c5ce7",
   web: "#4A90E2",
   disk: "#00b894",
@@ -23,10 +27,15 @@ export const KIND_COLOR: Record<string, string> = {
 
 export const KIND_LABEL: Record<string, string> = {
   machine: "Machines",
+  network: "Network",
+  other: "Other",
   service: "Services",
   web: "Web / ports",
   disk: "Disks",
 };
+
+export type ItemScope = "machines" | "network" | "all";
+export type HubType = "machine" | "network" | "other";
 
 const MAX_SVC = 16;
 const MAX_WEB = 12;
@@ -64,7 +73,7 @@ export type GraphComputer = {
   attached: { id: number; name: string; volumes: GraphVolume[] }[];
 };
 
-export type NodeType = "center" | "machine" | "service" | "web" | "disk";
+export type NodeType = "center" | "machine" | "network" | "other" | "service" | "web" | "disk";
 
 export type GraphNode = {
   id: string;
@@ -258,14 +267,52 @@ function webNode(machineId: number, w: WebRec, i: number): GraphNode {
 export function collectRuntimes(
   items: GraphItem[],
   childrenByParent: Map<number, GraphItem[]>,
+  volumeIds: Set<number>,
 ): string[] {
   const counts = new Map<string, number>();
-  for (const it of items.filter(isMachineItem)) {
+  for (const it of items) {
+    if (!isMachineItem({ ...it, hasVolumes: volumeIds.has(it.id) })) continue;
     for (const s of servicesOf(it, childrenByParent.get(it.id) ?? [])) {
       counts.set(s.kind, (counts.get(s.kind) ?? 0) + 1);
     }
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+}
+
+export function classifyHub(it: GraphItem, volumeIds: Set<number>): HubType | null {
+  const flagged = { ...it, hasVolumes: volumeIds.has(it.id) };
+  if (isMachineItem(flagged)) return "machine";
+  if (isNetworkItem(flagged)) return "network";
+  if (isOtherComputersItem(flagged)) return "other";
+  return null;
+}
+
+function hubAllowed(type: HubType, scope: ItemScope): boolean {
+  if (type === "machine") return true;
+  if (type === "network") return scope === "network" || scope === "all";
+  return scope === "all";
+}
+
+function hubNodeId(type: HubType, id: number): string {
+  return `${type === "machine" ? "m" : type === "network" ? "n" : "o"}:${id}`;
+}
+
+function makeHubNode(it: GraphItem, type: HubType): GraphNode {
+  const imp = parseImportance(it.attributes);
+  const radius = type === "machine" ? machineRadius(imp) : type === "network" ? 14 : 11;
+  return {
+    id: hubNodeId(type, it.id),
+    type,
+    label: it.name.slice(0, 32),
+    radius,
+    color: KIND_COLOR[type],
+    dimmed: imp === "afvoeren",
+    itemId: it.id,
+    importance: imp,
+    tags: [attr(it, "role"), type === "machine" ? imp : type].filter(Boolean) as string[],
+    lines: machineLines(it),
+    href: `/items/${it.id}`,
+  };
 }
 
 export function buildSystemsGraph(opts: {
@@ -275,8 +322,12 @@ export function buildSystemsGraph(opts: {
   runtime: string | null;
   centerLabel: string;
   relations?: { fromItemId: number; toItemId: number }[];
+  scope?: ItemScope;
+  volumeItemIds?: Iterable<number>;
 }): BuiltGraph {
   const { items, computers, view, runtime, centerLabel, relations } = opts;
+  const scope = opts.scope ?? "machines";
+  const volumeIds = new Set(opts.volumeItemIds ?? []);
   const childrenByParent = new Map<number, GraphItem[]>();
   for (const it of items) {
     if (it.parentId == null) continue;
@@ -285,12 +336,17 @@ export function buildSystemsGraph(opts: {
     childrenByParent.set(it.parentId, list);
   }
   const computersById = new Map(computers.map((c) => [c.id, c]));
-  const machines = items.filter(isMachineItem);
-  const runtimes = collectRuntimes(items, childrenByParent);
+  const runtimes = collectRuntimes(items, childrenByParent, volumeIds);
+  const hubs: { it: GraphItem; type: HubType }[] = [];
+  for (const it of items) {
+    const type = classifyHub(it, volumeIds);
+    if (!type || !hubAllowed(type, scope)) continue;
+    hubs.push({ it, type });
+  }
 
   const nodes: GraphNode[] = [];
   const links: GraphLink[] = [];
-  const counts: Record<string, number> = { machine: 0, service: 0, web: 0, disk: 0 };
+  const counts: Record<string, number> = { machine: 0, network: 0, other: 0, service: 0, web: 0, disk: 0 };
 
   if (view === "services") {
     const kind = runtime ?? runtimes[0] ?? "node";
@@ -304,31 +360,19 @@ export function buildSystemsGraph(opts: {
       tags: ["runtime"],
       lines: [{ k: "runtime", v: kind }],
     });
-    for (const m of machines) {
+    for (const { it: m, type } of hubs) {
+      if (type !== "machine") continue;
       const services = servicesOf(m, childrenByParent.get(m.id) ?? []).filter((s) => s.kind === kind);
       if (services.length === 0) continue;
-      const imp = parseImportance(m.attributes);
-      const mid = `m:${m.id}`;
-      nodes.push({
-        id: mid,
-        type: "machine",
-        label: m.name.slice(0, 32),
-        radius: machineRadius(imp),
-        color: KIND_COLOR.machine,
-        dimmed: imp === "afvoeren",
-        itemId: m.id,
-        importance: imp,
-        tags: [attr(m, "role"), imp].filter(Boolean) as string[],
-        lines: machineLines(m),
-        href: `/items/${m.id}`,
-      });
+      const n = makeHubNode(m, "machine");
+      nodes.push(n);
       counts.machine += 1;
-      links.push({ source: "__center__", target: mid, strength: 0.8 });
+      links.push({ source: "__center__", target: n.id, strength: 0.8 });
       services.slice(0, MAX_SVC).forEach((s, i) => {
-        const n = serviceNode(m.id, s, i);
-        nodes.push(n);
+        const leaf = serviceNode(m.id, s, i);
+        nodes.push(leaf);
         counts.service += 1;
-        links.push({ source: mid, target: n.id, strength: 0.3 });
+        links.push({ source: n.id, target: leaf.id, strength: 0.3 });
       });
     }
   } else {
@@ -342,24 +386,13 @@ export function buildSystemsGraph(opts: {
       tags: [],
       lines: [],
     });
-    for (const m of machines) {
-      const imp = parseImportance(m.attributes);
-      const mid = `m:${m.id}`;
-      nodes.push({
-        id: mid,
-        type: "machine",
-        label: m.name.slice(0, 32),
-        radius: machineRadius(imp),
-        color: KIND_COLOR.machine,
-        dimmed: imp === "afvoeren",
-        itemId: m.id,
-        importance: imp,
-        tags: [attr(m, "role"), imp].filter(Boolean) as string[],
-        lines: machineLines(m),
-        href: `/items/${m.id}`,
-      });
-      counts.machine += 1;
-      links.push({ source: "__center__", target: mid, strength: 0.8 });
+    const hubIdByItem = new Map<number, string>();
+    for (const { it: m, type } of hubs) {
+      const n = makeHubNode(m, type);
+      nodes.push(n);
+      counts[type] = (counts[type] ?? 0) + 1;
+      hubIdByItem.set(m.id, n.id);
+      links.push({ source: "__center__", target: n.id, strength: 0.8 });
 
       const kids = childrenByParent.get(m.id) ?? [];
       const childDisks = kids.filter((c) => attr(c, "role") === "storage");
@@ -377,24 +410,25 @@ export function buildSystemsGraph(opts: {
         ...web.slice(0, MAX_WEB).map((w, i) => webNode(m.id, w, i)),
         ...disks.slice(0, MAX_DISK),
       ];
-      for (const n of leaves) {
-        nodes.push(n);
-        counts[n.type] = (counts[n.type] ?? 0) + 1;
-        links.push({ source: mid, target: n.id, strength: 0.3 });
+      for (const leaf of leaves) {
+        nodes.push(leaf);
+        counts[leaf.type] = (counts[leaf.type] ?? 0) + 1;
+        links.push({ source: n.id, target: leaf.id, strength: 0.3 });
       }
     }
-    const machineIds = new Set(machines.map((m) => m.id));
     const seenCross = new Set<string>();
     for (const r of relations ?? []) {
-      if (!machineIds.has(r.fromItemId) || !machineIds.has(r.toItemId) || r.fromItemId === r.toItemId) continue;
-      const key = [r.fromItemId, r.toItemId].sort((a, b) => a - b).join("|");
+      const a = hubIdByItem.get(r.fromItemId);
+      const b = hubIdByItem.get(r.toItemId);
+      if (!a || !b || a === b) continue;
+      const key = [a, b].sort().join("|");
       if (seenCross.has(key)) continue;
       seenCross.add(key);
-      links.push({ source: `m:${r.fromItemId}`, target: `m:${r.toItemId}`, strength: 0.05, cross: true });
+      links.push({ source: a, target: b, strength: 0.05, cross: true });
     }
   }
 
-  const legend = (["machine", "service", "web", "disk"] as const)
+  const legend = (["machine", "network", "other", "service", "web", "disk"] as const)
     .filter((t) => (counts[t] ?? 0) > 0)
     .map((t) => ({ type: t, label: KIND_LABEL[t], color: KIND_COLOR[t], count: counts[t] }));
 

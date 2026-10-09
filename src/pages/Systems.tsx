@@ -17,7 +17,14 @@ import { drag } from "d3-drag";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
 import { formatBytes } from "@/components/storage/Blocks";
-import { buildSystemsGraph, type GraphComputer, type GraphItem, type GraphNode, type GraphVolume } from "@/lib/systemsGraph";
+import {
+  buildSystemsGraph,
+  type GraphComputer,
+  type GraphItem,
+  type GraphNode,
+  type GraphVolume,
+  type ItemScope,
+} from "@/lib/systemsGraph";
 import type { Importance } from "@/lib/systemsAttrs";
 
 type SimNode = SimulationNodeDatum & GraphNode;
@@ -75,8 +82,18 @@ function nodeStroke(d: GraphNode): { color: string; width: number } {
     if (d.importance) return IMP_STROKE[d.importance];
     return { color: "#fff", width: 2 };
   }
+  if (d.type === "network") return { color: "#7eeae6", width: 2 };
+  if (d.type === "other") return { color: "#888", width: 1.5 };
   return { color: "none", width: 0 };
 }
+
+const SCOPE_OPTS: { id: ItemScope; label: string }[] = [
+  { id: "machines", label: "Machines only" },
+  { id: "network", label: "Incl. network" },
+  { id: "all", label: "All Computers items" },
+];
+
+const HUB_TYPES = new Set(["center", "machine", "network", "other"]);
 
 export default function SystemsPage() {
   const { houseId: ctxHouseId, houses } = useHouse();
@@ -95,6 +112,7 @@ export default function SystemsPage() {
   const utils = trpc.useUtils();
 
   const [view, setView] = useState<"systems" | "services">("systems");
+  const [scope, setScope] = useState<ItemScope>("machines");
   const [runtime, setRuntime] = useState<string | null>(null);
   const [selected, setSelected] = useState<GraphNode | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; node: GraphNode } | null>(null);
@@ -183,6 +201,16 @@ export default function SystemsPage() {
   const centerLabel =
     houseFilter === "all" ? "Systems" : (houseList.find((h) => h.id === houseFilter)?.name ?? "Systems");
 
+  const volumeItemIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const c of computers) {
+      if (c.volumes.length) ids.add(c.id);
+      for (const d of c.drives) if (d.volumes.length) ids.add(d.id);
+      for (const d of c.attached) if (d.volumes.length) ids.add(d.id);
+    }
+    return ids;
+  }, [computers]);
+
   const graph = useMemo(
     () =>
       buildSystemsGraph({
@@ -192,8 +220,10 @@ export default function SystemsPage() {
         runtime,
         centerLabel,
         relations,
+        scope,
+        volumeItemIds,
       }),
-    [graphItems, computers, view, runtime, centerLabel, relations],
+    [graphItems, computers, view, runtime, centerLabel, relations, scope, volumeItemIds],
   );
 
   useEffect(() => {
@@ -224,7 +254,7 @@ export default function SystemsPage() {
     if (!svgEl || !z) return;
     const { w, h } = size;
     select(svgEl).call(z.transform, zoomIdentity.translate(w / 2, h / 2).scale(0.8).translate(-w / 2, -h / 2));
-  }, [view, runtime, houseFilter, size.w, size.h]);
+  }, [view, runtime, houseFilter, scope, size.w, size.h]);
 
   useEffect(() => {
     if (!gRef.current || !svgRef.current) return;
@@ -257,7 +287,7 @@ export default function SystemsPage() {
         "charge",
         forceManyBody<SimNode>().strength((d) => {
           if (d.type === "center") return -600;
-          if (d.type === "machine") return -300;
+          if (d.type === "machine" || d.type === "network" || d.type === "other") return -300;
           return -40;
         }),
       )
@@ -316,7 +346,7 @@ export default function SystemsPage() {
     const hubLabel = g
       .append("g")
       .selectAll<SVGTextElement, SimNode>("text")
-      .data(nodes.filter((d) => d.type === "center" || d.type === "machine"))
+      .data(nodes.filter((d) => HUB_TYPES.has(d.type)))
       .join("text")
       .attr("text-anchor", "middle")
       .attr("dy", (d) => (d.type === "center" ? 5 : d.radius + 14))
@@ -358,7 +388,7 @@ export default function SystemsPage() {
       }
       nodeSel.attr("opacity", (d) => {
         if (connected.has(d.id)) return d.dimmed ? 0.5 : 1;
-        return d.type === "center" || d.type === "machine" ? 0.15 : 0.15;
+        return 0.15;
       });
       linkSel.attr("stroke-opacity", (d) => {
         const sid = typeof d.source === "object" ? d.source.id : String(d.source);
@@ -414,7 +444,7 @@ export default function SystemsPage() {
         const svgEl = svgRef.current;
         const z = zoomRef.current;
         if (!svgEl || !z) return;
-        const scale = d.type === "center" ? 1.2 : d.type === "machine" ? 1.8 : 2.5;
+        const scale = d.type === "center" ? 1.2 : HUB_TYPES.has(d.type) ? 1.8 : 2.5;
         const { w: W, h: H } = sizeRef.current;
         const transform = zoomIdentity
           .translate(W / 2, H / 2)
@@ -510,6 +540,24 @@ export default function SystemsPage() {
               </button>
             ))}
         </div>
+        <div className="flex rounded-full border border-[#333] overflow-hidden text-[11px] font-medium">
+          {SCOPE_OPTS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => {
+                posRef.current.clear();
+                setSelected(null);
+                setScope(opt.id);
+              }}
+              className={`px-2.5 py-1.5 whitespace-nowrap transition-colors ${
+                scope === opt.id ? "bg-[#2a2a2a] text-[#e0e0e0]" : "bg-transparent text-[#888] hover:text-[#ff6b35]"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
         <select
           className="rounded-full bg-[#1a1a1a] border border-[#333] px-3 py-1.5 text-[12px] text-[#e0e0e0]"
           value={houseFilter}
@@ -554,7 +602,11 @@ export default function SystemsPage() {
 
         {ready && graph.nodes.length <= 1 && (
           <div className="absolute inset-0 flex items-center justify-center text-[#888] text-sm px-8 text-center">
-            No machines in this house. Computers, NAS and Lab-fed Things show up here.
+            {scope === "all"
+              ? "No Computers items in this house."
+              : scope === "network"
+                ? "No machines or network gear in this house."
+                : "No machines in this house. Peripherals stay out; network gear is under Incl. network."}
           </div>
         )}
 
