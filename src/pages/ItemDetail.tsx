@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
-import { AreaPicker } from "@/components/AreaPicker";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
 import { EnergySection } from "@/components/EnergySection";
@@ -166,6 +165,7 @@ export default function ItemDetail() {
     { areaId: item.data?.areaId ?? 0 },
     { enabled: !!item.data?.areaId },
   );
+  const topics = trpc.areas.list.useQuery();
   const siblingIds = (siblings.data ?? []).map((s) => s.id);
   const siblingIndex = siblingIds.indexOf(itemId);
   const prevId = siblingIndex > 0 ? siblingIds[siblingIndex - 1] : null;
@@ -174,7 +174,7 @@ export default function ItemDetail() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.key === "ArrowLeft" && prevId) navigate(`/items/${prevId}`);
       if (e.key === "ArrowRight" && nextId) navigate(`/items/${nextId}`);
     };
@@ -439,15 +439,25 @@ export default function ItemDetail() {
         <div className="flex-1 min-w-0">
           <div className="text-[12px] text-muted-foreground flex items-center gap-2 min-w-0">
             <span className="micro-label shrink-0">Topic</span>
-            <div className="w-52 shrink-0">
-              <AreaPicker
-                value={it.areaId}
-                onChange={(id) => {
-                  if (id !== it.areaId) update.mutate({ id: itemId, areaId: id });
-                }}
-                placeholder="pick a topic…"
-              />
-            </div>
+            <select
+              aria-label="Topic"
+              className="h-7 w-52 shrink-0 rounded-md border border-input bg-white px-1.5 text-[12px]"
+              value={it.areaId}
+              disabled={update.isPending}
+              onChange={(e) => {
+                const id = Number(e.target.value);
+                if (id !== it.areaId) update.mutate({ id: itemId, areaId: id });
+              }}
+            >
+              {!(topics.data ?? []).some((a) => a.id === it.areaId) && it.area && (
+                <option value={it.areaId}>{it.area.name}</option>
+              )}
+              {(topics.data ?? []).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
             {it.area?.slug && (
               <Link to={`/areas/${it.area.slug}`} className="hover:underline shrink-0">
                 Open
