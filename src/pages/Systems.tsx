@@ -98,11 +98,13 @@ const SCOPE_OPTS: { id: ItemScope; label: string }[] = [
 function runtimeChipLabel(k: string): string {
   if (k === "docker") return "containers";
   if (k === "web") return "web / PWA";
+  if (k === "vms") return "VMs";
+  if (k === "lxc") return "LXC";
   return k;
 }
 
 const HUB_TYPES = new Set(["center", "machine", "network", "other"]);
-const LEAF_TYPES = new Set(["service", "web", "disk", "volume"]);
+const LEAF_TYPES = new Set(["service", "web", "vm", "lxc", "disk", "volume"]);
 
 function fitTransform(nodes: { x?: number; y?: number; radius: number; type: string }[], w: number, h: number) {
   let minX = Infinity;
@@ -382,6 +384,7 @@ export default function SystemsPage() {
       .attr("r", (d) => d.radius)
       .attr("fill", (d) => d.color)
       .attr("fill-opacity", (d) => {
+        if (d.faint) return 0.12;
         if (d.dimmed) return 0.25;
         return LEAF_TYPES.has(d.type) ? 0.8 : 1;
       })
@@ -501,6 +504,7 @@ export default function SystemsPage() {
             radius: d.radius,
             color: d.color,
             dimmed: d.dimmed,
+            faint: d.faint,
             itemId: d.itemId,
             volumeId: d.volumeId,
             importance: d.importance,

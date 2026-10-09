@@ -15,7 +15,10 @@
  *   docker / containers   list of container names (kind docker).
  *               Collectors write this with services.report (not the Systems
  *               view itself). A daily claudemux fleet HTML page can feed the
- *               importer script; Systems never fetches that URL.
+ *               importer script; Systems never fetches that URL. Local Docker
+ *               on the Mini merges into containers and leaves fleet `web`.
+ *   vms / lxc             Proxmox guests [{ vmid, name, status, memMb?, diskGb?, template? }].
+ *               Collector: scripts/services-report-proxmox.ts. Not mixed into docker.
  *   units / systemd       list of unit names (kind systemd)
  *   launchd               list of launchd job names (kind launchd)
  *   svc.<name>            value = status, port, or URL
@@ -124,6 +127,15 @@ export type WebRec = {
   ports?: number[];
   urls?: string[];
   status?: string;
+};
+
+export type GuestRec = {
+  vmid: number;
+  name: string;
+  status: string;
+  memMb?: number;
+  diskGb?: number;
+  template?: boolean;
 };
 
 export function attrStr(attrs: Attrs, key: string): string | null {
@@ -384,6 +396,38 @@ function asWeb(x: unknown): WebRec | null {
     ...(urls.length ? { urls } : {}),
     ...(status ? { status } : {}),
   };
+}
+
+function asGuest(x: unknown): GuestRec | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  const vmid = num(o.vmid);
+  if (vmid == null || !Number.isInteger(vmid) || vmid < 0) return null;
+  const name = String(o.name ?? o.vmid ?? "").trim() || String(vmid);
+  const status = String(o.status ?? "stopped").trim() || "stopped";
+  const memMb = num(o.memMb);
+  const diskGb = num(o.diskGb);
+  const template = o.template === true || o.template === 1 || o.template === "1";
+  return {
+    vmid,
+    name,
+    status,
+    ...(memMb != null ? { memMb } : {}),
+    ...(diskGb != null ? { diskGb } : {}),
+    ...(template ? { template: true } : {}),
+  };
+}
+
+export function parseGuests(attrs: Attrs, key: "vms" | "lxc"): GuestRec[] {
+  const out: GuestRec[] = [];
+  const seen = new Set<number>();
+  for (const x of parseJsonOrList(attrs?.[key])) {
+    const g = asGuest(x);
+    if (!g || seen.has(g.vmid)) continue;
+    seen.add(g.vmid);
+    out.push(g);
+  }
+  return out;
 }
 
 export function parseWeb(attrs: Attrs): WebRec[] {

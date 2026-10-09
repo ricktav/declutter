@@ -26,12 +26,24 @@ export type WebRecIn = {
   status?: string;
 };
 
+export type GuestRecIn = {
+  vmid: number;
+  name: string;
+  status?: string;
+  memMb?: number;
+  diskGb?: number;
+  template?: boolean;
+};
+
 export type ServicesReportInput = {
   itemId: number;
   source: string;
+  merge?: boolean;
   containers?: ServiceRecIn[];
   node?: ServiceRecIn[];
   web?: WebRecIn[];
+  vms?: GuestRecIn[];
+  lxc?: GuestRecIn[];
 };
 
 function compactService(s: ServiceRecIn): Record<string, string | number> {
@@ -62,6 +74,81 @@ function compactWeb(w: WebRecIn): Record<string, string | number | string[] | nu
   return o;
 }
 
+function compactGuest(g: GuestRecIn): Record<string, string | number> {
+  const o: Record<string, string | number> = { vmid: g.vmid, name: g.name };
+  if (g.status) o.status = g.status;
+  if (g.memMb != null) o.memMb = g.memMb;
+  if (g.diskGb != null) o.diskGb = g.diskGb;
+  if (g.template) o.template = 1;
+  return o;
+}
+
+function parseJsonArray(raw: unknown): unknown[] {
+  if (raw == null || raw === "") return [];
+  if (Array.isArray(raw)) return raw;
+  const s = String(raw).trim();
+  if (!s) return [];
+  if (s.startsWith("[")) {
+    try {
+      const v = JSON.parse(s) as unknown;
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function mergeByKey<T extends Record<string, unknown>>(existing: T[], incoming: T[], keyOf: (x: T) => string): T[] {
+  const map = new Map<string, T>();
+  for (const x of existing) {
+    const k = keyOf(x);
+    if (k) map.set(k, x);
+  }
+  for (const x of incoming) {
+    const k = keyOf(x);
+    if (!k) continue;
+    map.set(k, { ...map.get(k), ...x });
+  }
+  return [...map.values()];
+}
+
+function asObj(x: unknown): Record<string, unknown> | null {
+  return x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, unknown>) : null;
+}
+
+function existingServices(raw: unknown): Record<string, string | number>[] {
+  return parseJsonArray(raw)
+    .map((x) => {
+      if (typeof x === "string" || typeof x === "number") return { name: String(x) };
+      const o = asObj(x);
+      const name = o ? String(o.name ?? "").trim() : "";
+      return name ? (o as Record<string, string | number>) : null;
+    })
+    .filter((x): x is Record<string, string | number> => x != null);
+}
+
+function existingWeb(raw: unknown): Record<string, string | number | string[] | number[]>[] {
+  return parseJsonArray(raw)
+    .map((x) => {
+      const o = asObj(x);
+      const label = o ? String(o.label ?? o.name ?? "").trim() : "";
+      return label ? (o as Record<string, string | number | string[] | number[]>) : null;
+    })
+    .filter((x): x is Record<string, string | number | string[] | number[]> => x != null);
+}
+
+function existingGuests(raw: unknown): Record<string, string | number>[] {
+  return parseJsonArray(raw)
+    .map((x) => {
+      const o = asObj(x);
+      if (!o) return null;
+      const vmid = Number(o.vmid);
+      return Number.isInteger(vmid) ? (o as Record<string, string | number>) : null;
+    })
+    .filter((x): x is Record<string, string | number> => x != null);
+}
+
 function setJsonList(attrs: Record<string, string | number>, key: string, list: unknown[] | undefined): void {
   if (list === undefined) return;
   if (list.length === 0) {
@@ -71,12 +158,41 @@ function setJsonList(attrs: Record<string, string | number>, key: string, list: 
   attrs[key] = JSON.stringify(list);
 }
 
+function applyList<T>(
+  attrs: Record<string, string | number>,
+  key: string,
+  incoming: T[] | undefined,
+  merge: boolean,
+  compact: (x: T) => Record<string, unknown>,
+  existing: (raw: unknown) => Record<string, unknown>[],
+  keyOf: (x: Record<string, unknown>) => string,
+): number {
+  if (incoming === undefined) return 0;
+  if (merge) {
+    if (incoming.length === 0) return existing(attrs[key]).length;
+    const merged = mergeByKey(existing(attrs[key]), incoming.map(compact), keyOf);
+    setJsonList(attrs, key, merged);
+    return merged.length;
+  }
+  setJsonList(attrs, key, incoming.map(compact));
+  return incoming.length;
+}
+
+export type ServicesReportResult = {
+  containers: number;
+  node: number;
+  web: number;
+  vms: number;
+  lxc: number;
+};
+
 /**
- * Snapshot of processes on a machine. Replaces the keys that were sent
- * (`containers`, `node`, `web`); omitted keys stay. Empty arrays clear that key.
- * No schema change: Systems already reads these attributes.
+ * Snapshot of processes / guests on a machine. Replaces the keys that were
+ * sent unless `merge` is set (then incoming rows upsert by name / label / vmid
+ * and omitted-from-incoming rows stay). Omitted keys stay. Empty arrays clear
+ * that key unless `merge` (empty + merge leaves the key).
  */
-export async function applyServicesReport(db: Db, input: ServicesReportInput): Promise<{ containers: number; node: number; web: number }> {
+export async function applyServicesReport(db: Db, input: ServicesReportInput): Promise<ServicesReportResult> {
   const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
   if (!item) throw new ServicesReportError("Item not found.");
   if (item.status === "archived") throw new ServicesReportError("Item is archived.");
@@ -84,17 +200,22 @@ export async function applyServicesReport(db: Db, input: ServicesReportInput): P
   if (!SERVICE_MACHINE_ROLES.has(role)) {
     throw new ServicesReportError("Item is not a machine (role laptop/desktop/server/sbc/nas).");
   }
-  if (input.containers === undefined && input.node === undefined && input.web === undefined) {
-    throw new ServicesReportError("Report a containers, node or web list.");
+  if (
+    input.containers === undefined &&
+    input.node === undefined &&
+    input.web === undefined &&
+    input.vms === undefined &&
+    input.lxc === undefined
+  ) {
+    throw new ServicesReportError("Report a containers, node, web, vms or lxc list.");
   }
   const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
-  setJsonList(next, "containers", input.containers?.map(compactService));
-  setJsonList(next, "node", input.node?.map(compactService));
-  setJsonList(next, "web", input.web?.map(compactWeb));
+  const merge = input.merge === true;
+  const containers = applyList(next, "containers", input.containers, merge, compactService, existingServices, (x) => String(x.name ?? "").toLowerCase());
+  const node = applyList(next, "node", input.node, merge, compactService, existingServices, (x) => String(x.name ?? "").toLowerCase());
+  const web = applyList(next, "web", input.web, merge, compactWeb, existingWeb, (x) => String(x.label ?? x.name ?? "").toLowerCase());
+  const vms = applyList(next, "vms", input.vms, merge, compactGuest, existingGuests, (x) => String(x.vmid ?? ""));
+  const lxc = applyList(next, "lxc", input.lxc, merge, compactGuest, existingGuests, (x) => String(x.vmid ?? ""));
   await db.update(items).set({ attributes: next }).where(eq(items.id, input.itemId));
-  return {
-    containers: input.containers?.length ?? 0,
-    node: input.node?.length ?? 0,
-    web: input.web?.length ?? 0,
-  };
+  return { containers, node, web, vms, lxc };
 }

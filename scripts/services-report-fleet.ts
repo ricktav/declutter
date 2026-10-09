@@ -148,7 +148,8 @@ for (const row of matched) {
   const report = {
     itemId: row.itemId,
     source: "fleet",
-    containers: row.containers,
+    merge: true,
+    ...(row.containers.length ? { containers: row.containers } : {}),
     web: row.web,
   };
   await trpc("services.report", report, "POST");

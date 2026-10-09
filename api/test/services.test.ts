@@ -30,7 +30,7 @@ describe("services.report", () => {
         { name: "caddy", status: "running" },
       ],
     });
-    expect(first).toEqual({ containers: 2, node: 0, web: 0 });
+    expect(first).toEqual({ containers: 2, node: 0, web: 0, vms: 0, lxc: 0 });
     const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
     expect(JSON.parse(String(row.attributes?.containers))).toEqual([
       { name: "nginx", status: "running", port: 80 },
@@ -54,6 +54,59 @@ describe("services.report", () => {
     const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
     expect(row.attributes?.containers).toBeUndefined();
     expect(JSON.parse(String(row.attributes?.node))).toEqual([{ name: "homebase" }]);
+  });
+
+  it("merges containers by name and leaves omitted keys", async () => {
+    const { houseId, pc } = await seed();
+    const c = callerFor(houseId);
+    await c.services.report({
+      itemId: pc,
+      source: "fleet",
+      web: [{ label: "Workbench", url: "http://10.50.0.102:3002", port: 3002 }],
+    });
+    await c.services.report({
+      itemId: pc,
+      source: "local-docker",
+      merge: true,
+      containers: [{ name: "twin-homebase", status: "ok", image: "lidarventory:homebase", port: 8001 }],
+    });
+    const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
+    expect(JSON.parse(String(row.attributes?.web))).toEqual([
+      expect.objectContaining({ label: "Workbench", port: 3002 }),
+    ]);
+    expect(JSON.parse(String(row.attributes?.containers))).toEqual([
+      expect.objectContaining({ name: "twin-homebase", status: "ok", port: 8001 }),
+    ]);
+    await c.services.report({
+      itemId: pc,
+      source: "local-docker",
+      merge: true,
+      containers: [{ name: "apache-php", status: "ok", port: 80 }],
+    });
+    const [merged] = await getTestDb().select().from(items).where(eq(items.id, pc));
+    expect(JSON.parse(String(merged.attributes?.containers)).map((x: { name: string }) => x.name).sort()).toEqual([
+      "apache-php",
+      "twin-homebase",
+    ]);
+    expect(JSON.parse(String(merged.attributes?.web))[0].label).toBe("Workbench");
+  });
+
+  it("writes proxmox vms and lxc without clearing containers", async () => {
+    const { houseId, pc } = await seed();
+    const c = callerFor(houseId);
+    await c.services.report({ itemId: pc, source: "test", containers: [{ name: "nginx" }] });
+    await c.services.report({
+      itemId: pc,
+      source: "proxmox",
+      vms: [{ vmid: 100, name: "win11", status: "stopped", memMb: 8192, diskGb: 64 }],
+      lxc: [{ vmid: 102, name: "puppet", status: "running" }],
+    });
+    const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
+    expect(JSON.parse(String(row.attributes?.containers))).toEqual([{ name: "nginx" }]);
+    expect(JSON.parse(String(row.attributes?.vms))).toEqual([
+      expect.objectContaining({ vmid: 100, name: "win11", status: "stopped", memMb: 8192, diskGb: 64 }),
+    ]);
+    expect(JSON.parse(String(row.attributes?.lxc))).toEqual([expect.objectContaining({ vmid: 102, name: "puppet", status: "running" })]);
   });
 
   it("refuses a non-machine or archived item", async () => {
