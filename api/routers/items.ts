@@ -33,16 +33,25 @@ function nameScore(a: string, b: string): number {
 
 export const itemsRouter = createRouter({
   listByArea: procedure
-    .input(z.object({ areaId: z.number(), includeArchived: z.boolean().default(false) }))
-    .query(async ({ input }) => {
+    .input(
+      z.object({
+        areaId: z.number(),
+        includeArchived: z.boolean().default(false),
+        houseId: z.number().nullable().optional(),
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const houseId = input.houseId !== undefined ? input.houseId : ctx.houseId;
       const db = getDb();
       const rows = await db
         .select()
         .from(items)
         .where(
-          input.includeArchived
-            ? eq(items.areaId, input.areaId)
-            : and(eq(items.areaId, input.areaId), eq(items.status, "active")),
+          and(
+            eq(items.areaId, input.areaId),
+            input.includeArchived ? undefined : eq(items.status, "active"),
+            houseId != null ? eq(items.houseId, houseId) : undefined,
+          ),
         )
         .orderBy(desc(items.updatedAt));
       const covers = await coverPhotos(db, rows.map((r) => r.id));

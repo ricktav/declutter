@@ -187,7 +187,7 @@ export default function ItemDetail() {
   const item = trpc.items.get.useQuery({ id: itemId });
   const history = trpc.events.forEntity.useQuery({ entityType: "item", entityId: itemId });
   const siblings = trpc.items.listByArea.useQuery(
-    { areaId: item.data?.areaId ?? 0 },
+    { areaId: item.data?.areaId ?? 0, houseId: item.data?.houseId ?? null },
     { enabled: !!item.data?.areaId },
   );
   const topicAttrKeys = trpc.items.attributeKeysForTopic.useQuery(

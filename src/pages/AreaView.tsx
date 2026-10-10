@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import type { Area } from "@db/schema";
 import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
 import { isMachineItem } from "@/lib/systemsAttrs";
+import { useHouse } from "@/context/house";
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -265,6 +266,7 @@ function AddItemDialog({ areaId, defs }: { areaId: number; defs: AttributeDef[] 
 
 export default function AreaView() {
   const { slug } = useParams<{ slug: string }>();
+  const { houseId } = useHouse();
   const { openAsk } = useAsk();
   const [q, setQ] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -275,6 +277,9 @@ export default function AreaView() {
   const [placeFilter, setPlaceFilter] = useState("");
   const [systems, setSystems] = usePersistedState("areaView.systems", true);
   const navigate = useNavigate();
+  useEffect(() => {
+    setPlaceFilter("");
+  }, [houseId]);
 
   const area = trpc.areas.get.useQuery({ slug: slug! }, { enabled: !!slug });
   const utils = trpc.useUtils();
@@ -295,7 +300,7 @@ export default function AreaView() {
     },
   });
   const itemsList = trpc.items.listByArea.useQuery(
-    { areaId: area.data?.id ?? 0, includeArchived: showArchived },
+    { areaId: area.data?.id ?? 0, includeArchived: showArchived, houseId },
     { enabled: !!area.data },
   );
 

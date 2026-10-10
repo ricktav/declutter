@@ -56,16 +56,19 @@ describe("items.listAll / get", () => {
     expect(one?.room).toMatchObject({ id: keuken, name: "Keuken", floor: "ground", hasGeometry: false });
   });
 
-  it("listByArea joins the room for topic Place filters", async () => {
-    const { h1, areaId, keuken } = await seed();
+  it("listByArea joins the room for topic Place filters and stays in the session house", async () => {
+    const { h1, h2, areaId, keuken, hal } = await seed();
     await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
     await callerFor(h1).items.create({ areaId, name: "lamp" });
+    await callerFor(h1).items.create({ areaId, name: "coat", roomId: hal });
 
     const rows = await callerFor(h1).items.listByArea({ areaId });
     expect(rows.map((r) => [r.name, r.room?.name ?? null]).sort()).toEqual([
       ["lamp", null],
       ["pan", "Keuken"],
     ]);
+    expect((await callerFor(h2).items.listByArea({ areaId })).map((r) => r.name)).toEqual(["coat"]);
+    expect(await callerFor(h1).items.listByArea({ areaId, houseId: null })).toHaveLength(3);
   });
 });
 
