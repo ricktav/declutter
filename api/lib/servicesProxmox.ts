@@ -1,6 +1,6 @@
 /** Parse Proxmox `pvesh` JSON or `pct list` / `qm list` text into guest records. */
 
-export type ProxmoxDisk = { name: string; sizeGb?: number };
+export type ProxmoxDisk = { name: string; sizeGb?: number; storage?: string };
 export type ProxmoxMount = { source: string; dest: string; type?: string; size?: number };
 
 export type ProxmoxGuest = {
@@ -13,6 +13,8 @@ export type ProxmoxGuest = {
   template?: boolean;
   disks?: ProxmoxDisk[];
   mounts?: ProxmoxMount[];
+  /** Cluster node, used by the collector to fetch config. Not stored. */
+  node?: string;
 };
 
 function asRecord(x: unknown): Record<string, unknown> | null {
@@ -56,6 +58,7 @@ function compactGuest(g: ProxmoxGuest): ProxmoxGuest {
   if (g.template) rec.template = true;
   if (g.disks?.length) rec.disks = g.disks.filter((d) => d.sizeGb != null && d.sizeGb > 0).slice(0, 16);
   if (g.mounts?.length) rec.mounts = g.mounts.slice(0, 32);
+  if (g.node) rec.node = g.node;
   return rec;
 }
 
@@ -67,6 +70,7 @@ function fromResource(o: Record<string, unknown>): ProxmoxGuest | null {
   const memMb = num(o.memMb) ?? bytesToMb(num(o.maxmem) ?? num(o.mem));
   const diskGb = num(o.diskGb) ?? bytesToGb(num(o.maxdisk));
   const usedGb = num(o.usedGb) ?? bytesToGb(num(o.disk));
+  const node = String(o.node ?? "").trim() || undefined;
   return compactGuest({
     vmid,
     name,
@@ -75,6 +79,7 @@ function fromResource(o: Record<string, unknown>): ProxmoxGuest | null {
     diskGb,
     usedGb: usedGb != null && usedGb > 0 ? usedGb : undefined,
     template: looksTemplate(name, o.template),
+    node,
   });
 }
 
@@ -194,17 +199,53 @@ function parsePveSize(raw: string): number | undefined {
   const m = String(raw).trim().match(/^([\d.]+)\s*([KMGT])?$/i);
   if (!m) return undefined;
   const n = Number(m[1]);
-  if (!Number.isFinite(n)) return undefined;
+  if (!Number.isFinite(n) || n <= 0) return undefined;
   const u = (m[2] ?? "G").toUpperCase();
   const gb = u === "T" ? n * 1024 : u === "G" ? n : u === "M" ? n / 1024 : u === "K" ? n / 1024 / 1024 : n;
-  return gb > 0 ? Math.round(gb * 10) / 10 : undefined;
+  if (!(gb > 0)) return undefined;
+  if (gb < 0.01) return Math.round(gb * 10000) / 10000;
+  if (gb < 1) return Math.round(gb * 1000) / 1000;
+  return Math.round(gb * 10) / 10;
 }
 
-const DISK_KEY = /^(scsi|sata|virtio|ide|efidisk|tpmstate|unused)\d+$/i;
-const MP_KEY = /^mp\d+$/i;
+function storageOf(vol: string): string | undefined {
+  const v = vol.trim();
+  if (!v || v === "none" || v.startsWith("/")) return undefined;
+  const i = v.indexOf(":");
+  if (i <= 0) return undefined;
+  return v.slice(0, i).slice(0, 64);
+}
 
-/** `qm config` / `pct config` text or pvesh config JSON. */
-export function parsePveGuestConfig(raw: unknown): Pick<ProxmoxGuest, "disks" | "mounts" | "memMb"> {
+const DISK_KEY = /^(scsi|sata|virtio|ide|efidisk|tpmstate)\d+$/i;
+const MP_KEY = /^mp\d+$/i;
+const CONFIG_KEY = /^(memory|rootfs|(scsi|sata|virtio|ide|efidisk|tpmstate|mp)\d+)$/i;
+
+function isCdromOrNone(val: string): boolean {
+  return /(?:^|,)media=cdrom(?:,|$)/i.test(val) || /^none(?:$|,)/i.test(val);
+}
+
+function sizeFromVol(val: string): number | undefined {
+  const m = val.match(/(?:^|,)size=([\d.]+[KMGT]?)/i);
+  return m ? parsePveSize(m[1]) : undefined;
+}
+
+function configRecord(raw: unknown): Record<string, unknown> | null {
+  const o = asRecord(raw);
+  if (!o) return null;
+  const inner = asRecord(o.data);
+  if (inner) {
+    const topHas = Object.keys(o).some((k) => CONFIG_KEY.test(k));
+    const innerHas = Object.keys(inner).some((k) => CONFIG_KEY.test(k));
+    if (!topHas && innerHas) return inner;
+  }
+  return o;
+}
+
+/** `pvesh` config JSON, `qm config` / `pct config` text. QEMU disk keys → disks; LXC rootfs+mpN → mounts. */
+export function parsePveGuestConfig(
+  raw: unknown,
+  kind: "qemu" | "lxc" = "qemu",
+): Pick<ProxmoxGuest, "disks" | "mounts" | "memMb"> {
   const lines: string[] = [];
   if (typeof raw === "string") {
     for (const line of raw.split(/\r?\n/)) {
@@ -212,7 +253,7 @@ export function parsePveGuestConfig(raw: unknown): Pick<ProxmoxGuest, "disks" | 
       if (t && !t.startsWith("#")) lines.push(t);
     }
   } else {
-    const o = asRecord(raw);
+    const o = configRecord(raw);
     if (o) {
       for (const [k, v] of Object.entries(o)) {
         if (v != null && v !== "") lines.push(`${k}: ${v}`);
@@ -232,22 +273,32 @@ export function parsePveGuestConfig(raw: unknown): Pick<ProxmoxGuest, "disks" | 
       if (Number.isFinite(n) && n > 0) memMb = n;
       continue;
     }
-    if (key === "rootfs" || DISK_KEY.test(key)) {
-      const sizeM = val.match(/size=([\d.]+[KMGT]?)/i);
-      const sizeGb = sizeM ? parsePveSize(sizeM[1]) : undefined;
+    if (kind === "qemu" && DISK_KEY.test(key)) {
+      if (isCdromOrNone(val)) continue;
+      const sizeGb = sizeFromVol(val);
+      if (sizeGb == null || !(sizeGb > 0)) continue;
       const vol = val.split(",")[0]?.trim() || key;
-      disks.push({ name: (key === "rootfs" ? "rootfs" : key).slice(0, 64), ...(sizeGb ? { sizeGb } : {}) });
-      if (key === "rootfs") {
-        mounts.push({ source: vol.slice(0, 255), dest: "/", type: "rootfs" });
-      }
+      const storage = storageOf(vol);
+      disks.push({ name: key.slice(0, 64), sizeGb, ...(storage ? { storage } : {}) });
       continue;
     }
-    if (MP_KEY.test(key)) {
+    if (kind === "lxc" && key === "rootfs") {
+      if (isCdromOrNone(val)) continue;
+      const sizeGb = sizeFromVol(val);
+      const vol = val.split(",")[0]?.trim() || key;
+      mounts.push({
+        source: vol.slice(0, 255),
+        dest: "/",
+        type: "rootfs",
+        ...(sizeGb ? { size: Math.round(sizeGb * 1e9) } : {}),
+      });
+      continue;
+    }
+    if (kind === "lxc" && MP_KEY.test(key)) {
       const destM = val.match(/(?:^|,)mp=([^,]+)/i);
-      const sizeM = val.match(/size=([\d.]+[KMGT]?)/i);
+      const sizeGb = sizeFromVol(val);
       const source = val.split(",")[0]?.trim() ?? key;
       const dest = destM?.[1]?.trim() || source;
-      const sizeGb = sizeM ? parsePveSize(sizeM[1]) : undefined;
       mounts.push({
         source: source.slice(0, 255),
         dest: dest.slice(0, 255),
@@ -261,6 +312,31 @@ export function parsePveGuestConfig(raw: unknown): Pick<ProxmoxGuest, "disks" | 
     ...(mounts.length ? { mounts } : {}),
     ...(memMb != null ? { memMb } : {}),
   };
+}
+
+function diskGbFromConfig(
+  extra: Pick<ProxmoxGuest, "disks" | "mounts">,
+  kind: "qemu" | "lxc",
+): number | undefined {
+  if (kind === "lxc") {
+    const root = extra.mounts?.find((m) => m.type === "rootfs");
+    if (root?.size != null && root.size > 0) return Math.round((root.size / 1e9) * 10) / 10;
+    return undefined;
+  }
+  const sum = extra.disks?.reduce((s, d) => s + (d.sizeGb ?? 0), 0) ?? 0;
+  return sum > 0 ? Math.round(sum * 10) / 10 : undefined;
+}
+
+/** Merge one guest's pvesh/qm/pct config onto the cluster-resource row. */
+export function applyPveGuestConfig(g: ProxmoxGuest, raw: unknown, kind: "qemu" | "lxc"): ProxmoxGuest {
+  const extra = parsePveGuestConfig(raw, kind);
+  const diskGb = diskGbFromConfig(extra, kind);
+  return compactGuest({
+    ...g,
+    ...extra,
+    diskGb: diskGb ?? g.diskGb,
+    memMb: extra.memMb ?? g.memMb,
+  });
 }
 
 /** Multiplexed `=== 100 ===\n...config` blocks from one SSH. */
@@ -285,19 +361,15 @@ export function parsePveConfigBlocks(text: string): Map<number, string> {
   return out;
 }
 
-export function enrichProxmoxGuests(guests: ProxmoxGuest[], configs: Map<number, string>): ProxmoxGuest[] {
+export function enrichProxmoxGuests(
+  guests: ProxmoxGuest[],
+  configs: Map<number, string>,
+  kind: "qemu" | "lxc" = "qemu",
+): ProxmoxGuest[] {
   return guests.map((g) => {
     const raw = configs.get(g.vmid);
     if (!raw) return g;
-    const extra = parsePveGuestConfig(raw);
-    const diskGb =
-      extra.disks?.reduce((s, d) => s + (d.sizeGb ?? 0), 0) || g.diskGb;
-    return compactGuest({
-      ...g,
-      ...extra,
-      diskGb: diskGb != null && diskGb > 0 ? diskGb : undefined,
-      memMb: extra.memMb ?? g.memMb,
-    });
+    return applyPveGuestConfig(g, raw, kind);
   });
 }
 
@@ -320,7 +392,7 @@ export function parseProxmoxInventory(input: {
   }
   if (!vms.length && input.qmList) vms = parseQmList(input.qmList);
   if (!lxc.length && input.pctList) lxc = parsePctList(input.pctList);
-  if (input.qmConfigs) vms = enrichProxmoxGuests(vms, parsePveConfigBlocks(input.qmConfigs));
-  if (input.pctConfigs) lxc = enrichProxmoxGuests(lxc, parsePveConfigBlocks(input.pctConfigs));
+  if (input.qmConfigs) vms = enrichProxmoxGuests(vms, parsePveConfigBlocks(input.qmConfigs), "qemu");
+  if (input.pctConfigs) lxc = enrichProxmoxGuests(lxc, parsePveConfigBlocks(input.pctConfigs), "lxc");
   return { vms, lxc };
 }

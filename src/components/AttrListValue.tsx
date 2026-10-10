@@ -91,6 +91,12 @@ function nums(v: unknown): number[] {
   return parsePortValues(v);
 }
 
+function fmtDiskGb(g: number): string {
+  if (!(g > 0)) return "";
+  if (g < 0.01) return `${Math.round(g * 1024)} MB`;
+  return `${g} GB`;
+}
+
 type Mount = { source: string; dest: string; type?: string; size?: number };
 
 function mountsOf(o: Record<string, unknown>): Mount[] {
@@ -181,7 +187,9 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
         if (!rec) continue;
         const n = str(rec.name);
         const g = Number(rec.sizeGb);
-        if (n && Number.isFinite(g) && g > 0) extra.push(`${n} ${g} GB`);
+        const storage = str(rec.storage);
+        const size = Number.isFinite(g) && g > 0 ? fmtDiskGb(g) : "";
+        if (n && size) extra.push(storage ? `${n} ${storage} ${size}` : `${n} ${size}`);
       }
     }
     return {

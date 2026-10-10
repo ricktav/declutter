@@ -5,7 +5,13 @@
 //   node --experimental-strip-types scripts/services-report-proxmox.ts --ssh root@10.50.0.155 --apply
 import "dotenv/config";
 import { execFileSync } from "child_process";
-import { matchPveMachine, parseProxmoxInventory, type PveMachineHint } from "../api/lib/servicesProxmox.ts";
+import {
+  applyPveGuestConfig,
+  matchPveMachine,
+  parseProxmoxInventory,
+  type ProxmoxGuest,
+  type PveMachineHint,
+} from "../api/lib/servicesProxmox.ts";
 
 const argv = process.argv.slice(2);
 const args: Record<string, string | true> = {};
@@ -45,45 +51,81 @@ function ssh(command: string[]): string {
   });
 }
 
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 let resourcesJson: unknown;
 let pctList: string | undefined;
 let qmList: string | undefined;
 try {
   const raw = ssh(["pvesh", "get", "/cluster/resources", "--output-format", "json"]);
   resourcesJson = JSON.parse(raw) as unknown;
-} catch {
+} catch (e) {
+  console.error(`pvesh /cluster/resources failed: ${errMsg(e)}`);
   resourcesJson = undefined;
 }
 if (resourcesJson == null) {
   try {
     pctList = ssh(["pct", "list"]);
   } catch (e) {
-    console.error(`pct list failed: ${(e as Error).message || e}`);
+    console.error(`pct list failed: ${errMsg(e)}`);
   }
   try {
     qmList = ssh(["qm", "list"]);
   } catch (e) {
-    console.error(`qm list failed: ${(e as Error).message || e}`);
+    console.error(`qm list failed: ${errMsg(e)}`);
   }
 }
 
-let qmConfigs: string | undefined;
-let pctConfigs: string | undefined;
-try {
-  qmConfigs = ssh(["bash", "-lc", 'for v in $(qm list | awk \'NR>1{print $1}\'); do echo "=== $v ==="; qm config "$v"; done']);
-} catch {
-  qmConfigs = undefined;
-}
-try {
-  pctConfigs = ssh(["bash", "-lc", 'for v in $(pct list | awk \'NR>1{print $1}\'); do echo "=== $v ==="; pct config "$v"; done']);
-} catch {
-  pctConfigs = undefined;
-}
-
-const { vms, lxc } = parseProxmoxInventory({ resourcesJson, pctList, qmList, qmConfigs, pctConfigs });
-if (!vms.length && !lxc.length) {
+const listed = parseProxmoxInventory({ resourcesJson, pctList, qmList });
+if (!listed.vms.length && !listed.lxc.length) {
   console.error("no VMs or LXC found on Proxmox (pvesh / pct list / qm list)");
   process.exit(1);
+}
+
+function fetchGuestConfig(kind: "qemu" | "lxc", guest: ProxmoxGuest): unknown {
+  const node = guest.node || "pve";
+  const path = `/nodes/${node}/${kind}/${guest.vmid}/config`;
+  const raw = ssh(["pvesh", "get", path, "--output-format", "json"]);
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (e) {
+    throw new Error(`invalid JSON from ${path}: ${errMsg(e)}`);
+  }
+}
+
+function enrichFromPvesh(guests: ProxmoxGuest[], kind: "qemu" | "lxc"): { guests: ProxmoxGuest[]; ok: number; failed: number } {
+  let ok = 0;
+  let failed = 0;
+  const out = guests.map((g) => {
+    const node = g.node || "pve";
+    try {
+      const cfg = fetchGuestConfig(kind, g);
+      const next = applyPveGuestConfig(g, cfg, kind);
+      ok += 1;
+      return next;
+    } catch (e) {
+      console.error(`pvesh ${kind} ${g.vmid} on ${node}: ${errMsg(e)}`);
+      failed += 1;
+      return g;
+    }
+  });
+  return { guests: out, ok, failed };
+}
+
+const vmCfg = enrichFromPvesh(listed.vms, "qemu");
+const lxcCfg = enrichFromPvesh(listed.lxc, "lxc");
+const vms = vmCfg.guests;
+const lxc = lxcCfg.guests;
+const configOk = vmCfg.ok + lxcCfg.ok;
+const configFailed = vmCfg.failed + lxcCfg.failed;
+if (configFailed && !configOk) {
+  console.error(`config reads failed for all ${configFailed} guest(s)`);
+  process.exit(1);
+}
+if (configFailed) {
+  console.error(`config reads failed for ${configFailed} of ${configOk + configFailed} guest(s)`);
 }
 
 type ItemRow = { id: number; name: string; attributes?: Record<string, string | number> | null };

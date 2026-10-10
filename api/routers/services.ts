@@ -40,7 +40,16 @@ const guestRec = z.object({
   diskGb: z.number().nonnegative().max(100_000).optional(),
   usedGb: z.number().nonnegative().max(100_000).optional(),
   template: z.boolean().optional(),
-  disks: z.array(z.object({ name: z.string().min(1).max(64), sizeGb: z.number().nonnegative().max(100_000).optional() })).max(16).optional(),
+  disks: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(64),
+        sizeGb: z.number().nonnegative().max(100_000).optional(),
+        storage: z.string().max(64).optional(),
+      }),
+    )
+    .max(16)
+    .optional(),
   mounts: z.array(mountRec).max(32).optional(),
 });
 

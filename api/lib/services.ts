@@ -20,6 +20,7 @@ export type MountRecIn = {
 export type DiskRecIn = {
   name: string;
   sizeGb?: number;
+  storage?: string;
 };
 
 export type ServiceRecIn = {
