@@ -6,8 +6,8 @@
 //   node --experimental-strip-types scripts/services-report-projects.ts --file ./projects.html --apply
 import "dotenv/config";
 import { readFileSync } from "fs";
-import { matchMachine, type MachineHint } from "../api/lib/servicesFleet.ts";
-import { parseProjectsDocument } from "../api/lib/servicesProjects.ts";
+import { machineHintFromItem, matchMachine } from "../api/lib/servicesFleet.ts";
+import { countProjectsByKind, parseProjectsDocument } from "../api/lib/servicesProjects.ts";
 
 const argv = process.argv.slice(2);
 const args: Record<string, string | true> = {};
@@ -71,13 +71,7 @@ type ItemRow = {
   attributes?: Record<string, string | number> | null;
 };
 const items = ((await trpc("items.listAll", { houseId: null })) as ItemRow[] | undefined) ?? [];
-const machines: MachineHint[] = items.map((it) => ({
-  id: it.id,
-  name: it.name,
-  hostname: it.attributes?.hostname != null ? String(it.attributes.hostname) : null,
-  host: it.attributes?.host != null ? String(it.attributes.host) : null,
-  ip: it.attributes?.ip != null ? String(it.attributes.ip) : it.attributes?.ip_address != null ? String(it.attributes.ip_address) : null,
-}));
+const machines = items.map(machineHintFromItem);
 
 const matched: Array<{
   itemId: number;
@@ -104,6 +98,7 @@ const plan = {
     name: row.name,
     host: row.host,
     projects: row.projects.length,
+    byKind: countProjectsByKind(row.projects),
     names: row.projects.map((p) => p.name),
   })),
   unmatched,

@@ -24,7 +24,8 @@
  *   projects              Claude Code / Grok / Hermes / OpenClaw
  *               [{ name, kind?, status?, tokens?, size?, updatedAt?, minutes?, url? }].
  *               Collectors: scripts/services-report-projects.ts (`/projects/`) and
- *               fleet web labels that look like those agents. Active is green;
+ *               fleet per-host project-directory tables (kind from the row, else
+ *               unknown). Web service labels stay in `web`. Active is green;
  *               older rows fade.
  *   units / systemd       list of unit names (kind systemd)
  *   launchd               list of launchd job names (kind launchd)

@@ -8,7 +8,8 @@
 // Reads APP_TOKEN from .env when the server has one.
 import "dotenv/config";
 import { readFileSync } from "fs";
-import { matchMachine, parseFleetDocumentWithMeta, type MachineHint } from "../api/lib/servicesFleet.ts";
+import { machineHintFromItem, matchMachine, parseFleetDocumentWithMeta } from "../api/lib/servicesFleet.ts";
+import { countProjectsByKind } from "../api/lib/servicesProjects.ts";
 
 const argv = process.argv.slice(2);
 const args: Record<string, string | true> = {};
@@ -62,7 +63,7 @@ if (file) {
   text = await res.text();
 }
 
-const { hosts, skippedUnreachable } = parseFleetDocumentWithMeta(text);
+const { hosts, skippedUnreachable, skippedProjectTables } = parseFleetDocumentWithMeta(text);
 if (hosts.length === 0) {
   console.error("no reachable hosts with containers, services, databases or projects found (need section.host + tr.pdrow / services-table / databases-table).");
   process.exit(1);
@@ -74,13 +75,7 @@ type ItemRow = {
   attributes?: Record<string, string | number> | null;
 };
 const items = ((await trpc("items.listAll", { houseId: null })) as ItemRow[] | undefined) ?? [];
-const machines: MachineHint[] = items.map((it) => ({
-  id: it.id,
-  name: it.name,
-  hostname: it.attributes?.hostname != null ? String(it.attributes.hostname) : null,
-  host: it.attributes?.host != null ? String(it.attributes.host) : null,
-  ip: it.attributes?.ip != null ? String(it.attributes.ip) : it.attributes?.ip_address != null ? String(it.attributes.ip_address) : null,
-}));
+const machines = items.map(machineHintFromItem);
 
 const matched: Array<{
   itemId: number;
@@ -108,9 +103,14 @@ for (const h of hosts) {
     });
     continue;
   }
-  const hostNorm = h.host.trim().toLowerCase().replace(/\.local$/, "");
-  const hostKeys = [m.hostname, m.host, m.name].filter(Boolean).map((x) => String(x).trim().toLowerCase().replace(/\.local$/, ""));
-  const byHost = hostKeys.some((k) => k.replace(/[^a-z0-9]+/g, "") === hostNorm.replace(/[^a-z0-9]+/g, ""));
+  const hostNorm = h.host.trim().toLowerCase().replace(/\.local\b/g, "").replace(/[^a-z0-9]+/g, "");
+  const hostKeys = [m.hostname, m.host, m.name, m.hostAlias, m.aliases].filter(Boolean).flatMap((x) =>
+    String(x)
+      .split(/[,;\n]+/)
+      .map((s) => s.trim().toLowerCase().replace(/\.local\b/g, "").replace(/[^a-z0-9]+/g, ""))
+      .filter(Boolean),
+  );
+  const byHost = hostKeys.includes(hostNorm);
   matched.push({
     itemId: m.id,
     name: m.name,
@@ -141,6 +141,7 @@ const plan = {
     serviceLabels: row.web.map((w) => w.label),
     databaseNames: row.databases.map((d) => d.name),
     projectNames: row.projects.map((p) => p.name),
+    projectKinds: countProjectsByKind(row.projects),
     services: row.web.map((w) => ({
       label: w.label,
       ports: w.ports ?? (w.port != null ? [w.port] : []),
@@ -150,6 +151,7 @@ const plan = {
   })),
   unmatched,
   skippedUnreachable,
+  skippedProjectTables,
 };
 
 if (!apply) {

@@ -1,11 +1,5 @@
 import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls.ts";
-import {
-  parseDatabasesList,
-  parseProjectsList,
-  projectsFromLabels,
-  type DatabaseRec,
-  type ProjectRec,
-} from "./servicesProjects.ts";
+import { parseDatabasesList, parseProjectsList, type DatabaseRec, type ProjectRec } from "./servicesProjects.ts";
 
 /** Parse a claudemux (or similar) fleet HTML/JSON snapshot into per-host container lists. */
 
@@ -44,6 +38,16 @@ export type MachineHint = {
   hostname?: string | null;
   host?: string | null;
   ip?: string | null;
+  /** LAN Police / fleet short name (`mbp`). Comma list allowed. */
+  hostAlias?: string | null;
+  aliases?: string | null;
+};
+
+export type SkippedProjectTable = {
+  host: string;
+  reason: string;
+  headers: string[];
+  sample: string[];
 };
 
 function asRecord(x: unknown): Record<string, unknown> | null {
@@ -175,7 +179,7 @@ function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "
       .filter((w): w is FleetWeb => w != null),
   );
   const databases = parseDatabasesList(o.databases ?? o.dbs);
-  const projects = [...parseProjectsList(o.projects ?? o.agents), ...projectsFromLabels(web)];
+  const projects = parseProjectsList(o.projects ?? o.agents);
   const seen = new Set<string>();
   const uniq = (xs: FleetContainer[]) =>
     xs.filter((c) => {
@@ -387,12 +391,62 @@ function extractClassBlocks(html: string, tag: string, className: string): strin
   return out;
 }
 
+function isNamedProjectsTable(open: string): boolean {
+  return (
+    hasClass(open, "projects-table") ||
+    hasClass(open, "claude-projects") ||
+    hasClass(open, "cc-projects") ||
+    hasClass(open, "agents-table") ||
+    hasClass(open, "project-dirs")
+  );
+}
+
+function isContainerProjectsTable(html: string): boolean {
+  return /class=["'][^"']*\bpd-k\b/i.test(html) || /class=["'][^"']*\bcname\b/i.test(html);
+}
+
+function tableRowCells(html: string): { headers: string[]; rows: string[][] } {
+  const trs = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((r) => r[1]);
+  const cells = (row: string) => [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => innerText(c[1]));
+  if (!trs.length) return { headers: [], rows: [] };
+  const first = cells(trs[0]).map((h) => h.toLowerCase());
+  const hasHeader = first.some((h) => /project|name|path|dir|directory|folder|kind|agent|root|label/.test(h));
+  return { headers: hasHeader ? first : [], rows: (hasHeader ? trs.slice(1) : trs).map(cells) };
+}
+
+/** `/Users/…`, `~/src/foo`, `.claude/projects/bar` — not a URL. */
+export function looksLikeProjectDir(s: string): boolean {
+  const t = s.trim();
+  if (!t || t.length < 2 || /^https?:\/\//i.test(t)) return false;
+  if (/^~(\/|$)/.test(t) || /^\/[\w.~-]/.test(t) || /^[A-Za-z]:[\\/]/.test(t)) return true;
+  if ((t.includes("/") || t.includes("\\")) && !/\s/.test(t) && t.length <= 255) return true;
+  return false;
+}
+
+function looksLikeProjectDirTable(open: string, body: string): boolean {
+  if (isContainerProjectsTable(body)) return false;
+  if (isNamedProjectsTable(open)) return true;
+  const caption = innerText(body.match(/<caption\b[^>]*>([\s\S]*?)<\/caption>/i)?.[1] ?? "");
+  const { headers, rows } = tableRowCells(body);
+  const headerJoin = `${caption} ${headers.join(" ")}`.toLowerCase();
+  if (!/project|path|dir|directory|folder/.test(headerJoin)) return false;
+  return rows.some((cols) => cols.some((c) => looksLikeProjectDir(c)));
+}
+
+function keepMtxTable(open: string, body: string): boolean {
+  if (hasClass(open, "services-table") || hasClass(open, "databases-table")) return true;
+  if (hasClass(open, "timers")) return false;
+  return isNamedProjectsTable(open) || looksLikeProjectDirTable(open, body);
+}
+
 function stripSkippedTables(html: string): string {
   return html.replace(/<table\b[\s\S]*?<\/table>/gi, (table) => {
     const open = table.match(/<table\b[^>]*>/i)?.[0] ?? "";
+    const body = table.slice(open.length);
     if (hasClass(open, "timers")) return "";
-    // services tables are `class="mtx services-table"` — keep those
-    if (hasClass(open, "mtx") && !hasClass(open, "services-table")) return "";
+    if (keepMtxTable(open, body)) return table;
+    // services / databases / project-dir tables are `class="mtx …"` — keep those
+    if (hasClass(open, "mtx")) return "";
     if (/\bdata-host\s*=/i.test(table)) return "";
     return table;
   });
@@ -732,12 +786,75 @@ function parseDatabasesTable(html: string): DatabaseRec[] {
   return uniqByDb(out);
 }
 
-export type ParsedFleet = { hosts: FleetHost[]; skippedUnreachable: string[] };
+function dirBasename(path: string): string {
+  const t = path.replace(/[\\/]+$/, "");
+  const i = Math.max(t.lastIndexOf("/"), t.lastIndexOf("\\"));
+  return (i >= 0 ? t.slice(i + 1) : t).slice(0, 128) || path.slice(0, 128);
+}
+
+function parseProjectDirsTable(html: string): { projects: ProjectRec[]; skipped: Omit<SkippedProjectTable, "host">[] } {
+  const projects: ProjectRec[] = [];
+  const skipped: Omit<SkippedProjectTable, "host">[] = [];
+  for (const tm of html.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table>/gi)) {
+    const open = `<table${tm[1]}>`;
+    const body = tm[2];
+    if (hasClass(open, "services-table") || hasClass(open, "databases-table") || hasClass(open, "timers")) continue;
+    if (isContainerProjectsTable(body)) continue;
+    const caption = innerText(body.match(/<caption\b[^>]*>([\s\S]*?)<\/caption>/i)?.[1] ?? "");
+    const { headers, rows } = tableRowCells(body);
+    const looksNamed = isNamedProjectsTable(open);
+    const looksDirs = looksLikeProjectDirTable(open, body);
+    const mentionsProject = /project|path|dir|directory|folder/.test(`${caption} ${headers.join(" ")}`);
+    if (!looksNamed && !looksDirs) {
+      if (mentionsProject) {
+        skipped.push({
+          reason: "project-looking table is not directory rows",
+          headers: headers.length ? headers : caption ? [caption] : [],
+          sample: (rows[0] ?? []).slice(0, 6),
+        });
+      }
+      continue;
+    }
+    const idx = (...names: string[]) => headers.findIndex((h) => names.includes(h));
+    const pathIdx = idx("path", "dir", "directory", "folder", "root");
+    const nameIdx = idx("project", "name", "label");
+    const kindIdx = idx("kind", "agent", "source");
+    const statusIdx = idx("status", "state");
+    let added = 0;
+    for (const cols of rows) {
+      const path = (pathIdx >= 0 ? cols[pathIdx] : "") || cols.find((c) => looksLikeProjectDir(c)) || "";
+      const label = (nameIdx >= 0 ? cols[nameIdx] : "") || (path ? dirBasename(path) : cols[0] ?? "");
+      const name = (looksLikeProjectDir(path) ? path : label).trim().slice(0, 128);
+      if (!name || isJunkCell(name)) continue;
+      if (/^https?:\/\//i.test(name)) continue;
+      const kindRaw = kindIdx >= 0 ? cols[kindIdx] ?? "" : "";
+      const kind = kindRaw && !isJunkCell(kindRaw) ? kindRaw.trim().toLowerCase().slice(0, 32) : "unknown";
+      const status = statusIdx >= 0 ? cols[statusIdx] ?? "" : "";
+      projects.push({
+        name,
+        kind,
+        ...(status && !isJunkCell(status) ? { status } : {}),
+      });
+      added += 1;
+    }
+    if (!added) {
+      skipped.push({
+        reason: looksNamed ? "projects-table had no usable directory or name rows" : "directory-looking table had no paths",
+        headers: headers.length ? headers : caption ? [caption] : [],
+        sample: (rows[0] ?? []).slice(0, 6),
+      });
+    }
+  }
+  return { projects: uniqByProject(projects), skipped };
+}
+
+export type ParsedFleet = { hosts: FleetHost[]; skippedUnreachable: string[]; skippedProjectTables: SkippedProjectTable[] };
 
 /** Claudemux daily HTML: one `<section class="host">` per machine. */
 export function parseClaudemuxHosts(html: string): ParsedFleet {
   const hosts: FleetHost[] = [];
   const skippedUnreachable: string[] = [];
+  const skippedProjectTables: SkippedProjectTable[] = [];
   for (const m of html.matchAll(/<section\b([^>]*)>([\s\S]*?)<\/section>/gi)) {
     const open = `<section${m[1]}>`;
     if (!hasClass(open, "host")) continue;
@@ -758,14 +875,16 @@ export function parseClaudemuxHosts(html: string): ParsedFleet {
     const containers = parsePdRows(body);
     const web = parseServicesTable(body);
     const databases = parseDatabasesTable(body);
-    const projects = projectsFromLabels(web);
+    const dir = parseProjectDirsTable(section);
+    for (const s of dir.skipped) skippedProjectTables.push({ host, ...s });
+    const projects = dir.projects;
     if (!containers.length && !web.length && !databases.length && !projects.length) {
       hosts.push({ host, ip, ...emptyLists() });
       continue;
     }
     pushHost(hosts, host, { containers, node: [], web, databases, projects }, ip);
   }
-  return { hosts, skippedUnreachable };
+  return { hosts, skippedUnreachable, skippedProjectTables };
 }
 
 function extractJsonBlobs(text: string): unknown[] {
@@ -804,25 +923,58 @@ export function parseFleetDocumentWithMeta(text: string): ParsedFleet {
     return {
       hosts: parsed.hosts.filter(hostHasRows),
       skippedUnreachable: parsed.skippedUnreachable,
+      skippedProjectTables: parsed.skippedProjectTables,
     };
   }
-  return { hosts: parseFleetDocument(text), skippedUnreachable: [] };
+  return { hosts: parseFleetDocument(text), skippedUnreachable: [], skippedProjectTables: [] };
 }
 
 export function normHost(s: string): string {
   return s
     .trim()
     .toLowerCase()
-    .replace(/\.local$/, "")
-    .replace(/\.(lan|home|internal)$/, "")
+    .replace(/\.local\b/g, "")
+    .replace(/\.(lan|home|internal)\b/g, "")
     .replace(/[^a-z0-9]+/g, "");
 }
 
+function splitAliases(raw: string | null | undefined): string[] {
+  if (raw == null || raw === "") return [];
+  return String(raw)
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export function machineHostKeys(m: MachineHint): string[] {
+  const raw = [m.hostname, m.host, m.name, ...splitAliases(m.hostAlias), ...splitAliases(m.aliases)].filter(Boolean);
+  return raw.map((x) => normHost(String(x)));
+}
+
+/** Build a matcher hint from a Thing's attributes. Does not write anything. */
+export function machineHintFromItem(it: {
+  id: number;
+  name: string;
+  attributes?: Record<string, string | number> | null;
+}): MachineHint {
+  const a = it.attributes ?? {};
+  return {
+    id: it.id,
+    name: it.name,
+    hostname: a.hostname != null ? String(a.hostname) : null,
+    host: a.host != null ? String(a.host) : null,
+    ip: a.ip != null ? String(a.ip) : a.ip_address != null ? String(a.ip_address) : null,
+    hostAlias: a.host_alias != null ? String(a.host_alias) : a.hostAlias != null ? String(a.hostAlias) : null,
+    aliases: a.aliases != null ? String(a.aliases) : null,
+  };
+}
+
 /**
- * Match a fleet host to an inventory machine. Hostname / host / name are
- * exact (after stripping .local). IP is exact equality only, and only used
- * when hostname did not match — so 10.50.0.102 never hits 10.50.0.10, and
- * "docker" never hits dockermac-1.
+ * Match a fleet / projects host to an inventory machine. Hostname, host,
+ * name, `host_alias` and `aliases` are exact after stripping `.local` and
+ * case. IP is exact equality only, and only used when hostname did not
+ * match — so 10.50.0.102 never hits 10.50.0.10, and "docker" never hits
+ * dockermac-1. `mbp` matches only when the item lists that alias.
  */
 export function matchMachine(
   target: string | { host: string; ip?: string | null },
@@ -832,8 +984,7 @@ export function matchMachine(
   const hostNorm = looksLikeIp(t.host) ? "" : normHost(t.host);
   if (hostNorm) {
     for (const m of machines) {
-      const keys = [m.hostname, m.host, m.name].filter(Boolean).map((x) => normHost(String(x)));
-      if (keys.includes(hostNorm)) return m;
+      if (machineHostKeys(m).includes(hostNorm)) return m;
     }
   }
   const ip = normalizeIp(t.ip) ?? (looksLikeIp(t.host) ? normalizeIp(t.host) : null);

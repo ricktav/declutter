@@ -9,7 +9,7 @@ import "dotenv/config";
 import { execFileSync } from "child_process";
 import os from "os";
 import { dockerPathEnv, enrichDockerContainers, parseDockerPs } from "../api/lib/servicesDocker.ts";
-import { matchMachine, type MachineHint } from "../api/lib/servicesFleet.ts";
+import { machineHintFromItem, matchMachine } from "../api/lib/servicesFleet.ts";
 
 const argv = process.argv.slice(2);
 const args: Record<string, string | true> = {};
@@ -85,13 +85,7 @@ if (!containers.length) {
 
 type ItemRow = { id: number; name: string; attributes?: Record<string, string | number> | null };
 const items = ((await trpc("items.listAll", { houseId: null })) as ItemRow[] | undefined) ?? [];
-const machines: MachineHint[] = items.map((it) => ({
-  id: it.id,
-  name: it.name,
-  hostname: it.attributes?.hostname != null ? String(it.attributes.hostname) : null,
-  host: it.attributes?.host != null ? String(it.attributes.host) : null,
-  ip: it.attributes?.ip != null ? String(it.attributes.ip) : it.attributes?.ip_address != null ? String(it.attributes.ip_address) : null,
-}));
+const machines = items.map(machineHintFromItem);
 
 const hostName = os.hostname().replace(/\.local$/, "");
 const pinned = itemArg != null && Number.isInteger(itemArg) ? machines.find((m) => m.id === itemArg) ?? { id: itemArg, name: `#${itemArg}` } : null;

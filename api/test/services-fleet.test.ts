@@ -91,9 +91,8 @@ describe("claudemux HTML fixture", () => {
     expect(pro.web.find((w) => w.label === "grafana")?.ports).toEqual([3000, 8086]);
     expect(pro.web.find((w) => w.label === "home-assistant")?.ports).toEqual([8123, 8199]);
     expect(pro.web.find((w) => w.label === "home-assistant")?.status).toBe("ok");
-    expect(pro.projects).toEqual([
-      expect.objectContaining({ name: "portal/clawdy-portal", kind: "openclaw", status: "ok" }),
-    ]);
+    expect(pro.projects).toEqual([]);
+    expect(pro.web.map((w) => w.label)).toContain("portal/clawdy-portal");
 
     const names = hosts.flatMap((h) => [h.host, ...h.containers.map((c) => c.name)]);
     expect(names).not.toEqual(expect.arrayContaining(["ls", "echo", "docker", "plugwise", "crontab"]));
@@ -216,6 +215,20 @@ describe("matchMachine", () => {
   it("maps fleet hostname dockermac to dockermac-1 by exact IP", () => {
     expect(matchMachine({ host: "dockermac", ip: "10.50.0.10" }, machines)?.id).toBe(1);
   });
+
+  it("matches host_alias / aliases after stripping .local, not hostname substrings", () => {
+    const withAlias = [
+      ...machines,
+      { id: 233, name: "2014 MBP", hostname: "Ricks-MBP2014", ip: "10.50.0.201", hostAlias: "mbp" },
+      { id: 9, name: "Air", hostname: "mba-m4", aliases: "mba, macbook-air-m2.local" },
+    ];
+    expect(matchMachine("mbp", withAlias)?.id).toBe(233);
+    expect(matchMachine("mbp.local", withAlias)?.id).toBe(233);
+    expect(matchMachine("Ricks-MBP2014.local", withAlias)?.id).toBe(233);
+    expect(matchMachine("mba", withAlias)?.id).toBe(9);
+    expect(matchMachine("macbook-air-m2", withAlias)?.id).toBe(9);
+    expect(matchMachine("mbp", machines)).toBeNull();
+  });
 });
 
 describe("localhost URLs and fleet status", () => {
@@ -262,7 +275,7 @@ describe("localhost URLs and fleet status", () => {
 });
 
 describe("databases and coding-agent projects", () => {
-  it("reads extra database columns and lifts grok / hermes / openclaw from web", () => {
+  it("keeps mtx databases-table and does not lift web labels into projects", () => {
     const html = `
       <section class="host">
         <div class="hh"><div class="hh-l"><span class="hname mono">macmini-m4</span> 10.50.0.102:8766</div></div>
@@ -271,9 +284,10 @@ describe("databases and coding-agent projects", () => {
           <tr><td>Grok build</td><td>http://localhost:8787/</td><td>ok</td></tr>
           <tr><td>Hermes agent</td><td>http://10.50.0.102:8811/</td><td>ok</td></tr>
           <tr><td>OpenClaw</td><td>http://10.50.0.102:3463/</td><td>amber</td></tr>
+          <tr><td>Threesum-grok/threesum-grok-threesum-tg-1</td><td>http://10.50.0.102:9001/</td><td>ok</td></tr>
           <tr><td>Workbench</td><td>http://10.50.0.102:3002/</td><td>ok</td></tr>
         </table>
-        <table class="databases-table">
+        <table class="mtx databases-table">
           <tr><th>db</th><th>engine</th><th>status</th><th>port</th></tr>
           <tr><td>declutter</td><td>mysql</td><td>ok</td><td>3306</td></tr>
           <tr><td>grafana</td><td>postgres</td><td>ok</td><td>5432</td></tr>
@@ -284,9 +298,58 @@ describe("databases and coding-agent projects", () => {
       expect.objectContaining({ name: "declutter", engine: "mysql", status: "ok", port: 3306 }),
       expect.objectContaining({ name: "grafana", engine: "postgres", port: 5432 }),
     ]);
-    expect(hosts[0].projects.map((p) => p.kind)).toEqual(["grok", "hermes", "openclaw"]);
-    expect(hosts[0].projects.find((p) => p.kind === "grok")?.url).toBe("http://10.50.0.102:8787/");
-    expect(hosts[0].web.map((w) => w.label)).toContain("Workbench");
+    expect(hosts[0].projects).toEqual([]);
+    expect(hosts[0].web.map((w) => w.label)).toEqual(
+      expect.arrayContaining(["Grok build", "Hermes agent", "OpenClaw", "Threesum-grok/threesum-grok-threesum-tg-1", "Workbench"]),
+    );
+  });
+
+  it("imports per-host project directory tables and skips container project tables", () => {
+    const html = `
+      <section class="host">
+        <div class="hh"><div class="hh-l"><span class="hname mono">dockermac-2</span> 10.50.0.109:8766</div></div>
+        <table class="projects">
+          <tr class="pdrow"><td><span class="pd-k">container</span> <span class="cname">caddy</span></td></tr>
+        </table>
+        <table class="mtx projects-table">
+          <tr><th>path</th><th>kind</th></tr>
+          <tr><td>/Volumes/T7/declutter</td><td>claude</td></tr>
+          <tr><td>/Users/rick/openclaw</td></tr>
+        </table>
+      </section>`;
+    const { hosts, skippedProjectTables } = parseFleetDocumentWithMeta(html);
+    expect(hosts[0].containers.map((c) => c.name)).toEqual(["caddy"]);
+    expect(hosts[0].projects).toEqual([
+      expect.objectContaining({ name: "/Volumes/T7/declutter", kind: "claude" }),
+      expect.objectContaining({ name: "/Users/rick/openclaw", kind: "unknown" }),
+    ]);
+    expect(skippedProjectTables).toEqual([]);
+  });
+
+  it("reports a Projects table that is not directories instead of importing it", () => {
+    const html = `
+      <section class="host">
+        <div class="hh"><div class="hh-l"><span class="hname mono">dockermac</span> 10.50.0.10:8766</div></div>
+        <table class="mtx services-table">
+          <tr><th>label</th><th>url</th></tr>
+          <tr><td>Ping</td><td>http://10.50.0.10/ping</td></tr>
+        </table>
+        <table class="mtx">
+          <caption>Projects</caption>
+          <tr><th>project</th><th>detail</th></tr>
+          <tr><td>compose</td><td>stack notes</td></tr>
+        </table>
+      </section>`;
+    const { hosts, skippedProjectTables } = parseFleetDocumentWithMeta(html);
+    expect(hosts[0].projects).toEqual([]);
+    expect(skippedProjectTables).toEqual([
+      expect.objectContaining({
+        host: "dockermac",
+        reason: "project-looking table is not directory rows",
+        headers: ["project", "detail"],
+        sample: ["compose", "stack notes"],
+      }),
+    ]);
   });
 
   it("parses a /projects/ JSON page per host", () => {

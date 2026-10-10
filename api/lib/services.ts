@@ -162,7 +162,7 @@ function compactDatabase(d: DatabaseRecIn, reach: string | null): Record<string,
 }
 
 function compactProject(p: ProjectRecIn, reach: string | null): Record<string, unknown> {
-  const o: Record<string, unknown> = { name: p.name };
+  const o: Record<string, unknown> = { name: p.name.slice(0, 128) };
   if (p.kind) o.kind = p.kind.slice(0, 32);
   if (p.status) o.status = p.status;
   if (p.tokens != null && p.tokens > 0) o.tokens = p.tokens;

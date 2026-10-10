@@ -561,6 +561,15 @@ export function parseDatabasesList(raw: unknown): DatabaseRec[] {
     .filter((d): d is DatabaseRec => d != null);
 }
 
+export function countProjectsByKind(projects: Array<{ kind?: string }>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const p of projects) {
+    const k = String(p.kind ?? "unknown").trim().toLowerCase() || "unknown";
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
+}
+
 export function parseProjectsList(raw: unknown, fallbackKind?: string): ProjectRec[] {
   return uniqProjects(
     listOf(raw)
