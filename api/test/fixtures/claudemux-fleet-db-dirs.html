@@ -1,7 +1,9 @@
 <!-- Realistic fleet shape after 38021ed dry-run:
      databases-table headers are kind, label, target, status, detail, checked.
      Per-host directory tables are class="mtx directory" with tr.pdrow / div.pd-row
-     and pd-k=directory (same pattern as containers, not table.projects). -->
+     and pd-k=directory (same pattern as containers, not table.projects).
+     Follow-up tr.pdrow (ports / mounts / image, no directory) must not become projects.
+     kind=transcript / source=history is origin, not the agent. -->
 
 <section class="host" id="host-102">
   <div class="hh"><div class="hh-l"><span class="hname mono">macmini-m4</span> host-102 · 10.50.0.102:8766</div></div>
@@ -17,8 +19,18 @@
       <div class="pd-row"><span class="pd-k">updated</span> 2h ago</div>
     </td></tr>
     <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">ports</span> 3002</div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">mounts</span> <span class="cname mono">/Volumes/T7/uploads</span></div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">image</span> node:22</div>
+    </td></tr>
+    <tr class="pdrow"><td>
       <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/Users/rick/photos-review</span></div>
       <div class="pd-row"><span class="pd-k">kind</span> claude</div>
+      <div class="pd-row"><span class="pd-k">source</span> transcript</div>
     </td></tr>
     <tr class="pdrow"><td>
       <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/Users/rick/openclaw</span></div>
@@ -49,13 +61,19 @@
   <table class="mtx directory">
     <tr class="pdrow"><td>
       <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/opt/gitea</span></div>
-      <div class="pd-row"><span class="pd-k">kind</span> unknown</div>
+      <div class="pd-row"><span class="pd-k">kind</span> transcript</div>
     </td></tr>
     <tr class="pdrow"><td>
       <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/opt/authentik</span></div>
     </td></tr>
     <tr class="pdrow"><td>
       <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/home/rick/changedetection</span></div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">mounts</span> <span class="cname mono">/var/lib/gitea</span></div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">volume</span> <span class="cname mono">/config</span></div>
     </td></tr>
   </table>
 </section>
@@ -75,10 +93,11 @@
     <tr><td>sqlite</td><td>vaultwarden</td><td>/data/db.sqlite3</td><td>ok</td><td></td><td>now</td></tr>
   </table>
   <table class="mtx directory">
-    <tr><th>directory</th><th>kind</th></tr>
-    <tr><td>/Volumes/T7/declutter</td><td>claude</td></tr>
-    <tr><td>/opt/plugwise</td><td>unknown</td></tr>
-    <tr><td>/home/rick/lidarventory</td><td>claude</td></tr>
+    <tr><th>directory</th><th>kind</th><th>source</th></tr>
+    <tr><td>/Volumes/T7/declutter</td><td>claude</td><td></td></tr>
+    <tr><td>/opt/plugwise</td><td>unknown</td><td></td></tr>
+    <tr><td>/home/rick/lidarventory</td><td>claude</td><td></td></tr>
+    <tr><td></td><td>transcript</td><td>history</td></tr>
   </table>
 </section>
 
@@ -116,7 +135,14 @@
     <tr class="pdrow"><td>
       <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/home/rick/clawd</span></div>
       <div class="pd-row"><span class="pd-k">kind</span> openclaw</div>
+      <div class="pd-row"><span class="pd-k">source</span> history</div>
       <div class="pd-row"><span class="pd-k">tokens</span> 80k</div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">ports</span> 3463</div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">mounts</span> <span class="cname mono">/config</span></div>
     </td></tr>
     <tr class="pdrow"><td>
       <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/home/rick/data-tracker</span></div>

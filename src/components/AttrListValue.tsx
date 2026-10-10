@@ -8,6 +8,7 @@ import {
   fmtMinutes,
   fmtTokens,
   inferProjectStatus,
+  isProjectSourceLabel,
   projectFade,
 } from "../../api/lib/servicesProjects.ts";
 
@@ -222,15 +223,18 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
   if (key === "projects") {
     const name = str(o.name ?? o.project ?? o.path).trim();
     if (!name) return null;
-    const kind = str(o.kind ?? o.agent);
+    const rawKind = str(o.kind ?? o.agent);
+    const kind = isProjectSourceLabel(rawKind) ? "" : rawKind;
     const status = inferProjectStatus(str(o.status) || undefined, str(o.updatedAt) || undefined);
     const tokens = Number(o.tokens);
     const size = Number(o.size);
     const minutes = Number(o.minutes);
     const fade = projectFade(status, str(o.updatedAt) || undefined);
     const path = str(o.path);
+    const source = str(o.source) || (isProjectSourceLabel(rawKind) ? rawKind.toLowerCase() : "");
     const extra = [
       path && path !== name ? path : "",
+      source,
       fmtMinutes(Number.isFinite(minutes) && minutes > 0 ? minutes : undefined),
       fmtAgo(str(o.updatedAt) || undefined),
     ].filter(Boolean);
