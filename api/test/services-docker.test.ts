@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { dockerHealthStatus, extractPublishedPorts, parseDockerPs } from "../lib/servicesDocker";
+import {
+  dockerHealthStatus,
+  enrichDockerContainers,
+  extractPublishedPorts,
+  parseDockerPs,
+  parseDockerSizeField,
+  parseDockerSystemDf,
+} from "../lib/servicesDocker";
 
 const tsv = `twin-homebase\tlidarventory:homebase\t0.0.0.0:8001->8000/tcp\tUp 2 hours
 flamboyant_kirch\tlidarventory\t0.0.0.0:8000->8000/tcp\tUp 5 days
@@ -55,5 +62,32 @@ describe("extractPublishedPorts / health", () => {
     expect(dockerHealthStatus("Up 13 days (unhealthy)")).toBe("warn");
     expect(dockerHealthStatus("Up 2 hours (healthy)")).toBe("ok");
     expect(dockerHealthStatus("Exited (0) 3 days ago")).toBe("stopped");
+    expect(dockerHealthStatus("Exited (1) 3 days ago")).toBe("error");
+  });
+
+  it("parses docker ps --size and inspect/df extras", () => {
+    expect(parseDockerSizeField("1.2MB (virtual 187MB)")).toEqual({ size: 1.2e6, imageSize: 187e6 });
+    const rows = parseDockerPs("db\tpostgres:16\t127.0.0.1:5433->5432/tcp\tUp 1 hour\t1.2MB (virtual 187MB)");
+    expect(rows[0].size).toBe(1.2e6);
+    const df = parseDockerSystemDf(`Local Volumes space usage:\n\nVOLUME NAME     LINKS     SIZE\ndb-data         1         45.2MB\n`);
+    expect(df.get("db-data")).toBeCloseTo(45.2e6, -3);
+    const enriched = enrichDockerContainers(
+      [{ name: "db", image: "postgres:16", port: 5433 }],
+      [
+        {
+          Name: "/db",
+          SizeRw: 1200,
+          SizeRootFs: 187_000_000,
+          Created: "2026-03-01T12:00:00Z",
+          Mounts: [{ Type: "volume", Name: "db-data", Source: "/var/lib/docker/volumes/db-data/_data", Destination: "/var/lib/postgresql/data" }],
+          Config: { Image: "postgres:16" },
+        },
+      ],
+      [{ RepoTags: ["postgres:16"], Size: 187_000_000, Created: "2026-01-01T00:00:00Z", RootFS: { Layers: ["a", "b", "c"] } }],
+      `Local Volumes space usage:\n\nVOLUME NAME     LINKS     SIZE\ndb-data         1         45MB\n`,
+    );
+    expect(enriched[0].layers).toBe(3);
+    expect(enriched[0].created).toBe("2026-03-01");
+    expect(enriched[0].mounts?.[0]).toEqual(expect.objectContaining({ dest: "/var/lib/postgresql/data", source: "db-data", size: 45e6 }));
   });
 });

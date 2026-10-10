@@ -10,12 +10,30 @@ export const SERVICE_MACHINE_ROLES = new Set(["laptop", "desktop", "server", "sb
 
 export class ServicesReportError extends Error {}
 
+export type MountRecIn = {
+  source: string;
+  dest: string;
+  type?: string;
+  size?: number;
+};
+
+export type DiskRecIn = {
+  name: string;
+  sizeGb?: number;
+};
+
 export type ServiceRecIn = {
   name: string;
   status?: string;
   image?: string;
   port?: number;
+  ports?: number[];
   url?: string;
+  size?: number;
+  imageSize?: number;
+  layers?: number;
+  created?: string;
+  mounts?: MountRecIn[];
 };
 
 export type WebRecIn = {
@@ -33,7 +51,10 @@ export type GuestRecIn = {
   status?: string;
   memMb?: number;
   diskGb?: number;
+  usedGb?: number;
   template?: boolean;
+  disks?: DiskRecIn[];
+  mounts?: MountRecIn[];
 };
 
 export type ServicesReportInput = {
@@ -47,12 +68,36 @@ export type ServicesReportInput = {
   lxc?: GuestRecIn[];
 };
 
-function compactService(s: ServiceRecIn, reach: string | null): Record<string, string | number> {
-  const o: Record<string, string | number> = { name: s.name };
+function compactMounts(list: MountRecIn[] | undefined): MountRecIn[] | undefined {
+  if (!list?.length) return undefined;
+  const out: MountRecIn[] = [];
+  for (const m of list) {
+    const source = String(m.source ?? "").trim().slice(0, 255);
+    const dest = String(m.dest ?? "").trim().slice(0, 255);
+    if (!source && !dest) continue;
+    const rec: MountRecIn = { source: source || dest, dest: dest || source };
+    if (m.type) rec.type = String(m.type).slice(0, 32);
+    if (m.size != null && m.size > 0) rec.size = m.size;
+    out.push(rec);
+    if (out.length >= 32) break;
+  }
+  return out.length ? out : undefined;
+}
+
+function compactService(s: ServiceRecIn, reach: string | null): Record<string, unknown> {
+  const ports = [...(s.ports ?? []), ...(s.port != null ? [s.port] : [])].filter((n, i, a) => a.indexOf(n) === i).sort((a, b) => a - b);
+  const o: Record<string, unknown> = { name: s.name };
   if (s.status) o.status = s.status;
   if (s.image) o.image = s.image;
-  if (s.port != null) o.port = s.port;
+  if (ports[0] != null) o.port = ports[0];
+  if (ports.length > 1) o.ports = ports;
   if (s.url) o.url = rewriteLocalHostUrl(s.url, reach);
+  if (s.size != null && s.size > 0) o.size = s.size;
+  if (s.imageSize != null && s.imageSize > 0) o.imageSize = s.imageSize;
+  if (s.layers != null && s.layers > 0) o.layers = s.layers;
+  if (s.created) o.created = s.created.slice(0, 32);
+  const mounts = compactMounts(s.mounts);
+  if (mounts) o.mounts = mounts;
   return o;
 }
 
@@ -83,12 +128,17 @@ function compactWebAt(w: WebRecIn, reach: string | null): Record<string, string 
   });
 }
 
-function compactGuest(g: GuestRecIn): Record<string, string | number> {
-  const o: Record<string, string | number> = { vmid: g.vmid, name: g.name };
+function compactGuest(g: GuestRecIn): Record<string, unknown> {
+  const o: Record<string, unknown> = { vmid: g.vmid, name: g.name };
   if (g.status) o.status = g.status;
   if (g.memMb != null) o.memMb = g.memMb;
   if (g.diskGb != null && g.diskGb > 0) o.diskGb = g.diskGb;
+  if (g.usedGb != null && g.usedGb > 0) o.usedGb = g.usedGb;
   if (g.template) o.template = 1;
+  const disks = (g.disks ?? []).filter((d) => d.name && d.sizeGb != null && d.sizeGb > 0).slice(0, 16);
+  if (disks.length) o.disks = disks;
+  const mounts = compactMounts(g.mounts);
+  if (mounts) o.mounts = mounts;
   return o;
 }
 
@@ -126,15 +176,15 @@ function asObj(x: unknown): Record<string, unknown> | null {
   return x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, unknown>) : null;
 }
 
-function existingServices(raw: unknown): Record<string, string | number>[] {
+function existingServices(raw: unknown): Record<string, unknown>[] {
   return parseJsonArray(raw)
     .map((x) => {
       if (typeof x === "string" || typeof x === "number") return { name: String(x) };
       const o = asObj(x);
       const name = o ? String(o.name ?? "").trim() : "";
-      return name ? (o as Record<string, string | number>) : null;
+      return name ? o : null;
     })
-    .filter((x): x is Record<string, string | number> => x != null);
+    .filter((x): x is Record<string, unknown> => x != null);
 }
 
 function existingWeb(raw: unknown): Record<string, string | number | string[] | number[]>[] {
@@ -147,15 +197,15 @@ function existingWeb(raw: unknown): Record<string, string | number | string[] | 
     .filter((x): x is Record<string, string | number | string[] | number[]> => x != null);
 }
 
-function existingGuests(raw: unknown): Record<string, string | number>[] {
+function existingGuests(raw: unknown): Record<string, unknown>[] {
   return parseJsonArray(raw)
     .map((x) => {
       const o = asObj(x);
       if (!o) return null;
       const vmid = Number(o.vmid);
-      return Number.isInteger(vmid) ? (o as Record<string, string | number>) : null;
+      return Number.isInteger(vmid) ? o : null;
     })
-    .filter((x): x is Record<string, string | number> => x != null);
+    .filter((x): x is Record<string, unknown> => x != null);
 }
 
 function setJsonList(attrs: Record<string, string | number>, key: string, list: unknown[] | undefined): void {

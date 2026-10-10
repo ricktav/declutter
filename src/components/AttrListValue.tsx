@@ -1,5 +1,6 @@
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import { rewriteLocalHostUrl, statusTone, type StatusTone } from "../../api/lib/serviceUrls";
+import { fmtBytes, portHref, rewriteLocalHostUrl, statusTone, type StatusTone } from "../../api/lib/serviceUrls.ts";
 
 const LIST_KEYS = new Set(["containers", "docker", "node", "web", "vms", "lxc", "services"]);
 
@@ -49,12 +50,34 @@ export function compactJsonList(s: string): string {
   }
 }
 
-type Row = {
-  name: string;
-  bits: string[];
-  hrefs?: string[];
-  tone?: StatusTone;
-};
+export function parsePortValues(v: unknown): number[] {
+  const out: number[] = [];
+  const add = (n: number) => {
+    if (Number.isInteger(n) && n > 0 && n <= 65535 && !out.includes(n)) out.push(n);
+  };
+  if (Array.isArray(v)) {
+    for (const x of v) add(Number(x));
+    return out;
+  }
+  const s = String(v ?? "").trim();
+  if (!s) return out;
+  if (s.startsWith("[")) {
+    try {
+      const a = JSON.parse(s) as unknown;
+      if (Array.isArray(a)) {
+        for (const x of a) {
+          if (x && typeof x === "object" && "port" in x) add(Number((x as { port: unknown }).port));
+          else add(Number(x));
+        }
+        return out;
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  for (const m of s.matchAll(/:?(\d{2,5})\b/g)) add(Number(m[1]));
+  return out;
+}
 
 function asRec(x: unknown): Record<string, unknown> | null {
   return x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, unknown>) : null;
@@ -64,72 +87,174 @@ function str(v: unknown): string {
   return v == null || v === "" ? "" : String(v);
 }
 
-function portsOf(o: Record<string, unknown>): string[] {
-  const out: string[] = [];
-  const add = (n: unknown) => {
-    const v = Number(n);
-    if (Number.isInteger(v) && v > 0) out.push(`:${v}`);
-  };
-  add(o.port);
-  if (Array.isArray(o.ports)) for (const p of o.ports) add(p);
-  return [...new Set(out)];
+function nums(v: unknown): number[] {
+  return parsePortValues(v);
 }
 
-function urlsOf(o: Record<string, unknown>, reach: string | null): string[] {
-  const out: string[] = [];
-  const add = (u: unknown) => {
-    const raw = str(u).trim();
-    const s = raw && /^https?:\/\//i.test(raw) ? rewriteLocalHostUrl(raw, reach) : "";
-    if (s && !out.includes(s)) out.push(s);
-  };
-  add(o.url);
-  if (Array.isArray(o.urls)) for (const u of o.urls) add(u);
+type Mount = { source: string; dest: string; type?: string; size?: number };
+
+function mountsOf(o: Record<string, unknown>): Mount[] {
+  const raw = o.mounts;
+  if (!Array.isArray(raw)) return [];
+  const out: Mount[] = [];
+  for (const x of raw) {
+    const m = asRec(x);
+    if (!m) continue;
+    const source = str(m.source).trim();
+    const dest = str(m.dest).trim();
+    if (!source && !dest) continue;
+    const size = Number(m.size);
+    const rec: Mount = { source: source || dest, dest: dest || source };
+    const type = str(m.type);
+    if (type) rec.type = type;
+    if (Number.isFinite(size) && size > 0) rec.size = size;
+    out.push(rec);
+  }
   return out;
 }
 
-function diskBit(v: unknown): string {
-  const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? `${n} GB` : "";
+type TableRow = {
+  key: string;
+  status: string;
+  tone: StatusTone;
+  name: string;
+  id: string;
+  ports: number[];
+  hrefs: string[];
+  sizeLabel: string;
+  sizeBytes: number;
+  extra: string[];
+  mounts: Mount[];
+};
+
+function rowFrom(key: string, x: unknown, i: number, reach: string | null): TableRow | null {
+  if (typeof x === "string" || typeof x === "number") {
+    const name = String(x).trim();
+    if (!name) return null;
+    return { key: `${name}-${i}`, status: "", tone: "dim", name, id: "", ports: [], hrefs: [], sizeLabel: "", sizeBytes: 0, extra: [], mounts: [] };
+  }
+  const o = asRec(x);
+  if (!o) return null;
+  const hrefs: string[] = [];
+  const addHref = (u: string) => {
+    const s = rewriteLocalHostUrl(u, reach);
+    if (s && /^https?:\/\//i.test(s) && !hrefs.includes(s)) hrefs.push(s);
+  };
+  addHref(str(o.url));
+  if (Array.isArray(o.urls)) for (const u of o.urls) addHref(str(u));
+
+  if (key === "web") {
+    const name = str(o.label ?? o.name).trim();
+    if (!name) return null;
+    const status = str(o.status);
+    return {
+      key: `${name}-${i}`,
+      status,
+      tone: statusTone(status) ?? "dim",
+      name,
+      id: "",
+      ports: nums([o.port, o.ports]),
+      hrefs,
+      sizeLabel: "",
+      sizeBytes: 0,
+      extra: [],
+      mounts: [],
+    };
+  }
+  if (key === "vms" || key === "lxc") {
+    const vmid = o.vmid != null ? String(o.vmid) : "";
+    const name = str(o.name).trim() || vmid;
+    if (!name) return null;
+    const status = str(o.status);
+    const template = o.template === true || o.template === 1;
+    const diskGb = Number(o.diskGb);
+    const usedGb = Number(o.usedGb);
+    const sizeBytes = Number.isFinite(diskGb) && diskGb > 0 ? diskGb * 1e9 : 0;
+    const extra = [
+      o.memMb != null ? `${o.memMb} MB` : "",
+      Number.isFinite(usedGb) && usedGb > 0 ? `${usedGb} GB used` : "",
+      template ? "template" : "",
+    ].filter(Boolean);
+    if (Array.isArray(o.disks)) {
+      for (const d of o.disks) {
+        const rec = asRec(d);
+        if (!rec) continue;
+        const n = str(rec.name);
+        const g = Number(rec.sizeGb);
+        if (n && Number.isFinite(g) && g > 0) extra.push(`${n} ${g} GB`);
+      }
+    }
+    return {
+      key: `${vmid || name}-${i}`,
+      status,
+      tone: template ? "dim" : statusTone(status) ?? "dim",
+      name,
+      id: vmid,
+      ports: nums([o.port, o.ports]),
+      hrefs,
+      sizeLabel: Number.isFinite(diskGb) && diskGb > 0 ? `${diskGb} GB` : "",
+      sizeBytes,
+      extra,
+      mounts: mountsOf(o),
+    };
+  }
+  const name = str(o.name ?? o.unit ?? o.container).trim();
+  if (!name) return null;
+  const status = str(o.status);
+  const size = Number(o.size);
+  const imageSize = Number(o.imageSize);
+  const extra = [
+    Number.isFinite(imageSize) && imageSize > 0 ? `img ${fmtBytes(imageSize)}` : "",
+    o.layers != null && Number(o.layers) > 0 ? `${o.layers} layers` : "",
+    str(o.created),
+  ].filter(Boolean);
+  return {
+    key: `${name}-${i}`,
+    status,
+    tone: statusTone(status) ?? "dim",
+    name,
+    id: str(o.image),
+    ports: nums([o.port, o.ports]),
+    hrefs,
+    sizeLabel: fmtBytes(size),
+    sizeBytes: Number.isFinite(size) && size > 0 ? size : 0,
+    extra,
+    mounts: mountsOf(o),
+  };
 }
 
-function rowsFor(key: string, items: unknown[], reach: string | null): Row[] {
-  return items
-    .map((x): Row | null => {
-      if (typeof x === "string" || typeof x === "number") {
-        const name = String(x).trim();
-        return name ? { name, bits: [] } : null;
-      }
-      const o = asRec(x);
-      if (!o) return null;
-      if (key === "web") {
-        const name = str(o.label ?? o.name).trim();
-        if (!name) return null;
-        const bits = [...portsOf(o), str(o.status)].filter(Boolean);
-        const hrefs = urlsOf(o, reach);
-        return { name, bits, hrefs, tone: statusTone(str(o.status)) };
-      }
-      if (key === "vms" || key === "lxc") {
-        const vmid = o.vmid != null ? String(o.vmid) : "";
-        const name = str(o.name).trim() || vmid;
-        if (!name) return null;
-        const bits = [
-          vmid && name !== vmid ? `#${vmid}` : "",
-          str(o.status),
-          o.memMb != null ? `${o.memMb} MB` : "",
-          diskBit(o.diskGb),
-          o.template === true || o.template === 1 ? "template" : "",
-        ].filter(Boolean);
-        const status = str(o.status);
-        const tone = o.template === true || o.template === 1 ? "dim" : statusTone(status);
-        return { name, bits, tone };
-      }
-      const name = str(o.name ?? o.unit ?? o.container).trim();
-      if (!name) return null;
-      const bits = [str(o.image), ...portsOf(o), str(o.status)].filter(Boolean);
-      return { name, bits, hrefs: urlsOf(o, reach), tone: statusTone(str(o.status)) };
-    })
-    .filter((r): r is Row => r != null);
+function StatusDot({ tone, title }: { tone: StatusTone; title?: string }) {
+  const cls =
+    tone === "ok"
+      ? "bg-emerald-500"
+      : tone === "warn"
+        ? "bg-amber-500"
+        : tone === "error"
+          ? "bg-red-500"
+          : "bg-neutral-400";
+  return <span title={title} className={cn("inline-block h-2 w-2 rounded-full shrink-0", cls)} />;
 }
+
+export function PortLinks({ ports, reachHost }: { ports: number[]; reachHost?: string | null }) {
+  if (!ports.length) return null;
+  return (
+    <span className="inline-flex flex-wrap gap-x-1.5">
+      {ports.map((p) => {
+        const href = portHref(reachHost, p);
+        const label = `:${p}`;
+        return href ? (
+          <a key={p} href={href} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            {label}
+          </a>
+        ) : (
+          <span key={p}>{label}</span>
+        );
+      })}
+    </span>
+  );
+}
+
+type SortKey = "name" | "status" | "id" | "size";
 
 export function AttrListValue({
   attrKey,
@@ -141,49 +266,114 @@ export function AttrListValue({
   reachHost?: string | null;
 }) {
   const items = parseArray(value);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "name", dir: 1 });
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const rows = useMemo(() => {
+    if (!items) return [];
+    const list = items.map((x, i) => rowFrom(attrKey, x, i, reachHost ?? null)).filter((r): r is TableRow => r != null);
+    const dir = sort.dir;
+    list.sort((a, b) => {
+      if (sort.key === "size") return (a.sizeBytes - b.sizeBytes) * dir;
+      const av = (sort.key === "name" ? a.name : sort.key === "id" ? a.id : a.status).toLowerCase();
+      const bv = (sort.key === "name" ? b.name : sort.key === "id" ? b.id : b.status).toLowerCase();
+      return av.localeCompare(bv) * dir;
+    });
+    return list;
+  }, [items, attrKey, reachHost, sort]);
+
   if (!items) {
     return <span className="font-data min-w-0 break-all">{String(value)}</span>;
   }
-  const rows = rowsFor(attrKey, items, reachHost ?? null);
   if (rows.length === 0) {
     return <span className="text-muted-foreground">none</span>;
   }
+
+  const toggle = (k: SortKey) => setSort((s) => (s.key === k ? { key: k, dir: s.dir === 1 ? -1 : 1 } : { key: k, dir: 1 }));
+  const th = (k: SortKey, label: string, extra = "") => (
+    <th className={cn("text-left font-medium text-muted-foreground px-1.5 py-1 whitespace-nowrap", extra)}>
+      <button type="button" className="hover:text-foreground" onClick={() => toggle(k)}>
+        {label}
+        {sort.key === k ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
+      </button>
+    </th>
+  );
+
   return (
-    <ul className="min-w-0 w-full space-y-1">
-      {rows.map((r, i) => (
-        <li
-          key={`${r.name}-${i}`}
-          className={cn(
-            "flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12px] leading-snug",
-            r.tone === "dim" && "opacity-50",
-          )}
-        >
-          <span className="font-medium text-foreground">{r.name}</span>
-          {r.bits.map((b) => (
-            <span
-              key={b}
-              className={cn(
-                "text-muted-foreground",
-                r.tone === "warn" && /amber|warn|unhealthy|restarting|degraded/i.test(b) && "text-amber-700",
-                r.tone === "error" && /red|error|down|fail/i.test(b) && "text-red-700",
-              )}
-            >
-              {b}
-            </span>
+    <div className="min-w-0 overflow-x-auto">
+      <table className="w-full text-[12px] leading-snug">
+        <thead className="hidden sm:table-header-group">
+          <tr>
+            <th className="w-4 px-1.5 py-1" />
+            {th("name", "Name")}
+            {th("id", attrKey === "vms" || attrKey === "lxc" ? "Id" : "Image")}
+            <th className="text-left font-medium text-muted-foreground px-1.5 py-1">Ports</th>
+            {th("size", "Size")}
+            <th className="text-left font-medium text-muted-foreground px-1.5 py-1">Extra</th>
+          </tr>
+        </thead>
+        <tbody className="sm:divide-y sm:divide-border">
+          {rows.map((r) => (
+            <tr key={r.key} className="block sm:table-row mb-2 sm:mb-0 rounded-md border border-border sm:border-0 p-2 sm:p-0">
+              <td className="block sm:table-cell px-1.5 py-1 align-top sm:w-4" data-label="">
+                <span className="inline-flex items-center gap-1.5">
+                  <StatusDot tone={r.tone} title={r.status || undefined} />
+                  <span className="sm:hidden font-medium">{r.name}</span>
+                </span>
+              </td>
+              <td className="hidden sm:table-cell px-1.5 py-1 align-top font-medium" data-label="Name">
+                {r.name}
+              </td>
+              <td className="block sm:table-cell px-1.5 py-1 align-top text-muted-foreground break-all" data-label="Id">
+                {r.id || <span className="sm:hidden">—</span>}
+              </td>
+              <td className="block sm:table-cell px-1.5 py-1 align-top" data-label="Ports">
+                <PortLinks ports={r.ports} reachHost={reachHost} />
+                {r.hrefs.length > 0 && r.ports.length === 0 && (
+                  <span className="inline-flex flex-col">
+                    {r.hrefs.map((h) => (
+                      <a key={h} href={h} target="_blank" rel="noreferrer" className="text-primary hover:underline truncate max-w-[16rem]">
+                        {h.replace(/^https?:\/\//, "")}
+                      </a>
+                    ))}
+                  </span>
+                )}
+              </td>
+              <td className="block sm:table-cell px-1.5 py-1 align-top tabular-nums" data-label="Size">
+                {r.sizeLabel}
+              </td>
+              <td className="block sm:table-cell px-1.5 py-1 align-top text-muted-foreground" data-label="Extra">
+                <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                  {r.extra.map((e) => (
+                    <span key={e}>{e}</span>
+                  ))}
+                </div>
+                {r.mounts.length > 0 && (
+                  <div className="mt-0.5">
+                    <button
+                      type="button"
+                      className="text-[11px] text-primary hover:underline"
+                      onClick={() => setOpen((o) => ({ ...o, [r.key]: !o[r.key] }))}
+                    >
+                      {r.mounts.length} mount{r.mounts.length === 1 ? "" : "s"}
+                    </button>
+                    {open[r.key] && (
+                      <ul className="mt-0.5 space-y-0.5 text-[11px]">
+                        {r.mounts.map((m) => (
+                          <li key={`${m.source}->${m.dest}`}>
+                            {m.source} → {m.dest}
+                            {m.type ? ` (${m.type})` : ""}
+                            {m.size ? ` ${fmtBytes(m.size)}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </td>
+            </tr>
           ))}
-          {(r.hrefs ?? []).map((href) => (
-            <a
-              key={href}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary hover:underline truncate max-w-[16rem]"
-            >
-              {href.replace(/^https?:\/\//, "")}
-            </a>
-          ))}
-        </li>
-      ))}
-    </ul>
+        </tbody>
+      </table>
+    </div>
   );
 }

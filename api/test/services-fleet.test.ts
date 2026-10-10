@@ -215,6 +215,8 @@ describe("matchMachine", () => {
 describe("localhost URLs and fleet status", () => {
   it("rewrites localhost / 127.0.0.1 / 0.0.0.0 to the machine IP", () => {
     expect(rewriteLocalHostUrl("http://localhost:3002/", "10.50.0.102")).toBe("http://10.50.0.102:3002/");
+    expect(statusTone("exited (1)")).toBe("error");
+    expect(statusTone("running")).toBe("ok");
     expect(rewriteLocalHostUrl("http://127.0.0.1:8001/x", "10.50.0.102")).toBe("http://10.50.0.102:8001/x");
     expect(rewriteLocalHostUrl("https://0.0.0.0:8443", "mini")).toBe("https://mini:8443/");
     expect(rewriteLocalHostUrl("http://10.50.0.10:3000/", "10.50.0.102")).toBe("http://10.50.0.10:3000/");

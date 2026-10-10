@@ -28,6 +28,7 @@ import {
   type ItemScope,
 } from "@/lib/systemsGraph";
 import { parseRating, type Importance, type Rating } from "@/lib/systemsAttrs";
+import { STATUS_DOT } from "../../api/lib/serviceUrls";
 
 type SimNode = SimulationNodeDatum & GraphNode;
 type SimLink = SimulationLinkDatum<SimNode> & { strength: number; cross?: boolean; tight?: boolean };
@@ -86,8 +87,7 @@ function nodeStroke(d: GraphNode): { color: string; width: number } {
   }
   if (d.type === "network") return { color: "#7eeae6", width: 2 };
   if (d.type === "other") return { color: "#888", width: 1.5 };
-  if (d.tone === "warn") return { color: "#f59e0b", width: 2 };
-  if (d.tone === "error") return { color: "#ef4444", width: 2 };
+  if (d.tone) return { color: STATUS_DOT[d.tone], width: 2 };
   return { color: "none", width: 0 };
 }
 

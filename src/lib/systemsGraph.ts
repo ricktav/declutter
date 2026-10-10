@@ -455,6 +455,7 @@ function guestsOf(m: GraphItem, key: "vms" | "lxc"): GuestRec[] {
 function guestNode(machineId: number, kind: "vm" | "lxc", g: GuestRec): GraphNode {
   const running = /^running$/i.test(g.status);
   const faint = g.template === true;
+  const tone = faint ? "dim" : statusTone(g.status);
   return {
     id: `${kind}:${machineId}:${g.vmid}`,
     type: kind,
@@ -463,6 +464,7 @@ function guestNode(machineId: number, kind: "vm" | "lxc", g: GuestRec): GraphNod
     color: KIND_COLOR[kind],
     dimmed: !running || faint,
     faint,
+    tone,
     itemId: machineId,
     kind,
     tags: [

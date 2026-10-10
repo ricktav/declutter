@@ -5,12 +5,24 @@ import { getDb } from "../queries/connection";
 import { logEvent } from "../lib/events";
 import { ServicesReportError, applyServicesReport } from "../lib/services";
 
+const mountRec = z.object({
+  source: z.string().max(255),
+  dest: z.string().max(255),
+  type: z.string().max(32).optional(),
+  size: z.number().nonnegative().max(1e16).optional(),
+});
 const rec = z.object({
   name: z.string().min(1).max(64),
   status: z.string().max(32).optional(),
   image: z.string().max(128).optional(),
   port: z.number().int().positive().max(65535).optional(),
+  ports: z.array(z.number().int().positive().max(65535)).max(32).optional(),
   url: z.string().max(255).optional(),
+  size: z.number().nonnegative().max(1e16).optional(),
+  imageSize: z.number().nonnegative().max(1e16).optional(),
+  layers: z.number().int().nonnegative().max(10_000).optional(),
+  created: z.string().max(32).optional(),
+  mounts: z.array(mountRec).max(32).optional(),
 });
 const webRec = z.object({
   label: z.string().min(1).max(64),
@@ -26,7 +38,10 @@ const guestRec = z.object({
   status: z.string().max(32).optional(),
   memMb: z.number().nonnegative().max(1_000_000).optional(),
   diskGb: z.number().nonnegative().max(100_000).optional(),
+  usedGb: z.number().nonnegative().max(100_000).optional(),
   template: z.boolean().optional(),
+  disks: z.array(z.object({ name: z.string().min(1).max(64), sizeGb: z.number().nonnegative().max(100_000).optional() })).max(16).optional(),
+  mounts: z.array(mountRec).max(32).optional(),
 });
 
 /**

@@ -67,7 +67,20 @@ if (resourcesJson == null) {
   }
 }
 
-const { vms, lxc } = parseProxmoxInventory({ resourcesJson, pctList, qmList });
+let qmConfigs: string | undefined;
+let pctConfigs: string | undefined;
+try {
+  qmConfigs = ssh(["bash", "-lc", 'for v in $(qm list | awk \'NR>1{print $1}\'); do echo "=== $v ==="; qm config "$v"; done']);
+} catch {
+  qmConfigs = undefined;
+}
+try {
+  pctConfigs = ssh(["bash", "-lc", 'for v in $(pct list | awk \'NR>1{print $1}\'); do echo "=== $v ==="; pct config "$v"; done']);
+} catch {
+  pctConfigs = undefined;
+}
+
+const { vms, lxc } = parseProxmoxInventory({ resourcesJson, pctList, qmList, qmConfigs, pctConfigs });
 if (!vms.length && !lxc.length) {
   console.error("no VMs or LXC found on Proxmox (pvesh / pct list / qm list)");
   process.exit(1);

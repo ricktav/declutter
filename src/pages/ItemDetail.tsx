@@ -44,8 +44,8 @@ import type { AppRouter } from "../../api/router";
 import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs";
 import { RatingStars } from "@/components/RatingStars";
 import { isMachineItem, parseRating, type Rating } from "@/lib/systemsAttrs";
-import { AttrListValue, compactJsonList, isJsonListAttr, jsonListAttrLabel, prettyJsonList } from "@/components/AttrListValue";
-import { pickReachHost } from "../../api/lib/serviceUrls";
+import { AttrListValue, compactJsonList, isJsonListAttr, jsonListAttrLabel, parsePortValues, PortLinks, prettyJsonList } from "@/components/AttrListValue";
+import { hostHref, pickReachHost } from "../../api/lib/serviceUrls";
 
 type AttrClash = inferRouterOutputs<AppRouter>["items"]["findAttributeDuplicates"]["clashes"][number];
 
@@ -783,21 +783,20 @@ export default function ItemDetail() {
                   {Object.entries(it.attributes ?? {}).map(([k, v]) => {
                     const clash = clashFor(k);
                     const label = defs.find((d) => d.key === k)?.label ?? jsonListAttrLabel(k) ?? k;
+                    const reach = pickReachHost(
+                      it.attributes?.ip != null ? String(it.attributes.ip) : it.attributes?.ip_address != null ? String(it.attributes.ip_address) : null,
+                      it.attributes?.hostname != null ? String(it.attributes.hostname) : it.attributes?.host != null ? String(it.attributes.host) : null,
+                    );
                     if (isJsonListAttr(k)) {
                       return (
                         <div key={k} className="py-2 text-[13px]">
                           <div className="mb-1 text-muted-foreground">{label}</div>
-                          <AttrListValue
-                            attrKey={k}
-                            value={v}
-                            reachHost={pickReachHost(
-                              it.attributes?.ip != null ? String(it.attributes.ip) : it.attributes?.ip_address != null ? String(it.attributes.ip_address) : null,
-                              it.attributes?.hostname != null ? String(it.attributes.hostname) : it.attributes?.host != null ? String(it.attributes.host) : null,
-                            )}
-                          />
+                          <AttrListValue attrKey={k} value={v} reachHost={reach} />
                         </div>
                       );
                     }
+                    const ipHref = (k === "ip" || k === "ip_address") ? hostHref(String(v)) : null;
+                    const portList = k === "ports" ? parsePortValues(v) : [];
                     return (
                     <div key={k} className="flex py-1.5 text-[13px]">
                       <span className="w-36 shrink-0 text-muted-foreground">
@@ -808,6 +807,12 @@ export default function ItemDetail() {
                           <Link to={`/storage?item=${it.id}`} className="text-primary hover:underline">
                             {String(v)}
                           </Link>
+                        ) : ipHref ? (
+                          <a href={ipHref} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                            {String(v)}
+                          </a>
+                        ) : portList.length ? (
+                          <PortLinks ports={portList} reachHost={reach} />
                         ) : (
                           String(v)
                         )}

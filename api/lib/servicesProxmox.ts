@@ -1,12 +1,18 @@
 /** Parse Proxmox `pvesh` JSON or `pct list` / `qm list` text into guest records. */
 
+export type ProxmoxDisk = { name: string; sizeGb?: number };
+export type ProxmoxMount = { source: string; dest: string; type?: string; size?: number };
+
 export type ProxmoxGuest = {
   vmid: number;
   name: string;
   status: string;
   memMb?: number;
   diskGb?: number;
+  usedGb?: number;
   template?: boolean;
+  disks?: ProxmoxDisk[];
+  mounts?: ProxmoxMount[];
 };
 
 function asRecord(x: unknown): Record<string, unknown> | null {
@@ -46,7 +52,10 @@ function compactGuest(g: ProxmoxGuest): ProxmoxGuest {
   const rec: ProxmoxGuest = { vmid: g.vmid, name: g.name.slice(0, 64), status: g.status };
   if (g.memMb != null) rec.memMb = g.memMb;
   if (g.diskGb != null && g.diskGb > 0) rec.diskGb = g.diskGb;
+  if (g.usedGb != null && g.usedGb > 0) rec.usedGb = g.usedGb;
   if (g.template) rec.template = true;
+  if (g.disks?.length) rec.disks = g.disks.filter((d) => d.sizeGb != null && d.sizeGb > 0).slice(0, 16);
+  if (g.mounts?.length) rec.mounts = g.mounts.slice(0, 32);
   return rec;
 }
 
@@ -56,13 +65,15 @@ function fromResource(o: Record<string, unknown>): ProxmoxGuest | null {
   const name = String(o.name ?? o.Name ?? o.vmid ?? "").trim() || String(vmid);
   const status = guestStatus(String(o.status ?? o.Status ?? "stopped"));
   const memMb = num(o.memMb) ?? bytesToMb(num(o.maxmem) ?? num(o.mem));
-  const diskGb = num(o.diskGb) ?? bytesToGb(num(o.maxdisk) ?? num(o.disk));
+  const diskGb = num(o.diskGb) ?? bytesToGb(num(o.maxdisk));
+  const usedGb = num(o.usedGb) ?? bytesToGb(num(o.disk));
   return compactGuest({
     vmid,
     name,
     status,
     memMb,
     diskGb,
+    usedGb: usedGb != null && usedGb > 0 ? usedGb : undefined,
     template: looksTemplate(name, o.template),
   });
 }
@@ -179,16 +190,137 @@ export function matchPveMachine(machines: PveMachineHint[]): PveMachineHint | nu
   return null;
 }
 
-export function parseProxmoxInventory(input: { resourcesJson?: unknown; pctList?: string; qmList?: string }): {
+function parsePveSize(raw: string): number | undefined {
+  const m = String(raw).trim().match(/^([\d.]+)\s*([KMGT])?$/i);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return undefined;
+  const u = (m[2] ?? "G").toUpperCase();
+  const gb = u === "T" ? n * 1024 : u === "G" ? n : u === "M" ? n / 1024 : u === "K" ? n / 1024 / 1024 : n;
+  return gb > 0 ? Math.round(gb * 10) / 10 : undefined;
+}
+
+const DISK_KEY = /^(scsi|sata|virtio|ide|efidisk|tpmstate|unused)\d+$/i;
+const MP_KEY = /^mp\d+$/i;
+
+/** `qm config` / `pct config` text or pvesh config JSON. */
+export function parsePveGuestConfig(raw: unknown): Pick<ProxmoxGuest, "disks" | "mounts" | "memMb"> {
+  const lines: string[] = [];
+  if (typeof raw === "string") {
+    for (const line of raw.split(/\r?\n/)) {
+      const t = line.trim();
+      if (t && !t.startsWith("#")) lines.push(t);
+    }
+  } else {
+    const o = asRecord(raw);
+    if (o) {
+      for (const [k, v] of Object.entries(o)) {
+        if (v != null && v !== "") lines.push(`${k}: ${v}`);
+      }
+    }
+  }
+  const disks: ProxmoxDisk[] = [];
+  const mounts: ProxmoxMount[] = [];
+  let memMb: number | undefined;
+  for (const line of lines) {
+    const m = line.match(/^([^:]+):\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1].trim();
+    const val = m[2].trim();
+    if (/^memory$/i.test(key)) {
+      const n = Number(val);
+      if (Number.isFinite(n) && n > 0) memMb = n;
+      continue;
+    }
+    if (key === "rootfs" || DISK_KEY.test(key)) {
+      const sizeM = val.match(/size=([\d.]+[KMGT]?)/i);
+      const sizeGb = sizeM ? parsePveSize(sizeM[1]) : undefined;
+      const vol = val.split(",")[0]?.trim() || key;
+      disks.push({ name: (key === "rootfs" ? "rootfs" : key).slice(0, 64), ...(sizeGb ? { sizeGb } : {}) });
+      if (key === "rootfs") {
+        mounts.push({ source: vol.slice(0, 255), dest: "/", type: "rootfs" });
+      }
+      continue;
+    }
+    if (MP_KEY.test(key)) {
+      const destM = val.match(/(?:^|,)mp=([^,]+)/i);
+      const sizeM = val.match(/size=([\d.]+[KMGT]?)/i);
+      const source = val.split(",")[0]?.trim() ?? key;
+      const dest = destM?.[1]?.trim() || source;
+      const sizeGb = sizeM ? parsePveSize(sizeM[1]) : undefined;
+      mounts.push({
+        source: source.slice(0, 255),
+        dest: dest.slice(0, 255),
+        type: "mp",
+        ...(sizeGb ? { size: Math.round(sizeGb * 1e9) } : {}),
+      });
+    }
+  }
+  return {
+    ...(disks.length ? { disks } : {}),
+    ...(mounts.length ? { mounts } : {}),
+    ...(memMb != null ? { memMb } : {}),
+  };
+}
+
+/** Multiplexed `=== 100 ===\n...config` blocks from one SSH. */
+export function parsePveConfigBlocks(text: string): Map<number, string> {
+  const out = new Map<number, string>();
+  let cur: number | null = null;
+  let buf: string[] = [];
+  const flush = () => {
+    if (cur != null) out.set(cur, buf.join("\n"));
+    buf = [];
+  };
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.trim().match(/^===\s*(\d+)\s*===$/);
+    if (m) {
+      flush();
+      cur = Number(m[1]);
+      continue;
+    }
+    if (cur != null) buf.push(line);
+  }
+  flush();
+  return out;
+}
+
+export function enrichProxmoxGuests(guests: ProxmoxGuest[], configs: Map<number, string>): ProxmoxGuest[] {
+  return guests.map((g) => {
+    const raw = configs.get(g.vmid);
+    if (!raw) return g;
+    const extra = parsePveGuestConfig(raw);
+    const diskGb =
+      extra.disks?.reduce((s, d) => s + (d.sizeGb ?? 0), 0) || g.diskGb;
+    return compactGuest({
+      ...g,
+      ...extra,
+      diskGb: diskGb != null && diskGb > 0 ? diskGb : undefined,
+      memMb: extra.memMb ?? g.memMb,
+    });
+  });
+}
+
+export function parseProxmoxInventory(input: {
+  resourcesJson?: unknown;
+  pctList?: string;
+  qmList?: string;
+  qmConfigs?: string;
+  pctConfigs?: string;
+}): {
   vms: ProxmoxGuest[];
   lxc: ProxmoxGuest[];
 } {
+  let vms: ProxmoxGuest[] = [];
+  let lxc: ProxmoxGuest[] = [];
   if (input.resourcesJson != null) {
     const parsed = parsePveResources(input.resourcesJson);
-    if (parsed.vms.length || parsed.lxc.length) return parsed;
+    vms = parsed.vms;
+    lxc = parsed.lxc;
   }
-  return {
-    vms: input.qmList ? parseQmList(input.qmList) : [],
-    lxc: input.pctList ? parsePctList(input.pctList) : [],
-  };
+  if (!vms.length && input.qmList) vms = parseQmList(input.qmList);
+  if (!lxc.length && input.pctList) lxc = parsePctList(input.pctList);
+  if (input.qmConfigs) vms = enrichProxmoxGuests(vms, parsePveConfigBlocks(input.qmConfigs));
+  if (input.pctConfigs) lxc = enrichProxmoxGuests(lxc, parsePveConfigBlocks(input.pctConfigs));
+  return { vms, lxc };
 }

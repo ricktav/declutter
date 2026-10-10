@@ -8,7 +8,7 @@
 import "dotenv/config";
 import { execFileSync } from "child_process";
 import os from "os";
-import { dockerPathEnv, parseDockerPs } from "../api/lib/servicesDocker.ts";
+import { dockerPathEnv, enrichDockerContainers, parseDockerPs } from "../api/lib/servicesDocker.ts";
 import { matchMachine, type MachineHint } from "../api/lib/servicesFleet.ts";
 
 const argv = process.argv.slice(2);
@@ -46,7 +46,7 @@ async function trpc(path: string, input: unknown, method: "GET" | "POST" = "GET"
 const env = dockerPathEnv();
 let text: string;
 try {
-  text = execFileSync("docker", ["ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}"], {
+  text = execFileSync("docker", ["ps", "--size", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}\t{{.Size}}"], {
     encoding: "utf8",
     env,
   });
@@ -56,7 +56,28 @@ try {
   process.exit(1);
 }
 
-const containers = parseDockerPs(text);
+function dockerJson(args: string[]): unknown {
+  try {
+    const raw = execFileSync("docker", args, { encoding: "utf8", env }).trim();
+    return raw ? (JSON.parse(raw) as unknown) : null;
+  } catch {
+    return null;
+  }
+}
+
+const parsed = parseDockerPs(text);
+const ids = execFileSync("docker", ["ps", "-q"], { encoding: "utf8", env }).trim().split(/\s+/).filter(Boolean);
+const inspect = ids.length ? dockerJson(["inspect", "--size", ...ids]) ?? dockerJson(["inspect", ...ids]) : null;
+const images = [...new Set(parsed.map((c) => c.image).filter(Boolean))] as string[];
+const imageInspect = images.length ? dockerJson(["image", "inspect", ...images]) : null;
+let dfText = "";
+try {
+  dfText = execFileSync("docker", ["system", "df", "-v"], { encoding: "utf8", env });
+} catch {
+  dfText = "";
+}
+
+const containers = enrichDockerContainers(parsed, inspect, imageInspect, dfText);
 if (!containers.length) {
   console.error("no running docker containers found");
   process.exit(1);

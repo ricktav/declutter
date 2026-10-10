@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { matchPveMachine, parsePctList, parsePveResources, parseQmList, parseProxmoxInventory } from "../lib/servicesProxmox";
+import {
+  matchPveMachine,
+  parsePctList,
+  parsePveConfigBlocks,
+  parsePveGuestConfig,
+  parsePveResources,
+  parseQmList,
+  parseProxmoxInventory,
+} from "../lib/servicesProxmox";
 
 const pct = `VMID       Status     Lock         Name
 102        running                 puppet
@@ -45,6 +53,23 @@ describe("parse Proxmox lists", () => {
     expect(vms.find((g) => g.vmid === 111)?.template).toBe(true);
     expect(vms.find((g) => g.vmid === 100)?.memMb).toBe(8192);
     expect(parsePveResources([{ type: "qemu", vmid: 113, name: "template-win11-schoon", status: "stopped", template: 1, maxdisk: 0 }]).vms[0].diskGb).toBeUndefined();
+  });
+
+  it("reads qm/pct config disks and mounts", () => {
+    const vm = parsePveGuestConfig(`memory: 8192\nscsi0: local-zfs:vm-100-disk-0,size=64G\nide2: none,media=cdrom\n`);
+    expect(vm.memMb).toBe(8192);
+    expect(vm.disks).toEqual([expect.objectContaining({ name: "scsi0", sizeGb: 64 })]);
+    const lxc = parsePveGuestConfig(`memory: 512\nrootfs: local-zfs:vm-102-disk-0,size=8G\nmp0: /tank/share,mp=/mnt/share\n`);
+    expect(lxc.disks?.[0]).toEqual({ name: "rootfs", sizeGb: 8 });
+    expect(lxc.mounts?.map((m) => m.dest)).toEqual(["/", "/mnt/share"]);
+    const blocks = parsePveConfigBlocks("=== 100 ===\nscsi0: local-zfs:vm-100-disk-0,size=64G\n=== 102 ===\nrootfs: local-zfs:subvol,size=8G\n");
+    expect(blocks.get(100)).toMatch(/scsi0/);
+    const inv = parseProxmoxInventory({
+      resourcesJson: [{ type: "qemu", vmid: 100, name: "win11", status: "stopped", maxmem: 1024 }],
+      qmConfigs: "=== 100 ===\nmemory: 8192\nscsi0: local-zfs:vm-100-disk-0,size=64G\n",
+    });
+    expect(inv.vms[0].diskGb).toBe(64);
+    expect(inv.vms[0].memMb).toBe(8192);
   });
 
   it("falls back to pct/qm when pvesh is empty", () => {
