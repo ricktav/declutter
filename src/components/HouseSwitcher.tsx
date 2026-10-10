@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 const HousesMap = lazy(() => import("@/components/HousesMap").then((m) => ({ default: m.HousesMap })));
 
 /** The one place a session changes building. Rendered in both shells. */
-export function HouseSwitcher({ dark = false }: { dark?: boolean }) {
+export function HouseSwitcher({ dark = false, allowAll = false }: { dark?: boolean; allowAll?: boolean }) {
   const id = useId();
   const { houseId, setHouseId, houses } = useHouse();
   const [mapOpen, setMapOpen] = useState(false);
@@ -22,6 +22,7 @@ export function HouseSwitcher({ dark = false }: { dark?: boolean }) {
           value={houseId ?? ""}
           onChange={(e) => setHouseId(e.target.value ? Number(e.target.value) : null)}
         >
+          {allowAll && <option value="">All houses</option>}
           {houses.map((h) => (
             <option key={h.id} value={h.id}>
               {h.name}

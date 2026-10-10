@@ -36,10 +36,12 @@ import {
   Smartphone,
   Zap,
   HardDrive,
+  Star,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useTopicFavs } from "@/lib/topicFavs";
 
 const AREA_ICONS: Record<string, LucideIcon> = {
   laptop: Laptop,
@@ -190,6 +192,7 @@ export default function Layout() {
   const { mode } = useWorkbenchMode();
   const location = useLocation();
   const areas = trpc.areas.list.useQuery();
+  const { favIds, toggle: toggleFav, isFaved } = useTopicFavs();
   const inbox = trpc.inbox.list.useQuery();
   const { openAsk } = useAsk();
   const navigate = useNavigate();
@@ -242,11 +245,40 @@ export default function Layout() {
       </div>
 
       <div className="px-2 pb-2 space-y-2">
-        <HouseSwitcher dark />
+        <HouseSwitcher dark allowAll />
         <WorkbenchModeToggle />
       </div>
 
       <nav className="px-2 space-y-0.5">
+        {favIds.length > 0 && (
+          <div className="space-y-0.5 pb-1 mb-1 border-b border-[#3a3f2e]">
+            {favIds.map((id) => {
+              const a = (areas.data ?? []).find((x) => x.id === id);
+              if (!a) return null;
+              const Icon = AREA_ICONS[a.icon] ?? Box;
+              return (
+                <div key={`fav-${a.id}`} className="flex items-center">
+                  <NavLink
+                    to={`/areas/${a.slug}`}
+                    className={(s) => cn(navLinkClass(s), "flex-1 min-w-0")}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <Icon className="h-4 w-4" style={{ color: a.color }} />
+                    <span className="flex-1 truncate">{a.name}</span>
+                  </NavLink>
+                  <button
+                    type="button"
+                    title="Remove shortcut"
+                    className="shrink-0 rounded p-1 mr-1 text-[#b4b8a5] hover:bg-[#32361f] hover:text-[#f4f4ed]"
+                    onClick={() => toggleFav(a.id)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {[...primaryNav, ...extraPrimary].map((n) => (
           <NavLink key={n.to} to={n.to} end={"end" in n && n.end === true} className={navLinkClass}
             onClick={() => setMenuOpen(false)}>
@@ -291,12 +323,28 @@ export default function Layout() {
             {(areas.data ?? []).map((a) => {
               const Icon = AREA_ICONS[a.icon] ?? Box;
               return (
-                <NavLink key={a.id} to={`/areas/${a.slug}`} className={navLinkClass}
-                  onClick={() => setMenuOpen(false)}>
-                  <Icon className="h-4 w-4" style={{ color: a.color }} />
-                  <span className="flex-1 truncate">{a.name}</span>
-                  <span className="font-data text-[11px] opacity-60">{a.itemCount}</span>
-                </NavLink>
+                <div key={a.id} className="flex items-center">
+                  <NavLink
+                    to={`/areas/${a.slug}`}
+                    className={(s) => cn(navLinkClass(s), "flex-1 min-w-0")}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <Icon className="h-4 w-4" style={{ color: a.color }} />
+                    <span className="flex-1 truncate">{a.name}</span>
+                    <span className="font-data text-[11px] opacity-60">{a.itemCount}</span>
+                  </NavLink>
+                  <button
+                    type="button"
+                    title={isFaved(a.id) ? "Remove shortcut" : "Pin under Home"}
+                    className={cn(
+                      "shrink-0 rounded p-1 mr-1",
+                      isFaved(a.id) ? "text-[#d2ff00]" : "text-[#b4b8a5] hover:bg-[#32361f] hover:text-[#f4f4ed]",
+                    )}
+                    onClick={() => toggleFav(a.id)}
+                  >
+                    <Star className={cn("h-3 w-3", isFaved(a.id) && "fill-current")} />
+                  </button>
+                </div>
               );
             })}
           </nav>

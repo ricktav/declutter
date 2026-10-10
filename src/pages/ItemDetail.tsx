@@ -262,9 +262,8 @@ export default function ItemDetail() {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  const locRef = useRef<HTMLElement>(null);
   const [roomId, setRoomId] = useState<number | null>(null);
-  const [editingLoc, setEditingLoc] = useState(false);
+  const [locOpen, setLocOpen] = useState(false);
   const [childName, setChildName] = useState("");
   const [lightboxPhoto, setLightboxPhoto] = useState<{ id: number; storageKey: string | null } | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -403,11 +402,8 @@ export default function ItemDetail() {
     setEditingAttrs(false);
   };
 
-  const startEditLoc = () => {
+  const openLocPicker = () => {
     if (it.roomId == null) {
-      // nothing set yet - default to wherever the adjacent item (same area,
-      // one filed just before/after this one) landed, since items are
-      // usually filed room-by-room in a batch
       const adjacent = [prevId, nextId]
         .map((sid) => (siblings.data ?? []).find((s) => s.id === sid))
         .find((s) => s && s.roomId != null);
@@ -415,21 +411,16 @@ export default function ItemDetail() {
     } else {
       setRoomId(it.roomId);
     }
-    setEditingLoc(true);
+    setLocOpen(true);
   };
-  /** The pane's "Pick a room": open the Location editor and bring it into
-   * view (it sits further down the column). */
-  const pickRoom = () => {
-    startEditLoc();
-    requestAnimationFrame(() => locRef.current?.scrollIntoView({ block: "center" }));
-  };
-  const saveLoc = () => {
+  const applyLoc = (next: number | null) => {
+    setRoomId(next);
     update.mutate({
       id: itemId,
-      roomId,
-      houseId: roomId == null ? it.houseId : undefined,
+      roomId: next,
+      houseId: next == null ? it.houseId : undefined,
     });
-    setEditingLoc(false);
+    setLocOpen(false);
   };
 
   const uploadAttachment = async (f: File) => {
@@ -562,8 +553,8 @@ export default function ItemDetail() {
             <Sparkles className="h-3.5 w-3.5 mr-1" /> Ask AI
           </Button>
           <Button size="sm" variant="outline" className="h-8 text-[12px]"
-            onClick={startEditLoc}>
-            <MapPin className="h-3.5 w-3.5 mr-1" /> Move
+            onClick={openLocPicker}>
+            <MapPin className="h-3.5 w-3.5 mr-1" /> Pick location
           </Button>
           <Button size="sm" variant="outline" className="h-8 text-[12px]"
             onClick={() => setArchived.mutate({ id: itemId, archived: it.status !== "archived" })}>
@@ -676,7 +667,7 @@ export default function ItemDetail() {
               <Images className="h-3 w-3 mr-1" />
               library
             </Button>
-            <PlacementTrigger itemId={it.id} onPickRoom={pickRoom} />
+            <PlacementTrigger itemId={it.id} onPickRoom={openLocPicker} />
           </div>
           {uploadError && (
             <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
@@ -1029,39 +1020,26 @@ export default function ItemDetail() {
           <EnergySection itemId={it.id} />
 
           {/* location: house → floor → room (areas are the topic, not the place) */}
-          <section ref={locRef} className="rounded-lg border border-border bg-white p-3">
+          <section className="rounded-lg border border-border bg-white p-3">
             <div className="flex items-center mb-2">
               <h2 className="micro-label text-muted-foreground">Location</h2>
-              {!editingLoc ? (
-                <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto" onClick={startEditLoc}>
-                  Edit
-                </Button>
+              <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto" onClick={openLocPicker}>
+                Pick location
+              </Button>
+            </div>
+            <div className="text-[13px] space-y-0.5">
+              {it.room ? (
+                <span className="text-[13px]">
+                  <Link to={`/items?roomId=${it.room.id}`} className="hover:underline">{it.room.name}</Link>
+                  {it.room.floor && <span className="ml-1.5 rounded bg-muted px-1 text-[10px] text-muted-foreground">{it.room.floor}</span>}
+                  {it.room.hasGeometry && <Link to={`/rooms/${it.room.id}`} className="ml-2 text-[11px] text-muted-foreground hover:underline">open plan</Link>}
+                </span>
+              ) : it.house ? (
+                <span className="text-[13px] text-muted-foreground">Unplaced in {it.house.name}</span>
               ) : (
-                <Button size="sm" className="h-6 text-[11px] ml-auto" onClick={saveLoc}>Save</Button>
+                <span className="text-[13px] text-muted-foreground">No location</span>
               )}
             </div>
-            {!editingLoc ? (
-              <div className="text-[13px] space-y-0.5">
-                {it.room ? (
-                  <span className="text-[13px]">
-                    <Link to={`/items?roomId=${it.room.id}`} className="hover:underline">{it.room.name}</Link>
-                    {it.room.floor && <span className="ml-1.5 rounded bg-muted px-1 text-[10px] text-muted-foreground">{it.room.floor}</span>}
-                    {it.room.hasGeometry && <Link to={`/rooms/${it.room.id}`} className="ml-2 text-[11px] text-muted-foreground hover:underline">open plan</Link>}
-                  </span>
-                ) : it.house ? (
-                  <span className="text-[13px] text-muted-foreground">Unplaced in {it.house.name}</span>
-                ) : (
-                  <span className="text-[13px] text-muted-foreground">No location</span>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <RoomPicker value={roomId} onChange={setRoomId} allowNone autoFocus houseId={it.houseId ?? undefined} />
-                <p className="text-[10px] text-muted-foreground">
-                  Topic (the picker above the name) is what the Thing is. This is where it sits.
-                </p>
-              </div>
-            )}
           </section>
 
           {/* sub-objects: set → mouse, cupboard → shelf, … (nesting) */}
@@ -1239,6 +1217,34 @@ export default function ItemDetail() {
         </div>
       </section>
 
+      <Dialog open={locOpen} onOpenChange={setLocOpen}>
+        <DialogContent className="sm:max-w-md overflow-visible">
+          <DialogHeader>
+            <DialogTitle>Pick location</DialogTitle>
+            <DialogDescription>
+              Where this Thing sits. Topic (above the name) stays what it is.
+            </DialogDescription>
+          </DialogHeader>
+          <RoomPicker
+            value={roomId}
+            onChange={(id) => {
+              setRoomId(id);
+              if (id != null) applyLoc(id);
+            }}
+            allowNone
+            autoFocus
+            houseId={it.houseId ?? undefined}
+          />
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] text-muted-foreground">
+              {it.room ? `Now: ${it.room.name}` : it.house ? `Unplaced in ${it.house.name}` : "No location yet"}
+            </p>
+            <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => applyLoc(null)}>
+              Leave unplaced
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <ChooseFromLibraryDialog itemId={itemId} open={libraryOpen} onClose={() => setLibraryOpen(false)} />
       {lightboxPhoto && (
         <PhotoCropZoom
