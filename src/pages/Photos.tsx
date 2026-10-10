@@ -5,7 +5,8 @@ import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { timeAgo } from "@/lib/format";
-import { Search, Loader2, MapPin, LayoutGrid, Link2, X, Camera, Home } from "lucide-react";
+import { Search, Loader2, MapPin, LayoutGrid, Link2, X, Camera, Home, Trash2 } from "lucide-react";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { usePersistedState } from "@/hooks/use-persisted-state";
 import { AttachPhotoDialog, type AttachTarget } from "@/components/AttachPhotoDialog";
 import { PhotoPlaceDialog, type PlaceResult, type PlaceTarget } from "@/components/PhotoPlaceDialog";
@@ -110,6 +111,14 @@ function PhotoTile({
   });
   const [pickRoom, setPickRoom] = useState(false);
   const canPlace = photo.source === "capture" ? rooms.length > 0 : photo.roomId != null && !photo.isCutout;
+  const utils = trpc.useUtils();
+  const removePhoto = trpc.photos.remove.useMutation({
+    onSuccess: () => void utils.photos.listAll.invalidate(),
+  });
+  const removeCapture = trpc.inbox.remove.useMutation({
+    onSuccess: () => void utils.photos.listAll.invalidate(),
+  });
+  const removePending = removePhoto.isPending || removeCapture.isPending;
 
   const caption =
     photo.source === "capture"
@@ -268,7 +277,37 @@ function PhotoTile({
         >
           <Home className="h-3 w-3" /> Change Place…
         </button>
+        <ConfirmDelete
+          trigger={
+            <button
+              type="button"
+              className="basis-full flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-destructive hover:border-destructive/50"
+              title={photo.source === "capture" ? "Delete this inbox photo" : "Delete this Photo"}
+              disabled={removePending}
+            >
+              <Trash2 className="h-3 w-3" /> Delete
+            </button>
+          }
+          title={photo.source === "capture" ? "Delete this inbox photo?" : "Delete this Photo?"}
+          description={
+            photo.source === "capture"
+              ? "It leaves Inbox and Photos. The file is deleted if nothing else uses it."
+              : photo.itemName
+                ? `Removes this Photo from ${photo.itemName} and from Photos. Pins on it go too. The file is deleted if nothing else uses it.`
+                : "Removes this Photo from Photos. Pins on it go too. The file is deleted if nothing else uses it."
+          }
+          confirmLabel="Delete"
+          pending={removePending}
+          onConfirm={() =>
+            photo.source === "capture"
+              ? removeCapture.mutate({ id: photo.captureId! })
+              : removePhoto.mutate({ id: photo.id })
+          }
+        />
         {ensureForPlace.error && <p className="basis-full text-[10px] text-destructive">{ensureForPlace.error.message}</p>}
+        {(removePhoto.error || removeCapture.error) && (
+          <p className="basis-full text-[10px] text-destructive">{(removePhoto.error ?? removeCapture.error)?.message}</p>
+        )}
       </div>
       {photo.storageKey && (
         <button

@@ -182,6 +182,33 @@ describe("photos.listAll / forRoom", () => {
     expect(byKey.has(`capture:${filedCap}`)).toBe(false);
   });
 
+  it("omits dismissed inbox captures from the catalog", async () => {
+    const { db, h1 } = await seed();
+    const [{ id: gone }] = await db
+      .insert(captures)
+      .values({ kind: "image", storageKey: "local/test-fake-list-dismissed.jpg", status: "dismissed" })
+      .$returningId();
+    const rows = await callerFor(h1).photos.listAll();
+    expect(rows.some((r) => r.source === "capture" && r.id === gone)).toBe(false);
+  });
+
+  it("inbox.remove deletes an unfiled capture and refuses one that is a Photo's source", async () => {
+    const { db, h1, itemId } = await seed();
+    const [{ id: loose }] = await db
+      .insert(captures)
+      .values({ kind: "image", storageKey: "local/test-fake-inbox-remove.jpg", status: "pending" })
+      .$returningId();
+    const [{ id: filed }] = await db
+      .insert(captures)
+      .values({ kind: "image", storageKey: "local/test-fake-inbox-keep.jpg", status: "processed" })
+      .$returningId();
+    await db.insert(photos).values({ itemId, storageKey: "local/test-fake-from-filed.jpg", sourceCaptureId: filed });
+    await callerFor(h1).inbox.remove({ id: loose });
+    expect(await db.select().from(captures).where(eq(captures.id, loose))).toHaveLength(0);
+    await expect(callerFor(h1).inbox.remove({ id: filed })).rejects.toThrow(/source of a Photo/);
+    expect(await db.select().from(captures).where(eq(captures.id, filed))).toHaveLength(1);
+  });
+
   it("forRoom returns the source captures behind cutouts of items in the room", async () => {
     const { db, h1, itemId, keuken } = await seed();
     const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: "local/test-fake-forroom-src.jpg" }).$returningId();
