@@ -862,14 +862,20 @@ export const itemsRouter = createRouter({
     return { ok: true };
   }),
 
-  /** lightweight search for pickers / auto-linking */
-  search: procedure.input(z.object({ q: z.string() })).query(async ({ input }) => {
-    const db = getDb();
-    const all = await db.select().from(items).where(eq(items.status, "active"));
-    const q = input.q.toLowerCase();
-    return all
-      .filter((i) => i.name.toLowerCase().includes(q))
-      .slice(0, 10)
-      .map((i) => ({ id: i.id, name: i.name, areaId: i.areaId }));
-  }),
+  /** lightweight search for pickers / auto-linking. Defaults to the session house. */
+  search: procedure
+    .input(z.object({ q: z.string(), houseId: z.number().nullable().optional() }))
+    .query(async ({ input, ctx }) => {
+      const houseId = input.houseId !== undefined ? input.houseId : ctx.houseId;
+      const db = getDb();
+      const all = await db
+        .select()
+        .from(items)
+        .where(and(eq(items.status, "active"), houseId != null ? eq(items.houseId, houseId) : undefined));
+      const q = input.q.toLowerCase();
+      return all
+        .filter((i) => i.name.toLowerCase().includes(q))
+        .slice(0, 10)
+        .map((i) => ({ id: i.id, name: i.name, areaId: i.areaId }));
+    }),
 });

@@ -69,6 +69,18 @@ describe("items.listAll / get", () => {
   });
 });
 
+describe("items.search", () => {
+  it("defaults to the session house and can list every house", async () => {
+    const { h1, h2, areaId, keuken, hal } = await seed();
+    await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
+    await callerFor(h1).items.create({ areaId, name: "coat", roomId: hal });
+
+    expect((await callerFor(h1).items.search({ q: "p" })).map((r) => r.name)).toEqual(["pan"]);
+    expect((await callerFor(h2).items.search({ q: "c" })).map((r) => r.name)).toEqual(["coat"]);
+    expect((await callerFor(h1).items.search({ q: "c", houseId: null })).map((r) => r.name)).toEqual(["coat"]);
+  });
+});
+
 describe("items.create atomicity", () => {
   it("a bad roomId leaves no orphan item", async () => {
     const { db, h1, areaId } = await seed();

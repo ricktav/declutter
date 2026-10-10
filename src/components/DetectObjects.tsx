@@ -13,6 +13,7 @@ import { RoomPicker } from "@/components/RoomPicker";
 import { AiProgressBar } from "@/components/AiProgressBar";
 import { setLastRoomId } from "@/lib/lastRoom";
 import { useLastRoomId } from "@/hooks/use-last-room";
+import { useHouse } from "@/context/house";
 import { Check, Loader2, ScanSearch, AlertTriangle, RefreshCw } from "lucide-react";
 
 type Suggestion = {
@@ -133,6 +134,8 @@ export function DetectObjectsModal({
   const [mode, setMode] = useState<"existing" | "new">("existing");
   const [newName, setNewName] = useState("");
   const [newArea, setNewArea] = useState<number | null>(null);
+  const { houseId } = useHouse();
+  const houseRooms = trpc.rooms.list.useQuery({ houseId }, { enabled: houseId != null });
   const lastRoomId = useLastRoomId();
   const [roomId, setRoomIdRaw] = useState<number | null>(null);
   const [roomTouched, setRoomTouched] = useState(false);
@@ -193,7 +196,7 @@ export function DetectObjectsModal({
       const matched = res.suggestions.find((s) => s.matchedItemId != null);
       if (matched?.matchedItemId) {
         const item = await utils.items.get.fetch({ id: matched.matchedItemId });
-        if (item?.roomId != null) setRoomId(item.roomId);
+        if (item?.roomId != null && houseRooms.data?.some((r) => r.id === item.roomId)) setRoomId(item.roomId);
       }
     },
     onError: (e) => setAiError(e.message),
@@ -382,7 +385,7 @@ export function DetectObjectsModal({
                   </div>
                 )}
 
-                <RoomPicker value={roomId} onChange={setRoomId} allowNone />
+                <RoomPicker value={roomId} onChange={setRoomId} houseId={houseId ?? undefined} allowNone />
 
                 <div className="flex gap-2 pt-1">
                   <Button

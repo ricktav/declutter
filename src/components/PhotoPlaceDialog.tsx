@@ -63,8 +63,9 @@ function PlaceBody({
 }) {
   const utils = trpc.useUtils();
   const { houseId: sessionHouseId } = useHouse();
-  const houseId = (target.source === "photo" ? target.houseId : null) ?? sessionHouseId ?? undefined;
-  const allRooms = trpc.rooms.list.useQuery({ houseId: null });
+  // the chosen house only — never every Place, and not the photo's other house
+  const houseId = sessionHouseId ?? undefined;
+  const rooms = trpc.rooms.list.useQuery({ houseId: houseId ?? null }, { enabled: houseId != null });
   const storedRoomId = target.source === "photo" ? target.roomId : null;
   const [value, setValue] = useState<number | null>(storedRoomId);
   // remounts the picker so its text snaps back to the stored room after a failed save
@@ -77,7 +78,7 @@ function PlaceBody({
   // read after rooms.list is refetched: the picker may have just made the room
   const nameOf = (id: number | null) => {
     if (id == null) return null;
-    const list = utils.rooms.list.getData({ houseId: null }) ?? allRooms.data;
+    const list = utils.rooms.list.getData({ houseId: houseId ?? null }) ?? rooms.data;
     return list?.find((r) => r.id === id)?.name ?? `#${id}`;
   };
 

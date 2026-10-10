@@ -16,6 +16,7 @@ import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { useZoomable } from "@/hooks/use-zoomable";
 import { isGeojsonFile } from "@/lib/geojsonFloor";
 import { PhotoPlaceDialog, type PlaceTarget } from "@/components/PhotoPlaceDialog";
+import { useHouse } from "@/context/house";
 import {
   Dialog,
   DialogContent,
@@ -309,6 +310,7 @@ function CaptureImage({ storageKey }: { storageKey: string }) {
  * created while pinning starts out placed instead of homeless. */
 function PinPendingButton({ captureId }: { captureId: number }) {
   const navigate = useNavigate();
+  const { houseId } = useHouse();
   const [open, setOpen] = useState(false);
   const lastRoomId = useLastRoomId();
   const [roomId, setRoomIdRaw] = useState<number | null>(null);
@@ -318,7 +320,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
     setTouched(true);
     setRoomIdRaw(id);
   };
-  const rooms = trpc.rooms.list.useQuery();
+  const rooms = trpc.rooms.list.useQuery({ houseId }, { enabled: houseId != null });
   const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "unset";
   const hasDefaultLocation = roomId != null;
   const ensure = trpc.photos.ensureForCapture.useMutation({
@@ -373,7 +375,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
           <p className="text-[12px] text-muted-foreground -mt-2">
             Confirms the location before pinning - a new item created there starts out placed.
           </p>
-          <RoomPicker value={roomId} onChange={setRoomId} />
+          <RoomPicker value={roomId} onChange={setRoomId} houseId={houseId ?? undefined} />
           <div className="flex justify-end gap-2 mt-1">
             <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
               Cancel
@@ -509,9 +511,10 @@ function TriageCard({
   const areas = trpc.areas.list.useQuery();
 
   const [rows, setRows] = useState<TriageRow[]>(() => (s ? buildTriageRows(s, areas.data) : []));
+  const { houseId } = useHouse();
   const lastRoomId = useLastRoomId();
   // a suggested room id is only usable if it is one of the session house's rooms
-  const houseRooms = trpc.rooms.list.useQuery();
+  const houseRooms = trpc.rooms.list.useQuery({ houseId }, { enabled: houseId != null });
   const inHouse = (id: number | null | undefined): id is number =>
     id != null && !!houseRooms.data?.some((r) => r.id === id);
   const [roomIdRaw, setRoomIdRaw] = useState<number | null>(null);
@@ -597,7 +600,7 @@ function TriageCard({
             <div className="mt-2 flex items-start gap-3">
               <ZoomableGeojson storageKey={capture.storageKey} />
               <div className="flex flex-col gap-1.5 flex-1 max-w-xs">
-                <RoomPicker value={geoRoomId} onChange={setGeoRoomId} />
+                <RoomPicker value={geoRoomId} onChange={setGeoRoomId} houseId={houseId ?? undefined} />
                 <div className="text-[11px] text-muted-foreground">
                   Pick the room this scan belongs to, or type a new name
                 </div>
@@ -743,7 +746,7 @@ function TriageCard({
           <label className="block mt-2">
             <span className="micro-label text-muted-foreground">Location (applies to every new item above)</span>
             <div className="mt-0.5">
-              <RoomPicker value={roomId} onChange={setRoomId} allowNone />
+              <RoomPicker value={roomId} onChange={setRoomId} houseId={houseId ?? undefined} allowNone />
             </div>
           </label>
 
