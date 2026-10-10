@@ -75,6 +75,17 @@ describe("photos.ensureForCapture / createCutout / recrop", () => {
     expect(row.storageKey).not.toBe(capKey);
     expect([row.itemId, row.roomId, row.sourceCaptureId]).toEqual([null, keuken, capId]);
     expect((await callerFor(h1).photos.get({ id: first.photoId })).url).toMatch(/^\/uploads\//);
+    const listed = await callerFor(h1).inbox.list();
+    const inboxRow = listed.find((c) => c.id === capId);
+    expect(inboxRow).toEqual(
+      expect.objectContaining({
+        photoId: first.photoId,
+        photoRoomId: keuken,
+        roomName: "Keuken",
+        houseId: h1,
+        hasCamera: false,
+      }),
+    );
   });
 
   it("createCutout crops from the source capture once per item and capture; recrop replaces the file", async () => {

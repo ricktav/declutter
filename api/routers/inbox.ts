@@ -239,10 +239,59 @@ function providerErrorDetail(err: unknown): string | null {
   }
 }
 
+async function listCapturesWithPlace() {
+  const db = getDb();
+  const rows = await db.select().from(captures).orderBy(desc(captures.createdAt)).limit(100);
+  const imageIds = rows.filter((c) => c.kind === "image").map((c) => c.id);
+  if (!imageIds.length) {
+    return rows.map((c) => ({
+      ...c,
+      photoId: null as number | null,
+      photoRoomId: null as number | null,
+      roomName: null as string | null,
+      houseId: null as number | null,
+      hasCamera: false,
+    }));
+  }
+  const locs = await db
+    .select({
+      id: photos.id,
+      sourceCaptureId: photos.sourceCaptureId,
+      roomId: photos.roomId,
+      camera: photos.camera,
+    })
+    .from(photos)
+    .where(and(inArray(photos.sourceCaptureId, imageIds), isNull(photos.itemId)));
+  const locBy = new Map<number, (typeof locs)[number]>();
+  for (const l of locs) {
+    if (l.sourceCaptureId == null) continue;
+    const prev = locBy.get(l.sourceCaptureId);
+    if (!prev || l.id < prev.id) locBy.set(l.sourceCaptureId, l);
+  }
+  const roomIds = [...new Set([...locBy.values()].map((l) => l.roomId).filter((id): id is number => id != null))];
+  const roomRows = roomIds.length
+    ? await db.select({ id: rooms.id, name: rooms.name, houseId: rooms.houseId }).from(rooms).where(inArray(rooms.id, roomIds))
+    : [];
+  const roomBy = new Map(roomRows.map((r) => [r.id, r]));
+  return rows.map((c) => {
+    const loc = locBy.get(c.id);
+    const room = loc?.roomId != null ? roomBy.get(loc.roomId) : undefined;
+    return {
+      ...c,
+      photoId: loc?.id ?? null,
+      photoRoomId: loc?.roomId ?? null,
+      roomName: room?.name ?? null,
+      houseId: room?.houseId ?? null,
+      hasCamera: loc?.camera != null,
+    };
+  });
+}
+
 export const inboxRouter = createRouter({
-  list: procedure.query(async () => {
-    return getDb().select().from(captures).orderBy(desc(captures.createdAt)).limit(100);
-  }),
+  /** Newest first. Image rows carry the location Photo's Place when one exists
+   * (`photoId`, `photoRoomId`, `roomName`, `houseId`, `hasCamera`) so Inbox
+   * can set or move it without going to Photos. */
+  list: procedure.query(() => listCapturesWithPlace()),
 
   create: procedure
     .input(

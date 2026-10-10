@@ -23,6 +23,7 @@ export function invalidatePhotoPlace(utils: ReturnType<typeof trpc.useUtils>) {
   utils.photos.forRoom.invalidate();
   utils.photos.roomPhotos.invalidate();
   utils.rooms.get.invalidate();
+  utils.inbox.list.invalidate();
 }
 
 /** Change a Photo's Place from the Photos page. */
@@ -118,7 +119,7 @@ function PlaceBody({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Change Place</DialogTitle>
+        <DialogTitle>{storedRoomId != null ? "Change Place" : "Set Place"}</DialogTitle>
         <DialogDescription>
           Where this Photo was taken.
           {target.source === "photo" && target.ofThing && " The Thing itself stays where it is."}

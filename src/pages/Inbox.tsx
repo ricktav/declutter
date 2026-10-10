@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
@@ -15,6 +15,7 @@ import { GeojsonThumb } from "@/components/GeojsonThumb";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { useZoomable } from "@/hooks/use-zoomable";
 import { isGeojsonFile } from "@/lib/geojsonFloor";
+import { PhotoPlaceDialog, type PlaceTarget } from "@/components/PhotoPlaceDialog";
 import {
   Dialog,
   DialogContent,
@@ -42,8 +43,77 @@ import {
   Camera,
   Copy,
   Pencil,
+  Home,
 } from "lucide-react";
 import type { Capture, TriageSuggestion } from "@db/schema";
+
+type InboxCapture = Capture & {
+  photoId: number | null;
+  photoRoomId: number | null;
+  roomName: string | null;
+  houseId: number | null;
+  hasCamera: boolean;
+};
+
+function placeTargetOf(c: InboxCapture): PlaceTarget {
+  if (c.photoId != null) {
+    return {
+      source: "photo",
+      photoId: c.photoId,
+      roomId: c.photoRoomId,
+      houseId: c.houseId,
+      ofThing: false,
+      hasCamera: c.hasCamera,
+    };
+  }
+  return { source: "capture", captureId: c.id };
+}
+
+/** Set or move the Photo's Place without leaving Inbox. */
+function CapturePlaceButton({
+  capture,
+  onPick,
+  compact = false,
+}: {
+  capture: InboxCapture;
+  onPick: (c: InboxCapture) => void;
+  compact?: boolean;
+}) {
+  if (capture.kind !== "image" || !capture.storageKey) return null;
+  const placed = capture.photoRoomId != null;
+  const label = placed ? (capture.roomName ?? "Place") : "Set Place";
+  if (compact) {
+    return (
+      <button
+        type="button"
+        className="mt-1 flex w-full items-center gap-1 truncate text-[10px] text-muted-foreground hover:text-foreground"
+        title={placed ? `Move from ${label}` : "Give this Photo a Place"}
+        onClick={(e) => {
+          e.stopPropagation();
+          onPick(capture);
+        }}
+      >
+        <Home className="h-3 w-3 shrink-0" />
+        <span className="truncate">{label}</span>
+      </button>
+    );
+  }
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-6 text-[11px]"
+      title={placed ? `Move from ${label}` : "Give this Photo a Place"}
+      onClick={(e) => {
+        e.stopPropagation();
+        onPick(capture);
+      }}
+    >
+      <Home className="h-3 w-3 mr-1" />
+      {label}
+    </Button>
+  );
+}
 
 const KIND_ICONS = {
   note: StickyNote,
@@ -424,9 +494,11 @@ function TriageSpottedRow({
 function TriageCard({
   capture,
   onZoom,
+  onPlace,
 }: {
-  capture: Capture;
+  capture: InboxCapture;
   onZoom: (storageKey: string, captureId: number, isPending: boolean) => void;
+  onPlace: (c: InboxCapture) => void;
 }) {
   const utils = trpc.useUtils();
   const s = capture.suggestion;
@@ -560,6 +632,7 @@ function TriageCard({
                 >
                   <ScanSearch className="h-3 w-3 mr-1" /> detect objects
                 </Button>
+                <CapturePlaceButton capture={capture} onPick={onPlace} />
                 <PinPendingButton captureId={capture.id} />
               </div>
             </div>
@@ -794,6 +867,13 @@ function CompareModal({
 
 export default function InboxPage() {
   const captures = trpc.inbox.list.useQuery();
+  const [placeTarget, setPlaceTarget] = useState<PlaceTarget | null>(null);
+  const [placeNote, setPlaceNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!placeNote) return;
+    const t = setTimeout(() => setPlaceNote(null), 4000);
+    return () => clearTimeout(t);
+  }, [placeNote]);
   const pending = (captures.data ?? []).filter((c) => c.status === "pending");
   // dismissed means gone - showing it anyway (just greyed out) defeats the
   // point of dismissing something, so Processed only shows statuses someone
@@ -849,7 +929,7 @@ export default function InboxPage() {
           </div>
         )}
         {pending.map((c) => (
-          <TriageCard key={c.id} capture={c} onZoom={openLightbox} />
+          <TriageCard key={c.id} capture={c} onZoom={openLightbox} onPlace={(cap) => setPlaceTarget(placeTargetOf(cap))} />
         ))}
       </div>
 
@@ -901,6 +981,7 @@ export default function InboxPage() {
                   )}
                   {c.kind === "image" && c.storageKey && <PinCaptureButton captureId={c.id} iconOnly />}
                 </div>
+                <CapturePlaceButton capture={c} onPick={(cap) => setPlaceTarget(placeTargetOf(cap))} compact />
                 <div className="mt-1 text-[10px] text-muted-foreground truncate">
                   {c.status} · {timeAgo(c.createdAt)}
                 </div>
@@ -914,18 +995,35 @@ export default function InboxPage() {
         open={!!lightbox}
         onClose={() => setLightbox(null)}
         toolbarExtra={
-          lightbox &&
-          (lightbox.isPending ? (
-            <PinPendingButton captureId={lightbox.captureId} />
-          ) : (
-            <PinCaptureButton captureId={lightbox.captureId} />
-          ))
+          lightbox && (
+            <div className="flex items-center gap-1">
+              {(() => {
+                const cap = (captures.data ?? []).find((c) => c.id === lightbox.captureId);
+                return cap ? <CapturePlaceButton capture={cap} onPick={(c) => setPlaceTarget(placeTargetOf(c))} /> : null;
+              })()}
+              {lightbox.isPending ? (
+                <PinPendingButton captureId={lightbox.captureId} />
+              ) : (
+                <PinCaptureButton captureId={lightbox.captureId} />
+              )}
+            </div>
+          )
         }
       >
         {lightboxUrl.data?.url && (
           <img src={lightboxUrl.data.url} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
         )}
       </ZoomOverlay>
+      <PhotoPlaceDialog
+        target={placeTarget}
+        onClose={() => setPlaceTarget(null)}
+        onMoved={(res) => setPlaceNote(res.roomName ? `Place: ${res.roomName}` : "Place cleared.")}
+      />
+      {placeNote && (
+        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md border border-border bg-white px-3 py-1.5 text-[12px] shadow">
+          {placeNote}
+        </div>
+      )}
     </div>
   );
 }
