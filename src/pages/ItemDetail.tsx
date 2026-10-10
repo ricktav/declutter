@@ -8,7 +8,9 @@ import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
+import { Thumb } from "@/components/Thumb";
 import { EnergySection } from "@/components/EnergySection";
 import { StorageSection } from "@/components/StorageSection";
 import { PhotoCropZoom } from "@/components/PhotoCropZoom";
@@ -79,16 +81,9 @@ function IdentityClashLinks({ clash }: { clash: AttrClash }) {
 
 function AttachmentView({
   att,
-  onZoom,
 }: {
   att: { id: number; kind: string; title: string | null; content: string | null; url: string | null; storageKey: string | null };
-  onZoom?: (photo: { id: number; storageKey: string | null }) => void;
 }) {
-  const url = trpc.photos.url.useQuery(
-    { key: att.storageKey! },
-    { enabled: !!att.storageKey && att.kind === "image" },
-  );
-  const [imgFailed, setImgFailed] = useState(false);
   if (att.kind === "link")
     return (
       <a href={att.url ?? "#"} target="_blank" rel="noreferrer"
@@ -98,53 +93,85 @@ function AttachmentView({
         <ExternalLink className="h-3 w-3 shrink-0" />
       </a>
     );
-  if (att.kind === "image" && url.isError)
-    return (
-      <div className="rounded border border-amber-300 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
-        <span className="font-medium">Image unavailable:</span>{" "}
-        {url.error instanceof Error ? url.error.message : "could not resolve storage URL"}
-        <div className="mt-0.5 font-data text-[10px] break-all text-amber-700">key: {att.storageKey}</div>
-      </div>
-    );
-  if (att.kind === "image" && imgFailed && url.data?.url)
-    return (
-      <div className="rounded border border-amber-300 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
-        <span className="font-medium">Image failed to load</span> — the file may be missing on disk.
-        <a href={url.data.url} target="_blank" rel="noreferrer" className="block mt-0.5 font-data text-[10px] break-all text-amber-700 underline">
-          {url.data.url}
-        </a>
-      </div>
-    );
-  if (att.kind === "image" && url.data?.url)
-    return (
-      <div>
-        <button
-          type="button"
-          className="cursor-zoom-in block"
-          onDoubleClick={() => onZoom?.({ id: att.id, storageKey: att.storageKey })}
-          title="Double-click to enlarge"
-        >
-          <img
-            src={url.data.url}
-            alt={att.title ?? ""}
-            className="max-h-80 w-full max-w-xl object-contain rounded border border-border"
-            onError={() => setImgFailed(true)}
-          />
-        </button>
-        <div className="flex items-center gap-2 mt-0.5">
-          {att.title && <div className="text-[11px] text-muted-foreground">{att.title}</div>}
-          <Link to={`/annotate/${att.id}`}
-            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
-            <MapPin className="h-3 w-3" /> Annotate
-          </Link>
-        </div>
-      </div>
-    );
   return (
     <div className="text-[13px] whitespace-pre-wrap">
       <span className="micro-label text-muted-foreground mr-1.5">{att.kind}</span>
       {att.title && <span className="font-medium mr-1.5">{att.title}</span>}
       {att.content}
+    </div>
+  );
+}
+
+function PhotoCatalogTile({
+  photo,
+  onZoom,
+  onUnlink,
+  unlinkPending,
+}: {
+  photo: {
+    id: number;
+    title: string | null;
+    storageKey: string | null;
+    sourceCaptureId: number | null;
+    createdAt: string | Date;
+  };
+  onZoom: (photo: { id: number; storageKey: string | null }) => void;
+  onUnlink: () => void;
+  unlinkPending: boolean;
+}) {
+  return (
+    <div className="group/tile relative">
+      <button
+        type="button"
+        className="w-full rounded-lg border border-border bg-white p-1.5 text-left hover:border-primary/50"
+        title="Click to enlarge"
+        onClick={() => onZoom({ id: photo.id, storageKey: photo.storageKey })}
+      >
+        <Thumb storageKey={photo.storageKey} size="lg" />
+        <div className="mt-1 truncate text-[12px] font-medium group-hover/tile:text-primary">{photo.title ?? "Photo"}</div>
+        <div className="font-data text-[10px] text-muted-foreground">{timeAgo(photo.createdAt)}</div>
+      </button>
+      <div className="invisible absolute top-2 right-2 flex gap-0.5 group-hover/tile:visible group-focus-within/tile:visible [@media(hover:none)]:visible">
+        <Link
+          to={`/annotate/${photo.id}`}
+          className="rounded bg-white/90 p-1 text-muted-foreground shadow-sm hover:text-primary"
+          title="Annotate"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <MapPin className="h-3.5 w-3.5" />
+        </Link>
+        {photo.sourceCaptureId && (
+          <button
+            type="button"
+            className="rounded bg-white/90 p-1 text-muted-foreground shadow-sm hover:text-primary"
+            title="Re-crop from original photo"
+            onClick={(e) => {
+              e.stopPropagation();
+              onZoom({ id: photo.id, storageKey: photo.storageKey });
+            }}
+          >
+            <Crop className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <ConfirmDelete
+          trigger={
+            <button
+              type="button"
+              className="rounded bg-white/90 p-1 text-muted-foreground shadow-sm hover:text-destructive disabled:opacity-100"
+              title="Unlink this photo from the item - it stays in the Photos pool"
+              disabled={unlinkPending}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          }
+          title="Unlink this photo?"
+          description="The photo stays in the Photos pool; it is only removed from this Thing."
+          confirmLabel="Unlink"
+          pending={unlinkPending}
+          onConfirm={onUnlink}
+        />
+      </div>
     </div>
   );
 }
@@ -351,6 +378,8 @@ export default function ItemDetail() {
       createdAt: l.createdAt,
     })),
   ].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  const photoEntries = entries.filter((a) => a.kind === "image");
+  const docEntries = entries.filter((a) => a.kind !== "image");
 
   const startEditAttrs = () => {
     const draft: Record<string, string> = {};
@@ -418,7 +447,7 @@ export default function ItemDetail() {
   };
 
   return (
-    <div key={itemId} className="max-w-5xl mx-auto px-6 py-8">
+    <div key={itemId} className="max-w-5xl mx-auto px-4 py-5">
       {mode === "simple" && (
         <div className="mb-4 flex items-center gap-2 text-[13px] text-muted-foreground">
           <Link to="/focus" className="text-primary hover:underline">← Focus</Link>
@@ -479,7 +508,7 @@ export default function ItemDetail() {
             )}
           </div>
           <input
-            className="text-2xl font-semibold tracking-tight bg-transparent outline-none border-b border-transparent focus:border-input w-full mt-0.5"
+            className="text-xl font-semibold tracking-tight bg-transparent outline-none border-b border-transparent focus:border-input w-full mt-0.5"
             defaultValue={it.name}
             onBlur={(e) => {
               if (e.target.value.trim() && e.target.value !== it.name)
@@ -487,7 +516,7 @@ export default function ItemDetail() {
             }}
           />
           <textarea
-            className="w-full text-sm text-muted-foreground bg-transparent outline-none mt-1 min-h-[40px] resize-y"
+            className="w-full text-sm text-muted-foreground bg-transparent outline-none mt-0.5 min-h-[28px] resize-y"
             placeholder="Add a description…"
             defaultValue={it.description ?? ""}
             onBlur={(e) => {
@@ -597,9 +626,9 @@ export default function ItemDetail() {
       )}
 
       {/* lead: pictures first, then where it sits in the room (if placed) */}
-      <div className="grid md:grid-cols-[1fr_260px] gap-6 mt-6 items-start">
+      <div className="grid md:grid-cols-[1fr_240px] gap-4 mt-4 items-start">
         <section
-          className={`rounded-lg border-2 bg-white p-4 transition-colors ${dragOver ? "border-primary border-dashed" : "border-border"}`}
+          className={`rounded-lg border-2 bg-white p-3 transition-colors ${dragOver ? "border-primary border-dashed" : "border-border"}`}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => {
@@ -613,7 +642,7 @@ export default function ItemDetail() {
             }
           }}
         >
-          <div className="flex items-center mb-2">
+          <div className="flex items-center flex-wrap gap-x-1 mb-2">
             <h2 className="micro-label text-muted-foreground">Documents & links</h2>
             <span className="micro-label text-muted-foreground/60 ml-2">drop files here</span>
             <input ref={fileRef} type="file" className="hidden"
@@ -647,68 +676,54 @@ export default function ItemDetail() {
               <Images className="h-3 w-3 mr-1" />
               library
             </Button>
+            <PlacementTrigger itemId={it.id} onPickRoom={pickRoom} />
           </div>
           {uploadError && (
             <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
               {uploadError}
             </div>
           )}
-          <div className="space-y-2.5">
+          {photoEntries.length > 0 && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+              {photoEntries.map((a) => (
+                <PhotoCatalogTile
+                  key={`${a.entry}-${a.id}`}
+                  photo={a}
+                  onZoom={setLightboxPhoto}
+                  unlinkPending={unlinkPhoto.isPending}
+                  onUnlink={() => unlinkPhoto.mutate({ id: a.id })}
+                />
+              ))}
+            </div>
+          )}
+          <div className={photoEntries.length > 0 ? "mt-2 space-y-1.5" : "space-y-1.5"}>
             {entries.length === 0 && (
               <div className="text-[13px] text-muted-foreground">
                 Nothing attached. Drop a photo, paste a link or write a note.
               </div>
             )}
-            {entries.map((a) => (
+            {docEntries.map((a) => (
               <div key={`${a.entry}-${a.id}`} className="group flex items-start gap-2">
                 <div className="flex-1 min-w-0">
-                  <AttachmentView att={a} onZoom={setLightboxPhoto} />
+                  <AttachmentView att={a} />
                   <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
                 </div>
-                {a.kind === "image" && a.sourceCaptureId && (
-                  <button
-                    className="text-muted-foreground hover:text-primary"
-                    title="Re-crop from original photo"
-                    onClick={() => setLightboxPhoto({ id: a.id, storageKey: a.storageKey })}
-                  >
-                    <Crop className="h-3.5 w-3.5" />
-                  </button>
-                )}
-                {a.entry === "photo" ? (
-                  <ConfirmDelete
-                    trigger={
-                      <button
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive disabled:opacity-100"
-                        title="Unlink this photo from the item - it stays in the Photos pool"
-                        disabled={unlinkPhoto.isPending}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    }
-                    title="Unlink this photo?"
-                    description="The photo stays in the Photos pool; it is only removed from this Thing."
-                    confirmLabel="Unlink"
-                    pending={unlinkPhoto.isPending}
-                    onConfirm={() => unlinkPhoto.mutate({ id: a.id })}
-                  />
-                ) : (
-                  <ConfirmDelete
-                    trigger={
-                      <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    }
-                    title={`Delete ${a.kind === "note" ? "note" : "link"}?`}
-                    description="This will be permanently removed."
-                    confirmLabel="Delete"
-                    pending={removeLink.isPending}
-                    onConfirm={() => removeLink.mutate({ id: a.id })}
-                  />
-                )}
+                <ConfirmDelete
+                  trigger={
+                    <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  }
+                  title={`Delete ${a.kind === "note" ? "note" : "link"}?`}
+                  description="This will be permanently removed."
+                  confirmLabel="Delete"
+                  pending={removeLink.isPending}
+                  onConfirm={() => removeLink.mutate({ id: a.id })}
+                />
               </div>
             ))}
           </div>
-          <div className="mt-3 space-y-2">
+          <div className="mt-2 space-y-1.5">
             <div className="flex gap-2">
               <StickyNote className="h-4 w-4 text-muted-foreground mt-1.5 shrink-0" />
               <input className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
@@ -737,9 +752,9 @@ export default function ItemDetail() {
         {it.roomId != null && it.pos != null && <ItemRoomPreview roomId={it.roomId} itemId={it.id} />}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6 mt-6">
+      <div className="grid md:grid-cols-2 gap-4 mt-4">
         {/* left column */}
-        <div className="space-y-6">
+        <div className="space-y-4">
           {/* attributes - collapses to a single add-button when empty */}
           {Object.entries(it.attributes ?? {}).length === 0 && !editingAttrs ? (
             <button
@@ -750,7 +765,7 @@ export default function ItemDetail() {
               <Plus className="h-3.5 w-3.5" /> Add attribute
             </button>
           ) : (
-            <section className="rounded-lg border border-border bg-white p-4">
+            <section className="rounded-lg border border-border bg-white p-3">
               <div className="flex items-center mb-2">
                 <h2 className="micro-label text-muted-foreground">Attributes</h2>
                 {!editingAttrs ? (
@@ -789,7 +804,7 @@ export default function ItemDetail() {
                     );
                     if (isJsonListAttr(k)) {
                       return (
-                        <div key={k} className="py-2 text-[13px]">
+                        <div key={k} className="py-1.5 text-[13px]">
                           <AttrListValue attrKey={k} value={v} reachHost={reach} label={label} />
                         </div>
                       );
@@ -797,7 +812,7 @@ export default function ItemDetail() {
                     const ipHref = (k === "ip" || k === "ip_address") ? hostHref(String(v)) : null;
                     const portList = k === "ports" ? parsePortValues(v) : [];
                     return (
-                    <div key={k} className="flex py-1.5 text-[13px]">
+                    <div key={k} className="flex py-1 text-[13px]">
                       <span className="w-36 shrink-0 text-muted-foreground">
                         {label}
                       </span>
@@ -950,7 +965,7 @@ export default function ItemDetail() {
               <Link2 className="h-3.5 w-3.5" /> Add relation
             </button>
           ) : (
-            <section className="rounded-lg border border-border bg-white p-4">
+            <section className="rounded-lg border border-border bg-white p-3">
               <div className="flex items-center mb-2">
                 <h2 className="micro-label text-muted-foreground">Relations</h2>
                 {confirmed.length === 0 && (
@@ -1014,7 +1029,7 @@ export default function ItemDetail() {
           <EnergySection itemId={it.id} />
 
           {/* location: house → floor → room (areas are the topic, not the place) */}
-          <section ref={locRef} className="rounded-lg border border-border bg-white p-4">
+          <section ref={locRef} className="rounded-lg border border-border bg-white p-3">
             <div className="flex items-center mb-2">
               <h2 className="micro-label text-muted-foreground">Location</h2>
               {!editingLoc ? (
@@ -1050,7 +1065,7 @@ export default function ItemDetail() {
           </section>
 
           {/* sub-objects: set → mouse, cupboard → shelf, … (nesting) */}
-          <section className="rounded-lg border border-border bg-white p-4">
+          <section className="rounded-lg border border-border bg-white p-3">
             <h2 className="micro-label text-muted-foreground mb-2">
               Sub-objects {it.children.length > 0 && `(${it.children.length})`}
             </h2>
@@ -1122,10 +1137,8 @@ export default function ItemDetail() {
           </section>
         </div>
 
-        {/* right column: placement first, then add task / add idea */}
-        <div className="space-y-6">
-          <PlacementPane itemId={it.id} onPickRoom={pickRoom} />
-
+        {/* right column: add task / add idea (Placement lives next to Documents) */}
+        <div className="space-y-4">
           {/* tasks - collapses to a single add-button when empty, to avoid a
               permanently-empty card taking up space on most items */}
           {it.tasks.length === 0 && !addingTask ? (
@@ -1137,7 +1150,7 @@ export default function ItemDetail() {
               <ListTodo className="h-3.5 w-3.5" /> Add task
             </button>
           ) : (
-            <section className="rounded-lg border border-border bg-white p-4">
+            <section className="rounded-lg border border-border bg-white p-3">
               <h2 className="micro-label text-muted-foreground mb-2">Tasks</h2>
               <div className="space-y-1">
                 {it.tasks.map((t) => (
@@ -1179,7 +1192,7 @@ export default function ItemDetail() {
               <Lightbulb className="h-3.5 w-3.5" /> Add idea
             </button>
           ) : (
-            <section className="rounded-lg border border-border bg-white p-4">
+            <section className="rounded-lg border border-border bg-white p-3">
               <h2 className="micro-label text-muted-foreground mb-2">Linked ideas</h2>
               <div className="space-y-1">
                 {it.ideas.map((idea) => (
@@ -1208,7 +1221,7 @@ export default function ItemDetail() {
 
       {/* history - at the bottom; useful for audit, not something you need
           while actively working on an item */}
-      <section className="mt-6 rounded-lg border border-border bg-white p-4">
+      <section className="mt-4 rounded-lg border border-border bg-white p-3">
         <h2 className="micro-label text-muted-foreground mb-2">History</h2>
         <div className="space-y-1">
           {(history.data ?? []).length === 0 && (
@@ -1239,31 +1252,63 @@ export default function ItemDetail() {
   );
 }
 
-/** Where the Thing is placed, and where it is not yet: pinned in a photo,
- * on its room's 2D plan, and in 3D. Plan and 3D are one fact (roomId + pos);
- * 3D additionally needs the room's walls or its width and depth. Each gap
- * gets its direct action. */
-function PlacementPane({ itemId, onPickRoom }: { itemId: number; onPickRoom: () => void }) {
-  // "always": coming back from Annotate or the plan must show the new pin or
-  // position, even when the cached answer is still within staleTime
-  const placement = trpc.items.placement.useQuery({ itemId }, { refetchOnMount: "always" });
-  return (
-    <section className="rounded-lg border border-border bg-white p-4">
-      <h2 className="micro-label text-muted-foreground mb-2">Placement</h2>
-      {placement.isLoading ? (
-        <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading placement…
-        </div>
-      ) : placement.isError || !placement.data ? (
-        <div className="text-[13px] text-amber-800">Could not load placement: {placement.error?.message ?? "unknown error"}</div>
-      ) : (
-        <PlacementRows p={placement.data} onPickRoom={onPickRoom} />
-      )}
-    </section>
-  );
+type PlacementData = inferRouterOutputs<AppRouter>["items"]["placement"];
+
+function placementSummary(p: PlacementData | undefined): string {
+  if (!p) return "";
+  const bits: string[] = [];
+  if (p.pins.length) bits.push(`${p.pins.length} pin${p.pins.length === 1 ? "" : "s"}`);
+  if (p.parentId != null) bits.push(`in ${p.parentName ?? `#${p.parentId}`}`);
+  else if (p.onPlan) bits.push("on plan");
+  else if (p.roomName) bits.push(p.roomName);
+  else bits.push("not placed");
+  return bits.join(" · ");
 }
 
-type PlacementData = inferRouterOutputs<AppRouter>["items"]["placement"];
+/** Trial: Placement as a modal next to Documents & links, instead of a card. */
+function PlacementTrigger({ itemId, onPickRoom }: { itemId: number; onPickRoom: () => void }) {
+  const [open, setOpen] = useState(false);
+  const placement = trpc.items.placement.useQuery({ itemId }, { refetchOnMount: "always" });
+  const summary = placementSummary(placement.data);
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-6 text-[11px]"
+        onClick={() => setOpen(true)}
+        title={summary || "Photo pins, 2D plan and 3D"}
+      >
+        <MapPin className="h-3 w-3 mr-1" />
+        Placement
+        {summary ? <span className="ml-1 text-muted-foreground font-normal truncate max-w-[10rem]">{summary}</span> : null}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Placement</DialogTitle>
+            <DialogDescription>Photo pins, 2D plan and 3D. Same facts as before, in a modal so the Thing page stays short.</DialogDescription>
+          </DialogHeader>
+          {placement.isLoading ? (
+            <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading placement…
+            </div>
+          ) : placement.isError || !placement.data ? (
+            <div className="text-[13px] text-amber-800">Could not load placement: {placement.error?.message ?? "unknown error"}</div>
+          ) : (
+            <PlacementRows
+              p={placement.data}
+              onPickRoom={() => {
+                setOpen(false);
+                onPickRoom();
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 /** Room photos offered as pin canvases in the pane; the rest live on /photos. */
 const PANE_ROOM_PHOTOS_MAX = 6;
