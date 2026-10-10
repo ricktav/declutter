@@ -289,13 +289,18 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
     }
     const ip = str(o.ip).trim();
     if (ip && !extra.includes(ip)) extra.unshift(ip);
+    const ports = nums([o.port, o.ports]);
+    if (ip && !hrefs.length && !ports.length) {
+      const bare = hostHref(ip);
+      if (bare) hrefs.push(bare);
+    }
     return {
       key: `${vmid || name}-${i}`,
       status,
       tone: template ? "dim" : statusTone(status) ?? "dim",
       name,
       id: vmid,
-      ports: nums([o.port, o.ports]),
+      ports,
       hrefs,
       sizeLabel: Number.isFinite(diskGb) && diskGb > 0 ? `${diskGb} GB` : "",
       sizeBytes,

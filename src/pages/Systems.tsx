@@ -28,7 +28,7 @@ import {
   type ItemScope,
 } from "@/lib/systemsGraph";
 import { parseRating, type Importance, type Rating } from "@/lib/systemsAttrs";
-import { STATUS_DOT } from "../../api/lib/serviceUrls";
+import { hostHref, portHref, STATUS_DOT } from "../../api/lib/serviceUrls";
 
 type SimNode = SimulationNodeDatum & GraphNode;
 type SimLink = SimulationLinkDatum<SimNode> & { strength: number; cross?: boolean; tight?: boolean };
@@ -911,6 +911,24 @@ export default function SystemsPage() {
                       <a href={row.v} target="_blank" rel="noreferrer" className="text-[#4A90E2] underline">
                         {row.v}
                       </a>
+                    ) : row.k === "ip" && hostHref(row.v) ? (
+                      <a href={hostHref(row.v)!} target="_blank" rel="noreferrer" className="text-[#4A90E2] underline">
+                        {row.v}
+                      </a>
+                    ) : row.k === "ports" ? (
+                      <span className="inline-flex flex-wrap gap-x-1.5">
+                        {row.v.split(/[\s,]+/).filter(Boolean).map((p) => {
+                          const n = Number(p);
+                          const href = Number.isInteger(n) ? portHref(selected.lines.find((l) => l.k === "ip")?.v, n) : null;
+                          return href ? (
+                            <a key={p} href={href} target="_blank" rel="noreferrer" className="text-[#4A90E2] underline">
+                              :{p}
+                            </a>
+                          ) : (
+                            <span key={p}>:{p}</span>
+                          );
+                        })}
+                      </span>
                     ) : row.k === "status" && selected.tone === "warn" ? (
                       <span className="text-amber-400">{row.v}</span>
                     ) : row.k === "status" && selected.tone === "error" ? (
