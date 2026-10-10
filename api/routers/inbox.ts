@@ -19,7 +19,7 @@ import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 import { setItemLocation } from "../lib/location";
-import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout } from "../lib/photos";
+import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -933,6 +933,9 @@ export const inboxRouter = createRouter({
     });
     return { ok: true };
   }),
+
+  /** Hard-delete an inbox photo that was never filed as a Photo. */
+  remove: procedure.input(z.object({ id: z.number() })).mutation(({ input }) => removeUnfiledCapture(getDb(), input.id)),
 
   /** Byte-identical captures sitting in the inbox (dev-phase feature: just
    * hard-deletes duplicates outright, keeping the oldest, rather than

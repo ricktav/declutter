@@ -191,6 +191,20 @@ export async function addPhoto(
   return { id, storageKey: input.storageKey };
 }
 
+/** Delete an inbox capture that is not yet a Photo. The file goes if nothing else uses it. */
+export async function removeUnfiledCapture(db: Db, id: number): Promise<{ ok: true }> {
+  const row = await db.query.captures.findFirst({ where: eq(captures.id, id) });
+  if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Capture not found." });
+  const photo = await db.query.photos.findFirst({ where: eq(photos.sourceCaptureId, id) });
+  if (photo) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This capture is still the source of a Photo." });
+  const link = await db.query.itemLinks.findFirst({ where: eq(itemLinks.sourceCaptureId, id) });
+  if (link) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This capture is still linked." });
+  await db.delete(captures).where(eq(captures.id, id));
+  await logEvent({ entityType: "capture", entityId: id, action: "deleted", summary: `Capture #${id} removed` });
+  if (row.storageKey) await releaseStoredFiles(db, [row.storageKey]);
+  return { ok: true as const };
+}
+
 /** Delete a photo and the pins drawn on it; the file goes only if nothing else uses it. */
 export async function removePhoto(db: Db, id: number): Promise<{ ok: true }> {
   const row = await db.query.photos.findFirst({ where: eq(photos.id, id) });
@@ -354,7 +368,7 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
   const filedCaptureIds = new Set(all.map((p) => p.sourceCaptureId).filter((id): id is number => id != null));
   const imageCaptures = await db.select().from(captures).where(eq(captures.kind, "image")).orderBy(desc(captures.createdAt));
   const captureRows: CatalogRow[] = imageCaptures
-    .filter((c) => !filedCaptureIds.has(c.id))
+    .filter((c) => !filedCaptureIds.has(c.id) && c.status !== "dismissed")
     .map((c) => ({
       source: "capture",
       id: c.id,

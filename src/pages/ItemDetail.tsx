@@ -132,8 +132,8 @@ function AttachmentView({
 function PhotoCatalogTile({
   photo,
   onZoom,
-  onUnlink,
-  unlinkPending,
+  onRemove,
+  removePending,
 }: {
   photo: {
     id: number;
@@ -143,8 +143,8 @@ function PhotoCatalogTile({
     createdAt: string | Date;
   };
   onZoom: (photo: { id: number; storageKey: string | null }) => void;
-  onUnlink: () => void;
-  unlinkPending: boolean;
+  onRemove: () => void;
+  removePending: boolean;
 }) {
   return (
     <div className="group/tile relative">
@@ -185,18 +185,18 @@ function PhotoCatalogTile({
             <button
               type="button"
               className="rounded bg-white/90 p-1 text-muted-foreground shadow-sm hover:text-destructive disabled:opacity-100"
-              title="Unlink this photo from the item - it stays in the Photos pool"
-              disabled={unlinkPending}
+              title="Delete this Photo"
+              disabled={removePending}
               onClick={(e) => e.stopPropagation()}
             >
-              <X className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           }
-          title="Unlink this photo?"
-          description="The photo stays in the Photos pool; it is only removed from this Thing."
-          confirmLabel="Unlink"
-          pending={unlinkPending}
-          onConfirm={onUnlink}
+          title="Delete this Photo?"
+          description="It is removed from this Thing and from Photos. Pins on it go too. The file is deleted if nothing else uses it."
+          confirmLabel="Delete"
+          pending={removePending}
+          onConfirm={onRemove}
         />
       </div>
     </div>
@@ -330,7 +330,12 @@ export default function ItemDetail() {
   const addLink = trpc.itemLinks.add.useMutation(attachmentAdded);
   const addingAttachment = addPhoto.isPending || addLink.isPending;
   const removeLink = trpc.itemLinks.remove.useMutation({ onSuccess: invalidate });
-  const unlinkPhoto = trpc.photos.unlink.useMutation({ onSuccess: invalidate });
+  const removePhoto = trpc.photos.remove.useMutation({
+    onSuccess: () => {
+      invalidate();
+      void utils.photos.listAll.invalidate();
+    },
+  });
   const addRelation = trpc.items.addRelation.useMutation({ onSuccess: invalidate });
   const resolveRelation = trpc.items.resolveRelation.useMutation({
     onSuccess: () => {
@@ -708,8 +713,8 @@ export default function ItemDetail() {
                   key={`${a.entry}-${a.id}`}
                   photo={a}
                   onZoom={setLightboxPhoto}
-                  unlinkPending={unlinkPhoto.isPending}
-                  onUnlink={() => unlinkPhoto.mutate({ id: a.id })}
+                  removePending={removePhoto.isPending}
+                  onRemove={() => removePhoto.mutate({ id: a.id })}
                 />
               ))}
             </div>
