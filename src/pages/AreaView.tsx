@@ -27,6 +27,23 @@ function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+/** Identity / spec fields: find them in the search bar, not as dropdowns. */
+const SKIP_FILTER_KEYS = new Set(["mac", "mac_address", "serial", "serial_number", "cpu"]);
+
+function itemMatchesQuery(
+  i: { name: string; attributes: Record<string, unknown> | null; room?: { name: string; floor: string | null } | null },
+  query: string,
+): boolean {
+  if (!query) return true;
+  if (i.name.toLowerCase().includes(query)) return true;
+  if ((i.room?.name ?? "").toLowerCase().includes(query)) return true;
+  if ((i.room?.floor ?? "").toLowerCase().includes(query)) return true;
+  for (const v of Object.values(i.attributes ?? {})) {
+    if (v != null && String(v).toLowerCase().includes(query)) return true;
+  }
+  return false;
+}
+
 function EditAreaDialog({ area }: { area: Area }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(area.name);
@@ -255,7 +272,8 @@ export default function AreaView() {
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
-  const [realComputers, setRealComputers] = usePersistedState("areaView.realComputers", true);
+  const [placeFilter, setPlaceFilter] = useState("");
+  const [systems, setSystems] = usePersistedState("areaView.systems", true);
   const navigate = useNavigate();
 
   const area = trpc.areas.get.useQuery({ slug: slug! }, { enabled: !!slug });
@@ -295,6 +313,7 @@ export default function AreaView() {
   const categorical = useMemo(() => {
     const out: { key: string; label: string; values: string[] }[] = [];
     for (const c of columns) {
+      if (SKIP_FILTER_KEYS.has(c.key)) continue;
       const fromDef = c.type === "select";
       const values = [...new Set((itemsList.data ?? []).map((it) => String(it.attributes?.[c.key] ?? "")).filter(Boolean))].sort();
       if (fromDef || c.key === "role" || (values.length >= 2 && values.length <= 12)) {
@@ -305,11 +324,29 @@ export default function AreaView() {
     return out;
   }, [columns, itemsList.data]);
 
+  const places = useMemo(() => {
+    const map = new Map<number, { id: number; name: string; floor: string | null }>();
+    let unplaced = 0;
+    for (const it of itemsList.data ?? []) {
+      if (it.room) map.set(it.room.id, { id: it.room.id, name: it.room.name, floor: it.room.floor });
+      else unplaced += 1;
+    }
+    return {
+      rooms: [...map.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      unplaced,
+    };
+  }, [itemsList.data]);
+
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
-    const machinesOnly = slug === "computers" && realComputers;
+    const machinesOnly = slug === "computers" && systems;
     return (itemsList.data ?? []).filter((i) => {
-      if (query && !i.name.toLowerCase().includes(query)) return false;
+      if (!itemMatchesQuery(i, query)) return false;
+      if (placeFilter === "none") {
+        if (i.roomId != null) return false;
+      } else if (placeFilter && i.roomId !== Number(placeFilter)) {
+        return false;
+      }
       for (const [k, v] of Object.entries(colFilters)) {
         if (v && String(i.attributes?.[k] ?? "") !== v) return false;
       }
@@ -326,13 +363,14 @@ export default function AreaView() {
       }
       return true;
     });
-  }, [itemsList.data, q, colFilters, slug, realComputers]);
+  }, [itemsList.data, q, colFilters, slug, systems, placeFilter]);
 
   const sorted = useMemo(() => {
     const rows = [...filtered];
     const dir = sortDir === "asc" ? 1 : -1;
     rows.sort((a, b) => {
       if (sortKey === "name") return a.name.localeCompare(b.name) * dir;
+      if (sortKey === "place") return (a.room?.name ?? "").localeCompare(b.room?.name ?? "") * dir;
       if (sortKey === "updated") return (+new Date(a.updatedAt) - +new Date(b.updatedAt)) * dir;
       const av = String(a.attributes?.[sortKey] ?? "");
       const bv = String(b.attributes?.[sortKey] ?? "");
@@ -390,10 +428,10 @@ export default function AreaView() {
         <p className="text-sm text-muted-foreground mt-1">{area.data.description}</p>
       )}
 
-      <div className="flex items-center gap-3 mt-5">
+      <div className="flex flex-wrap items-center gap-3 mt-5">
         <input
           className="w-64 rounded-md border border-input bg-white px-3 py-1.5 text-[13px]"
-          placeholder="Filter by name…"
+          placeholder="Search name, Place, attributes…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -409,10 +447,28 @@ export default function AreaView() {
           <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground" title="Hide mice, keyboards, monitors and other peripherals">
             <input
               type="checkbox"
-              checked={realComputers}
-              onChange={(e) => setRealComputers(e.target.checked)}
+              checked={systems}
+              onChange={(e) => setSystems(e.target.checked)}
             />
-            Real computers
+            Systems
+          </label>
+        )}
+        {(places.rooms.length > 0 || places.unplaced > 0) && (
+          <label className="text-[12px] text-muted-foreground">
+            Place
+            <select
+              className="ml-1.5 rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
+              value={placeFilter}
+              onChange={(e) => setPlaceFilter(e.target.value)}
+            >
+              <option value="">All</option>
+              {places.unplaced > 0 && <option value="none">Unplaced</option>}
+              {places.rooms.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}{r.floor ? ` · ${r.floor}` : ""}
+                </option>
+              ))}
+            </select>
           </label>
         )}
         {categorical.map((c) => (
@@ -460,6 +516,9 @@ export default function AreaView() {
             >
               <Thumb storageKey={it.imageKey} size="lg" />
               <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{it.name}</div>
+              {it.room?.name && (
+                <div className="truncate text-[11px] text-muted-foreground">{it.room.name}</div>
+              )}
               {it.verificationStatus === "detected" && (
                 <span className="inline-block text-[10px] font-medium text-amber-700 bg-amber-100 rounded px-1.5">
                   needs review
@@ -474,8 +533,8 @@ export default function AreaView() {
           ))}
             {sorted.length === 0 && (
             <div className="col-span-full text-center text-muted-foreground py-8">
-              {slug === "computers" && realComputers
-                ? "No real computers in this list — turn off Real computers to see peripherals."
+              {slug === "computers" && systems
+                ? "No systems in this list — turn off Systems to see peripherals."
                 : "No items yet — add one, or capture something via the inbox."}
             </div>
           )}
@@ -487,6 +546,7 @@ export default function AreaView() {
             <tr>
               <th className="w-12" />
               <SortableTh label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Place" column="place" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               {columns.map((c) => (
                 <SortableTh key={c.key} label={c.label} column={c.key} sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               ))}
@@ -515,6 +575,10 @@ export default function AreaView() {
                     </span>
                   )}
                 </td>
+                <td className="text-[12px] text-muted-foreground">
+                  {it.room?.name ?? "—"}
+                  {it.room?.floor ? <span className="ml-1 text-[11px]">{it.room.floor}</span> : null}
+                </td>
                 {columns.map((c) => (
                   <td key={c.key} className="font-data text-[12px]">
                     {String(it.attributes?.[c.key] ?? "")}
@@ -539,9 +603,9 @@ export default function AreaView() {
             ))}
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={columns.length + 4} className="text-center text-muted-foreground py-8">
-                  {slug === "computers" && realComputers
-                    ? "No real computers in this list — turn off Real computers to see peripherals."
+                <td colSpan={columns.length + 5} className="text-center text-muted-foreground py-8">
+                  {slug === "computers" && systems
+                    ? "No systems in this list — turn off Systems to see peripherals."
                     : "No items yet — add one, or capture something via the inbox."}
                 </td>
               </tr>

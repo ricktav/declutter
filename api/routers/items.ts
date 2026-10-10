@@ -46,7 +46,12 @@ export const itemsRouter = createRouter({
         )
         .orderBy(desc(items.updatedAt));
       const covers = await coverPhotos(db, rows.map((r) => r.id));
-      return rows.map((r) => ({ ...r, imageKey: covers.get(r.id)?.storageKey ?? null }));
+      const roomsById = await roomSummary(db, rows.map((r) => r.roomId).filter((x): x is number => x != null));
+      return rows.map((r) => ({
+        ...r,
+        imageKey: covers.get(r.id)?.storageKey ?? null,
+        room: r.roomId != null ? (roomsById.get(r.roomId) ?? null) : null,
+      }));
     }),
 
   /** Every active item across every area, for the cross-area browser (search/sort by area or location). */

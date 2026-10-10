@@ -55,6 +55,18 @@ describe("items.listAll / get", () => {
     const one = await callerFor(h1).items.get({ id: mine.find((r) => r.name === "pan")!.id });
     expect(one?.room).toMatchObject({ id: keuken, name: "Keuken", floor: "ground", hasGeometry: false });
   });
+
+  it("listByArea joins the room for topic Place filters", async () => {
+    const { h1, areaId, keuken } = await seed();
+    await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
+    await callerFor(h1).items.create({ areaId, name: "lamp" });
+
+    const rows = await callerFor(h1).items.listByArea({ areaId });
+    expect(rows.map((r) => [r.name, r.room?.name ?? null]).sort()).toEqual([
+      ["lamp", null],
+      ["pan", "Keuken"],
+    ]);
+  });
 });
 
 describe("items.create atomicity", () => {
