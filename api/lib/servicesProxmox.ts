@@ -195,13 +195,26 @@ export function matchPveMachine(machines: PveMachineHint[]): PveMachineHint | nu
   return null;
 }
 
-function parsePveSize(raw: string): number | undefined {
+const KIB = 1024;
+const MIB = 1024 * 1024;
+const GIB = 1024 * 1024 * 1024;
+const TIB = 1024 * 1024 * 1024 * 1024;
+
+/** Proxmox size suffixes are binary (K/M/G/T = KiB/MiB/GiB/TiB). */
+function parsePveSizeBytes(raw: string): number | undefined {
   const m = String(raw).trim().match(/^([\d.]+)\s*([KMGT])?$/i);
   if (!m) return undefined;
   const n = Number(m[1]);
   if (!Number.isFinite(n) || n <= 0) return undefined;
   const u = (m[2] ?? "G").toUpperCase();
-  const gb = u === "T" ? n * 1024 : u === "G" ? n : u === "M" ? n / 1024 : u === "K" ? n / 1024 / 1024 : n;
+  const mul = u === "T" ? TIB : u === "G" ? GIB : u === "M" ? MIB : u === "K" ? KIB : GIB;
+  const bytes = n * mul;
+  if (!(bytes > 0) || !Number.isFinite(bytes)) return undefined;
+  return Math.round(bytes);
+}
+
+function bytesToSizeGb(bytes: number): number | undefined {
+  const gb = bytes / GIB;
   if (!(gb > 0)) return undefined;
   if (gb < 0.01) return Math.round(gb * 10000) / 10000;
   if (gb < 1) return Math.round(gb * 1000) / 1000;
@@ -224,9 +237,14 @@ function isCdromOrNone(val: string): boolean {
   return /(?:^|,)media=cdrom(?:,|$)/i.test(val) || /^none(?:$|,)/i.test(val);
 }
 
-function sizeFromVol(val: string): number | undefined {
+function sizeFromVolBytes(val: string): number | undefined {
   const m = val.match(/(?:^|,)size=([\d.]+[KMGT]?)/i);
-  return m ? parsePveSize(m[1]) : undefined;
+  return m ? parsePveSizeBytes(m[1]) : undefined;
+}
+
+function sizeFromVol(val: string): number | undefined {
+  const bytes = sizeFromVolBytes(val);
+  return bytes != null ? bytesToSizeGb(bytes) : undefined;
 }
 
 function configRecord(raw: unknown): Record<string, unknown> | null {
@@ -284,26 +302,26 @@ export function parsePveGuestConfig(
     }
     if (kind === "lxc" && key === "rootfs") {
       if (isCdromOrNone(val)) continue;
-      const sizeGb = sizeFromVol(val);
+      const bytes = sizeFromVolBytes(val);
       const vol = val.split(",")[0]?.trim() || key;
       mounts.push({
         source: vol.slice(0, 255),
         dest: "/",
         type: "rootfs",
-        ...(sizeGb ? { size: Math.round(sizeGb * 1e9) } : {}),
+        ...(bytes ? { size: bytes } : {}),
       });
       continue;
     }
     if (kind === "lxc" && MP_KEY.test(key)) {
       const destM = val.match(/(?:^|,)mp=([^,]+)/i);
-      const sizeGb = sizeFromVol(val);
+      const bytes = sizeFromVolBytes(val);
       const source = val.split(",")[0]?.trim() ?? key;
       const dest = destM?.[1]?.trim() || source;
       mounts.push({
         source: source.slice(0, 255),
         dest: dest.slice(0, 255),
         type: "mp",
-        ...(sizeGb ? { size: Math.round(sizeGb * 1e9) } : {}),
+        ...(bytes ? { size: bytes } : {}),
       });
     }
   }
@@ -320,7 +338,7 @@ function diskGbFromConfig(
 ): number | undefined {
   if (kind === "lxc") {
     const root = extra.mounts?.find((m) => m.type === "rootfs");
-    if (root?.size != null && root.size > 0) return Math.round((root.size / 1e9) * 10) / 10;
+    if (root?.size != null && root.size > 0) return bytesToSizeGb(root.size);
     return undefined;
   }
   const sum = extra.disks?.reduce((s, d) => s + (d.sizeGb ?? 0), 0) ?? 0;

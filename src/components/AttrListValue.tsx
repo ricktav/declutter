@@ -97,6 +97,21 @@ function fmtDiskGb(g: number): string {
   return `${g} GB`;
 }
 
+const TINY_FIRMWARE_MIB = 16;
+
+function isTinyFirmwareDisk(name: string, sizeGb: number): boolean {
+  if (!/^(efidisk|tpmstate)\d+$/i.test(name)) return false;
+  return sizeGb > 0 && sizeGb * 1024 <= TINY_FIRMWARE_MIB + 0.5;
+}
+
+function fmtGibBytes(n: number): string {
+  if (!(n > 0) || !Number.isFinite(n)) return "";
+  const gib = n / (1024 * 1024 * 1024);
+  if (gib < 0.01) return `${Math.round(n / (1024 * 1024))} MB`;
+  if (gib < 1) return `${Math.round(gib * 1000) / 1000} GB`;
+  return `${Math.round(gib * 10) / 10} GB`;
+}
+
 type Mount = { source: string; dest: string; type?: string; size?: number };
 
 function mountsOf(o: Record<string, unknown>): Mount[] {
@@ -175,22 +190,32 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
     const template = o.template === true || o.template === 1;
     const diskGb = Number(o.diskGb);
     const usedGb = Number(o.usedGb);
-    const sizeBytes = Number.isFinite(diskGb) && diskGb > 0 ? diskGb * 1e9 : 0;
+    const sizeBytes = Number.isFinite(diskGb) && diskGb > 0 ? diskGb * 1024 * 1024 * 1024 : 0;
     const extra = [
       o.memMb != null ? `${o.memMb} MB` : "",
       Number.isFinite(usedGb) && usedGb > 0 ? `${usedGb} GB used` : "",
       template ? "template" : "",
     ].filter(Boolean);
     if (Array.isArray(o.disks)) {
+      let hasEfi = false;
+      let hasTpm = false;
       for (const d of o.disks) {
         const rec = asRec(d);
         if (!rec) continue;
         const n = str(rec.name);
         const g = Number(rec.sizeGb);
+        if (n && Number.isFinite(g) && isTinyFirmwareDisk(n, g)) {
+          if (/^efidisk/i.test(n)) hasEfi = true;
+          if (/^tpmstate/i.test(n)) hasTpm = true;
+          continue;
+        }
         const storage = str(rec.storage);
         const size = Number.isFinite(g) && g > 0 ? fmtDiskGb(g) : "";
         if (n && size) extra.push(storage ? `${n} ${storage} ${size}` : `${n} ${size}`);
       }
+      if (hasEfi && hasTpm) extra.push("efi+tpm");
+      else if (hasEfi) extra.push("efi");
+      else if (hasTpm) extra.push("tpm");
     }
     return {
       key: `${vmid || name}-${i}`,
@@ -370,7 +395,7 @@ export function AttrListValue({
                           <li key={`${m.source}->${m.dest}`}>
                             {m.source} → {m.dest}
                             {m.type ? ` (${m.type})` : ""}
-                            {m.size ? ` ${fmtBytes(m.size)}` : ""}
+                            {m.size ? ` ${attrKey === "vms" || attrKey === "lxc" ? fmtGibBytes(m.size) : fmtBytes(m.size)}` : ""}
                           </li>
                         ))}
                       </ul>

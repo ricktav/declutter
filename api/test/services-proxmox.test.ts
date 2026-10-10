@@ -73,7 +73,7 @@ describe("parse Proxmox lists", () => {
     );
     expect(lxc.disks).toBeUndefined();
     expect(lxc.mounts).toEqual([
-      expect.objectContaining({ dest: "/", type: "rootfs", source: "local-zfs:vm-102-disk-0", size: 8e9 }),
+      expect.objectContaining({ dest: "/", type: "rootfs", source: "local-zfs:vm-102-disk-0", size: 8 * 1024 ** 3 }),
       expect.objectContaining({ dest: "/mnt/share", type: "mp", source: "/tank/share" }),
     ]);
     const blocks = parsePveConfigBlocks(
@@ -131,7 +131,7 @@ describe("parse Proxmox lists", () => {
     );
     expect(lxc102.diskGb).toBe(5);
     expect(lxc102.disks).toBeUndefined();
-    expect(lxc102.mounts).toEqual([expect.objectContaining({ dest: "/", type: "rootfs", size: 5e9 })]);
+    expect(lxc102.mounts).toEqual([expect.objectContaining({ dest: "/", type: "rootfs", size: 5 * 1024 ** 3 })]);
     const lxc103 = applyPveGuestConfig(
       { vmid: 103, name: "guacamole", status: "running" },
       { rootfs: "local-lvm:vm-103-disk-0,size=8G" },
