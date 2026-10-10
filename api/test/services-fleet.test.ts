@@ -10,7 +10,7 @@ import {
   parseFleetDocument,
   parseFleetDocumentWithMeta,
 } from "../lib/servicesFleet";
-import { pickReachHost, rewriteLocalHostUrl, statusTone } from "../lib/serviceUrls";
+import { pickReachHost, rewriteLocalHostUrl, statusTone, worstStatusTone } from "../lib/serviceUrls";
 
 const snippet = readFileSync(path.join(import.meta.dirname, "fixtures/claudemux-fleet-snippet.html"), "utf8");
 
@@ -246,6 +246,9 @@ describe("localhost URLs and fleet status", () => {
     expect(statusTone("red")).toBe("error");
     expect(statusTone("unhealthy")).toBe("warn");
     expect(statusTone("stopped")).toBe("dim");
+    expect(worstStatusTone(["ok", "dim", "warn"])).toBe("warn");
+    expect(worstStatusTone(["ok", "error", "warn"])).toBe("error");
+    expect(worstStatusTone(["dim", "ok"])).toBe("ok");
     expect(aggregateStatus(["ok", "amber"])).toBe("ok");
     expect(aggregateStatus(["amber", "red"])).toBe("red");
     expect(aggregateStatus(["amber"])).toBe("amber");

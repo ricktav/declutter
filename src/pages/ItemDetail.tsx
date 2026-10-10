@@ -790,8 +790,7 @@ export default function ItemDetail() {
                     if (isJsonListAttr(k)) {
                       return (
                         <div key={k} className="py-2 text-[13px]">
-                          <div className="mb-1 text-muted-foreground">{label}</div>
-                          <AttrListValue attrKey={k} value={v} reachHost={reach} />
+                          <AttrListValue attrKey={k} value={v} reachHost={reach} label={label} />
                         </div>
                       );
                     }

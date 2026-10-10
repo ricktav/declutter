@@ -45,6 +45,23 @@ export const STATUS_DOT: Record<StatusTone, string> = {
 };
 
 /** Fleet uses ok / amber / red; docker uses warn / unhealthy / stopped. */
+const TONE_RANK: Record<StatusTone, number> = { dim: 0, ok: 1, warn: 2, error: 3 };
+
+/** Red > amber > green > grey. Used for a collapsed list's summary dot. */
+export function worstStatusTone(tones: Iterable<StatusTone | undefined | null>): StatusTone | undefined {
+  let worst: StatusTone | undefined;
+  let rank = -1;
+  for (const t of tones) {
+    if (!t) continue;
+    const r = TONE_RANK[t];
+    if (r > rank) {
+      worst = t;
+      rank = r;
+    }
+  }
+  return worst;
+}
+
 export function statusTone(status: string | undefined | null): StatusTone | undefined {
   const s = String(status ?? "").trim().toLowerCase();
   if (!s) return undefined;

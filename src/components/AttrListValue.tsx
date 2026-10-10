@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fmtBytes, portHref, rewriteLocalHostUrl, statusTone, type StatusTone } from "../../api/lib/serviceUrls.ts";
+import { fmtBytes, portHref, rewriteLocalHostUrl, statusTone, worstStatusTone, type StatusTone } from "../../api/lib/serviceUrls.ts";
 
 const LIST_KEYS = new Set(["containers", "docker", "node", "web", "vms", "lxc", "services"]);
+const COLLAPSE_KEYS = new Set(["containers", "docker", "web", "vms", "lxc"]);
 
 export function isJsonListAttr(key: string): boolean {
   return LIST_KEYS.has(key);
@@ -293,14 +295,17 @@ export function AttrListValue({
   attrKey,
   value,
   reachHost,
+  label,
 }: {
   attrKey: string;
   value: unknown;
   reachHost?: string | null;
+  label?: string;
 }) {
   const items = parseArray(value);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "name", dir: 1 });
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState(true);
   const rows = useMemo(() => {
     if (!items) return [];
     const list = items.map((x, i) => rowFrom(attrKey, x, i, reachHost ?? null)).filter((r): r is TableRow => r != null);
@@ -317,21 +322,21 @@ export function AttrListValue({
   if (!items) {
     return <span className="font-data min-w-0 break-all">{String(value)}</span>;
   }
-  if (rows.length === 0) {
-    return <span className="text-muted-foreground">none</span>;
-  }
 
   const toggle = (k: SortKey) => setSort((s) => (s.key === k ? { key: k, dir: s.dir === 1 ? -1 : 1 } : { key: k, dir: 1 }));
-  const th = (k: SortKey, label: string, extra = "") => (
+  const th = (k: SortKey, heading: string, extra = "") => (
     <th className={cn("text-left font-medium text-muted-foreground px-1.5 py-1 whitespace-nowrap", extra)}>
       <button type="button" className="hover:text-foreground" onClick={() => toggle(k)}>
-        {label}
+        {heading}
         {sort.key === k ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
       </button>
     </th>
   );
 
-  return (
+  const table =
+    rows.length === 0 ? (
+      <span className="text-muted-foreground">none</span>
+    ) : (
     <div className="min-w-0 overflow-x-auto">
       <table className="w-full text-[12px] leading-snug">
         <thead className="hidden sm:table-header-group">
@@ -407,6 +412,35 @@ export function AttrListValue({
           ))}
         </tbody>
       </table>
+    </div>
+    );
+
+  if (!COLLAPSE_KEYS.has(attrKey)) {
+    if (!label) return table;
+    return (
+      <div className="min-w-0">
+        <div className="mb-1 text-muted-foreground">{label}</div>
+        {table}
+      </div>
+    );
+  }
+
+  const title = label ?? jsonListAttrLabel(attrKey) ?? attrKey;
+  const worst = worstStatusTone(rows.map((r) => r.tone));
+  return (
+    <div className="min-w-0">
+      <button
+        type="button"
+        aria-expanded={!collapsed}
+        className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        {collapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+        {worst ? <StatusDot tone={worst} title={worst} /> : null}
+        <span>{title}</span>
+        <span className="tabular-nums">{rows.length}</span>
+      </button>
+      {!collapsed && <div className="mt-1">{table}</div>}
     </div>
   );
 }
