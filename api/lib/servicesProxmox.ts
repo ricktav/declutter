@@ -13,6 +13,10 @@ export type ProxmoxGuest = {
   template?: boolean;
   disks?: ProxmoxDisk[];
   mounts?: ProxmoxMount[];
+  ip?: string;
+  hostname?: string;
+  url?: string;
+  ports?: number[];
   /** Cluster node, used by the collector to fetch config. Not stored. */
   node?: string;
 };
@@ -58,6 +62,10 @@ function compactGuest(g: ProxmoxGuest): ProxmoxGuest {
   if (g.template) rec.template = true;
   if (g.disks?.length) rec.disks = g.disks.filter((d) => d.sizeGb != null && d.sizeGb > 0).slice(0, 16);
   if (g.mounts?.length) rec.mounts = g.mounts.slice(0, 32);
+  if (g.ip) rec.ip = g.ip;
+  if (g.hostname) rec.hostname = g.hostname.slice(0, 64);
+  if (g.url) rec.url = g.url.slice(0, 255);
+  if (g.ports?.length) rec.ports = g.ports.filter((n, i, a) => a.indexOf(n) === i).slice(0, 8);
   if (g.node) rec.node = g.node;
   return rec;
 }
@@ -71,6 +79,7 @@ function fromResource(o: Record<string, unknown>): ProxmoxGuest | null {
   const diskGb = num(o.diskGb) ?? bytesToGb(num(o.maxdisk));
   const usedGb = num(o.usedGb) ?? bytesToGb(num(o.disk));
   const node = String(o.node ?? "").trim() || undefined;
+  const ip = parsePveIpv4(String(o.ip ?? o.IP ?? "")) ?? undefined;
   return compactGuest({
     vmid,
     name,
@@ -79,6 +88,7 @@ function fromResource(o: Record<string, unknown>): ProxmoxGuest | null {
     diskGb,
     usedGb: usedGb != null && usedGb > 0 ? usedGb : undefined,
     template: looksTemplate(name, o.template),
+    ip,
     node,
   });
 }
@@ -231,7 +241,45 @@ function storageOf(vol: string): string | undefined {
 
 const DISK_KEY = /^(scsi|sata|virtio|ide|efidisk|tpmstate)\d+$/i;
 const MP_KEY = /^mp\d+$/i;
-const CONFIG_KEY = /^(memory|rootfs|(scsi|sata|virtio|ide|efidisk|tpmstate|mp)\d+)$/i;
+const NET_KEY = /^net\d+$/i;
+const IPCONFIG_KEY = /^ipconfig\d+$/i;
+const CONFIG_KEY =
+  /^(memory|hostname|rootfs|nameserver|(scsi|sata|virtio|ide|efidisk|tpmstate|mp|net|ipconfig)\d+)$/i;
+
+/** First IPv4 in `ip=10.50.0.50/24`, a bare address, or a net/ipconfig line. Skips dhcp. */
+export function parsePveIpv4(raw: string): string | undefined {
+  const s = String(raw ?? "").trim();
+  if (!s) return undefined;
+  const tagged = s.match(/(?:^|,)ip=(\d{1,3}(?:\.\d{1,3}){3})(?:\/\d+)?(?:,|$)/i);
+  if (tagged && tagged[1] !== "0.0.0.0") return tagged[1];
+  const bare = s.match(/^(\d{1,3}(?:\.\d{1,3}){3})(?:\/\d+)?$/);
+  if (bare && bare[1] !== "0.0.0.0") return bare[1];
+  return undefined;
+}
+
+const GUEST_HTTP: Record<string, { port: number; https?: boolean; path?: string }> = {
+  guacamole: { port: 8080, path: "/guacamole" },
+};
+
+/** Well-known HTTP UI from the guest name (guacamole :8080, …). */
+export function guessGuestAccess(name: string, ip?: string | null): { url?: string; ports?: number[] } {
+  const key = name.trim().toLowerCase();
+  const spec = GUEST_HTTP[key];
+  if (!spec) return {};
+  const ports = [spec.port];
+  const host = String(ip ?? "").trim();
+  if (!host) return { ports };
+  const proto = spec.https ? "https" : "http";
+  const path = spec.path ?? "";
+  return { url: `${proto}://${host}:${spec.port}${path}`, ports };
+}
+
+/** Proxmox management GUI on the hypervisor. */
+export function proxmoxHostWeb(ip: string | null | undefined): { label: string; url: string; port: number; status: string } | null {
+  const host = String(ip ?? "").trim();
+  if (!host) return null;
+  return { label: "Proxmox", url: `https://${host}:8006`, port: 8006, status: "ok" };
+}
 
 function isCdromOrNone(val: string): boolean {
   return /(?:^|,)media=cdrom(?:,|$)/i.test(val) || /^none(?:$|,)/i.test(val);
@@ -263,7 +311,7 @@ function configRecord(raw: unknown): Record<string, unknown> | null {
 export function parsePveGuestConfig(
   raw: unknown,
   kind: "qemu" | "lxc" = "qemu",
-): Pick<ProxmoxGuest, "disks" | "mounts" | "memMb"> {
+): Pick<ProxmoxGuest, "disks" | "mounts" | "memMb" | "ip" | "hostname"> {
   const lines: string[] = [];
   if (typeof raw === "string") {
     for (const line of raw.split(/\r?\n/)) {
@@ -281,6 +329,8 @@ export function parsePveGuestConfig(
   const disks: ProxmoxDisk[] = [];
   const mounts: ProxmoxMount[] = [];
   let memMb: number | undefined;
+  let ip: string | undefined;
+  let hostname: string | undefined;
   for (const line of lines) {
     const m = line.match(/^([^:]+):\s*(.*)$/);
     if (!m) continue;
@@ -289,6 +339,16 @@ export function parsePveGuestConfig(
     if (/^memory$/i.test(key)) {
       const n = Number(val);
       if (Number.isFinite(n) && n > 0) memMb = n;
+      continue;
+    }
+    if (/^hostname$/i.test(key)) {
+      const h = val.split(",")[0]?.trim() ?? "";
+      if (h) hostname = h.slice(0, 64);
+      continue;
+    }
+    if (NET_KEY.test(key) || IPCONFIG_KEY.test(key)) {
+      const found = parsePveIpv4(val);
+      if (found && !ip) ip = found;
       continue;
     }
     if (kind === "qemu" && DISK_KEY.test(key)) {
@@ -329,6 +389,8 @@ export function parsePveGuestConfig(
     ...(disks.length ? { disks } : {}),
     ...(mounts.length ? { mounts } : {}),
     ...(memMb != null ? { memMb } : {}),
+    ...(ip ? { ip } : {}),
+    ...(hostname ? { hostname } : {}),
   };
 }
 
@@ -349,11 +411,18 @@ function diskGbFromConfig(
 export function applyPveGuestConfig(g: ProxmoxGuest, raw: unknown, kind: "qemu" | "lxc"): ProxmoxGuest {
   const extra = parsePveGuestConfig(raw, kind);
   const diskGb = diskGbFromConfig(extra, kind);
+  const ip = extra.ip ?? g.ip;
+  const hostname = extra.hostname ?? g.hostname;
+  const access = guessGuestAccess(hostname || g.name, ip);
   return compactGuest({
     ...g,
     ...extra,
     diskGb: diskGb ?? g.diskGb,
     memMb: extra.memMb ?? g.memMb,
+    ip,
+    hostname,
+    url: g.url ?? access.url,
+    ports: g.ports ?? access.ports,
   });
 }
 

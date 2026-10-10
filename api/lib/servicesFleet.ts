@@ -473,8 +473,12 @@ function looksLikeProjectDirTable(open: string, body: string): boolean {
   return rows.some((cols) => cols.some((c) => looksLikeProjectDir(c)));
 }
 
+function isCliTable(open: string): boolean {
+  return hasClass(open, "cli-table") || hasClass(open, "harness-table") || hasClass(open, "node-table");
+}
+
 function keepMtxTable(open: string, body: string): boolean {
-  if (hasClass(open, "services-table") || hasClass(open, "databases-table")) return true;
+  if (hasClass(open, "services-table") || hasClass(open, "databases-table") || isCliTable(open)) return true;
   if (hasClass(open, "timers")) return false;
   return isNamedProjectsTable(open) || looksLikeProjectDirTable(open, body);
 }
@@ -553,6 +557,89 @@ function parsePdRows(html: string): FleetContainer[] {
     }
   }
   return uniqByName(out);
+}
+
+function parseOneProcess(block: string): FleetContainer | null {
+  const k = innerText(block.match(/<span\b[^>]*class=["'][^"']*\bpd-k\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "").toLowerCase();
+  if (!/^(process|cli|harness|agent|node)$/.test(k)) return null;
+  const name = innerText(block.match(/<span\b[^>]*class=["'][^"']*\bcname\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
+  if (!name || isJunkCell(name)) return null;
+  const portRaw = innerText(block.match(/<span\b[^>]*class=["'][^"']*\bport\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
+  const port = portOf(portRaw);
+  return { name, ...(port != null ? { port } : {}) };
+}
+
+function parsePdProcesses(html: string): FleetContainer[] {
+  const out: FleetContainer[] = [];
+  const pdRows = extractClassBlocks(html, "div", "pd-row");
+  if (pdRows.length) {
+    for (const block of pdRows) {
+      const c = parseOneProcess(block);
+      if (c) out.push(c);
+    }
+  }
+  return uniqByName(out);
+}
+
+function isCliPresent(mark: string): boolean {
+  const t = mark.trim();
+  if (!t || /^[-–—·•x]$/i.test(t) || /^(absent|no|missing|down)$/i.test(t)) return false;
+  return true;
+}
+
+function parseCliTable(html: string): FleetContainer[] {
+  const out: FleetContainer[] = [];
+  for (const tm of html.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table>/gi)) {
+    const open = `<table${tm[1]}>`;
+    if (!isCliTable(open)) continue;
+    const body = tm[2];
+    const rows = [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((r) => r[1]);
+    const cells = (row: string) =>
+      [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => innerText(c[1]));
+    if (!rows.length) continue;
+    const first = cells(rows[0]).map((h) => h.toLowerCase());
+    const hasHeader = first.some((h) => /name|cli|harness|agent|tool|status|label/.test(h));
+    const nameIdx = hasHeader ? first.findIndex((h) => /name|cli|harness|agent|tool|label/.test(h)) : 0;
+    const statusIdx = hasHeader ? first.findIndex((h) => h === "status" || h === "state") : 1;
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    for (const row of dataRows) {
+      const cols = cells(row);
+      const name = (nameIdx >= 0 ? cols[nameIdx] : cols[0]) ?? "";
+      if (!name || isJunkCell(name)) continue;
+      const status = statusIdx >= 0 ? cols[statusIdx] ?? "" : "";
+      out.push({ name, ...(status && !isJunkCell(status) ? { status } : {}) });
+    }
+  }
+  return uniqByName(out);
+}
+
+/** Fleet `table.overview` matrix: row = CLI / harness, column = host. */
+export function parseOverviewCli(html: string): Map<string, FleetContainer[]> {
+  const out = new Map<string, FleetContainer[]>();
+  for (const tm of html.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table>/gi)) {
+    const open = `<table${tm[1]}>`;
+    if (!hasClass(open, "overview")) continue;
+    const body = tm[2];
+    const rows = [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((r) => r[1]);
+    const cells = (row: string) =>
+      [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => innerText(c[1]));
+    if (!rows.length) continue;
+    const hosts = cells(rows[0]).slice(1).map((h) => h.trim()).filter((h) => h && !isJunkCell(h));
+    for (const row of rows.slice(1)) {
+      const cols = cells(row);
+      const name = (cols[0] ?? "").trim();
+      if (!name || isJunkCell(name)) continue;
+      for (let i = 0; i < hosts.length; i++) {
+        if (!isCliPresent(cols[i + 1] ?? "")) continue;
+        const list = out.get(hosts[i]) ?? [];
+        if (!list.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+          list.push({ name, status: "ok" });
+        }
+        out.set(hosts[i], list);
+      }
+    }
+  }
+  return out;
 }
 
 function portFromUrl(url: string | undefined): number | undefined {
@@ -1020,16 +1107,17 @@ export function parseClaudemuxHosts(html: string): ParsedFleet {
     const ip = normalizeIp(header);
     const body = stripSkippedTables(section);
     const containers = parsePdRows(body);
+    const node = uniqByName([...parsePdProcesses(body), ...parseCliTable(body)]);
     const web = parseServicesTable(body);
     const databases = parseDatabasesTable(body);
     const dir = parseProjectDirsTable(section);
     for (const s of dir.skipped) skippedProjectTables.push({ host, ...s });
     const projects = dir.projects;
-    if (!containers.length && !web.length && !databases.length && !projects.length) {
+    if (!containers.length && !node.length && !web.length && !databases.length && !projects.length) {
       hosts.push({ host, ip, ...emptyLists() });
       continue;
     }
-    pushHost(hosts, host, { containers, node: [], web, databases, projects }, ip);
+    pushHost(hosts, host, { containers, node, web, databases, projects }, ip);
   }
   return { hosts, skippedUnreachable, skippedProjectTables };
 }
@@ -1054,9 +1142,19 @@ function extractJsonBlobs(text: string): unknown[] {
   return blobs;
 }
 
+function attachOverviewCli(hosts: FleetHost[], html: string): FleetHost[] {
+  const cli = parseOverviewCli(html);
+  for (const [host, node] of cli) {
+    const existing = hosts.find((h) => normHost(h.host) === normHost(host));
+    if (!existing || !node.length) continue;
+    pushHost(hosts, existing.host, { containers: [], node, web: [], databases: [], projects: [] }, null);
+  }
+  return hosts;
+}
+
 export function parseFleetDocument(text: string): FleetHost[] {
   if (/<section\b[^>]*class=["'][^"']*\bhost\b/i.test(text)) {
-    return parseClaudemuxHosts(text).hosts.filter(hostHasRows);
+    return attachOverviewCli(parseClaudemuxHosts(text).hosts, text).filter(hostHasRows);
   }
   const out: FleetHost[] = [];
   for (const blob of extractJsonBlobs(text)) walk(blob, out, 0);
@@ -1068,7 +1166,7 @@ export function parseFleetDocumentWithMeta(text: string): ParsedFleet {
   if (/<section\b[^>]*class=["'][^"']*\bhost\b/i.test(text)) {
     const parsed = parseClaudemuxHosts(text);
     return {
-      hosts: parsed.hosts.filter(hostHasRows),
+      hosts: attachOverviewCli(parsed.hosts, text).filter(hostHasRows),
       skippedUnreachable: parsed.skippedUnreachable,
       skippedProjectTables: parsed.skippedProjectTables,
     };

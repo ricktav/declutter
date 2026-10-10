@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import type { Area } from "@db/schema";
 import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
 import { isMachineItem } from "@/lib/systemsAttrs";
+import { isJsonListAttr, jsonListAttrLabel, MACHINE_CORE_LIST_ATTRS } from "@/components/AttrListValue";
 import { useHouse } from "@/context/house";
 
 function slugify(name: string) {
@@ -30,6 +31,19 @@ function slugify(name: string) {
 
 /** Identity / spec fields: find them in the search bar, not as dropdowns. */
 const SKIP_FILTER_KEYS = new Set(["mac", "mac_address", "serial", "serial_number", "cpu"]);
+
+function jsonListCount(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  if (Array.isArray(v)) return v.length;
+  const s = String(v).trim();
+  if (!s.startsWith("[")) return null;
+  try {
+    const a = JSON.parse(s) as unknown;
+    return Array.isArray(a) ? a.length : null;
+  } catch {
+    return null;
+  }
+}
 
 function itemMatchesQuery(
   i: { name: string; attributes: Record<string, unknown> | null; room?: { name: string; floor: string | null } | null },
@@ -304,21 +318,30 @@ export default function AreaView() {
     { enabled: !!area.data },
   );
 
-  // columns: from attributeDefs if present, else union of keys seen
+  // columns: attributeDefs first, then list attrs (databases / projects / AI harness)
+  // so Systems snapshots show up even when they are not in the topic schema.
   const columns = useMemo(() => {
-    const defs = area.data?.attributeDefs as AttributeDef[] | null;
-    if (defs?.length) return defs;
-    const keys = new Map<string, string>();
+    const defs = (area.data?.attributeDefs as AttributeDef[] | null) ?? [];
+    const keys = new Map<string, { key: string; label: string; type: AttributeDef["type"] }>();
+    for (const d of defs) keys.set(d.key, { key: d.key, label: d.label, type: d.type });
     for (const it of itemsList.data ?? []) {
-      for (const k of Object.keys(it.attributes ?? {})) if (!keys.has(k)) keys.set(k, k);
+      for (const k of Object.keys(it.attributes ?? {})) {
+        if (keys.has(k)) continue;
+        if (isJsonListAttr(k) || !defs.length) keys.set(k, { key: k, label: jsonListAttrLabel(k) ?? k, type: "text" });
+      }
     }
-    return [...keys.entries()].map(([key, label]) => ({ key, label, type: "text" as const }));
-  }, [area.data, itemsList.data]);
+    if (slug === "computers") {
+      for (const k of MACHINE_CORE_LIST_ATTRS) {
+        if (!keys.has(k)) keys.set(k, { key: k, label: jsonListAttrLabel(k) ?? k, type: "text" });
+      }
+    }
+    return [...keys.values()];
+  }, [area.data, itemsList.data, slug]);
 
   const categorical = useMemo(() => {
     const out: { key: string; label: string; values: string[] }[] = [];
     for (const c of columns) {
-      if (SKIP_FILTER_KEYS.has(c.key)) continue;
+      if (SKIP_FILTER_KEYS.has(c.key) || isJsonListAttr(c.key)) continue;
       const fromDef = c.type === "select";
       const values = [...new Set((itemsList.data ?? []).map((it) => String(it.attributes?.[c.key] ?? "")).filter(Boolean))].sort();
       if (fromDef || c.key === "role" || (values.length >= 2 && values.length <= 12)) {
@@ -586,7 +609,9 @@ export default function AreaView() {
                 </td>
                 {columns.map((c) => (
                   <td key={c.key} className="font-data text-[12px]">
-                    {String(it.attributes?.[c.key] ?? "")}
+                    {isJsonListAttr(c.key)
+                      ? (jsonListCount(it.attributes?.[c.key]) != null ? String(jsonListCount(it.attributes?.[c.key])) : "")
+                      : String(it.attributes?.[c.key] ?? "")}
                   </td>
                 ))}
                 <td className="font-data text-[11px] text-muted-foreground">{timeAgo(it.updatedAt)}</td>

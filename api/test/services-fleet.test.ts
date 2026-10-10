@@ -54,6 +54,7 @@ describe("claudemux HTML fixture", () => {
     const mini = hosts.find((h) => h.host === "macmini-m4")!;
     expect(mini.ip).toBe("10.50.0.102");
     expect(mini.containers).toEqual([]);
+    expect(mini.node.map((c) => c.name)).toEqual(["ls", "echo"]);
     expect(mini.web.map((w) => w.label)).toEqual(["Workbench", "HomeBase", "Flow", "Photos", "Ping"]);
     expect(mini.web).toHaveLength(5);
 
@@ -69,6 +70,7 @@ describe("claudemux HTML fixture", () => {
       "changedetection",
     ]);
     expect(d2.web).toHaveLength(6);
+    expect(d2.node.map((c) => c.name)).toEqual(["ls", "docker"]);
 
     const dock = hosts.find((h) => h.host === "dockermac")!;
     expect(dock.ip).toBe("10.50.0.10");
@@ -78,9 +80,12 @@ describe("claudemux HTML fixture", () => {
     expect(dock.web).toHaveLength(20);
     expect(dock.databases).toEqual([expect.objectContaining({ name: "declutter", engine: "mysql" })]);
 
+    expect(dock.node.map((c) => c.name)).toEqual(["ls", "docker", "plugwise"]);
+
     const pro = hosts.find((h) => h.host === "prodesk-rt1")!;
     expect(pro.ip).toBe("10.50.0.142");
     expect(pro.containers).toHaveLength(14);
+    expect(pro.node.map((c) => c.name)).toEqual(["echo", "docker"]);
     expect(pro.web.map((w) => w.label)).toEqual([
       "portal/clawdy-portal",
       "caddy",

@@ -91,6 +91,39 @@ describe("services.report", () => {
     expect(JSON.parse(String(merged.attributes?.web))[0].label).toBe("Workbench");
   });
 
+  it("stores guest IP and HTTP on Proxmox LXC", async () => {
+    const { houseId, pc } = await seed();
+    const c = callerFor(houseId);
+    await c.services.report({
+      itemId: pc,
+      source: "proxmox",
+      lxc: [
+        {
+          vmid: 103,
+          name: "guacamole",
+          status: "running",
+          ip: "10.50.0.40",
+          url: "http://10.50.0.40:8080/guacamole",
+          ports: [8080],
+        },
+      ],
+      web: [{ label: "Proxmox", url: "https://10.50.0.155:8006", port: 8006 }],
+    });
+    const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
+    expect(JSON.parse(String(row.attributes?.lxc))).toEqual([
+      expect.objectContaining({
+        vmid: 103,
+        name: "guacamole",
+        ip: "10.50.0.40",
+        url: "http://10.50.0.40:8080/guacamole",
+        port: 8080,
+      }),
+    ]);
+    expect(JSON.parse(String(row.attributes?.web))).toEqual([
+      expect.objectContaining({ label: "Proxmox", port: 8006 }),
+    ]);
+  });
+
   it("writes proxmox vms and lxc without clearing containers", async () => {
     const { houseId, pc } = await seed();
     const c = callerFor(houseId);

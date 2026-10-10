@@ -57,6 +57,10 @@ export type GuestRecIn = {
   template?: boolean;
   disks?: DiskRecIn[];
   mounts?: MountRecIn[];
+  ip?: string;
+  hostname?: string;
+  url?: string;
+  ports?: number[];
 };
 
 export type DatabaseRecIn = {
@@ -194,6 +198,12 @@ function compactGuest(g: GuestRecIn): Record<string, unknown> {
   if (disks.length) o.disks = disks;
   const mounts = compactMounts(g.mounts);
   if (mounts) o.mounts = mounts;
+  if (g.ip) o.ip = String(g.ip).slice(0, 64);
+  if (g.hostname) o.hostname = String(g.hostname).slice(0, 64);
+  if (g.url) o.url = String(g.url).slice(0, 255);
+  const ports = [...(g.ports ?? [])].filter((n, i, a) => Number.isInteger(n) && n > 0 && n <= 65535 && a.indexOf(n) === i);
+  if (ports[0] != null) o.port = ports[0];
+  if (ports.length) o.ports = ports;
   return o;
 }
 

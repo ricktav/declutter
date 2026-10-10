@@ -51,6 +51,10 @@ const guestRec = z.object({
     .max(16)
     .optional(),
   mounts: z.array(mountRec).max(32).optional(),
+  ip: z.string().max(64).optional(),
+  hostname: z.string().max(64).optional(),
+  url: z.string().max(255).optional(),
+  ports: z.array(z.number().int().positive().max(65535)).max(8).optional(),
 });
 const databaseRec = z.object({
   name: z.string().min(1).max(64),

@@ -4,10 +4,13 @@ import {
   parsePctList,
   parsePveConfigBlocks,
   parsePveGuestConfig,
+  parsePveIpv4,
   parsePveResources,
   parseQmList,
   parseProxmoxInventory,
   applyPveGuestConfig,
+  guessGuestAccess,
+  proxmoxHostWeb,
 } from "../lib/servicesProxmox";
 
 const pct = `VMID       Status     Lock         Name
@@ -151,6 +154,50 @@ describe("parse Proxmox lists", () => {
     const inv = parseProxmoxInventory({ resourcesJson: [], pctList: pct, qmList: qm });
     expect(inv.lxc).toHaveLength(2);
     expect(inv.vms).toHaveLength(6);
+  });
+});
+
+describe("guest IP, URL and Proxmox GUI", () => {
+  it("reads LXC net0 and QEMU ipconfig0 IPv4", () => {
+    expect(parsePveIpv4("name=eth0,bridge=vmbr0,gw=10.50.0.1,ip=10.50.0.40/24,type=veth")).toBe("10.50.0.40");
+    expect(parsePveIpv4("ip=10.50.0.80/24,gw=10.50.0.1")).toBe("10.50.0.80");
+    expect(parsePveIpv4("ip=dhcp")).toBeUndefined();
+    expect(parsePveIpv4("10.50.0.155")).toBe("10.50.0.155");
+    const lxc = parsePveGuestConfig(
+      {
+        hostname: "guacamole",
+        memory: 512,
+        net0: "name=eth0,bridge=vmbr0,ip=10.50.0.40/24,type=veth",
+        rootfs: "local-lvm:vm-103-disk-0,size=8G",
+      },
+      "lxc",
+    );
+    expect(lxc.ip).toBe("10.50.0.40");
+    expect(lxc.hostname).toBe("guacamole");
+    const vm = parsePveGuestConfig(`memory: 8192\nipconfig0: ip=10.50.0.80/24,gw=10.50.0.1\nscsi0: local-zfs:vm-100-disk-0,size=64G\n`, "qemu");
+    expect(vm.ip).toBe("10.50.0.80");
+  });
+
+  it("guesses guacamole HTTP and the hypervisor GUI", () => {
+    expect(guessGuestAccess("guacamole", "10.50.0.40")).toEqual({
+      url: "http://10.50.0.40:8080/guacamole",
+      ports: [8080],
+    });
+    expect(guessGuestAccess("win11", "10.50.0.80")).toEqual({});
+    expect(proxmoxHostWeb("10.50.0.155")).toEqual({
+      label: "Proxmox",
+      url: "https://10.50.0.155:8006",
+      port: 8006,
+      status: "ok",
+    });
+    const g = applyPveGuestConfig(
+      { vmid: 103, name: "guacamole", status: "running" },
+      { hostname: "guacamole", net0: "name=eth0,bridge=vmbr0,ip=10.50.0.40/24", rootfs: "local-lvm:vm-103-disk-0,size=8G" },
+      "lxc",
+    );
+    expect(g.ip).toBe("10.50.0.40");
+    expect(g.url).toBe("http://10.50.0.40:8080/guacamole");
+    expect(g.ports).toEqual([8080]);
   });
 });
 

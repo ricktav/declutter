@@ -45,11 +45,38 @@ import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
 import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs";
 import { RatingStars } from "@/components/RatingStars";
-import { isMachineItem, parseRating, type Rating } from "@/lib/systemsAttrs";
-import { AttrListValue, compactJsonList, isJsonListAttr, jsonListAttrLabel, parsePortValues, PortLinks, prettyJsonList } from "@/components/AttrListValue";
+import { isMachineItem, looksLikeProxmox, parseRating, parseWeb, type Rating } from "@/lib/systemsAttrs";
+import { AttrListValue, compactJsonList, isJsonListAttr, jsonListAttrLabel, MACHINE_CORE_LIST_ATTRS, parsePortValues, PortLinks, prettyJsonList } from "@/components/AttrListValue";
 import { hostHref, pickReachHost } from "../../api/lib/serviceUrls";
 
 type AttrClash = inferRouterOutputs<AppRouter>["items"]["findAttributeDuplicates"]["clashes"][number];
+
+function visibleItemAttrs(it: {
+  name: string;
+  attributes: Record<string, string | number> | null;
+  areaSlug?: string | null;
+  parentId?: number | null;
+  status?: string;
+}): [string, string | number][] {
+  const src = { ...(it.attributes ?? {}) };
+  if (
+    isMachineItem({
+      attributes: it.attributes,
+      areaSlug: it.areaSlug,
+      parentId: it.parentId,
+      status: it.status,
+    })
+  ) {
+    for (const k of MACHINE_CORE_LIST_ATTRS) {
+      if (src[k] == null || src[k] === "") src[k] = "[]";
+    }
+    if (looksLikeProxmox(it.attributes, it.name)) {
+      const web = parseWeb(it.attributes, it.name);
+      if (web.length) src.web = JSON.stringify(web);
+    }
+  }
+  return Object.entries(src);
+}
 
 function attrValueOptions(
   key: string,
@@ -786,7 +813,13 @@ export default function ItemDetail() {
               )}
               {!editingAttrs ? (
                 <div className="divide-y divide-border">
-                  {Object.entries(it.attributes ?? {}).map(([k, v]) => {
+                  {visibleItemAttrs({
+                    name: it.name,
+                    attributes: it.attributes,
+                    areaSlug: it.area?.slug ?? null,
+                    parentId: it.parentId,
+                    status: it.status,
+                  }).map(([k, v]) => {
                     const clash = clashFor(k);
                     const label = defs.find((d) => d.key === k)?.label ?? jsonListAttrLabel(k) ?? k;
                     const reach = pickReachHost(

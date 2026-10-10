@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fmtBytes, portHref, rewriteLocalHostUrl, statusTone, worstStatusTone, type StatusTone } from "../../api/lib/serviceUrls.ts";
+import { fmtBytes, hostHref, portHref, rewriteLocalHostUrl, statusTone, worstStatusTone, type StatusTone } from "../../api/lib/serviceUrls.ts";
 import {
   PROJECT_KIND_COLOR,
   fmtAgo,
@@ -12,7 +12,8 @@ import {
 } from "../../api/lib/servicesProjects.ts";
 
 const LIST_KEYS = new Set(["containers", "docker", "node", "web", "vms", "lxc", "services", "databases", "projects"]);
-const COLLAPSE_KEYS = new Set(["containers", "docker", "web", "vms", "lxc", "databases", "projects"]);
+const COLLAPSE_KEYS = new Set(["containers", "docker", "web", "vms", "lxc", "databases", "projects", "node"]);
+export const MACHINE_CORE_LIST_ATTRS = ["databases", "projects", "node"] as const;
 
 export function isJsonListAttr(key: string): boolean {
   return LIST_KEYS.has(key);
@@ -22,7 +23,7 @@ const LIST_LABELS: Record<string, string> = {
   containers: "Containers",
   docker: "Containers",
   web: "Web",
-  node: "Node",
+  node: "AI harness / CLI",
   vms: "VMs",
   lxc: "LXC",
   services: "Services",
@@ -160,6 +161,7 @@ type TableRow = {
   mounts: Mount[];
   fade?: number;
   kindColor?: string;
+  reach?: string | null;
 };
 
 function rowFrom(key: string, x: unknown, i: number, reach: string | null): TableRow | null {
@@ -285,6 +287,8 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
       else if (hasEfi) extra.push("efi");
       else if (hasTpm) extra.push("tpm");
     }
+    const ip = str(o.ip).trim();
+    if (ip && !extra.includes(ip)) extra.unshift(ip);
     return {
       key: `${vmid || name}-${i}`,
       status,
@@ -297,6 +301,7 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
       sizeBytes,
       extra,
       mounts: mountsOf(o),
+      reach: ip || null,
     };
   }
   const name = str(o.name ?? o.unit ?? o.container).trim();
@@ -441,8 +446,8 @@ export function AttrListValue({
                 {r.id || <span className="sm:hidden">—</span>}
               </td>
               <td className="block sm:table-cell px-1.5 py-1 align-top" data-label="Ports">
-                <PortLinks ports={r.ports} reachHost={reachHost} />
-                {r.hrefs.length > 0 && r.ports.length === 0 && (
+                <PortLinks ports={r.ports} reachHost={r.reach ?? reachHost} />
+                {r.hrefs.length > 0 && (
                   <span className="inline-flex flex-col">
                     {r.hrefs.map((h) => (
                       <a key={h} href={h} target="_blank" rel="noreferrer" className="text-primary hover:underline truncate max-w-[16rem]">
@@ -457,9 +462,16 @@ export function AttrListValue({
               </td>
               <td className="block sm:table-cell px-1.5 py-1 align-top text-muted-foreground" data-label="Extra">
                 <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-                  {r.extra.map((e) => (
-                    <span key={e}>{e}</span>
-                  ))}
+                  {r.extra.map((e) => {
+                    const ipLink = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(e) ? hostHref(e) : null;
+                    return ipLink ? (
+                      <a key={e} href={ipLink} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                        {e}
+                      </a>
+                    ) : (
+                      <span key={e}>{e}</span>
+                    );
+                  })}
                 </div>
                 {r.mounts.length > 0 && (
                   <div className="mt-0.5">

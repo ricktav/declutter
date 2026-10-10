@@ -43,7 +43,8 @@ import { dbMergeKey, projectMergeKey } from "../../api/lib/servicesProjects";
  *   urls / url / web / pwa / apps / pages / websites    JSON array or comma-separated URLs
  *               Fleet importer writes web as [{ label, ports, urls, status }] — one
  *               leaf per service, not per port.
- *   node     list of Node processes (kind node); a value that looks like a URL is a web node
+ *   node     AI harness / CLI (claude, grok, docker, …). Fleet overview matrix
+ *               and cli/harness tables write this. A value that looks like a URL is a web node.
  * A port/url already named on a service is not duplicated as a web node.
  * Child Things: role container/docker → container; role web/pwa/website/app → web.
  *
@@ -147,6 +148,10 @@ export type GuestRec = {
   memMb?: number;
   diskGb?: number;
   template?: boolean;
+  ip?: string;
+  hostname?: string;
+  url?: string;
+  ports?: number[];
 };
 
 export type DatabaseRec = {
@@ -443,6 +448,10 @@ function asGuest(x: unknown): GuestRec | null {
   const memMb = num(o.memMb);
   const diskGb = num(o.diskGb);
   const template = o.template === true || o.template === 1 || o.template === "1";
+  const ip = o.ip != null ? String(o.ip).trim() : "";
+  const hostname = o.hostname != null ? String(o.hostname).trim() : "";
+  const url = o.url != null ? String(o.url).trim() : "";
+  const ports = numList([o.port, o.ports]);
   return {
     vmid,
     name,
@@ -450,6 +459,10 @@ function asGuest(x: unknown): GuestRec | null {
     ...(memMb != null ? { memMb } : {}),
     ...(diskGb != null ? { diskGb } : {}),
     ...(template ? { template: true } : {}),
+    ...(ip ? { ip } : {}),
+    ...(hostname ? { hostname } : {}),
+    ...(url ? { url } : {}),
+    ...(ports.length ? { ports } : {}),
   };
 }
 
@@ -545,7 +558,25 @@ export function parseGuests(attrs: Attrs, key: "vms" | "lxc"): GuestRec[] {
   return out;
 }
 
-export function parseWeb(attrs: Attrs): WebRec[] {
+export function looksLikeProxmox(attrs: Attrs, name?: string): boolean {
+  const host = (attrStr(attrs, "hostname") ?? attrStr(attrs, "host") ?? "").trim().toLowerCase().replace(/\.local$/, "");
+  const ip = attrStr(attrs, "ip") ?? attrStr(attrs, "ip_address") ?? "";
+  if (host === "pve" || /\bproxmox\b/.test(host)) return true;
+  if (/\b10\.50\.0\.155\b/.test(ip)) return true;
+  if (name && /\bproxmox\b/i.test(name)) return true;
+  return false;
+}
+
+export function proxmoxGuiWeb(attrs: Attrs): WebRec | null {
+  const ip = attrStr(attrs, "ip") ?? attrStr(attrs, "ip_address");
+  const host = attrStr(attrs, "hostname") ?? attrStr(attrs, "host");
+  const reach = (ip && !/^localhost|^127\.0\.0\.1/.test(ip) ? ip : null) ?? host;
+  if (!reach) return null;
+  const url = `https://${reach}:8006`;
+  return { label: "Proxmox", url, port: 8006, ports: [8006], urls: [url] };
+}
+
+export function parseWeb(attrs: Attrs, name?: string): WebRec[] {
   const out: WebRec[] = [];
   const seen = new Set<string>();
   const add = (w: WebRec | null) => {
@@ -562,6 +593,7 @@ export function parseWeb(attrs: Attrs): WebRec[] {
   for (const x of parseJsonOrList(attrs?.node)) {
     if (typeof x === "string" && /^https?:\/\//i.test(x.trim())) add(asWeb(x));
   }
+  if (looksLikeProxmox(attrs, name)) add(proxmoxGuiWeb(attrs));
   return out;
 }
 

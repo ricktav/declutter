@@ -253,7 +253,15 @@ function webOf(m: GraphItem, kids: GraphItem[]): WebRec[] {
     });
   const seen = new Set<string>();
   const out: WebRec[] = [];
-  for (const w of [...parseWeb(m.attributes), ...fromKids]) {
+  const fromGuests: WebRec[] = [...parseGuests(m.attributes, "lxc"), ...parseGuests(m.attributes, "vms")]
+    .filter((g) => g.url)
+    .map((g) => ({
+      label: g.name,
+      url: g.url,
+      ports: g.ports,
+      status: g.status,
+    }));
+  for (const w of [...parseWeb(m.attributes, m.name), ...fromKids, ...fromGuests]) {
     const k = webKey(w);
     if (seen.has(k)) continue;
     seen.add(k);
@@ -490,15 +498,18 @@ function guestNode(machineId: number, kind: "vm" | "lxc", g: GuestRec): GraphNod
       g.status,
       g.template ? "template" : "",
       g.vmid != null ? `#${g.vmid}` : "",
+      g.ip ?? "",
     ].filter(Boolean),
     lines: [
       { k: "vmid", v: String(g.vmid) },
       { k: "status", v: g.status },
+      ...(g.ip ? [{ k: "ip", v: g.ip }] : []),
+      ...(g.hostname && g.hostname !== g.name ? [{ k: "host", v: g.hostname }] : []),
       ...(g.memMb != null ? [{ k: "mem", v: `${g.memMb} MB` }] : []),
       ...(g.diskGb != null && g.diskGb > 0 ? [{ k: "disk", v: `${g.diskGb} GB` }] : []),
       ...(g.template ? [{ k: "template", v: "yes" }] : []),
     ],
-    href: `/items/${machineId}`,
+    href: g.url || (g.ip ? `http://${g.ip}/` : `/items/${machineId}`),
   };
 }
 

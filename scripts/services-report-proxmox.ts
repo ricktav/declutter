@@ -1,6 +1,6 @@
 #!/usr/bin/env -S node --experimental-strip-types
 // Snapshot Proxmox VMs and LXC onto the hypervisor's HomeBase Thing.
-// Default is a dry run; pass --apply to write. Does not send containers/web.
+// Default is a dry run; pass --apply to write. Sends web (GUI :8006 + guest HTTP).
 //   node --experimental-strip-types scripts/services-report-proxmox.ts
 //   node --experimental-strip-types scripts/services-report-proxmox.ts --ssh root@10.50.0.155 --apply
 import "dotenv/config";
@@ -9,6 +9,7 @@ import {
   applyPveGuestConfig,
   matchPveMachine,
   parseProxmoxInventory,
+  proxmoxHostWeb,
   type ProxmoxGuest,
   type PveMachineHint,
 } from "../api/lib/servicesProxmox.ts";
@@ -139,6 +140,19 @@ const machines: PveMachineHint[] = items.map((it) => ({
 }));
 
 const matched = matchPveMachine(machines);
+const hostIp = matched?.ip ?? sshTarget.match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/)?.[1] ?? null;
+const gui = proxmoxHostWeb(hostIp);
+const web = [
+  ...(gui ? [gui] : []),
+  ...[...lxc, ...vms]
+    .filter((g) => g.url)
+    .map((g) => ({
+      label: g.name,
+      url: g.url!,
+      ...(g.ports?.[0] != null ? { port: g.ports[0], ports: g.ports } : {}),
+      ...(g.status ? { status: g.status } : {}),
+    })),
+];
 const plan = {
   dry: !apply,
   source: "proxmox",
@@ -146,9 +160,11 @@ const plan = {
   via: resourcesJson != null ? "pvesh" : "pct/qm",
   vms: vms.length,
   lxc: lxc.length,
-  vmNames: vms.map((g) => `${g.vmid} ${g.name} ${g.status}${g.template ? " template" : ""}`),
-  lxcNames: lxc.map((g) => `${g.vmid} ${g.name} ${g.status}`),
-  items: { vms, lxc },
+  web: web.length,
+  vmNames: vms.map((g) => `${g.vmid} ${g.name} ${g.status}${g.ip ? ` ${g.ip}` : ""}${g.template ? " template" : ""}`),
+  lxcNames: lxc.map((g) => `${g.vmid} ${g.name} ${g.status}${g.ip ? ` ${g.ip}` : ""}`),
+  webLabels: web.map((w) => w.label),
+  items: { vms, lxc, web },
   matched: matched ? { itemId: matched.id, name: matched.name } : null,
 };
 
@@ -160,13 +176,13 @@ if (!matched) {
 
 if (!apply) {
   console.log(JSON.stringify(plan, null, 2));
-  console.error("dry run (pass --apply to write services.report; containers/web are not sent)");
+  console.error("dry run (pass --apply to write services.report)");
   process.exit(0);
 }
 
 const result = (await trpc(
   "services.report",
-  { itemId: matched.id, source: "proxmox", vms, lxc },
+  { itemId: matched.id, source: "proxmox", vms, lxc, web },
   "POST",
-)) as { vms: number; lxc: number };
-console.log(`${matched.name} (#${matched.id}): ${result.vms} VM(s), ${result.lxc} LXC from ${sshTarget}`);
+)) as { vms: number; lxc: number; web: number };
+console.log(`${matched.name} (#${matched.id}): ${result.vms} VM(s), ${result.lxc} LXC, ${result.web} web from ${sshTarget}`);

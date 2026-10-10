@@ -84,11 +84,12 @@ const matched: Array<{
   ip: string | null;
   match: "hostname" | "ip";
   containers: (typeof hosts)[0]["containers"];
+  node: (typeof hosts)[0]["node"];
   web: (typeof hosts)[0]["web"];
   databases: (typeof hosts)[0]["databases"];
   projects: (typeof hosts)[0]["projects"];
 }> = [];
-const unmatched: Array<{ host: string; ip: string | null; containers: number; web: number; databases: number; projects: number }> = [];
+const unmatched: Array<{ host: string; ip: string | null; containers: number; node: number; web: number; databases: number; projects: number }> = [];
 
 for (const h of hosts) {
   const m = matchMachine({ host: h.host, ip: h.ip }, machines);
@@ -97,6 +98,7 @@ for (const h of hosts) {
       host: h.host,
       ip: h.ip ?? null,
       containers: h.containers.length,
+      node: h.node.length,
       web: h.web.length,
       databases: h.databases.length,
       projects: h.projects.length,
@@ -118,6 +120,7 @@ for (const h of hosts) {
     ip: h.ip ?? null,
     match: byHost ? "hostname" : "ip",
     containers: h.containers,
+    node: h.node,
     web: h.web,
     databases: h.databases,
     projects: h.projects,
@@ -134,10 +137,12 @@ const plan = {
     ip: row.ip,
     match: row.match,
     containers: row.containers.length,
+    node: row.node.length,
     web: row.web.length,
     databases: row.databases.length,
     projects: row.projects.length,
     containerNames: row.containers.map((c) => c.name),
+    nodeNames: row.node.map((c) => c.name),
     serviceLabels: row.web.map((w) => w.label),
     databaseNames: row.databases.map((d) => d.name),
     projectNames: row.projects.map((p) => p.name),
@@ -167,6 +172,7 @@ for (const row of matched) {
     source: "fleet",
     merge: true,
     ...(row.containers.length ? { containers: row.containers } : {}),
+    ...(row.node.length ? { node: row.node } : {}),
     web: row.web,
     ...(row.databases.length ? { databases: row.databases } : {}),
     ...(row.projects.length ? { projects: row.projects } : {}),
@@ -174,7 +180,7 @@ for (const row of matched) {
   await trpc("services.report", report, "POST");
   ok += 1;
   console.log(
-    `${row.name} (#${row.itemId}): ${row.containers.length} container(s), ${row.web.length} service(s), ${row.databases.length} database(s), ${row.projects.length} project(s) from ${row.host}`,
+    `${row.name} (#${row.itemId}): ${row.containers.length} container(s), ${row.node.length} cli, ${row.web.length} service(s), ${row.databases.length} database(s), ${row.projects.length} project(s) from ${row.host}`,
   );
 }
 if (unmatched.length) console.error(`unmatched hosts: ${unmatched.map((u) => u.host).join(", ")}`);
