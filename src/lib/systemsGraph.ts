@@ -9,20 +9,32 @@ import {
   isOtherComputersItem,
   parseImportance,
   parseRating,
+  parseDatabases,
   parseGuests,
+  parseProjects,
   parseServices,
   parseWeb,
   SERVICE_ROLES,
   CONTAINER_ROLES,
   WEB_ROLES,
   type Attrs,
+  type DatabaseRec,
   type GuestRec,
   type Importance,
+  type ProjectRec,
   type Rating,
   type ServiceRec,
   type WebRec,
 } from "@/lib/systemsAttrs";
 import { pickReachHost, rewriteLocalHostUrl, statusTone, type StatusTone } from "../../api/lib/serviceUrls";
+import {
+  PROJECT_KIND_COLOR,
+  fmtAgo,
+  fmtMinutes,
+  fmtTokens,
+  inferProjectStatus,
+  projectFade,
+} from "../../api/lib/servicesProjects";
 
 export const KIND_COLOR: Record<string, string> = {
   center: "#ff6b35",
@@ -33,6 +45,8 @@ export const KIND_COLOR: Record<string, string> = {
   web: "#4A90E2",
   vm: "#fdcb6e",
   lxc: "#74b9ff",
+  database: "#e17055",
+  project: "#d97706",
   disk: "#00b894",
   volume: "#55efc4",
   runtime: "#ff6b35",
@@ -46,6 +60,8 @@ export const KIND_LABEL: Record<string, string> = {
   web: "Web / PWA",
   vm: "VMs",
   lxc: "LXC",
+  database: "Databases",
+  project: "Projects",
   disk: "Disks",
   volume: "Volumes",
 };
@@ -90,7 +106,7 @@ export type GraphComputer = {
   attached: { id: number; name: string; volumes: GraphVolume[] }[];
 };
 
-export type NodeType = "center" | "machine" | "network" | "other" | "service" | "web" | "vm" | "lxc" | "disk" | "volume";
+export type NodeType = "center" | "machine" | "network" | "other" | "service" | "web" | "vm" | "lxc" | "database" | "project" | "disk" | "volume";
 
 export type GraphNode = {
   id: string;
@@ -101,6 +117,8 @@ export type GraphNode = {
   dimmed: boolean;
   /** Templates: even fainter than a stopped guest. */
   faint?: boolean;
+  /** 0–1 fill fade for stale coding-agent projects. */
+  fade?: number;
   tone?: StatusTone;
   itemId?: number;
   volumeId?: number;
@@ -507,6 +525,101 @@ function attachGuests(
   }
 }
 
+function databasesOf(m: GraphItem): DatabaseRec[] {
+  return parseDatabases(m.attributes);
+}
+
+function projectsOf(m: GraphItem): ProjectRec[] {
+  return parseProjects(m.attributes);
+}
+
+function databaseNode(machineId: number, d: DatabaseRec, i: number): GraphNode {
+  const status = d.status ?? "";
+  const tone = status ? statusTone(status) : undefined;
+  return {
+    id: `db:${machineId}:${d.name}:${i}`,
+    type: "database",
+    label: d.name.slice(0, 28),
+    radius: 6,
+    color: KIND_COLOR.database,
+    dimmed: tone === "dim" || tone === "error",
+    tone,
+    itemId: machineId,
+    kind: d.engine ?? "database",
+    tags: ["database", d.engine ?? "", status].filter(Boolean),
+    lines: [
+      ...(d.engine ? [{ k: "engine", v: d.engine }] : []),
+      ...(status ? [{ k: "status", v: status }] : []),
+      ...(d.port != null ? [{ k: "port", v: String(d.port) }] : []),
+      ...(d.size != null && d.size > 0 ? [{ k: "size", v: d.size >= 1024 ? fmtGb(d.size) : String(d.size) }] : []),
+    ],
+    href: d.url ?? `/items/${machineId}`,
+  };
+}
+
+function projectRadius(p: ProjectRec): number {
+  const tokens = p.tokens ?? 0;
+  if (tokens >= 1e6) return 10;
+  if (tokens >= 1e5) return 8;
+  if (tokens >= 1e4) return 7;
+  if (p.size && p.size > 50 * 1024 * 1024) return 8;
+  return 6;
+}
+
+function projectNode(machineId: number, p: ProjectRec, i: number): GraphNode {
+  const status = inferProjectStatus(p.status, p.updatedAt);
+  const fade = projectFade(status, p.updatedAt);
+  const kind = (p.kind ?? "").toLowerCase();
+  const color = PROJECT_KIND_COLOR[kind] ?? KIND_COLOR.project;
+  const active = /^(active|running|ok|live)$/i.test(status);
+  return {
+    id: `proj:${machineId}:${kind}:${p.name}:${i}`,
+    type: "project",
+    label: p.name.slice(0, 28),
+    radius: projectRadius(p),
+    color,
+    dimmed: !active && fade < 0.7,
+    faint: fade < 0.4,
+    fade,
+    tone: active ? "ok" : fade < 0.6 ? "dim" : statusTone(status),
+    itemId: machineId,
+    kind: kind || "project",
+    tags: ["project", kind, status].filter(Boolean),
+    lines: [
+      ...(kind ? [{ k: "kind", v: kind }] : []),
+      ...(status ? [{ k: "status", v: status }] : []),
+      ...(p.tokens != null && p.tokens > 0 ? [{ k: "tokens", v: fmtTokens(p.tokens) }] : []),
+      ...(p.size != null && p.size > 0 ? [{ k: "size", v: fmtGb(p.size) }] : []),
+      ...(p.minutes != null && p.minutes > 0 ? [{ k: "time", v: fmtMinutes(p.minutes) }] : []),
+      ...(p.updatedAt ? [{ k: "updated", v: fmtAgo(p.updatedAt) }] : []),
+    ],
+    href: p.url ?? `/items/${machineId}`,
+  };
+}
+
+function attachLists(
+  hubId: string,
+  machineId: number,
+  databases: DatabaseRec[],
+  projects: ProjectRec[],
+  nodes: GraphNode[],
+  links: GraphLink[],
+  counts: Record<string, number>,
+) {
+  for (const [i, d] of databases.slice(0, MAX_GUEST).entries()) {
+    const leaf = databaseNode(machineId, d, i);
+    nodes.push(leaf);
+    counts.database = (counts.database ?? 0) + 1;
+    links.push({ source: hubId, target: leaf.id, strength: 0.3 });
+  }
+  for (const [i, p] of projects.slice(0, MAX_GUEST).entries()) {
+    const leaf = projectNode(machineId, p, i);
+    nodes.push(leaf);
+    counts.project = (counts.project ?? 0) + 1;
+    links.push({ source: hubId, target: leaf.id, strength: 0.3 });
+  }
+}
+
 export function collectRuntimes(
   items: GraphItem[],
   childrenByParent: Map<number, GraphItem[]>,
@@ -516,6 +629,8 @@ export function collectRuntimes(
   let web = 0;
   let vms = 0;
   let lxc = 0;
+  let databases = 0;
+  let projects = 0;
   for (const it of items) {
     if (!isMachineItem({ ...it, hasVolumes: volumeIds.has(it.id) })) continue;
     const kids = childrenByParent.get(it.id) ?? [];
@@ -525,11 +640,15 @@ export function collectRuntimes(
     web += webOf(it, kids).length;
     vms += guestsOf(it, "vms").length;
     lxc += guestsOf(it, "lxc").length;
+    databases += databasesOf(it).length;
+    projects += projectsOf(it).length;
   }
   const kinds = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
   if (web > 0 && !kinds.includes("web")) kinds.push("web");
   if (vms > 0 && !kinds.includes("vms")) kinds.push("vms");
   if (lxc > 0 && !kinds.includes("lxc")) kinds.push("lxc");
+  if (databases > 0 && !kinds.includes("databases")) kinds.push("databases");
+  if (projects > 0 && !kinds.includes("projects")) kinds.push("projects");
   return kinds;
 }
 
@@ -577,7 +696,16 @@ function hubSubnodes(m: GraphItem, kids: GraphItem[], computer: GraphComputer | 
   const childDisks = kids.filter((c) => attr(c, "role") === "storage");
   const vols = volumesForMachine(computer);
   const diskIds = new Set([...vols.map((v) => v.itemId), ...childDisks.map((d) => d.id)].filter((id) => id !== m.id));
-  return services.length + web.length + guestsOf(m, "vms").length + guestsOf(m, "lxc").length + diskIds.size + vols.length;
+  return (
+    services.length +
+    web.length +
+    guestsOf(m, "vms").length +
+    guestsOf(m, "lxc").length +
+    databasesOf(m).length +
+    projectsOf(m).length +
+    diskIds.size +
+    vols.length
+  );
 }
 
 function unusedWeb(services: ServiceRec[], web: WebRec[]): WebRec[] {
@@ -646,7 +774,7 @@ export function buildSystemsGraph(opts: {
 
   const nodes: GraphNode[] = [];
   const links: GraphLink[] = [];
-  const counts: Record<string, number> = { machine: 0, network: 0, other: 0, service: 0, web: 0, vm: 0, lxc: 0, disk: 0, volume: 0 };
+  const counts: Record<string, number> = { machine: 0, network: 0, other: 0, service: 0, web: 0, vm: 0, lxc: 0, database: 0, project: 0, disk: 0, volume: 0 };
 
   if (view === "services") {
     const kind = runtime;
@@ -657,18 +785,34 @@ export function buildSystemsGraph(opts: {
       const webs = webOf(m, kids);
       const vms = guestsOf(m, "vms");
       const lxc = guestsOf(m, "lxc");
-      if (kind === "web") return { services: [] as ServiceRec[], web: webs, vms: [] as GuestRec[], lxc: [] as GuestRec[] };
-      if (kind === "vms") return { services: [] as ServiceRec[], web: [] as WebRec[], vms, lxc: [] as GuestRec[] };
-      if (kind === "lxc") return { services: [] as ServiceRec[], web: [] as WebRec[], vms: [] as GuestRec[], lxc };
-      if (kind) return { services: all.filter((s) => s.kind === kind), web: [] as WebRec[], vms: [] as GuestRec[], lxc: [] as GuestRec[] };
-      return { services: all, web: unusedWeb(all, webs), vms, lxc };
+      const databases = databasesOf(m);
+      const projects = projectsOf(m);
+      if (kind === "web") return { services: [] as ServiceRec[], web: webs, vms: [] as GuestRec[], lxc: [] as GuestRec[], databases: [] as DatabaseRec[], projects: [] as ProjectRec[] };
+      if (kind === "vms") return { services: [] as ServiceRec[], web: [] as WebRec[], vms, lxc: [] as GuestRec[], databases: [] as DatabaseRec[], projects: [] as ProjectRec[] };
+      if (kind === "lxc") return { services: [] as ServiceRec[], web: [] as WebRec[], vms: [] as GuestRec[], lxc, databases: [] as DatabaseRec[], projects: [] as ProjectRec[] };
+      if (kind === "databases") return { services: [] as ServiceRec[], web: [] as WebRec[], vms: [] as GuestRec[], lxc: [] as GuestRec[], databases, projects: [] as ProjectRec[] };
+      if (kind === "projects") return { services: [] as ServiceRec[], web: [] as WebRec[], vms: [] as GuestRec[], lxc: [] as GuestRec[], databases: [] as DatabaseRec[], projects };
+      if (kind) return { services: all.filter((s) => s.kind === kind), web: [] as WebRec[], vms: [] as GuestRec[], lxc: [] as GuestRec[], databases: [] as DatabaseRec[], projects: [] as ProjectRec[] };
+      return { services: all, web: unusedWeb(all, webs), vms, lxc, databases, projects };
     };
     const totalLeaves = machines.reduce((s, h) => {
       const m = matching(h.it);
-      return s + m.services.length + m.web.length + m.vms.length + m.lxc.length;
+      return s + m.services.length + m.web.length + m.vms.length + m.lxc.length + m.databases.length + m.projects.length;
     }, 0);
     const runtimeLabel =
-      kind === "web" ? "Web / PWA" : kind === "docker" ? "containers" : kind === "vms" ? "VMs" : kind === "lxc" ? "LXC" : kind ?? "Services";
+      kind === "web"
+        ? "Web / PWA"
+        : kind === "docker"
+          ? "containers"
+          : kind === "vms"
+            ? "VMs"
+            : kind === "lxc"
+              ? "LXC"
+              : kind === "databases"
+                ? "Databases"
+                : kind === "projects"
+                  ? "Projects"
+                  : kind ?? "Services";
     nodes.push({
       id: "__center__",
       type: "center",
@@ -683,9 +827,9 @@ export function buildSystemsGraph(opts: {
     // on them — otherwise live data with empty service attributes looks like
     // "no computers in this house".
     for (const { it: m } of machines) {
-      const { services, web, vms, lxc } = matching(m);
+      const { services, web, vms, lxc, databases, projects } = matching(m);
       const reach = reachOf(m);
-      const n = makeHubNode(m, "machine", services.length + web.length + vms.length + lxc.length);
+      const n = makeHubNode(m, "machine", services.length + web.length + vms.length + lxc.length + databases.length + projects.length);
       nodes.push(n);
       counts.machine += 1;
       links.push({ source: "__center__", target: n.id, strength: 0.8 });
@@ -707,6 +851,7 @@ export function buildSystemsGraph(opts: {
         }
       });
       attachGuests(n.id, m.id, vms, lxc, nodes, links, counts);
+      attachLists(n.id, m.id, databases, projects, nodes, links, counts);
     }
   } else {
     const hubCount = hubs.length;
@@ -742,6 +887,7 @@ export function buildSystemsGraph(opts: {
       const web = unusedWeb(services, webOf(m, kids));
       const reach = reachOf(m);
       attachGuests(n.id, m.id, guestsOf(m, "vms"), guestsOf(m, "lxc"), nodes, links, counts);
+      attachLists(n.id, m.id, databasesOf(m), projectsOf(m), nodes, links, counts);
       for (const [i, s] of services.slice(0, MAX_SVC).entries()) {
         const leaf = serviceNode(m.id, s, i, reach);
         nodes.push(leaf);
@@ -773,7 +919,7 @@ export function buildSystemsGraph(opts: {
     }
   }
 
-  const legend = (["machine", "network", "other", "service", "web", "vm", "lxc", "disk", "volume"] as const)
+  const legend = (["machine", "network", "other", "service", "web", "vm", "lxc", "database", "project", "disk", "volume"] as const)
     .filter((t) => (counts[t] ?? 0) > 0)
     .map((t) => ({ type: t, label: KIND_LABEL[t], color: KIND_COLOR[t], count: counts[t] }));
 

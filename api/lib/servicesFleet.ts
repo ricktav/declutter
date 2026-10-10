@@ -1,4 +1,11 @@
 import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls.ts";
+import {
+  parseDatabasesList,
+  parseProjectsList,
+  projectsFromLabels,
+  type DatabaseRec,
+  type ProjectRec,
+} from "./servicesProjects.ts";
 
 /** Parse a claudemux (or similar) fleet HTML/JSON snapshot into per-host container lists. */
 
@@ -25,7 +32,11 @@ export type FleetHost = {
   containers: FleetContainer[];
   node: FleetContainer[];
   web: FleetWeb[];
+  databases: DatabaseRec[];
+  projects: ProjectRec[];
 };
+
+export type { DatabaseRec, ProjectRec };
 
 export type MachineHint = {
   id: number;
@@ -151,7 +162,7 @@ function hostNameOf(o: Record<string, unknown>): string | null {
   return str(o.host ?? o.hostname ?? o.machine ?? o.name ?? o.Name ?? o.item);
 }
 
-function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "node" | "web"> {
+function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "node" | "web" | "databases" | "projects"> {
   const containers = [...listOf(o.containers), ...listOf(o.docker), ...listOf(o.services), ...listOf(o.compose)]
     .map(asContainer)
     .filter((c): c is FleetContainer => c != null);
@@ -163,6 +174,8 @@ function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "
       .map(asWeb)
       .filter((w): w is FleetWeb => w != null),
   );
+  const databases = parseDatabasesList(o.databases ?? o.dbs);
+  const projects = [...parseProjectsList(o.projects ?? o.agents), ...projectsFromLabels(web)];
   const seen = new Set<string>();
   const uniq = (xs: FleetContainer[]) =>
     xs.filter((c) => {
@@ -171,7 +184,27 @@ function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "
       seen.add(k);
       return true;
     });
-  return { containers: uniq(containers), node: uniq(node), web };
+  return { containers: uniq(containers), node: uniq(node), web, databases: uniqByDb(databases), projects: uniqByProject(projects) };
+}
+
+function uniqByDb(xs: DatabaseRec[]): DatabaseRec[] {
+  const seen = new Set<string>();
+  return xs.filter((d) => {
+    const k = `${(d.engine ?? "").toLowerCase()}:${d.name.toLowerCase()}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function uniqByProject(xs: ProjectRec[]): ProjectRec[] {
+  const seen = new Set<string>();
+  return xs.filter((p) => {
+    const k = `${(p.kind ?? "").toLowerCase()}:${p.name.toLowerCase()}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 function rewriteContainerUrl(c: FleetContainer, reach: string | null): FleetContainer {
@@ -187,28 +220,50 @@ function rewriteWebUrls(w: FleetWeb, reach: string | null): FleetWeb {
   return { ...w, ...(url ? { url } : {}), ...(urls?.length ? { urls } : {}) };
 }
 
-function rewriteHostLists(
-  lists: Pick<FleetHost, "containers" | "node" | "web">,
-  host: string,
-  ip?: string | null,
-): Pick<FleetHost, "containers" | "node" | "web"> {
+function rewriteDatabaseUrl(d: DatabaseRec, reach: string | null): DatabaseRec {
+  if (!d.url || !reach) return d;
+  const url = rewriteLocalHostUrl(d.url, reach);
+  return url === d.url ? d : { ...d, url };
+}
+
+function rewriteProjectUrl(p: ProjectRec, reach: string | null): ProjectRec {
+  if (!p.url || !reach) return p;
+  const url = rewriteLocalHostUrl(p.url, reach);
+  return url === p.url ? p : { ...p, url };
+}
+
+type HostLists = Pick<FleetHost, "containers" | "node" | "web" | "databases" | "projects">;
+
+function emptyLists(): HostLists {
+  return { containers: [], node: [], web: [], databases: [], projects: [] };
+}
+
+function hostHasRows(lists: HostLists): boolean {
+  return lists.containers.length + lists.node.length + lists.web.length + lists.databases.length + lists.projects.length > 0;
+}
+
+function rewriteHostLists(lists: HostLists, host: string, ip?: string | null): HostLists {
   const reach = pickReachHost(ip, host);
   if (!reach) return lists;
   return {
     containers: lists.containers.map((c) => rewriteContainerUrl(c, reach)),
     node: lists.node.map((c) => rewriteContainerUrl(c, reach)),
     web: lists.web.map((w) => rewriteWebUrls(w, reach)),
+    databases: lists.databases.map((d) => rewriteDatabaseUrl(d, reach)),
+    projects: lists.projects.map((p) => rewriteProjectUrl(p, reach)),
   };
 }
 
-function pushHost(out: FleetHost[], host: string, lists: Pick<FleetHost, "containers" | "node" | "web">, ip?: string | null) {
+function pushHost(out: FleetHost[], host: string, lists: HostLists, ip?: string | null) {
   const next = rewriteHostLists(lists, host, ip);
-  if (!next.containers.length && !next.node.length && !next.web.length) return;
+  if (!hostHasRows(next)) return;
   const prev = out.find((h) => normHost(h.host) === normHost(host));
   if (prev) {
     prev.containers.push(...next.containers);
     prev.node.push(...next.node);
     prev.web = groupWebServices([...prev.web, ...next.web]);
+    prev.databases = uniqByDb([...prev.databases, ...next.databases]);
+    prev.projects = uniqByProject([...prev.projects, ...next.projects]);
     if (!prev.ip && ip) prev.ip = ip;
     return;
   }
@@ -225,14 +280,14 @@ function walk(x: unknown, out: FleetHost[], depth: number) {
   if (!o) return;
   const host = hostNameOf(o);
   const lists = pickLists(o);
-  if (host && (lists.containers.length || lists.node.length || lists.web.length)) {
+  if (host && hostHasRows(lists)) {
     pushHost(out, host, lists, str(o.ip ?? o.address));
   }
   for (const [k, v] of Object.entries(o)) {
-    if (["containers", "docker", "services", "compose", "node", "nodes", "web", "pwa", "urls", "pages"].includes(k)) continue;
+    if (["containers", "docker", "services", "compose", "node", "nodes", "web", "pwa", "urls", "pages", "databases", "dbs", "projects", "agents"].includes(k)) continue;
     if (Array.isArray(v) || (v && typeof v === "object")) {
       const nested = asRecord(v);
-      if (nested && !hostNameOf(nested) && (pickLists(nested).containers.length || pickLists(nested).node.length)) {
+      if (nested && !hostNameOf(nested) && hostHasRows(pickLists(nested))) {
         pushHost(out, k, pickLists(nested));
       } else {
         walk(v, out, depth + 1);
@@ -335,7 +390,7 @@ function extractClassBlocks(html: string, tag: string, className: string): strin
 function stripSkippedTables(html: string): string {
   return html.replace(/<table\b[\s\S]*?<\/table>/gi, (table) => {
     const open = table.match(/<table\b[^>]*>/i)?.[0] ?? "";
-    if (hasClass(open, "databases-table") || hasClass(open, "timers")) return "";
+    if (hasClass(open, "timers")) return "";
     // services tables are `class="mtx services-table"` — keep those
     if (hasClass(open, "mtx") && !hasClass(open, "services-table")) return "";
     if (/\bdata-host\s*=/i.test(table)) return "";
@@ -635,6 +690,48 @@ function parseServicesTable(html: string): FleetWeb[] {
   return groupWebServices(out);
 }
 
+function parseDatabasesTable(html: string): DatabaseRec[] {
+  const out: DatabaseRec[] = [];
+  for (const tm of html.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table>/gi)) {
+    const open = `<table${tm[1]}>`;
+    if (!hasClass(open, "databases-table")) continue;
+    const body = tm[2];
+    const rows = [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((r) => r[1]);
+    if (!rows.length) continue;
+    const cells = (row: string) =>
+      [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => innerText(c[1]));
+    const first = cells(rows[0]).map((h) => h.toLowerCase());
+    const hasHeader = first.some((h) => /db|name|database|engine|type/.test(h));
+    const nameIdx = hasHeader ? first.findIndex((h) => h === "db" || h === "name" || h === "database" || h === "schema") : 0;
+    const engineIdx = hasHeader ? first.findIndex((h) => h === "engine" || h === "type" || h === "kind") : 1;
+    const statusIdx = hasHeader ? first.findIndex((h) => h === "status" || h === "state") : -1;
+    const portIdx = hasHeader ? first.findIndex((h) => h === "port") : -1;
+    const sizeIdx = hasHeader ? first.findIndex((h) => h === "size" || h === "bytes") : -1;
+    const urlIdx = hasHeader ? first.findIndex((h) => h === "url" || h === "href") : -1;
+    const dataRows = hasHeader ? rows.slice(1) : rows;
+    for (const row of dataRows) {
+      const cols = cells(row);
+      const name = (nameIdx >= 0 ? cols[nameIdx] : cols[0]) ?? "";
+      if (!name || isJunkCell(name)) continue;
+      const engine = engineIdx >= 0 ? cols[engineIdx] ?? "" : "";
+      const status = statusIdx >= 0 ? cols[statusIdx] ?? "" : "";
+      const port = portIdx >= 0 ? portOf(cols[portIdx]) : undefined;
+      const sizeRaw = sizeIdx >= 0 ? cols[sizeIdx] ?? "" : "";
+      const sizeN = Number(String(sizeRaw).replace(/[^\d.]/g, ""));
+      const url = urlIdx >= 0 ? cols[urlIdx] ?? "" : "";
+      out.push({
+        name,
+        ...(engine && !isJunkCell(engine) ? { engine } : {}),
+        ...(status && !isJunkCell(status) ? { status } : {}),
+        ...(port != null ? { port } : {}),
+        ...(Number.isFinite(sizeN) && sizeN > 0 ? { size: sizeN } : {}),
+        ...(url && !isJunkCell(url) ? { url } : {}),
+      });
+    }
+  }
+  return uniqByDb(out);
+}
+
 export type ParsedFleet = { hosts: FleetHost[]; skippedUnreachable: string[] };
 
 /** Claudemux daily HTML: one `<section class="host">` per machine. */
@@ -660,11 +757,13 @@ export function parseClaudemuxHosts(html: string): ParsedFleet {
     const body = stripSkippedTables(section);
     const containers = parsePdRows(body);
     const web = parseServicesTable(body);
-    if (!containers.length && !web.length) {
-      hosts.push({ host, ip, containers: [], node: [], web: [] });
+    const databases = parseDatabasesTable(body);
+    const projects = projectsFromLabels(web);
+    if (!containers.length && !web.length && !databases.length && !projects.length) {
+      hosts.push({ host, ip, ...emptyLists() });
       continue;
     }
-    pushHost(hosts, host, { containers, node: [], web }, ip);
+    pushHost(hosts, host, { containers, node: [], web, databases, projects }, ip);
   }
   return { hosts, skippedUnreachable };
 }
@@ -691,19 +790,19 @@ function extractJsonBlobs(text: string): unknown[] {
 
 export function parseFleetDocument(text: string): FleetHost[] {
   if (/<section\b[^>]*class=["'][^"']*\bhost\b/i.test(text)) {
-    return parseClaudemuxHosts(text).hosts.filter((h) => h.containers.length || h.node.length || h.web.length);
+    return parseClaudemuxHosts(text).hosts.filter(hostHasRows);
   }
   const out: FleetHost[] = [];
   for (const blob of extractJsonBlobs(text)) walk(blob, out, 0);
   for (const h of out) h.containers = uniqByName(h.containers);
-  return out.filter((h) => h.containers.length || h.node.length || h.web.length);
+  return out.filter(hostHasRows);
 }
 
 export function parseFleetDocumentWithMeta(text: string): ParsedFleet {
   if (/<section\b[^>]*class=["'][^"']*\bhost\b/i.test(text)) {
     const parsed = parseClaudemuxHosts(text);
     return {
-      hosts: parsed.hosts.filter((h) => h.containers.length || h.node.length || h.web.length),
+      hosts: parsed.hosts.filter(hostHasRows),
       skippedUnreachable: parsed.skippedUnreachable,
     };
   }

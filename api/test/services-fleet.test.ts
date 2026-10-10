@@ -10,9 +10,11 @@ import {
   parseFleetDocument,
   parseFleetDocumentWithMeta,
 } from "../lib/servicesFleet";
+import { detectProjectKind, parseProjectsDocument, projectFade, parseTokenCount } from "../lib/servicesProjects";
 import { pickReachHost, rewriteLocalHostUrl, statusTone, worstStatusTone } from "../lib/serviceUrls";
 
 const snippet = readFileSync(path.join(import.meta.dirname, "fixtures/claudemux-fleet-snippet.html"), "utf8");
+const projectsSnippet = readFileSync(path.join(import.meta.dirname, "fixtures/claude-projects-snippet.html"), "utf8");
 
 describe("parseFleetDocument JSON", () => {
   it("reads a JSON array of hosts with docker lists", () => {
@@ -65,6 +67,7 @@ describe("claudemux HTML fixture", () => {
     expect(dock.containers[0]).toEqual({ name: "nginx", port: 80 });
     expect(snippet.match(/class="cname[^"]*">nginx/g)?.length).toBe(2);
     expect(dock.web).toHaveLength(20);
+    expect(dock.databases).toEqual([expect.objectContaining({ name: "declutter", engine: "mysql" })]);
 
     const pro = hosts.find((h) => h.host === "prodesk-rt1")!;
     expect(pro.ip).toBe("10.50.0.142");
@@ -88,6 +91,9 @@ describe("claudemux HTML fixture", () => {
     expect(pro.web.find((w) => w.label === "grafana")?.ports).toEqual([3000, 8086]);
     expect(pro.web.find((w) => w.label === "home-assistant")?.ports).toEqual([8123, 8199]);
     expect(pro.web.find((w) => w.label === "home-assistant")?.status).toBe("ok");
+    expect(pro.projects).toEqual([
+      expect.objectContaining({ name: "portal/clawdy-portal", kind: "openclaw", status: "ok" }),
+    ]);
 
     const names = hosts.flatMap((h) => [h.host, ...h.containers.map((c) => c.name)]);
     expect(names).not.toEqual(expect.arrayContaining(["ls", "echo", "docker", "plugwise", "crontab"]));
@@ -252,5 +258,91 @@ describe("localhost URLs and fleet status", () => {
     expect(aggregateStatus(["ok", "amber"])).toBe("ok");
     expect(aggregateStatus(["amber", "red"])).toBe("red");
     expect(aggregateStatus(["amber"])).toBe("amber");
+  });
+});
+
+describe("databases and coding-agent projects", () => {
+  it("reads extra database columns and lifts grok / hermes / openclaw from web", () => {
+    const html = `
+      <section class="host">
+        <div class="hh"><div class="hh-l"><span class="hname mono">macmini-m4</span> 10.50.0.102:8766</div></div>
+        <table class="mtx services-table">
+          <tr><th>label</th><th>url</th><th>status</th></tr>
+          <tr><td>Grok build</td><td>http://localhost:8787/</td><td>ok</td></tr>
+          <tr><td>Hermes agent</td><td>http://10.50.0.102:8811/</td><td>ok</td></tr>
+          <tr><td>OpenClaw</td><td>http://10.50.0.102:3463/</td><td>amber</td></tr>
+          <tr><td>Workbench</td><td>http://10.50.0.102:3002/</td><td>ok</td></tr>
+        </table>
+        <table class="databases-table">
+          <tr><th>db</th><th>engine</th><th>status</th><th>port</th></tr>
+          <tr><td>declutter</td><td>mysql</td><td>ok</td><td>3306</td></tr>
+          <tr><td>grafana</td><td>postgres</td><td>ok</td><td>5432</td></tr>
+        </table>
+      </section>`;
+    const hosts = parseFleetDocument(html);
+    expect(hosts[0].databases).toEqual([
+      expect.objectContaining({ name: "declutter", engine: "mysql", status: "ok", port: 3306 }),
+      expect.objectContaining({ name: "grafana", engine: "postgres", port: 5432 }),
+    ]);
+    expect(hosts[0].projects.map((p) => p.kind)).toEqual(["grok", "hermes", "openclaw"]);
+    expect(hosts[0].projects.find((p) => p.kind === "grok")?.url).toBe("http://10.50.0.102:8787/");
+    expect(hosts[0].web.map((w) => w.label)).toContain("Workbench");
+  });
+
+  it("parses a /projects/ JSON page per host", () => {
+    const hosts = parseProjectsDocument(
+      JSON.stringify({
+        hosts: [
+          {
+            host: "macmini-m4",
+            ip: "10.50.0.102",
+            projects: [
+              { name: "declutter", tokens: "1.2M", size: "48 MB", updatedAt: "2h ago", status: "active" },
+              { name: "old-lab", tokens: 8000, updatedAt: "40 days ago" },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0].projects[0]).toEqual(
+      expect.objectContaining({ name: "declutter", kind: "claude", tokens: 1.2e6, status: "active" }),
+    );
+    expect(hosts[0].projects[1].name).toBe("old-lab");
+    expect(projectFade("active", "2h ago")).toBe(1);
+    expect(projectFade("stale", "40 days ago")).toBeLessThan(0.6);
+    expect(parseTokenCount("12k")).toBe(12000);
+    expect(detectProjectKind("portal/clawdy-portal")).toBe("openclaw");
+  });
+
+  it("parses a /projects/ HTML table and ignores fleet container tables", () => {
+    const html = `
+      <section class="host">
+        <span class="hname">dockermac</span> 10.50.0.10
+        <table class="projects-table">
+          <tr><th>project</th><th>tokens</th><th>size</th><th>updated</th><th>kind</th></tr>
+          <tr><td>homebase</td><td>80k</td><td>12 MB</td><td>now</td><td>claude</td></tr>
+          <tr><td>grokbot</td><td>2.1M</td><td>90 MB</td><td>3 days ago</td><td>grok</td></tr>
+        </table>
+        <table class="projects">
+          <tr class="pdrow"><td><span class="pd-k">container</span> <span class="cname">nginx</span></td></tr>
+        </table>
+      </section>`;
+    const hosts = parseProjectsDocument(html);
+    expect(hosts[0].host).toBe("dockermac");
+    expect(hosts[0].projects.map((p) => p.name)).toEqual(["homebase", "grokbot"]);
+    expect(hosts[0].projects.find((p) => p.name === "grokbot")?.kind).toBe("grok");
+    expect(hosts[0].projects.find((p) => p.name === "homebase")?.tokens).toBe(80000);
+  });
+
+  it("reads the Claude projects HTML fixture per machine", () => {
+    const hosts = parseProjectsDocument(projectsSnippet);
+    expect(hosts.map((h) => h.host).sort()).toEqual(["dockermac", "macmini-m4"]);
+    const mini = hosts.find((h) => h.host === "macmini-m4")!;
+    expect(mini.projects.map((p) => p.name)).toEqual(["declutter", "photos-review"]);
+    expect(mini.projects[0]).toEqual(expect.objectContaining({ kind: "claude", tokens: 1.2e6, status: "active" }));
+    expect(hosts.find((h) => h.host === "dockermac")?.projects).toEqual([
+      expect.objectContaining({ name: "openclaw-bridge", kind: "openclaw", status: "active" }),
+    ]);
   });
 });

@@ -2,9 +2,17 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fmtBytes, portHref, rewriteLocalHostUrl, statusTone, worstStatusTone, type StatusTone } from "../../api/lib/serviceUrls.ts";
+import {
+  PROJECT_KIND_COLOR,
+  fmtAgo,
+  fmtMinutes,
+  fmtTokens,
+  inferProjectStatus,
+  projectFade,
+} from "../../api/lib/servicesProjects.ts";
 
-const LIST_KEYS = new Set(["containers", "docker", "node", "web", "vms", "lxc", "services"]);
-const COLLAPSE_KEYS = new Set(["containers", "docker", "web", "vms", "lxc"]);
+const LIST_KEYS = new Set(["containers", "docker", "node", "web", "vms", "lxc", "services", "databases", "projects"]);
+const COLLAPSE_KEYS = new Set(["containers", "docker", "web", "vms", "lxc", "databases", "projects"]);
 
 export function isJsonListAttr(key: string): boolean {
   return LIST_KEYS.has(key);
@@ -18,6 +26,8 @@ const LIST_LABELS: Record<string, string> = {
   vms: "VMs",
   lxc: "LXC",
   services: "Services",
+  databases: "Databases",
+  projects: "Projects",
 };
 
 export function jsonListAttrLabel(key: string): string | undefined {
@@ -148,13 +158,15 @@ type TableRow = {
   sizeBytes: number;
   extra: string[];
   mounts: Mount[];
+  fade?: number;
+  kindColor?: string;
 };
 
 function rowFrom(key: string, x: unknown, i: number, reach: string | null): TableRow | null {
   if (typeof x === "string" || typeof x === "number") {
     const name = String(x).trim();
     if (!name) return null;
-    return { key: `${name}-${i}`, status: "", tone: "dim", name, id: "", ports: [], hrefs: [], sizeLabel: "", sizeBytes: 0, extra: [], mounts: [] };
+    return { key: `${name}-${i}`, status: "", tone: "dim", name, id: "", ports: [], hrefs: [], sizeLabel: "", sizeBytes: 0, extra: [], mounts: [], fade: 1 };
   }
   const o = asRec(x);
   if (!o) return null;
@@ -182,6 +194,58 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
       sizeBytes: 0,
       extra: [],
       mounts: [],
+    };
+  }
+  if (key === "databases") {
+    const name = str(o.name ?? o.db ?? o.database).trim();
+    if (!name) return null;
+    const status = str(o.status);
+    const size = Number(o.size);
+    const engine = str(o.engine ?? o.type);
+    return {
+      key: `${name}-${i}`,
+      status,
+      tone: statusTone(status) ?? (status ? "ok" : "dim"),
+      name,
+      id: engine,
+      ports: nums([o.port, o.ports]),
+      hrefs,
+      sizeLabel: Number.isFinite(size) && size > 0 ? (size >= 1024 ? fmtBytes(size) : `${size}`) : "",
+      sizeBytes: Number.isFinite(size) && size > 0 ? size : 0,
+      extra: [],
+      mounts: [],
+      fade: 1,
+    };
+  }
+  if (key === "projects") {
+    const name = str(o.name ?? o.project ?? o.path).trim();
+    if (!name) return null;
+    const kind = str(o.kind ?? o.agent);
+    const status = inferProjectStatus(str(o.status) || undefined, str(o.updatedAt) || undefined);
+    const tokens = Number(o.tokens);
+    const size = Number(o.size);
+    const minutes = Number(o.minutes);
+    const fade = projectFade(status, str(o.updatedAt) || undefined);
+    const extra = [
+      fmtMinutes(Number.isFinite(minutes) && minutes > 0 ? minutes : undefined),
+      fmtAgo(str(o.updatedAt) || undefined),
+    ].filter(Boolean);
+    const tokenLabel = Number.isFinite(tokens) && tokens > 0 ? fmtTokens(tokens) : "";
+    const byteLabel = Number.isFinite(size) && size > 0 ? fmtBytes(size) : "";
+    return {
+      key: `${kind}:${name}-${i}`,
+      status,
+      tone: /^(active|running|ok|live)$/i.test(status) ? "ok" : fade < 0.6 ? "dim" : statusTone(status) ?? "dim",
+      name,
+      id: kind,
+      ports: nums([o.port, o.ports]),
+      hrefs,
+      sizeLabel: tokenLabel || byteLabel,
+      sizeBytes: Number.isFinite(tokens) && tokens > 0 ? tokens : Number.isFinite(size) && size > 0 ? size : 0,
+      extra,
+      mounts: [],
+      fade,
+      kindColor: kind ? PROJECT_KIND_COLOR[kind.toLowerCase()] : undefined,
     };
   }
   if (key === "vms" || key === "lxc") {
@@ -343,7 +407,7 @@ export function AttrListValue({
           <tr>
             <th className="w-4 px-1.5 py-1" />
             {th("name", "Name")}
-            {th("id", attrKey === "vms" || attrKey === "lxc" ? "Id" : "Image")}
+            {th("id", attrKey === "vms" || attrKey === "lxc" ? "Id" : attrKey === "databases" ? "Engine" : attrKey === "projects" ? "Kind" : "Image")}
             <th className="text-left font-medium text-muted-foreground px-1.5 py-1">Ports</th>
             {th("size", "Size")}
             <th className="text-left font-medium text-muted-foreground px-1.5 py-1">Extra</th>
@@ -351,14 +415,24 @@ export function AttrListValue({
         </thead>
         <tbody className="sm:divide-y sm:divide-border">
           {rows.map((r) => (
-            <tr key={r.key} className="block sm:table-row mb-2 sm:mb-0 rounded-md border border-border sm:border-0 p-2 sm:p-0">
+            <tr
+              key={r.key}
+              className="block sm:table-row mb-2 sm:mb-0 rounded-md border border-border sm:border-0 p-2 sm:p-0"
+              style={r.fade != null && r.fade < 1 ? { opacity: Math.max(0.28, r.fade) } : undefined}
+            >
               <td className="block sm:table-cell px-1.5 py-1 align-top sm:w-4" data-label="">
                 <span className="inline-flex items-center gap-1.5">
                   <StatusDot tone={r.tone} title={r.status || undefined} />
-                  <span className="sm:hidden font-medium">{r.name}</span>
+                  <span className="sm:hidden font-medium" style={r.kindColor ? { color: r.kindColor } : undefined}>
+                    {r.name}
+                  </span>
                 </span>
               </td>
-              <td className="hidden sm:table-cell px-1.5 py-1 align-top font-medium" data-label="Name">
+              <td
+                className="hidden sm:table-cell px-1.5 py-1 align-top font-medium"
+                data-label="Name"
+                style={r.kindColor ? { color: r.kindColor } : undefined}
+              >
                 {r.name}
               </td>
               <td className="block sm:table-cell px-1.5 py-1 align-top text-muted-foreground break-all" data-label="Id">

@@ -21,6 +21,7 @@ import { AREA_ICONS, AREA_COLORS } from "@/lib/areaStyle";
 import { cn } from "@/lib/utils";
 import type { Area } from "@db/schema";
 import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
+import { isMachineItem } from "@/lib/systemsAttrs";
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -254,6 +255,7 @@ export default function AreaView() {
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
+  const [realComputers, setRealComputers] = usePersistedState("areaView.realComputers", true);
   const navigate = useNavigate();
 
   const area = trpc.areas.get.useQuery({ slug: slug! }, { enabled: !!slug });
@@ -305,14 +307,26 @@ export default function AreaView() {
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
+    const machinesOnly = slug === "computers" && realComputers;
     return (itemsList.data ?? []).filter((i) => {
       if (query && !i.name.toLowerCase().includes(query)) return false;
       for (const [k, v] of Object.entries(colFilters)) {
         if (v && String(i.attributes?.[k] ?? "") !== v) return false;
       }
+      if (
+        machinesOnly &&
+        !isMachineItem({
+          attributes: i.attributes,
+          areaSlug: slug,
+          parentId: i.parentId,
+          status: i.status,
+        })
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [itemsList.data, q, colFilters]);
+  }, [itemsList.data, q, colFilters, slug, realComputers]);
 
   const sorted = useMemo(() => {
     const rows = [...filtered];
@@ -391,6 +405,16 @@ export default function AreaView() {
           />
           show archived
         </label>
+        {slug === "computers" && (
+          <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground" title="Hide mice, keyboards, monitors and other peripherals">
+            <input
+              type="checkbox"
+              checked={realComputers}
+              onChange={(e) => setRealComputers(e.target.checked)}
+            />
+            Real computers
+          </label>
+        )}
         {categorical.map((c) => (
           <label key={c.key} className="text-[12px] text-muted-foreground">
             {c.label}
@@ -448,9 +472,11 @@ export default function AreaView() {
               )}
             </Link>
           ))}
-          {sorted.length === 0 && (
+            {sorted.length === 0 && (
             <div className="col-span-full text-center text-muted-foreground py-8">
-              No items yet — add one, or capture something via the inbox.
+              {slug === "computers" && realComputers
+                ? "No real computers in this list — turn off Real computers to see peripherals."
+                : "No items yet — add one, or capture something via the inbox."}
             </div>
           )}
         </div>
@@ -514,7 +540,9 @@ export default function AreaView() {
             {sorted.length === 0 && (
               <tr>
                 <td colSpan={columns.length + 4} className="text-center text-muted-foreground py-8">
-                  No items yet — add one, or capture something via the inbox.
+                  {slug === "computers" && realComputers
+                    ? "No real computers in this list — turn off Real computers to see peripherals."
+                    : "No items yet — add one, or capture something via the inbox."}
                 </td>
               </tr>
             )}

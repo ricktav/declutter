@@ -64,7 +64,7 @@ if (file) {
 
 const { hosts, skippedUnreachable } = parseFleetDocumentWithMeta(text);
 if (hosts.length === 0) {
-  console.error("no reachable hosts with containers or services found (need section.host + tr.pdrow / services-table).");
+  console.error("no reachable hosts with containers, services, databases or projects found (need section.host + tr.pdrow / services-table / databases-table).");
   process.exit(1);
 }
 
@@ -90,13 +90,22 @@ const matched: Array<{
   match: "hostname" | "ip";
   containers: (typeof hosts)[0]["containers"];
   web: (typeof hosts)[0]["web"];
+  databases: (typeof hosts)[0]["databases"];
+  projects: (typeof hosts)[0]["projects"];
 }> = [];
-const unmatched: Array<{ host: string; ip: string | null; containers: number; web: number }> = [];
+const unmatched: Array<{ host: string; ip: string | null; containers: number; web: number; databases: number; projects: number }> = [];
 
 for (const h of hosts) {
   const m = matchMachine({ host: h.host, ip: h.ip }, machines);
   if (!m) {
-    unmatched.push({ host: h.host, ip: h.ip ?? null, containers: h.containers.length, web: h.web.length });
+    unmatched.push({
+      host: h.host,
+      ip: h.ip ?? null,
+      containers: h.containers.length,
+      web: h.web.length,
+      databases: h.databases.length,
+      projects: h.projects.length,
+    });
     continue;
   }
   const hostNorm = h.host.trim().toLowerCase().replace(/\.local$/, "");
@@ -110,6 +119,8 @@ for (const h of hosts) {
     match: byHost ? "hostname" : "ip",
     containers: h.containers,
     web: h.web,
+    databases: h.databases,
+    projects: h.projects,
   });
 }
 
@@ -124,8 +135,12 @@ const plan = {
     match: row.match,
     containers: row.containers.length,
     web: row.web.length,
+    databases: row.databases.length,
+    projects: row.projects.length,
     containerNames: row.containers.map((c) => c.name),
     serviceLabels: row.web.map((w) => w.label),
+    databaseNames: row.databases.map((d) => d.name),
+    projectNames: row.projects.map((p) => p.name),
     services: row.web.map((w) => ({
       label: w.label,
       ports: w.ports ?? (w.port != null ? [w.port] : []),
@@ -151,10 +166,14 @@ for (const row of matched) {
     merge: true,
     ...(row.containers.length ? { containers: row.containers } : {}),
     web: row.web,
+    ...(row.databases.length ? { databases: row.databases } : {}),
+    ...(row.projects.length ? { projects: row.projects } : {}),
   };
   await trpc("services.report", report, "POST");
   ok += 1;
-  console.log(`${row.name} (#${row.itemId}): ${row.containers.length} container(s), ${row.web.length} service(s) from ${row.host}`);
+  console.log(
+    `${row.name} (#${row.itemId}): ${row.containers.length} container(s), ${row.web.length} service(s), ${row.databases.length} database(s), ${row.projects.length} project(s) from ${row.host}`,
+  );
 }
 if (unmatched.length) console.error(`unmatched hosts: ${unmatched.map((u) => u.host).join(", ")}`);
 if (skippedUnreachable.length) console.error(`skipped unreachable: ${skippedUnreachable.join(", ")}`);

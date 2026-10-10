@@ -102,11 +102,13 @@ function runtimeChipLabel(k: string): string {
   if (k === "web") return "web / PWA";
   if (k === "vms") return "VMs";
   if (k === "lxc") return "LXC";
+  if (k === "databases") return "databases";
+  if (k === "projects") return "projects";
   return k;
 }
 
 const HUB_TYPES = new Set(["center", "machine", "network", "other"]);
-const LEAF_TYPES = new Set(["service", "web", "vm", "lxc", "disk", "volume"]);
+const LEAF_TYPES = new Set(["service", "web", "vm", "lxc", "database", "project", "disk", "volume"]);
 
 function fitTransform(nodes: { x?: number; y?: number; radius: number; type: string }[], w: number, h: number) {
   let minX = Infinity;
@@ -386,6 +388,7 @@ export default function SystemsPage() {
       .attr("r", (d) => d.radius)
       .attr("fill", (d) => d.color)
       .attr("fill-opacity", (d) => {
+        if (d.fade != null) return Math.max(0.12, d.fade * (LEAF_TYPES.has(d.type) ? 0.9 : 1));
         if (d.faint) return 0.12;
         if (d.dimmed) return 0.25;
         return LEAF_TYPES.has(d.type) ? 0.8 : 1;

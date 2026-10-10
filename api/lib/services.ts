@@ -58,6 +58,26 @@ export type GuestRecIn = {
   mounts?: MountRecIn[];
 };
 
+export type DatabaseRecIn = {
+  name: string;
+  engine?: string;
+  status?: string;
+  port?: number;
+  size?: number;
+  url?: string;
+};
+
+export type ProjectRecIn = {
+  name: string;
+  kind?: string;
+  status?: string;
+  tokens?: number;
+  size?: number;
+  updatedAt?: string;
+  minutes?: number;
+  url?: string;
+};
+
 export type ServicesReportInput = {
   itemId: number;
   source: string;
@@ -67,6 +87,8 @@ export type ServicesReportInput = {
   web?: WebRecIn[];
   vms?: GuestRecIn[];
   lxc?: GuestRecIn[];
+  databases?: DatabaseRecIn[];
+  projects?: ProjectRecIn[];
 };
 
 function compactMounts(list: MountRecIn[] | undefined): MountRecIn[] | undefined {
@@ -127,6 +149,28 @@ function compactWebAt(w: WebRecIn, reach: string | null): Record<string, string 
     url: w.url ? rewriteLocalHostUrl(w.url, reach) : w.url,
     urls: w.urls?.map((u) => rewriteLocalHostUrl(u, reach)),
   });
+}
+
+function compactDatabase(d: DatabaseRecIn, reach: string | null): Record<string, unknown> {
+  const o: Record<string, unknown> = { name: d.name };
+  if (d.engine) o.engine = d.engine.slice(0, 32);
+  if (d.status) o.status = d.status;
+  if (d.port != null) o.port = d.port;
+  if (d.size != null && d.size > 0) o.size = d.size;
+  if (d.url) o.url = rewriteLocalHostUrl(d.url, reach);
+  return o;
+}
+
+function compactProject(p: ProjectRecIn, reach: string | null): Record<string, unknown> {
+  const o: Record<string, unknown> = { name: p.name };
+  if (p.kind) o.kind = p.kind.slice(0, 32);
+  if (p.status) o.status = p.status;
+  if (p.tokens != null && p.tokens > 0) o.tokens = p.tokens;
+  if (p.size != null && p.size > 0) o.size = p.size;
+  if (p.updatedAt) o.updatedAt = p.updatedAt.slice(0, 40);
+  if (p.minutes != null && p.minutes > 0) o.minutes = p.minutes;
+  if (p.url) o.url = rewriteLocalHostUrl(p.url, reach);
+  return o;
 }
 
 function compactGuest(g: GuestRecIn): Record<string, unknown> {
@@ -198,6 +242,18 @@ function existingWeb(raw: unknown): Record<string, string | number | string[] | 
     .filter((x): x is Record<string, string | number | string[] | number[]> => x != null);
 }
 
+function existingNamed(raw: unknown, keys: string[]): Record<string, unknown>[] {
+  return parseJsonArray(raw)
+    .map((x) => {
+      if (typeof x === "string" || typeof x === "number") return { name: String(x) };
+      const o = asObj(x);
+      if (!o) return null;
+      const name = keys.map((k) => String(o[k] ?? "").trim()).find(Boolean) ?? "";
+      return name ? o : null;
+    })
+    .filter((x): x is Record<string, unknown> => x != null);
+}
+
 function existingGuests(raw: unknown): Record<string, unknown>[] {
   return parseJsonArray(raw)
     .map((x) => {
@@ -244,13 +300,16 @@ export type ServicesReportResult = {
   web: number;
   vms: number;
   lxc: number;
+  databases: number;
+  projects: number;
 };
 
 /**
- * Snapshot of processes / guests on a machine. Replaces the keys that were
- * sent unless `merge` is set (then incoming rows upsert by name / label / vmid
- * and omitted-from-incoming rows stay). Omitted keys stay. Empty arrays clear
- * that key unless `merge` (empty + merge leaves the key).
+ * Snapshot of processes / guests / databases / coding-agent projects on a
+ * machine. Replaces the keys that were sent unless `merge` is set (then
+ * incoming rows upsert by name / label / vmid / kind+name and omitted-from-
+ * incoming rows stay). Omitted keys stay. Empty arrays clear that key unless
+ * `merge` (empty + merge leaves the key).
  */
 export async function applyServicesReport(db: Db, input: ServicesReportInput): Promise<ServicesReportResult> {
   const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
@@ -265,9 +324,11 @@ export async function applyServicesReport(db: Db, input: ServicesReportInput): P
     input.node === undefined &&
     input.web === undefined &&
     input.vms === undefined &&
-    input.lxc === undefined
+    input.lxc === undefined &&
+    input.databases === undefined &&
+    input.projects === undefined
   ) {
-    throw new ServicesReportError("Report a containers, node, web, vms or lxc list.");
+    throw new ServicesReportError("Report a containers, node, web, vms, lxc, databases or projects list.");
   }
   const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
   const merge = input.merge === true;
@@ -280,6 +341,24 @@ export async function applyServicesReport(db: Db, input: ServicesReportInput): P
   const web = applyList(next, "web", input.web, merge, (w) => compactWebAt(w, reach), existingWeb, (x) => String(x.label ?? x.name ?? "").toLowerCase());
   const vms = applyList(next, "vms", input.vms, merge, compactGuest, existingGuests, (x) => String(x.vmid ?? ""));
   const lxc = applyList(next, "lxc", input.lxc, merge, compactGuest, existingGuests, (x) => String(x.vmid ?? ""));
+  const databases = applyList(
+    next,
+    "databases",
+    input.databases,
+    merge,
+    (d) => compactDatabase(d, reach),
+    (raw) => existingNamed(raw, ["name", "db", "database"]),
+    (x) => `${String(x.engine ?? "").toLowerCase()}:${String(x.name ?? x.db ?? "").toLowerCase()}`,
+  );
+  const projects = applyList(
+    next,
+    "projects",
+    input.projects,
+    merge,
+    (p) => compactProject(p, reach),
+    (raw) => existingNamed(raw, ["name", "project", "path", "label"]),
+    (x) => `${String(x.kind ?? "").toLowerCase()}:${String(x.name ?? x.project ?? "").toLowerCase()}`,
+  );
   await db.update(items).set({ attributes: next }).where(eq(items.id, input.itemId));
-  return { containers, node, web, vms, lxc };
+  return { containers, node, web, vms, lxc, databases, projects };
 }

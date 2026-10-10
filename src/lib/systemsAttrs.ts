@@ -19,6 +19,13 @@
  *               on the Mini merges into containers and leaves fleet `web`.
  *   vms / lxc             Proxmox guests [{ vmid, name, status, memMb?, diskGb?, template? }].
  *               Collector: scripts/services-report-proxmox.ts. Not mixed into docker.
+ *   databases             [{ name, engine?, status?, port?, size?, url? }]. Fleet
+ *               `databases-table` (no longer stripped). Same list shape as vms/lxc.
+ *   projects              Claude Code / Grok / Hermes / OpenClaw
+ *               [{ name, kind?, status?, tokens?, size?, updatedAt?, minutes?, url? }].
+ *               Collectors: scripts/services-report-projects.ts (`/projects/`) and
+ *               fleet web labels that look like those agents. Active is green;
+ *               older rows fade.
  *   units / systemd       list of unit names (kind systemd)
  *   launchd               list of launchd job names (kind launchd)
  *   svc.<name>            value = status, port, or URL
@@ -136,6 +143,26 @@ export type GuestRec = {
   memMb?: number;
   diskGb?: number;
   template?: boolean;
+};
+
+export type DatabaseRec = {
+  name: string;
+  engine?: string;
+  status?: string;
+  port?: number;
+  size?: number;
+  url?: string;
+};
+
+export type ProjectRec = {
+  name: string;
+  kind?: string;
+  status?: string;
+  tokens?: number;
+  size?: number;
+  updatedAt?: string;
+  minutes?: number;
+  url?: string;
 };
 
 export function attrStr(attrs: Attrs, key: string): string | null {
@@ -416,6 +443,79 @@ function asGuest(x: unknown): GuestRec | null {
     ...(diskGb != null ? { diskGb } : {}),
     ...(template ? { template: true } : {}),
   };
+}
+
+function asDatabase(x: unknown): DatabaseRec | null {
+  if (typeof x === "string" || typeof x === "number") {
+    const name = String(x).trim();
+    return name ? { name } : null;
+  }
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  const name = String(o.name ?? o.db ?? o.database ?? "").trim();
+  if (!name) return null;
+  const engine = o.engine != null || o.type != null ? String(o.engine ?? o.type) : undefined;
+  const status = o.status != null ? String(o.status) : undefined;
+  const port = num(o.port);
+  const size = num(o.size);
+  const url = o.url != null ? String(o.url) : undefined;
+  return {
+    name,
+    ...(engine ? { engine } : {}),
+    ...(status ? { status } : {}),
+    ...(port != null && port > 0 ? { port } : {}),
+    ...(size != null && size > 0 ? { size } : {}),
+    ...(url ? { url } : {}),
+  };
+}
+
+function asProject(x: unknown): ProjectRec | null {
+  if (typeof x === "string" || typeof x === "number") {
+    const name = String(x).trim();
+    return name ? { name } : null;
+  }
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  const name = String(o.name ?? o.project ?? o.path ?? o.label ?? "").trim();
+  if (!name) return null;
+  return {
+    name,
+    ...(o.kind != null || o.agent != null ? { kind: String(o.kind ?? o.agent) } : {}),
+    ...(o.status != null ? { status: String(o.status) } : {}),
+    ...(num(o.tokens) != null ? { tokens: num(o.tokens) } : {}),
+    ...(num(o.size) != null ? { size: num(o.size) } : {}),
+    ...(o.updatedAt != null || o.updated != null ? { updatedAt: String(o.updatedAt ?? o.updated) } : {}),
+    ...(num(o.minutes) != null ? { minutes: num(o.minutes) } : {}),
+    ...(o.url != null ? { url: String(o.url) } : {}),
+  };
+}
+
+export function parseDatabases(attrs: Attrs): DatabaseRec[] {
+  const out: DatabaseRec[] = [];
+  const seen = new Set<string>();
+  for (const x of parseJsonOrList(attrs?.databases)) {
+    const d = asDatabase(x);
+    if (!d) continue;
+    const k = `${(d.engine ?? "").toLowerCase()}:${d.name.toLowerCase()}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(d);
+  }
+  return out;
+}
+
+export function parseProjects(attrs: Attrs): ProjectRec[] {
+  const out: ProjectRec[] = [];
+  const seen = new Set<string>();
+  for (const x of parseJsonOrList(attrs?.projects)) {
+    const p = asProject(x);
+    if (!p) continue;
+    const k = `${(p.kind ?? "").toLowerCase()}:${p.name.toLowerCase()}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out;
 }
 
 export function parseGuests(attrs: Attrs, key: "vms" | "lxc"): GuestRec[] {

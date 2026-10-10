@@ -30,7 +30,7 @@ describe("services.report", () => {
         { name: "caddy", status: "running" },
       ],
     });
-    expect(first).toEqual({ containers: 2, node: 0, web: 0, vms: 0, lxc: 0 });
+    expect(first).toEqual({ containers: 2, node: 0, web: 0, vms: 0, lxc: 0, databases: 0, projects: 0 });
     const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
     expect(JSON.parse(String(row.attributes?.containers))).toEqual([
       { name: "nginx", status: "running", port: 80 },
@@ -107,6 +107,27 @@ describe("services.report", () => {
       expect.objectContaining({ vmid: 100, name: "win11", status: "stopped", memMb: 8192, diskGb: 64 }),
     ]);
     expect(JSON.parse(String(row.attributes?.lxc))).toEqual([expect.objectContaining({ vmid: 102, name: "puppet", status: "running" })]);
+  });
+
+  it("writes databases and projects without clearing containers", async () => {
+    const { houseId, pc } = await seed();
+    const c = callerFor(houseId);
+    await c.services.report({ itemId: pc, source: "test", containers: [{ name: "nginx" }] });
+    const wrote = await c.services.report({
+      itemId: pc,
+      source: "fleet",
+      databases: [{ name: "declutter", engine: "mysql", status: "ok" }],
+      projects: [{ name: "declutter", kind: "claude", status: "active", tokens: 1_200_000, updatedAt: "2026-10-10" }],
+    });
+    expect(wrote).toEqual(expect.objectContaining({ databases: 1, projects: 1, containers: 0 }));
+    const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
+    expect(JSON.parse(String(row.attributes?.containers))).toEqual([{ name: "nginx" }]);
+    expect(JSON.parse(String(row.attributes?.databases))).toEqual([
+      expect.objectContaining({ name: "declutter", engine: "mysql", status: "ok" }),
+    ]);
+    expect(JSON.parse(String(row.attributes?.projects))).toEqual([
+      expect.objectContaining({ name: "declutter", kind: "claude", status: "active", tokens: 1_200_000 }),
+    ]);
   });
 
   it("refuses a non-machine or archived item", async () => {

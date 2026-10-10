@@ -52,11 +52,30 @@ const guestRec = z.object({
     .optional(),
   mounts: z.array(mountRec).max(32).optional(),
 });
+const databaseRec = z.object({
+  name: z.string().min(1).max(64),
+  engine: z.string().max(32).optional(),
+  status: z.string().max(32).optional(),
+  port: z.number().int().positive().max(65535).optional(),
+  size: z.number().nonnegative().max(1e16).optional(),
+  url: z.string().max(255).optional(),
+});
+const projectRec = z.object({
+  name: z.string().min(1).max(128),
+  kind: z.string().max(32).optional(),
+  status: z.string().max(32).optional(),
+  tokens: z.number().nonnegative().max(1e15).optional(),
+  size: z.number().nonnegative().max(1e16).optional(),
+  updatedAt: z.string().max(40).optional(),
+  minutes: z.number().nonnegative().max(1e7).optional(),
+  url: z.string().max(255).optional(),
+});
 
 /**
- * Snapshot of containers / node processes / web endpoints / Proxmox guests
- * on a machine. Collectors write Systems attributes; the view does not
- * fetch claudemux HTML or SSH to Proxmox itself.
+ * Snapshot of containers / node processes / web endpoints / Proxmox guests /
+ * databases / coding-agent projects on a machine. Collectors write Systems
+ * attributes; the view does not fetch claudemux HTML, /projects/ or SSH to
+ * Proxmox itself.
  */
 export const servicesRouter = createRouter({
   report: procedure
@@ -71,6 +90,8 @@ export const servicesRouter = createRouter({
           web: z.array(webRec).max(100).optional(),
           vms: z.array(guestRec).max(100).optional(),
           lxc: z.array(guestRec).max(100).optional(),
+          databases: z.array(databaseRec).max(100).optional(),
+          projects: z.array(projectRec).max(200).optional(),
         })
         .refine(
           (v) =>
@@ -78,8 +99,10 @@ export const servicesRouter = createRouter({
             v.node !== undefined ||
             v.web !== undefined ||
             v.vms !== undefined ||
-            v.lxc !== undefined,
-          { message: "Report a containers, node, web, vms or lxc list." },
+            v.lxc !== undefined ||
+            v.databases !== undefined ||
+            v.projects !== undefined,
+          { message: "Report a containers, node, web, vms, lxc, databases or projects list." },
         ),
     )
     .mutation(async ({ input }) => {
@@ -99,6 +122,8 @@ export const servicesRouter = createRouter({
             web: result.web,
             vms: result.vms,
             lxc: result.lxc,
+            databases: result.databases,
+            projects: result.projects,
           },
         });
         return result;
