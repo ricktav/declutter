@@ -537,7 +537,7 @@ function databaseNode(machineId: number, d: DatabaseRec, i: number): GraphNode {
   const status = d.status ?? "";
   const tone = status ? statusTone(status) : undefined;
   return {
-    id: `db:${machineId}:${d.name}:${i}`,
+    id: `db:${machineId}:${d.engine ?? ""}:${d.name}:${d.target ?? ""}:${i}`,
     type: "database",
     label: d.name.slice(0, 28),
     radius: 6,
@@ -551,6 +551,7 @@ function databaseNode(machineId: number, d: DatabaseRec, i: number): GraphNode {
       ...(d.engine ? [{ k: "engine", v: d.engine }] : []),
       ...(status ? [{ k: "status", v: status }] : []),
       ...(d.port != null ? [{ k: "port", v: String(d.port) }] : []),
+      ...(d.target ? [{ k: "target", v: d.target.slice(0, 40) }] : []),
       ...(d.size != null && d.size > 0 ? [{ k: "size", v: d.size >= 1024 ? fmtGb(d.size) : String(d.size) }] : []),
     ],
     href: d.url ?? `/items/${machineId}`,
@@ -573,7 +574,7 @@ function projectNode(machineId: number, p: ProjectRec, i: number): GraphNode {
   const color = PROJECT_KIND_COLOR[kind] ?? KIND_COLOR.project;
   const active = /^(active|running|ok|live)$/i.test(status);
   return {
-    id: `proj:${machineId}:${kind}:${p.name}:${i}`,
+    id: `proj:${machineId}:${kind}:${p.path ?? p.name}:${i}`,
     type: "project",
     label: p.name.slice(0, 28),
     radius: projectRadius(p),
@@ -588,6 +589,7 @@ function projectNode(machineId: number, p: ProjectRec, i: number): GraphNode {
     lines: [
       ...(kind ? [{ k: "kind", v: kind }] : []),
       ...(status ? [{ k: "status", v: status }] : []),
+      ...(p.path && p.path !== p.name ? [{ k: "path", v: p.path.slice(0, 40) }] : []),
       ...(p.tokens != null && p.tokens > 0 ? [{ k: "tokens", v: fmtTokens(p.tokens) }] : []),
       ...(p.size != null && p.size > 0 ? [{ k: "size", v: fmtGb(p.size) }] : []),
       ...(p.minutes != null && p.minutes > 0 ? [{ k: "time", v: fmtMinutes(p.minutes) }] : []),

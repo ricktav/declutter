@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { items } from "@db/schema";
 import type { getDb } from "../queries/connection";
 import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls.ts";
+import { dbMergeKey, looksLikeProjectDir, mergeProjectRecords, projectMergeKey } from "./servicesProjects.ts";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -65,6 +66,9 @@ export type DatabaseRecIn = {
   port?: number;
   size?: number;
   url?: string;
+  target?: string;
+  detail?: string;
+  checked?: string;
 };
 
 export type ProjectRecIn = {
@@ -76,6 +80,7 @@ export type ProjectRecIn = {
   updatedAt?: string;
   minutes?: number;
   url?: string;
+  path?: string;
 };
 
 export type ServicesReportInput = {
@@ -152,12 +157,15 @@ function compactWebAt(w: WebRecIn, reach: string | null): Record<string, string 
 }
 
 function compactDatabase(d: DatabaseRecIn, reach: string | null): Record<string, unknown> {
-  const o: Record<string, unknown> = { name: d.name };
+  const o: Record<string, unknown> = { name: d.name.slice(0, 64) };
   if (d.engine) o.engine = d.engine.slice(0, 32);
   if (d.status) o.status = d.status;
   if (d.port != null) o.port = d.port;
   if (d.size != null && d.size > 0) o.size = d.size;
   if (d.url) o.url = rewriteLocalHostUrl(d.url, reach);
+  if (d.target) o.target = d.target.slice(0, 255);
+  if (d.detail) o.detail = d.detail.slice(0, 255);
+  if (d.checked) o.checked = d.checked.slice(0, 40);
   return o;
 }
 
@@ -170,6 +178,8 @@ function compactProject(p: ProjectRecIn, reach: string | null): Record<string, u
   if (p.updatedAt) o.updatedAt = p.updatedAt.slice(0, 40);
   if (p.minutes != null && p.minutes > 0) o.minutes = p.minutes;
   if (p.url) o.url = rewriteLocalHostUrl(p.url, reach);
+  const path = (p.path || (looksLikeProjectDir(p.name) ? p.name : "")).trim();
+  if (path) o.path = path.slice(0, 255);
   return o;
 }
 
@@ -203,7 +213,12 @@ function parseJsonArray(raw: unknown): unknown[] {
   return [];
 }
 
-function mergeByKey<T extends Record<string, unknown>>(existing: T[], incoming: T[], keyOf: (x: T) => string): T[] {
+function mergeByKey<T extends Record<string, unknown>>(
+  existing: T[],
+  incoming: T[],
+  keyOf: (x: T) => string,
+  combine?: (a: T, b: T) => T,
+): T[] {
   const map = new Map<string, T>();
   for (const x of existing) {
     const k = keyOf(x);
@@ -212,7 +227,8 @@ function mergeByKey<T extends Record<string, unknown>>(existing: T[], incoming: 
   for (const x of incoming) {
     const k = keyOf(x);
     if (!k) continue;
-    map.set(k, { ...map.get(k), ...x });
+    const prev = map.get(k);
+    map.set(k, prev ? (combine ? combine(prev, x) : { ...prev, ...x }) : x);
   }
   return [...map.values()];
 }
@@ -282,11 +298,12 @@ function applyList<T>(
   compact: (x: T) => Record<string, unknown>,
   existing: (raw: unknown) => Record<string, unknown>[],
   keyOf: (x: Record<string, unknown>) => string,
+  combine?: (a: Record<string, unknown>, b: Record<string, unknown>) => Record<string, unknown>,
 ): number {
   if (incoming === undefined) return 0;
   if (merge) {
     if (incoming.length === 0) return existing(attrs[key]).length;
-    const merged = mergeByKey(existing(attrs[key]), incoming.map(compact), keyOf);
+    const merged = mergeByKey(existing(attrs[key]), incoming.map(compact), keyOf, combine);
     setJsonList(attrs, key, merged);
     return merged.length;
   }
@@ -307,9 +324,10 @@ export type ServicesReportResult = {
 /**
  * Snapshot of processes / guests / databases / coding-agent projects on a
  * machine. Replaces the keys that were sent unless `merge` is set (then
- * incoming rows upsert by name / label / vmid / kind+name and omitted-from-
- * incoming rows stay). Omitted keys stay. Empty arrays clear that key unless
- * `merge` (empty + merge leaves the key).
+ * incoming rows upsert by name / label / vmid / engine+name+target / path
+ * and omitted-from-incoming rows stay). Projects on the same path keep the
+ * richer tokens / updatedAt. Omitted keys stay. Empty arrays clear that key
+ * unless `merge` (empty + merge leaves the key).
  */
 export async function applyServicesReport(db: Db, input: ServicesReportInput): Promise<ServicesReportResult> {
   const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
@@ -347,8 +365,8 @@ export async function applyServicesReport(db: Db, input: ServicesReportInput): P
     input.databases,
     merge,
     (d) => compactDatabase(d, reach),
-    (raw) => existingNamed(raw, ["name", "db", "database"]),
-    (x) => `${String(x.engine ?? "").toLowerCase()}:${String(x.name ?? x.db ?? "").toLowerCase()}`,
+    (raw) => existingNamed(raw, ["name", "label", "db", "database"]),
+    (x) => dbMergeKey({ name: String(x.name ?? x.label ?? x.db ?? ""), engine: x.engine != null ? String(x.engine) : undefined, target: x.target != null ? String(x.target) : undefined }),
   );
   const projects = applyList(
     next,
@@ -357,7 +375,8 @@ export async function applyServicesReport(db: Db, input: ServicesReportInput): P
     merge,
     (p) => compactProject(p, reach),
     (raw) => existingNamed(raw, ["name", "project", "path", "label"]),
-    (x) => `${String(x.kind ?? "").toLowerCase()}:${String(x.name ?? x.project ?? "").toLowerCase()}`,
+    (x) => projectMergeKey({ name: String(x.name ?? x.project ?? ""), path: x.path != null ? String(x.path) : undefined, kind: x.kind != null ? String(x.kind) : undefined }),
+    mergeProjectRecords,
   );
   await db.update(items).set({ attributes: next }).where(eq(items.id, input.itemId));
   return { containers, node, web, vms, lxc, databases, projects };

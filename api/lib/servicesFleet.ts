@@ -1,5 +1,17 @@
 import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls.ts";
-import { parseDatabasesList, parseProjectsList, type DatabaseRec, type ProjectRec } from "./servicesProjects.ts";
+import {
+  dbMergeKey,
+  looksLikeProjectDir,
+  mergeProjectRecords,
+  normalizeProjectKind,
+  parseDatabasesList,
+  parseProjectsList,
+  parseSizeBytes,
+  parseTokenCount,
+  projectMergeKey,
+  type DatabaseRec,
+  type ProjectRec,
+} from "./servicesProjects.ts";
 
 /** Parse a claudemux (or similar) fleet HTML/JSON snapshot into per-host container lists. */
 
@@ -194,7 +206,7 @@ function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "
 function uniqByDb(xs: DatabaseRec[]): DatabaseRec[] {
   const seen = new Set<string>();
   return xs.filter((d) => {
-    const k = `${(d.engine ?? "").toLowerCase()}:${d.name.toLowerCase()}`;
+    const k = dbMergeKey(d);
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -202,13 +214,13 @@ function uniqByDb(xs: DatabaseRec[]): DatabaseRec[] {
 }
 
 function uniqByProject(xs: ProjectRec[]): ProjectRec[] {
-  const seen = new Set<string>();
-  return xs.filter((p) => {
-    const k = `${(p.kind ?? "").toLowerCase()}:${p.name.toLowerCase()}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  const map = new Map<string, ProjectRec>();
+  for (const p of xs) {
+    const k = projectMergeKey(p);
+    const prev = map.get(k);
+    map.set(k, prev ? (mergeProjectRecords(prev, p) as ProjectRec) : p);
+  }
+  return [...map.values()];
 }
 
 function rewriteContainerUrl(c: FleetContainer, reach: string | null): FleetContainer {
@@ -397,12 +409,45 @@ function isNamedProjectsTable(open: string): boolean {
     hasClass(open, "claude-projects") ||
     hasClass(open, "cc-projects") ||
     hasClass(open, "agents-table") ||
-    hasClass(open, "project-dirs")
+    hasClass(open, "project-dirs") ||
+    hasClass(open, "directory") ||
+    hasClass(open, "directories")
   );
 }
 
-function isContainerProjectsTable(html: string): boolean {
-  return /class=["'][^"']*\bpd-k\b/i.test(html) || /class=["'][^"']*\bcname\b/i.test(html);
+function pdKValues(html: string): string[] {
+  return [...html.matchAll(/<span\b[^>]*class=["'][^"']*\bpd-k\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/gi)].map((m) =>
+    innerText(m[1]).toLowerCase(),
+  );
+}
+
+function cnameValues(html: string): string[] {
+  return [...html.matchAll(/<span\b[^>]*class=["'][^"']*\bcname\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/gi)].map((m) =>
+    innerText(m[1]),
+  );
+}
+
+/** Container `table.projects` pd-rows — not a project-directory table. */
+function isContainerOnlyTable(open: string, body: string): boolean {
+  if (
+    hasClass(open, "directory") ||
+    hasClass(open, "directories") ||
+    hasClass(open, "projects-table") ||
+    hasClass(open, "claude-projects") ||
+    hasClass(open, "cc-projects") ||
+    hasClass(open, "agents-table") ||
+    hasClass(open, "project-dirs")
+  ) {
+    return false;
+  }
+  const kinds = pdKValues(body);
+  if (kinds.some((k) => /^(directory|path|project|dir)$/.test(k))) return false;
+  if (cnameValues(body).some((c) => looksLikeProjectDir(c))) return false;
+  const { headers, rows } = tableRowCells(body);
+  if (headers.some((h) => /directory|path|project|folder/.test(h)) && rows.some((cols) => cols.some((c) => looksLikeProjectDir(c)))) {
+    return false;
+  }
+  return kinds.includes("container") || (cnameValues(body).length > 0 && kinds.every((k) => !k || k === "container" || k === "ports" || k === "image"));
 }
 
 function tableRowCells(html: string): { headers: string[]; rows: string[][] } {
@@ -414,18 +459,13 @@ function tableRowCells(html: string): { headers: string[]; rows: string[][] } {
   return { headers: hasHeader ? first : [], rows: (hasHeader ? trs.slice(1) : trs).map(cells) };
 }
 
-/** `/Users/…`, `~/src/foo`, `.claude/projects/bar` — not a URL. */
-export function looksLikeProjectDir(s: string): boolean {
-  const t = s.trim();
-  if (!t || t.length < 2 || /^https?:\/\//i.test(t)) return false;
-  if (/^~(\/|$)/.test(t) || /^\/[\w.~-]/.test(t) || /^[A-Za-z]:[\\/]/.test(t)) return true;
-  if ((t.includes("/") || t.includes("\\")) && !/\s/.test(t) && t.length <= 255) return true;
-  return false;
-}
+export { looksLikeProjectDir };
 
 function looksLikeProjectDirTable(open: string, body: string): boolean {
-  if (isContainerProjectsTable(body)) return false;
+  if (isContainerOnlyTable(open, body)) return false;
   if (isNamedProjectsTable(open)) return true;
+  if (pdKValues(body).some((k) => /^(directory|path|project|dir)$/.test(k))) return true;
+  if (cnameValues(body).some((c) => looksLikeProjectDir(c))) return true;
   const caption = innerText(body.match(/<caption\b[^>]*>([\s\S]*?)<\/caption>/i)?.[1] ?? "");
   const { headers, rows } = tableRowCells(body);
   const headerJoin = `${caption} ${headers.join(" ")}`.toLowerCase();
@@ -744,42 +784,73 @@ function parseServicesTable(html: string): FleetWeb[] {
   return groupWebServices(out);
 }
 
+const DB_HEADER_WORD = /^(kind|label|target|status|detail|checked|db|name|database|engine|type|schema|path|url|port|size)$/i;
+
+function headerCol(headers: string[], ...names: string[]): number {
+  for (const name of names) {
+    const i = headers.findIndex((h) => h === name || h.startsWith(`${name} `));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+function isHeaderWordRow(cols: string[]): boolean {
+  const nonempty = cols.map((c) => c.trim()).filter(Boolean);
+  if (!nonempty.length) return false;
+  return nonempty.filter((c) => DB_HEADER_WORD.test(c)).length >= Math.min(2, nonempty.length);
+}
+
 function parseDatabasesTable(html: string): DatabaseRec[] {
   const out: DatabaseRec[] = [];
   for (const tm of html.matchAll(/<table\b([^>]*)>([\s\S]*?)<\/table>/gi)) {
     const open = `<table${tm[1]}>`;
     if (!hasClass(open, "databases-table")) continue;
     const body = tm[2];
-    const rows = [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((r) => r[1]);
+    const rows = [...body.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)];
     if (!rows.length) continue;
     const cells = (row: string) =>
       [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => innerText(c[1]));
-    const first = cells(rows[0]).map((h) => h.toLowerCase());
-    const hasHeader = first.some((h) => /db|name|database|engine|type/.test(h));
-    const nameIdx = hasHeader ? first.findIndex((h) => h === "db" || h === "name" || h === "database" || h === "schema") : 0;
-    const engineIdx = hasHeader ? first.findIndex((h) => h === "engine" || h === "type" || h === "kind") : 1;
-    const statusIdx = hasHeader ? first.findIndex((h) => h === "status" || h === "state") : -1;
-    const portIdx = hasHeader ? first.findIndex((h) => h === "port") : -1;
-    const sizeIdx = hasHeader ? first.findIndex((h) => h === "size" || h === "bytes") : -1;
-    const urlIdx = hasHeader ? first.findIndex((h) => h === "url" || h === "href") : -1;
-    const dataRows = hasHeader ? rows.slice(1) : rows;
-    for (const row of dataRows) {
-      const cols = cells(row);
-      const name = (nameIdx >= 0 ? cols[nameIdx] : cols[0]) ?? "";
-      if (!name || isJunkCell(name)) continue;
-      const engine = engineIdx >= 0 ? cols[engineIdx] ?? "" : "";
-      const status = statusIdx >= 0 ? cols[statusIdx] ?? "" : "";
+    const firstCols = cells(rows[0][2]);
+    const first = firstCols.map((h) => h.toLowerCase());
+    const hasHeader =
+      /<th\b/i.test(rows[0][2]) ||
+      first.some((h) => /^(kind|label|target|status|detail|checked|db|name|database|engine|type|schema)$/.test(h));
+    const headers = hasHeader ? first : [];
+    const nameIdx = hasHeader ? headerCol(headers, "label", "db", "name", "database", "schema") : -1;
+    const engineIdx = hasHeader ? headerCol(headers, "kind", "engine", "type") : -1;
+    const targetIdx = hasHeader ? headerCol(headers, "target", "path") : -1;
+    const statusIdx = hasHeader ? headerCol(headers, "status", "state") : -1;
+    const detailIdx = hasHeader ? headerCol(headers, "detail", "notes") : -1;
+    const checkedIdx = hasHeader ? headerCol(headers, "checked", "last") : -1;
+    const portIdx = hasHeader ? headerCol(headers, "port") : -1;
+    const sizeIdx = hasHeader ? headerCol(headers, "size", "bytes") : -1;
+    const urlIdx = hasHeader ? headerCol(headers, "url", "href") : -1;
+    for (const row of rows) {
+      if (/<th\b/i.test(row[2])) continue;
+      const cols = cells(row[2]);
+      if (isHeaderWordRow(cols)) continue;
+      const name = ((nameIdx >= 0 ? cols[nameIdx] : cols[1] ?? cols[0]) ?? "").trim();
+      if (!name || isJunkCell(name) || DB_HEADER_WORD.test(name)) continue;
+      const engine = ((engineIdx >= 0 ? cols[engineIdx] : cols[0]) ?? "").trim();
+      const target = ((targetIdx >= 0 ? cols[targetIdx] : cols[2] ?? "") ?? "").trim();
+      const status = (statusIdx >= 0 ? cols[statusIdx] ?? "" : "").trim();
+      const detail = (detailIdx >= 0 ? cols[detailIdx] ?? "" : "").trim();
+      const checked = (checkedIdx >= 0 ? cols[checkedIdx] ?? "" : "").trim();
       const port = portIdx >= 0 ? portOf(cols[portIdx]) : undefined;
       const sizeRaw = sizeIdx >= 0 ? cols[sizeIdx] ?? "" : "";
       const sizeN = Number(String(sizeRaw).replace(/[^\d.]/g, ""));
-      const url = urlIdx >= 0 ? cols[urlIdx] ?? "" : "";
+      const urlCol = urlIdx >= 0 ? cols[urlIdx] ?? "" : "";
+      const url = urlCol || (/^https?:\/\//i.test(target) ? target : "");
       out.push({
-        name,
-        ...(engine && !isJunkCell(engine) ? { engine } : {}),
+        name: name.slice(0, 64),
+        ...(engine && !isJunkCell(engine) && !DB_HEADER_WORD.test(engine) ? { engine: engine.slice(0, 32) } : {}),
         ...(status && !isJunkCell(status) ? { status } : {}),
         ...(port != null ? { port } : {}),
         ...(Number.isFinite(sizeN) && sizeN > 0 ? { size: sizeN } : {}),
         ...(url && !isJunkCell(url) ? { url } : {}),
+        ...(target && !isJunkCell(target) ? { target: target.slice(0, 255) } : {}),
+        ...(detail && !isJunkCell(detail) ? { detail: detail.slice(0, 255) } : {}),
+        ...(checked && !isJunkCell(checked) ? { checked: checked.slice(0, 40) } : {}),
       });
     }
   }
@@ -792,6 +863,66 @@ function dirBasename(path: string): string {
   return (i >= 0 ? t.slice(i + 1) : t).slice(0, 128) || path.slice(0, 128);
 }
 
+function pdValue(block: string): string {
+  const cname = innerText(block.match(/<span\b[^>]*class=["'][^"']*\bcname\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "");
+  if (cname) return cname;
+  const stripped = block.replace(/<span\b[^>]*class=["'][^"']*\bpd-k\b[^"']*["'][^>]*>[\s\S]*?<\/span>/i, "");
+  return innerText(stripped);
+}
+
+function directoryPdBlocks(html: string): string[] {
+  const pdRows = extractClassBlocks(html, "div", "pd-row");
+  if (pdRows.length) return pdRows;
+  const out: string[] = [];
+  for (const m of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
+    if (!hasClass(`<tr${m[1]}>`, "pdrow")) continue;
+    const nested = extractClassBlocks(m[2], "div", "pd-row");
+    if (nested.length) out.push(...nested);
+    else out.push(m[2]);
+  }
+  return out;
+}
+
+function parseDirectoryPdRows(html: string): ProjectRec[] {
+  const out: ProjectRec[] = [];
+  let cur: ProjectRec | null = null;
+  const flush = () => {
+    if (cur?.name) out.push(cur);
+    cur = null;
+  };
+  for (const block of directoryPdBlocks(html)) {
+    const k = innerText(block.match(/<span\b[^>]*class=["'][^"']*\bpd-k\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "").toLowerCase();
+    if (k === "container" || k === "ports" || k === "image") {
+      flush();
+      continue;
+    }
+    const value = pdValue(block);
+    const pathLike = looksLikeProjectDir(value);
+    if (pathLike && (k === "directory" || k === "path" || k === "dir" || k === "project" || !k)) {
+      flush();
+      cur = { name: dirBasename(value), path: value.slice(0, 255), kind: "unknown" };
+      continue;
+    }
+    if (!cur) continue;
+    if (k === "kind" || k === "agent" || k === "source") {
+      const kind = normalizeProjectKind(value) ?? value.trim().toLowerCase().slice(0, 32);
+      if (kind) cur.kind = kind;
+    } else if (k === "tokens" || k === "token" || k === "usage") {
+      const tokens = parseTokenCount(value);
+      if (tokens != null) cur.tokens = tokens;
+    } else if (k === "size" || k === "bytes" || k === "disk") {
+      const size = parseSizeBytes(value);
+      if (size != null) cur.size = size;
+    } else if (k === "updated" || k === "last" || k === "seen" || k === "activity" || k === "time") {
+      if (value && !isJunkCell(value)) cur.updatedAt = value.slice(0, 40);
+    } else if (k === "status" || k === "state") {
+      if (value && !isJunkCell(value)) cur.status = value;
+    }
+  }
+  flush();
+  return out;
+}
+
 function parseProjectDirsTable(html: string): { projects: ProjectRec[]; skipped: Omit<SkippedProjectTable, "host">[] } {
   const projects: ProjectRec[] = [];
   const skipped: Omit<SkippedProjectTable, "host">[] = [];
@@ -799,12 +930,13 @@ function parseProjectDirsTable(html: string): { projects: ProjectRec[]; skipped:
     const open = `<table${tm[1]}>`;
     const body = tm[2];
     if (hasClass(open, "services-table") || hasClass(open, "databases-table") || hasClass(open, "timers")) continue;
-    if (isContainerProjectsTable(body)) continue;
+    if (isContainerOnlyTable(open, body)) continue;
     const caption = innerText(body.match(/<caption\b[^>]*>([\s\S]*?)<\/caption>/i)?.[1] ?? "");
     const { headers, rows } = tableRowCells(body);
+    const classHint = classList(open);
     const looksNamed = isNamedProjectsTable(open);
     const looksDirs = looksLikeProjectDirTable(open, body);
-    const mentionsProject = /project|path|dir|directory|folder/.test(`${caption} ${headers.join(" ")}`);
+    const mentionsProject = /project|path|dir|directory|folder/.test(`${caption} ${headers.join(" ")} ${classHint}`);
     if (!looksNamed && !looksDirs) {
       if (mentionsProject) {
         skipped.push({
@@ -815,33 +947,48 @@ function parseProjectDirsTable(html: string): { projects: ProjectRec[]; skipped:
       }
       continue;
     }
-    const idx = (...names: string[]) => headers.findIndex((h) => names.includes(h));
-    const pathIdx = idx("path", "dir", "directory", "folder", "root");
-    const nameIdx = idx("project", "name", "label");
-    const kindIdx = idx("kind", "agent", "source");
-    const statusIdx = idx("status", "state");
-    let added = 0;
-    for (const cols of rows) {
-      const path = (pathIdx >= 0 ? cols[pathIdx] : "") || cols.find((c) => looksLikeProjectDir(c)) || "";
-      const label = (nameIdx >= 0 ? cols[nameIdx] : "") || (path ? dirBasename(path) : cols[0] ?? "");
-      const name = (looksLikeProjectDir(path) ? path : label).trim().slice(0, 128);
-      if (!name || isJunkCell(name)) continue;
-      if (/^https?:\/\//i.test(name)) continue;
-      const kindRaw = kindIdx >= 0 ? cols[kindIdx] ?? "" : "";
-      const kind = kindRaw && !isJunkCell(kindRaw) ? kindRaw.trim().toLowerCase().slice(0, 32) : "unknown";
-      const status = statusIdx >= 0 ? cols[statusIdx] ?? "" : "";
-      projects.push({
-        name,
-        kind,
-        ...(status && !isJunkCell(status) ? { status } : {}),
-      });
-      added += 1;
+    const before = projects.length;
+    const fromPd = parseDirectoryPdRows(body);
+    projects.push(...fromPd);
+    if (!fromPd.length) {
+      const idx = (...names: string[]) => headers.findIndex((h) => names.includes(h));
+      const pathIdx = idx("path", "dir", "directory", "folder", "root");
+      const nameIdx = idx("project", "name", "label");
+      const kindIdx = idx("kind", "agent", "source");
+      const statusIdx = idx("status", "state");
+      const tokensIdx = idx("tokens", "token", "usage");
+      const sizeIdx = idx("size", "bytes", "disk");
+      const updatedIdx = idx("updated", "last", "seen", "activity", "time");
+      for (const cols of rows) {
+        if (isHeaderWordRow(cols)) continue;
+        const path = (pathIdx >= 0 ? cols[pathIdx] : "") || cols.find((c) => looksLikeProjectDir(c)) || "";
+        const label = (nameIdx >= 0 ? cols[nameIdx] : "") || (path ? dirBasename(path) : cols[0] ?? "");
+        const rawName = (looksLikeProjectDir(path) ? path : label).trim();
+        if (!rawName || isJunkCell(rawName) || DB_HEADER_WORD.test(rawName)) continue;
+        if (/^https?:\/\//i.test(rawName)) continue;
+        const kindRaw = kindIdx >= 0 ? cols[kindIdx] ?? "" : "";
+        const kind = kindRaw && !isJunkCell(kindRaw) ? (normalizeProjectKind(kindRaw) ?? kindRaw.trim().toLowerCase().slice(0, 32)) : "unknown";
+        const status = statusIdx >= 0 ? cols[statusIdx] ?? "" : "";
+        const tokens = tokensIdx >= 0 ? parseTokenCount(cols[tokensIdx]) : undefined;
+        const size = sizeIdx >= 0 ? parseSizeBytes(cols[sizeIdx]) : undefined;
+        const updatedAt = updatedIdx >= 0 ? cols[updatedIdx] ?? "" : "";
+        const pathVal = looksLikeProjectDir(path) ? path : looksLikeProjectDir(rawName) ? rawName : "";
+        projects.push({
+          name: (pathVal ? dirBasename(pathVal) : rawName).slice(0, 128),
+          kind,
+          ...(status && !isJunkCell(status) ? { status } : {}),
+          ...(tokens != null ? { tokens } : {}),
+          ...(size != null ? { size } : {}),
+          ...(updatedAt && !isJunkCell(updatedAt) ? { updatedAt: updatedAt.slice(0, 40) } : {}),
+          ...(pathVal ? { path: pathVal.slice(0, 255) } : {}),
+        });
+      }
     }
-    if (!added) {
+    if (projects.length === before) {
       skipped.push({
         reason: looksNamed ? "projects-table had no usable directory or name rows" : "directory-looking table had no paths",
-        headers: headers.length ? headers : caption ? [caption] : [],
-        sample: (rows[0] ?? []).slice(0, 6),
+        headers: headers.length ? headers : caption ? [caption] : classHint.trim() ? [classHint.trim()] : [],
+        sample: (rows[0] ?? cnameValues(body).slice(0, 6)).slice(0, 6),
       });
     }
   }

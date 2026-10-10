@@ -212,7 +212,7 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
       hrefs,
       sizeLabel: Number.isFinite(size) && size > 0 ? (size >= 1024 ? fmtBytes(size) : `${size}`) : "",
       sizeBytes: Number.isFinite(size) && size > 0 ? size : 0,
-      extra: [],
+      extra: [str(o.target), str(o.detail), str(o.checked)].filter(Boolean),
       mounts: [],
       fade: 1,
     };
@@ -226,7 +226,9 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
     const size = Number(o.size);
     const minutes = Number(o.minutes);
     const fade = projectFade(status, str(o.updatedAt) || undefined);
+    const path = str(o.path);
     const extra = [
+      path && path !== name ? path : "",
       fmtMinutes(Number.isFinite(minutes) && minutes > 0 ? minutes : undefined),
       fmtAgo(str(o.updatedAt) || undefined),
     ].filter(Boolean);

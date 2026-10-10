@@ -19,6 +19,7 @@ export type ProjectRec = {
   updatedAt?: string;
   minutes?: number;
   url?: string;
+  path?: string;
 };
 
 export type DatabaseRec = {
@@ -28,6 +29,9 @@ export type DatabaseRec = {
   port?: number;
   size?: number;
   url?: string;
+  target?: string;
+  detail?: string;
+  checked?: string;
 };
 
 export type ProjectsHost = {
@@ -209,6 +213,92 @@ export function fmtMinutes(n: number | undefined | null): string {
   return `${Math.round(n)} min`;
 }
 
+/** `/Users/…`, `~/src/foo`, `.claude/projects/bar` — not a URL. */
+export function looksLikeProjectDir(s: string): boolean {
+  const t = s.trim();
+  if (!t || t.length < 2 || /^https?:\/\//i.test(t)) return false;
+  if (/^~(\/|$)/.test(t) || /^\/[\w.~-]/.test(t) || /^[A-Za-z]:[\\/]/.test(t)) return true;
+  if ((t.includes("/") || t.includes("\\")) && !/\s/.test(t) && t.length <= 255) return true;
+  return false;
+}
+
+export function normProjectPath(raw: string): string {
+  return raw
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/")
+    .replace(/\/+$/, "");
+}
+
+/** Same engine + label + target is one database (two sqlite files can share a label). */
+export function dbMergeKey(d: { name?: string; engine?: string; target?: string }): string {
+  return `${String(d.engine ?? "").toLowerCase()}:${String(d.name ?? "").toLowerCase()}:${String(d.target ?? "").toLowerCase()}`;
+}
+
+/** Same machine + same path is one project, even when kind/name differ. */
+export function projectMergeKey(p: { name?: string; path?: string; kind?: string }): string {
+  const named = String(p.name ?? "").trim();
+  const raw = String(p.path ?? "").trim() || (looksLikeProjectDir(named) ? named : "");
+  if (raw) return `p:${normProjectPath(raw).toLowerCase()}`;
+  return `n:${String(p.kind ?? "").toLowerCase()}:${named.toLowerCase()}`;
+}
+
+function preferKind(a?: string, b?: string): string | undefined {
+  const pick = (k?: string) => {
+    const t = String(k ?? "").trim().toLowerCase();
+    return t && t !== "unknown" ? t : "";
+  };
+  return pick(b) || pick(a) || String(b || a || "").trim() || undefined;
+}
+
+function newerStamp(a?: string, b?: string): string | undefined {
+  const am = parseWhenMs(a ?? "");
+  const bm = parseWhenMs(b ?? "");
+  if (am != null && bm != null) return bm >= am ? b : a;
+  return b || a || undefined;
+}
+
+function maxNum(a: unknown, b: unknown): number | undefined {
+  const an = typeof a === "number" && Number.isFinite(a) && a > 0 ? a : undefined;
+  const bn = typeof b === "number" && Number.isFinite(b) && b > 0 ? b : undefined;
+  if (an == null) return bn;
+  if (bn == null) return an;
+  return Math.max(an, bn);
+}
+
+/** Prefer tokens / newer updatedAt / a known kind when two collectors hit one path. */
+export function mergeProjectRecords(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
+  const nameA = String(a.name ?? "").trim();
+  const nameB = String(b.name ?? "").trim();
+  const pathA = String(a.path ?? "").trim() || (looksLikeProjectDir(nameA) ? nameA : "");
+  const pathB = String(b.path ?? "").trim() || (looksLikeProjectDir(nameB) ? nameB : "");
+  const path = pathA.length >= pathB.length ? pathA : pathB;
+  const display = [nameA, nameB].filter(Boolean).sort((x, y) => {
+    const xd = looksLikeProjectDir(x) ? 1 : 0;
+    const yd = looksLikeProjectDir(y) ? 1 : 0;
+    if (xd !== yd) return xd - yd;
+    return x.length - y.length;
+  })[0];
+  const tokens = maxNum(a.tokens, b.tokens);
+  const size = maxNum(a.size, b.size);
+  const minutes = maxNum(a.minutes, b.minutes);
+  const updatedAt = newerStamp(a.updatedAt != null ? String(a.updatedAt) : undefined, b.updatedAt != null ? String(b.updatedAt) : undefined);
+  const kind = preferKind(a.kind != null ? String(a.kind) : undefined, b.kind != null ? String(b.kind) : undefined);
+  const status = String(b.status ?? a.status ?? "").trim();
+  const url = String(b.url ?? a.url ?? "").trim();
+  const o: Record<string, unknown> = { ...a, ...b, name: (display || path).slice(0, 128) };
+  if (kind) o.kind = kind;
+  if (status) o.status = status;
+  else delete o.status;
+  if (tokens != null) o.tokens = tokens;
+  if (size != null) o.size = size;
+  if (minutes != null) o.minutes = minutes;
+  if (updatedAt) o.updatedAt = updatedAt;
+  if (path) o.path = path.slice(0, 255);
+  if (url) o.url = url;
+  return o;
+}
+
 export function fmtAgo(updatedAt?: string, now = Date.now()): string {
   const days = daysSince(updatedAt, now);
   if (days == null) return updatedAt?.trim() ?? "";
@@ -241,6 +331,7 @@ function asProject(x: unknown, fallbackKind?: string): ProjectRec | null {
   const updatedAt = str(o.updatedAt ?? o.updated ?? o.last ?? o.seen ?? o.activity ?? o.time);
   const minutes = parseMinutes(o.minutes ?? o.duration ?? o.hours);
   const url = str(o.url);
+  const path = str(o.path ?? o.dir ?? o.directory) ?? (looksLikeProjectDir(name) ? name : null);
   return {
     name,
     ...(kind ? { kind } : {}),
@@ -250,6 +341,7 @@ function asProject(x: unknown, fallbackKind?: string): ProjectRec | null {
     ...(updatedAt ? { updatedAt } : {}),
     ...(minutes != null && minutes > 0 ? { minutes } : {}),
     ...(url ? { url } : {}),
+    ...(path ? { path: path.slice(0, 255) } : {}),
   };
 }
 
@@ -260,7 +352,7 @@ function asDatabase(x: unknown): DatabaseRec | null {
   }
   const o = asRecord(x);
   if (!o) return null;
-  const name = str(o.name ?? o.db ?? o.database ?? o.schema);
+  const name = str(o.name ?? o.label ?? o.db ?? o.database ?? o.schema);
   if (!name) return null;
   const engine = str(o.engine ?? o.type ?? o.kind);
   const status = str(o.status ?? o.state);
@@ -268,7 +360,10 @@ function asDatabase(x: unknown): DatabaseRec | null {
   const portN = typeof portRaw === "number" ? portRaw : Number(portRaw);
   const port = Number.isInteger(portN) && portN > 0 && portN <= 65535 ? portN : undefined;
   const size = parseSizeBytes(o.size ?? o.bytes);
-  const url = str(o.url);
+  const target = str(o.target);
+  const url = str(o.url) ?? (target && /^https?:\/\//i.test(target) ? target : null);
+  const detail = str(o.detail);
+  const checked = str(o.checked);
   return {
     name,
     ...(engine ? { engine } : {}),
@@ -276,6 +371,9 @@ function asDatabase(x: unknown): DatabaseRec | null {
     ...(port != null ? { port } : {}),
     ...(size != null && size > 0 ? { size } : {}),
     ...(url ? { url } : {}),
+    ...(target ? { target } : {}),
+    ...(detail ? { detail } : {}),
+    ...(checked ? { checked } : {}),
   };
 }
 
@@ -313,13 +411,13 @@ function normalizeIp(s: string | null | undefined): string | null {
 }
 
 function uniqProjects(xs: ProjectRec[]): ProjectRec[] {
-  const seen = new Set<string>();
-  return xs.filter((p) => {
-    const k = `${String(p.kind ?? "").toLowerCase()}:${p.name.toLowerCase()}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  const map = new Map<string, ProjectRec>();
+  for (const p of xs) {
+    const k = projectMergeKey(p);
+    const prev = map.get(k);
+    map.set(k, prev ? (mergeProjectRecords(prev, p) as ProjectRec) : p);
+  }
+  return [...map.values()];
 }
 
 function pushHost(out: ProjectsHost[], host: string, projects: ProjectRec[], ip?: string | null) {
@@ -437,7 +535,7 @@ function rowsFromTable(body: string): { headers: string[]; rows: string[][] } {
 
 function projectFromCols(headers: string[], cols: string[], fallbackKind?: string): ProjectRec | null {
   const idx = (...names: string[]) => headerIndex(headers, ...names);
-  const name = (idx("project", "name", "path", "label") >= 0 ? cols[idx("project", "name", "path", "label")] : cols[0]) ?? "";
+  const name = (idx("project", "name", "path", "label", "directory") >= 0 ? cols[idx("project", "name", "path", "label", "directory")] : cols[0]) ?? "";
   if (!name) return null;
   const kindRaw = idx("kind", "agent", "source") >= 0 ? cols[idx("kind", "agent", "source")] : "";
   const status = idx("status", "state") >= 0 ? cols[idx("status", "state")] : "";
@@ -446,6 +544,8 @@ function projectFromCols(headers: string[], cols: string[], fallbackKind?: strin
   const updatedAt = idx("updated", "last", "seen", "activity", "time") >= 0 ? cols[idx("updated", "last", "seen", "activity", "time")] : "";
   const minutes = parseMinutes(idx("duration", "minutes", "hours") >= 0 ? cols[idx("duration", "minutes", "hours")] : "");
   const url = idx("url", "href") >= 0 ? cols[idx("url", "href")] : "";
+  const pathCol = idx("path", "dir", "directory", "folder") >= 0 ? cols[idx("path", "dir", "directory", "folder")] : "";
+  const path = (pathCol && looksLikeProjectDir(pathCol) ? pathCol : looksLikeProjectDir(name) ? name : "") || undefined;
   const kind = normalizeProjectKind(kindRaw) ?? detectProjectKind(name) ?? fallbackKind;
   return asProject(
     {
@@ -457,6 +557,7 @@ function projectFromCols(headers: string[], cols: string[], fallbackKind?: strin
       ...(updatedAt ? { updatedAt } : {}),
       ...(minutes != null ? { minutes } : {}),
       ...(url ? { url } : {}),
+      ...(path ? { path } : {}),
     },
     fallbackKind,
   );

@@ -1,3 +1,5 @@
+import { dbMergeKey, projectMergeKey } from "../../api/lib/servicesProjects";
+
 /**
  * Attribute convention for the Systems mindmap. Other bots can fill these
  * without a schema change. Existing Computer Lab keys stay as they are.
@@ -19,14 +21,15 @@
  *               on the Mini merges into containers and leaves fleet `web`.
  *   vms / lxc             Proxmox guests [{ vmid, name, status, memMb?, diskGb?, template? }].
  *               Collector: scripts/services-report-proxmox.ts. Not mixed into docker.
- *   databases             [{ name, engine?, status?, port?, size?, url? }]. Fleet
- *               `databases-table` (no longer stripped). Same list shape as vms/lxc.
+ *   databases             [{ name, engine?, status?, port?, size?, url?, target?,
+ *               detail?, checked? }]. Fleet `databases-table` maps kind→engine,
+ *               label→name, plus target. Same list shape as vms/lxc.
  *   projects              Claude Code / Grok / Hermes / OpenClaw
- *               [{ name, kind?, status?, tokens?, size?, updatedAt?, minutes?, url? }].
+ *               [{ name, kind?, status?, tokens?, size?, updatedAt?, minutes?, url?, path? }].
  *               Collectors: scripts/services-report-projects.ts (`/projects/`) and
- *               fleet per-host project-directory tables (kind from the row, else
- *               unknown). Web service labels stay in `web`. Active is green;
- *               older rows fade.
+ *               fleet per-host directory tables (class directory / pd-k directory).
+ *               Same machine + path is one entry. Web service labels stay in `web`.
+ *               Active is green; older rows fade.
  *   units / systemd       list of unit names (kind systemd)
  *   launchd               list of launchd job names (kind launchd)
  *   svc.<name>            value = status, port, or URL
@@ -153,6 +156,9 @@ export type DatabaseRec = {
   port?: number;
   size?: number;
   url?: string;
+  target?: string;
+  detail?: string;
+  checked?: string;
 };
 
 export type ProjectRec = {
@@ -164,6 +170,7 @@ export type ProjectRec = {
   updatedAt?: string;
   minutes?: number;
   url?: string;
+  path?: string;
 };
 
 export function attrStr(attrs: Attrs, key: string): string | null {
@@ -453,13 +460,16 @@ function asDatabase(x: unknown): DatabaseRec | null {
   }
   if (!x || typeof x !== "object") return null;
   const o = x as Record<string, unknown>;
-  const name = String(o.name ?? o.db ?? o.database ?? "").trim();
+  const name = String(o.name ?? o.label ?? o.db ?? o.database ?? "").trim();
   if (!name) return null;
-  const engine = o.engine != null || o.type != null ? String(o.engine ?? o.type) : undefined;
+  const engine = o.engine != null || o.type != null || o.kind != null ? String(o.engine ?? o.type ?? o.kind) : undefined;
   const status = o.status != null ? String(o.status) : undefined;
   const port = num(o.port);
   const size = num(o.size);
   const url = o.url != null ? String(o.url) : undefined;
+  const target = o.target != null ? String(o.target) : undefined;
+  const detail = o.detail != null ? String(o.detail) : undefined;
+  const checked = o.checked != null ? String(o.checked) : undefined;
   return {
     name,
     ...(engine ? { engine } : {}),
@@ -467,6 +477,9 @@ function asDatabase(x: unknown): DatabaseRec | null {
     ...(port != null && port > 0 ? { port } : {}),
     ...(size != null && size > 0 ? { size } : {}),
     ...(url ? { url } : {}),
+    ...(target ? { target } : {}),
+    ...(detail ? { detail } : {}),
+    ...(checked ? { checked } : {}),
   };
 }
 
@@ -488,6 +501,7 @@ function asProject(x: unknown): ProjectRec | null {
     ...(o.updatedAt != null || o.updated != null ? { updatedAt: String(o.updatedAt ?? o.updated) } : {}),
     ...(num(o.minutes) != null ? { minutes: num(o.minutes) } : {}),
     ...(o.url != null ? { url: String(o.url) } : {}),
+    ...(o.path != null || o.dir != null || o.directory != null ? { path: String(o.path ?? o.dir ?? o.directory) } : {}),
   };
 }
 
@@ -497,7 +511,7 @@ export function parseDatabases(attrs: Attrs): DatabaseRec[] {
   for (const x of parseJsonOrList(attrs?.databases)) {
     const d = asDatabase(x);
     if (!d) continue;
-    const k = `${(d.engine ?? "").toLowerCase()}:${d.name.toLowerCase()}`;
+    const k = dbMergeKey(d);
     if (seen.has(k)) continue;
     seen.add(k);
     out.push(d);
@@ -511,7 +525,7 @@ export function parseProjects(attrs: Attrs): ProjectRec[] {
   for (const x of parseJsonOrList(attrs?.projects)) {
     const p = asProject(x);
     if (!p) continue;
-    const k = `${(p.kind ?? "").toLowerCase()}:${p.name.toLowerCase()}`;
+    const k = projectMergeKey(p);
     if (seen.has(k)) continue;
     seen.add(k);
     out.push(p);

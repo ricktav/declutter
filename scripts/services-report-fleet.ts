@@ -141,7 +141,7 @@ const plan = {
     serviceLabels: row.web.map((w) => w.label),
     databaseNames: row.databases.map((d) => d.name),
     projectNames: row.projects.map((p) => p.name),
-    projectKinds: countProjectsByKind(row.projects),
+    byKind: countProjectsByKind(row.projects),
     services: row.web.map((w) => ({
       label: w.label,
       ports: w.ports ?? (w.port != null ? [w.port] : []),

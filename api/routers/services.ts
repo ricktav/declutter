@@ -59,6 +59,9 @@ const databaseRec = z.object({
   port: z.number().int().positive().max(65535).optional(),
   size: z.number().nonnegative().max(1e16).optional(),
   url: z.string().max(255).optional(),
+  target: z.string().max(255).optional(),
+  detail: z.string().max(255).optional(),
+  checked: z.string().max(40).optional(),
 });
 const projectRec = z.object({
   name: z.string().min(1).max(128),
@@ -69,6 +72,7 @@ const projectRec = z.object({
   updatedAt: z.string().max(40).optional(),
   minutes: z.number().nonnegative().max(1e7).optional(),
   url: z.string().max(255).optional(),
+  path: z.string().max(255).optional(),
 });
 
 /**

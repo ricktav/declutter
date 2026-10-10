@@ -130,6 +130,33 @@ describe("services.report", () => {
     ]);
   });
 
+  it("merges fleet + projects rows on the same path and keeps the richer one", async () => {
+    const { houseId, pc } = await seed();
+    const c = callerFor(houseId);
+    await c.services.report({
+      itemId: pc,
+      source: "fleet",
+      merge: true,
+      projects: [{ name: "declutter", path: "/Volumes/T7/declutter", kind: "unknown" }],
+    });
+    await c.services.report({
+      itemId: pc,
+      source: "projects",
+      merge: true,
+      projects: [{ name: "declutter", path: "/Volumes/T7/declutter", kind: "claude", tokens: 1_200_000, updatedAt: "2026-10-10" }],
+    });
+    const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
+    expect(JSON.parse(String(row.attributes?.projects))).toEqual([
+      expect.objectContaining({
+        name: "declutter",
+        path: "/Volumes/T7/declutter",
+        kind: "claude",
+        tokens: 1_200_000,
+        updatedAt: "2026-10-10",
+      }),
+    ]);
+  });
+
   it("refuses a non-machine or archived item", async () => {
     const { houseId, pc, chair } = await seed();
     const c = callerFor(houseId);

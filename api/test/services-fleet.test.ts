@@ -10,11 +10,20 @@ import {
   parseFleetDocument,
   parseFleetDocumentWithMeta,
 } from "../lib/servicesFleet";
-import { detectProjectKind, parseProjectsDocument, projectFade, parseTokenCount } from "../lib/servicesProjects";
+import {
+  countProjectsByKind,
+  detectProjectKind,
+  mergeProjectRecords,
+  parseProjectsDocument,
+  parseTokenCount,
+  projectFade,
+  projectMergeKey,
+} from "../lib/servicesProjects";
 import { pickReachHost, rewriteLocalHostUrl, statusTone, worstStatusTone } from "../lib/serviceUrls";
 
 const snippet = readFileSync(path.join(import.meta.dirname, "fixtures/claudemux-fleet-snippet.html"), "utf8");
 const projectsSnippet = readFileSync(path.join(import.meta.dirname, "fixtures/claude-projects-snippet.html"), "utf8");
+const dbDirs = readFileSync(path.join(import.meta.dirname, "fixtures/claudemux-fleet-db-dirs.html"), "utf8");
 
 describe("parseFleetDocument JSON", () => {
   it("reads a JSON array of hosts with docker lists", () => {
@@ -320,8 +329,8 @@ describe("databases and coding-agent projects", () => {
     const { hosts, skippedProjectTables } = parseFleetDocumentWithMeta(html);
     expect(hosts[0].containers.map((c) => c.name)).toEqual(["caddy"]);
     expect(hosts[0].projects).toEqual([
-      expect.objectContaining({ name: "/Volumes/T7/declutter", kind: "claude" }),
-      expect.objectContaining({ name: "/Users/rick/openclaw", kind: "unknown" }),
+      expect.objectContaining({ name: "declutter", path: "/Volumes/T7/declutter", kind: "claude" }),
+      expect.objectContaining({ name: "openclaw", path: "/Users/rick/openclaw", kind: "unknown" }),
     ]);
     expect(skippedProjectTables).toEqual([]);
   });
@@ -407,5 +416,70 @@ describe("databases and coding-agent projects", () => {
     expect(hosts.find((h) => h.host === "dockermac")?.projects).toEqual([
       expect.objectContaining({ name: "openclaw-bridge", kind: "openclaw", status: "active" }),
     ]);
+  });
+});
+
+describe("realistic fleet databases-table + directory tables", () => {
+  it("maps kind/label/target headers, skips the header row, and uniques by kind+label+target", () => {
+    const { hosts } = parseFleetDocumentWithMeta(dbDirs);
+    const counts = Object.fromEntries(hosts.map((h) => [h.host, h.databases.length]));
+    expect(counts).toEqual({ "dockermac-2": 5, dockermac: 9, "prodesk-rt1": 19, "macmini-m4": 0 });
+    const names = hosts.flatMap((h) => h.databases.map((d) => d.name));
+    expect(names).not.toContain("kind");
+    expect(names).not.toContain("label");
+    const d2 = hosts.find((h) => h.host === "dockermac-2")!;
+    expect(d2.databases[0]).toEqual(
+      expect.objectContaining({ name: "gitea", engine: "sqlite", target: "/var/lib/gitea/gitea.db", status: "ok" }),
+    );
+    const pro = hosts.find((h) => h.host === "prodesk-rt1")!;
+    expect(pro.databases.filter((d) => d.engine === "sqlite" && d.name === "clawd")).toHaveLength(8);
+    expect(new Set(pro.databases.map((d) => `${d.engine}:${d.name}:${d.target}`)).size).toBe(19);
+  });
+
+  it("imports directory pd-rows and lists a non-dir Projects table in skippedProjectTables", () => {
+    const { hosts, skippedProjectTables } = parseFleetDocumentWithMeta(dbDirs);
+    const byHost = Object.fromEntries(hosts.map((h) => [h.host, h.projects.length]));
+    expect(byHost["macmini-m4"]).toBe(4);
+    expect(byHost["dockermac-2"]).toBe(3);
+    expect(byHost.dockermac).toBe(3);
+    expect(byHost["prodesk-rt1"]).toBe(3);
+    const mini = hosts.find((h) => h.host === "macmini-m4")!;
+    expect(mini.projects.find((p) => p.path === "/Volumes/T7/declutter")).toEqual(
+      expect.objectContaining({ name: "declutter", kind: "claude", tokens: 1.2e6 }),
+    );
+    expect(mini.databases).toEqual([]);
+    expect(hosts.find((h) => h.host === "dockermac-2")?.containers.map((c) => c.name)).toEqual(["caddy"]);
+    expect(skippedProjectTables).toEqual([
+      expect.objectContaining({
+        host: "prodesk-rt1",
+        reason: "project-looking table is not directory rows",
+        headers: ["project", "detail"],
+      }),
+    ]);
+    expect(countProjectsByKind(mini.projects)).toEqual({ claude: 2, openclaw: 1, hermes: 1 });
+  });
+
+  it("never silently drops a directory-looking table", () => {
+    const { hosts, skippedProjectTables } = parseFleetDocumentWithMeta(dbDirs);
+    const imported = new Set(hosts.flatMap((h) => h.projects.map((p) => p.path ?? p.name)));
+    expect(imported.has("/Volumes/T7/declutter")).toBe(true);
+    expect(imported.has("/home/rick/clawd")).toBe(true);
+    expect(skippedProjectTables.some((s) => s.host === "prodesk-rt1")).toBe(true);
+    expect(skippedProjectTables.some((s) => /container/i.test(s.reason))).toBe(false);
+  });
+});
+
+describe("project merge key", () => {
+  it("treats the same path as one project and keeps the richer tokens / updatedAt", () => {
+    expect(projectMergeKey({ name: "declutter", path: "/Volumes/T7/declutter/" })).toBe(
+      projectMergeKey({ name: "declutter", path: "/Volumes/T7/declutter", kind: "claude" }),
+    );
+    const merged = mergeProjectRecords(
+      { name: "declutter", path: "/Volumes/T7/declutter", kind: "unknown" },
+      { name: "declutter", path: "/Volumes/T7/declutter", kind: "claude", tokens: 1.2e6, updatedAt: "2h ago" },
+    );
+    expect(merged).toEqual(
+      expect.objectContaining({ name: "declutter", path: "/Volumes/T7/declutter", kind: "claude", tokens: 1.2e6 }),
+    );
   });
 });
