@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { items } from "@db/schema";
 import type { getDb } from "../queries/connection";
-import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls";
+import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls.ts";
 
 type Db = ReturnType<typeof getDb>;
 

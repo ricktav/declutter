@@ -1,4 +1,4 @@
-import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls";
+import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls.ts";
 
 /** Parse a claudemux (or similar) fleet HTML/JSON snapshot into per-host container lists. */
 
