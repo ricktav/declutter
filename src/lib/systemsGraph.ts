@@ -22,6 +22,7 @@ import {
   type ServiceRec,
   type WebRec,
 } from "@/lib/systemsAttrs";
+import { pickReachHost, rewriteLocalHostUrl, statusTone, type StatusTone } from "../../api/lib/serviceUrls";
 
 export const KIND_COLOR: Record<string, string> = {
   center: "#ff6b35",
@@ -100,6 +101,7 @@ export type GraphNode = {
   dimmed: boolean;
   /** Templates: even fainter than a stopped guest. */
   faint?: boolean;
+  tone?: StatusTone;
   itemId?: number;
   volumeId?: number;
   importance?: Importance | null;
@@ -201,17 +203,22 @@ function webPorts(w: WebRec): number[] {
   return raw.filter((n, i, a) => a.indexOf(n) === i).sort((a, b) => a - b);
 }
 
-function webUrls(w: WebRec): string[] {
+function webUrls(w: WebRec, reach?: string | null): string[] {
   const raw = [...(w.urls ?? []), ...(w.url ? [w.url] : [])];
   const seen = new Set<string>();
   const out: string[] = [];
   for (const u of raw) {
-    const k = u.toLowerCase();
+    const rewritten = rewriteLocalHostUrl(u, reach);
+    const k = rewritten.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);
-    out.push(u);
+    out.push(rewritten);
   }
   return out;
+}
+
+function reachOf(it: GraphItem): string | null {
+  return pickReachHost(attr(it, "ip") ?? attr(it, "ip_address"), attr(it, "hostname") ?? attr(it, "host"));
 }
 
 function webOf(m: GraphItem, kids: GraphItem[]): WebRec[] {
@@ -351,15 +358,18 @@ function attachStorage(
   }
 }
 
-function serviceNode(machineId: number, s: ServiceRec, i: number): GraphNode {
+function serviceNode(machineId: number, s: ServiceRec, i: number, reach?: string | null): GraphNode {
   const itemId = s.itemId ?? machineId;
+  const url = s.url ? rewriteLocalHostUrl(s.url, reach) : undefined;
+  const tone = statusTone(s.status);
   return {
     id: `svc:${machineId}:${i}:${s.name}`,
     type: "service",
     label: s.name.slice(0, 28),
     radius: 6,
     color: KIND_COLOR.service,
-    dimmed: false,
+    dimmed: tone === "dim",
+    tone,
     itemId,
     kind: s.kind,
     tags: [s.kind, s.status, s.port != null ? `:${s.port}` : ""].filter(Boolean) as string[],
@@ -367,22 +377,24 @@ function serviceNode(machineId: number, s: ServiceRec, i: number): GraphNode {
       { k: "kind", v: s.kind },
       ...(s.status ? [{ k: "status", v: s.status }] : []),
       ...(s.port != null ? [{ k: "port", v: String(s.port) }] : []),
-      ...(s.url ? [{ k: "url", v: s.url }] : []),
+      ...(url ? [{ k: "url", v: url }] : []),
     ],
     href: `/items/${itemId}`,
   };
 }
 
-function webNode(machineId: number, w: WebRec, i: number): GraphNode {
+function webNode(machineId: number, w: WebRec, i: number, reach?: string | null): GraphNode {
   const ports = webPorts(w);
-  const urls = webUrls(w);
+  const urls = webUrls(w, reach);
+  const tone = statusTone(w.status);
   return {
     id: `web:${machineId}:${i}:${w.label}`,
     type: "web",
     label: w.label.slice(0, 28),
     radius: 5,
     color: KIND_COLOR.web,
-    dimmed: false,
+    dimmed: tone === "dim",
+    tone,
     itemId: machineId,
     tags: [
       ...(w.status ? [w.status] : []),
@@ -397,10 +409,10 @@ function webNode(machineId: number, w: WebRec, i: number): GraphNode {
   };
 }
 
-function portChildNodes(parent: GraphNode, w: WebRec): { nodes: GraphNode[]; links: GraphLink[] } {
+function portChildNodes(parent: GraphNode, w: WebRec, reach?: string | null): { nodes: GraphNode[]; links: GraphLink[] } {
   const ports = webPorts(w);
   if (ports.length < 2) return { nodes: [], links: [] };
-  const urls = webUrls(w);
+  const urls = webUrls(w, reach);
   const nodes: GraphNode[] = [];
   const links: GraphLink[] = [];
   for (const p of ports) {
@@ -463,7 +475,7 @@ function guestNode(machineId: number, kind: "vm" | "lxc", g: GuestRec): GraphNod
       { k: "vmid", v: String(g.vmid) },
       { k: "status", v: g.status },
       ...(g.memMb != null ? [{ k: "mem", v: `${g.memMb} MB` }] : []),
-      ...(g.diskGb != null ? [{ k: "disk", v: `${g.diskGb} GB` }] : []),
+      ...(g.diskGb != null && g.diskGb > 0 ? [{ k: "disk", v: `${g.diskGb} GB` }] : []),
       ...(g.template ? [{ k: "template", v: "yes" }] : []),
     ],
     href: `/items/${machineId}`,
@@ -670,23 +682,24 @@ export function buildSystemsGraph(opts: {
     // "no computers in this house".
     for (const { it: m } of machines) {
       const { services, web, vms, lxc } = matching(m);
+      const reach = reachOf(m);
       const n = makeHubNode(m, "machine", services.length + web.length + vms.length + lxc.length);
       nodes.push(n);
       counts.machine += 1;
       links.push({ source: "__center__", target: n.id, strength: 0.8 });
       services.slice(0, MAX_SVC).forEach((s, i) => {
-        const leaf = serviceNode(m.id, s, i);
+        const leaf = serviceNode(m.id, s, i, reach);
         nodes.push(leaf);
         counts.service += 1;
         links.push({ source: n.id, target: leaf.id, strength: 0.3 });
       });
       web.slice(0, MAX_WEB).forEach((w, i) => {
-        const leaf = webNode(m.id, w, i);
+        const leaf = webNode(m.id, w, i, reach);
         nodes.push(leaf);
         counts.web += 1;
         links.push({ source: n.id, target: leaf.id, strength: 0.3 });
         if (shouldExpandPorts(leaf.id, expandNodeId)) {
-          const extra = portChildNodes(leaf, w);
+          const extra = portChildNodes(leaf, w, reach);
           nodes.push(...extra.nodes);
           links.push(...extra.links);
         }
@@ -725,20 +738,21 @@ export function buildSystemsGraph(opts: {
       const childDisks = kids.filter((c) => attr(c, "role") === "storage");
       const services = servicesOf(m, kids);
       const web = unusedWeb(services, webOf(m, kids));
+      const reach = reachOf(m);
       attachGuests(n.id, m.id, guestsOf(m, "vms"), guestsOf(m, "lxc"), nodes, links, counts);
       for (const [i, s] of services.slice(0, MAX_SVC).entries()) {
-        const leaf = serviceNode(m.id, s, i);
+        const leaf = serviceNode(m.id, s, i, reach);
         nodes.push(leaf);
         counts.service = (counts.service ?? 0) + 1;
         links.push({ source: n.id, target: leaf.id, strength: 0.3 });
       }
       for (const [i, w] of web.slice(0, MAX_WEB).entries()) {
-        const leaf = webNode(m.id, w, i);
+        const leaf = webNode(m.id, w, i, reach);
         nodes.push(leaf);
         counts.web = (counts.web ?? 0) + 1;
         links.push({ source: n.id, target: leaf.id, strength: 0.3 });
         if (shouldExpandPorts(leaf.id, expandNodeId)) {
-          const extra = portChildNodes(leaf, w);
+          const extra = portChildNodes(leaf, w, reach);
           nodes.push(...extra.nodes);
           links.push(...extra.links);
         }

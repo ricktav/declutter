@@ -86,6 +86,8 @@ function nodeStroke(d: GraphNode): { color: string; width: number } {
   }
   if (d.type === "network") return { color: "#7eeae6", width: 2 };
   if (d.type === "other") return { color: "#888", width: 1.5 };
+  if (d.tone === "warn") return { color: "#f59e0b", width: 2 };
+  if (d.tone === "error") return { color: "#ef4444", width: 2 };
   return { color: "none", width: 0 };
 }
 
@@ -505,6 +507,7 @@ export default function SystemsPage() {
             color: d.color,
             dimmed: d.dimmed,
             faint: d.faint,
+            tone: d.tone,
             itemId: d.itemId,
             volumeId: d.volumeId,
             importance: d.importance,
@@ -905,6 +908,10 @@ export default function SystemsPage() {
                       <a href={row.v} target="_blank" rel="noreferrer" className="text-[#4A90E2] underline">
                         {row.v}
                       </a>
+                    ) : row.k === "status" && selected.tone === "warn" ? (
+                      <span className="text-amber-400">{row.v}</span>
+                    ) : row.k === "status" && selected.tone === "error" ? (
+                      <span className="text-red-400">{row.v}</span>
                     ) : (
                       row.v
                     )}

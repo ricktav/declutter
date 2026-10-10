@@ -44,6 +44,7 @@ describe("parse Proxmox lists", () => {
     expect(vms.map((g) => g.vmid)).toEqual([100, 111]);
     expect(vms.find((g) => g.vmid === 111)?.template).toBe(true);
     expect(vms.find((g) => g.vmid === 100)?.memMb).toBe(8192);
+    expect(parsePveResources([{ type: "qemu", vmid: 113, name: "template-win11-schoon", status: "stopped", template: 1, maxdisk: 0 }]).vms[0].diskGb).toBeUndefined();
   });
 
   it("falls back to pct/qm when pvesh is empty", () => {

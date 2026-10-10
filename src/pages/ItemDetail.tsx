@@ -45,6 +45,7 @@ import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs"
 import { RatingStars } from "@/components/RatingStars";
 import { isMachineItem, parseRating, type Rating } from "@/lib/systemsAttrs";
 import { AttrListValue, compactJsonList, isJsonListAttr, jsonListAttrLabel, prettyJsonList } from "@/components/AttrListValue";
+import { pickReachHost } from "../../api/lib/serviceUrls";
 
 type AttrClash = inferRouterOutputs<AppRouter>["items"]["findAttributeDuplicates"]["clashes"][number];
 
@@ -786,7 +787,14 @@ export default function ItemDetail() {
                       return (
                         <div key={k} className="py-2 text-[13px]">
                           <div className="mb-1 text-muted-foreground">{label}</div>
-                          <AttrListValue attrKey={k} value={v} />
+                          <AttrListValue
+                            attrKey={k}
+                            value={v}
+                            reachHost={pickReachHost(
+                              it.attributes?.ip != null ? String(it.attributes.ip) : it.attributes?.ip_address != null ? String(it.attributes.ip_address) : null,
+                              it.attributes?.hostname != null ? String(it.attributes.hostname) : it.attributes?.host != null ? String(it.attributes.host) : null,
+                            )}
+                          />
                         </div>
                       );
                     }

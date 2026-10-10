@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { rewriteLocalHostUrl, statusTone, type StatusTone } from "../../api/lib/serviceUrls";
 
 const LIST_KEYS = new Set(["containers", "docker", "node", "web", "vms", "lxc", "services"]);
 
@@ -52,7 +53,7 @@ type Row = {
   name: string;
   bits: string[];
   hrefs?: string[];
-  tone?: "ok" | "warn" | "dim";
+  tone?: StatusTone;
 };
 
 function asRec(x: unknown): Record<string, unknown> | null {
@@ -74,26 +75,24 @@ function portsOf(o: Record<string, unknown>): string[] {
   return [...new Set(out)];
 }
 
-function urlsOf(o: Record<string, unknown>): string[] {
+function urlsOf(o: Record<string, unknown>, reach: string | null): string[] {
   const out: string[] = [];
   const add = (u: unknown) => {
-    const s = str(u).trim();
-    if (s && /^https?:\/\//i.test(s) && !out.includes(s)) out.push(s);
+    const raw = str(u).trim();
+    const s = raw && /^https?:\/\//i.test(raw) ? rewriteLocalHostUrl(raw, reach) : "";
+    if (s && !out.includes(s)) out.push(s);
   };
   add(o.url);
   if (Array.isArray(o.urls)) for (const u of o.urls) add(u);
   return out;
 }
 
-function toneOf(status: string): Row["tone"] {
-  const s = status.toLowerCase();
-  if (!s) return undefined;
-  if (s === "warn" || s === "unhealthy" || s === "restarting") return "warn";
-  if (s === "stopped" || s === "exited" || s === "dead" || s === "paused") return "dim";
-  return "ok";
+function diskBit(v: unknown): string {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? `${n} GB` : "";
 }
 
-function rowsFor(key: string, items: unknown[]): Row[] {
+function rowsFor(key: string, items: unknown[], reach: string | null): Row[] {
   return items
     .map((x): Row | null => {
       if (typeof x === "string" || typeof x === "number") {
@@ -106,8 +105,8 @@ function rowsFor(key: string, items: unknown[]): Row[] {
         const name = str(o.label ?? o.name).trim();
         if (!name) return null;
         const bits = [...portsOf(o), str(o.status)].filter(Boolean);
-        const hrefs = urlsOf(o);
-        return { name, bits, hrefs, tone: toneOf(str(o.status)) };
+        const hrefs = urlsOf(o, reach);
+        return { name, bits, hrefs, tone: statusTone(str(o.status)) };
       }
       if (key === "vms" || key === "lxc") {
         const vmid = o.vmid != null ? String(o.vmid) : "";
@@ -117,27 +116,35 @@ function rowsFor(key: string, items: unknown[]): Row[] {
           vmid && name !== vmid ? `#${vmid}` : "",
           str(o.status),
           o.memMb != null ? `${o.memMb} MB` : "",
-          o.diskGb != null ? `${o.diskGb} GB` : "",
+          diskBit(o.diskGb),
           o.template === true || o.template === 1 ? "template" : "",
         ].filter(Boolean);
         const status = str(o.status);
-        const tone = o.template === true || o.template === 1 ? "dim" : toneOf(status);
+        const tone = o.template === true || o.template === 1 ? "dim" : statusTone(status);
         return { name, bits, tone };
       }
       const name = str(o.name ?? o.unit ?? o.container).trim();
       if (!name) return null;
       const bits = [str(o.image), ...portsOf(o), str(o.status)].filter(Boolean);
-      return { name, bits, hrefs: urlsOf(o), tone: toneOf(str(o.status)) };
+      return { name, bits, hrefs: urlsOf(o, reach), tone: statusTone(str(o.status)) };
     })
     .filter((r): r is Row => r != null);
 }
 
-export function AttrListValue({ attrKey, value }: { attrKey: string; value: unknown }) {
+export function AttrListValue({
+  attrKey,
+  value,
+  reachHost,
+}: {
+  attrKey: string;
+  value: unknown;
+  reachHost?: string | null;
+}) {
   const items = parseArray(value);
   if (!items) {
     return <span className="font-data min-w-0 break-all">{String(value)}</span>;
   }
-  const rows = rowsFor(attrKey, items);
+  const rows = rowsFor(attrKey, items, reachHost ?? null);
   if (rows.length === 0) {
     return <span className="text-muted-foreground">none</span>;
   }
@@ -157,7 +164,8 @@ export function AttrListValue({ attrKey, value }: { attrKey: string; value: unkn
               key={b}
               className={cn(
                 "text-muted-foreground",
-                r.tone === "warn" && /warn|unhealthy/i.test(b) && "text-amber-700",
+                r.tone === "warn" && /amber|warn|unhealthy|restarting|degraded/i.test(b) && "text-amber-700",
+                r.tone === "error" && /red|error|down|fail/i.test(b) && "text-red-700",
               )}
             >
               {b}

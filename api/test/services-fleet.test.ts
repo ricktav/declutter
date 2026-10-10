@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 import {
+  aggregateStatus,
   decodeEntities,
   groupWebServices,
   isJunkCell,
@@ -9,6 +10,7 @@ import {
   parseFleetDocument,
   parseFleetDocumentWithMeta,
 } from "../lib/servicesFleet";
+import { pickReachHost, rewriteLocalHostUrl, statusTone } from "../lib/serviceUrls";
 
 const snippet = readFileSync(path.join(import.meta.dirname, "fixtures/claudemux-fleet-snippet.html"), "utf8");
 
@@ -207,5 +209,43 @@ describe("matchMachine", () => {
 
   it("maps fleet hostname dockermac to dockermac-1 by exact IP", () => {
     expect(matchMachine({ host: "dockermac", ip: "10.50.0.10" }, machines)?.id).toBe(1);
+  });
+});
+
+describe("localhost URLs and fleet status", () => {
+  it("rewrites localhost / 127.0.0.1 / 0.0.0.0 to the machine IP", () => {
+    expect(rewriteLocalHostUrl("http://localhost:3002/", "10.50.0.102")).toBe("http://10.50.0.102:3002/");
+    expect(rewriteLocalHostUrl("http://127.0.0.1:8001/x", "10.50.0.102")).toBe("http://10.50.0.102:8001/x");
+    expect(rewriteLocalHostUrl("https://0.0.0.0:8443", "mini")).toBe("https://mini:8443/");
+    expect(rewriteLocalHostUrl("http://10.50.0.10:3000/", "10.50.0.102")).toBe("http://10.50.0.10:3000/");
+    expect(pickReachHost("10.50.0.102", "macmini-m4")).toBe("10.50.0.102");
+    expect(pickReachHost(null, "macmini-m4")).toBe("macmini-m4");
+    expect(pickReachHost("127.0.0.1", "macmini-m4")).toBe("macmini-m4");
+  });
+
+  it("rewrites localhost service URLs when parsing a host with an IP", () => {
+    const html = `
+      <section class="host">
+        <div class="hh"><div class="hh-l"><span class="hname mono">macmini-m4</span> 10.50.0.102:8766</div></div>
+        <table class="mtx services-table">
+          <tr><th>label</th><th>url</th><th>status</th></tr>
+          <tr><td>Workbench</td><td>http://localhost:3002/</td><td>ok</td></tr>
+          <tr><td>Ping</td><td>http://127.0.0.1:3001/api/trpc/ping</td><td>amber</td></tr>
+        </table>
+      </section>`;
+    const hosts = parseFleetDocument(html);
+    expect(hosts[0].web.map((w) => w.url)).toEqual(["http://10.50.0.102:3002/", "http://10.50.0.102:3001/api/trpc/ping"]);
+    expect(hosts[0].web.find((w) => w.label === "Ping")?.status).toBe("amber");
+  });
+
+  it("maps fleet ok / amber / red and keeps amber below red", () => {
+    expect(statusTone("ok")).toBe("ok");
+    expect(statusTone("amber")).toBe("warn");
+    expect(statusTone("red")).toBe("error");
+    expect(statusTone("unhealthy")).toBe("warn");
+    expect(statusTone("stopped")).toBe("dim");
+    expect(aggregateStatus(["ok", "amber"])).toBe("ok");
+    expect(aggregateStatus(["amber", "red"])).toBe("red");
+    expect(aggregateStatus(["amber"])).toBe("amber");
   });
 });

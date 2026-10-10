@@ -1,3 +1,5 @@
+import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls";
+
 /** Parse a claudemux (or similar) fleet HTML/JSON snapshot into per-host container lists. */
 
 export type FleetContainer = {
@@ -172,17 +174,45 @@ function pickLists(o: Record<string, unknown>): Pick<FleetHost, "containers" | "
   return { containers: uniq(containers), node: uniq(node), web };
 }
 
+function rewriteContainerUrl(c: FleetContainer, reach: string | null): FleetContainer {
+  if (!c.url || !reach) return c;
+  const url = rewriteLocalHostUrl(c.url, reach);
+  return url === c.url ? c : { ...c, url };
+}
+
+function rewriteWebUrls(w: FleetWeb, reach: string | null): FleetWeb {
+  if (!reach) return w;
+  const url = w.url ? rewriteLocalHostUrl(w.url, reach) : undefined;
+  const urls = w.urls?.map((u) => rewriteLocalHostUrl(u, reach));
+  return { ...w, ...(url ? { url } : {}), ...(urls?.length ? { urls } : {}) };
+}
+
+function rewriteHostLists(
+  lists: Pick<FleetHost, "containers" | "node" | "web">,
+  host: string,
+  ip?: string | null,
+): Pick<FleetHost, "containers" | "node" | "web"> {
+  const reach = pickReachHost(ip, host);
+  if (!reach) return lists;
+  return {
+    containers: lists.containers.map((c) => rewriteContainerUrl(c, reach)),
+    node: lists.node.map((c) => rewriteContainerUrl(c, reach)),
+    web: lists.web.map((w) => rewriteWebUrls(w, reach)),
+  };
+}
+
 function pushHost(out: FleetHost[], host: string, lists: Pick<FleetHost, "containers" | "node" | "web">, ip?: string | null) {
-  if (!lists.containers.length && !lists.node.length && !lists.web.length) return;
+  const next = rewriteHostLists(lists, host, ip);
+  if (!next.containers.length && !next.node.length && !next.web.length) return;
   const prev = out.find((h) => normHost(h.host) === normHost(host));
   if (prev) {
-    prev.containers.push(...lists.containers);
-    prev.node.push(...lists.node);
-    prev.web = groupWebServices([...prev.web, ...lists.web]);
+    prev.containers.push(...next.containers);
+    prev.node.push(...next.node);
+    prev.web = groupWebServices([...prev.web, ...next.web]);
     if (!prev.ip && ip) prev.ip = ip;
     return;
   }
-  out.push({ host, ip: ip ?? null, ...lists });
+  out.push({ host, ip: ip ?? null, ...next });
 }
 
 function walk(x: unknown, out: FleetHost[], depth: number) {
@@ -408,7 +438,7 @@ function collapseProjectPrefix(name: string): string {
 }
 
 const OK_STATUS = /^(ok|up|healthy|running|live|good)$/i;
-const DEGRADED_STATUS = /^(degraded|warn|warning|slow)$/i;
+const DEGRADED_STATUS = /^(degraded|warn|warning|slow|amber)$/i;
 
 function isOkStatus(s: string): boolean {
   const t = s.trim();

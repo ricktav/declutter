@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { items } from "@db/schema";
 import type { getDb } from "../queries/connection";
+import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -46,12 +47,12 @@ export type ServicesReportInput = {
   lxc?: GuestRecIn[];
 };
 
-function compactService(s: ServiceRecIn): Record<string, string | number> {
+function compactService(s: ServiceRecIn, reach: string | null): Record<string, string | number> {
   const o: Record<string, string | number> = { name: s.name };
   if (s.status) o.status = s.status;
   if (s.image) o.image = s.image;
   if (s.port != null) o.port = s.port;
-  if (s.url) o.url = s.url;
+  if (s.url) o.url = rewriteLocalHostUrl(s.url, reach);
   return o;
 }
 
@@ -74,11 +75,19 @@ function compactWeb(w: WebRecIn): Record<string, string | number | string[] | nu
   return o;
 }
 
+function compactWebAt(w: WebRecIn, reach: string | null): Record<string, string | number | string[] | number[]> {
+  return compactWeb({
+    ...w,
+    url: w.url ? rewriteLocalHostUrl(w.url, reach) : w.url,
+    urls: w.urls?.map((u) => rewriteLocalHostUrl(u, reach)),
+  });
+}
+
 function compactGuest(g: GuestRecIn): Record<string, string | number> {
   const o: Record<string, string | number> = { vmid: g.vmid, name: g.name };
   if (g.status) o.status = g.status;
   if (g.memMb != null) o.memMb = g.memMb;
-  if (g.diskGb != null) o.diskGb = g.diskGb;
+  if (g.diskGb != null && g.diskGb > 0) o.diskGb = g.diskGb;
   if (g.template) o.template = 1;
   return o;
 }
@@ -211,9 +220,13 @@ export async function applyServicesReport(db: Db, input: ServicesReportInput): P
   }
   const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
   const merge = input.merge === true;
-  const containers = applyList(next, "containers", input.containers, merge, compactService, existingServices, (x) => String(x.name ?? "").toLowerCase());
-  const node = applyList(next, "node", input.node, merge, compactService, existingServices, (x) => String(x.name ?? "").toLowerCase());
-  const web = applyList(next, "web", input.web, merge, compactWeb, existingWeb, (x) => String(x.label ?? x.name ?? "").toLowerCase());
+  const reach = pickReachHost(
+    item.attributes?.ip != null ? String(item.attributes.ip) : item.attributes?.ip_address != null ? String(item.attributes.ip_address) : null,
+    item.attributes?.hostname != null ? String(item.attributes.hostname) : item.attributes?.host != null ? String(item.attributes.host) : null,
+  );
+  const containers = applyList(next, "containers", input.containers, merge, (s) => compactService(s, reach), existingServices, (x) => String(x.name ?? "").toLowerCase());
+  const node = applyList(next, "node", input.node, merge, (s) => compactService(s, reach), existingServices, (x) => String(x.name ?? "").toLowerCase());
+  const web = applyList(next, "web", input.web, merge, (w) => compactWebAt(w, reach), existingWeb, (x) => String(x.label ?? x.name ?? "").toLowerCase());
   const vms = applyList(next, "vms", input.vms, merge, compactGuest, existingGuests, (x) => String(x.vmid ?? ""));
   const lxc = applyList(next, "lxc", input.lxc, merge, compactGuest, existingGuests, (x) => String(x.vmid ?? ""));
   await db.update(items).set({ attributes: next }).where(eq(items.id, input.itemId));

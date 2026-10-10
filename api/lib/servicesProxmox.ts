@@ -45,7 +45,7 @@ function looksTemplate(name: string, flag?: unknown): boolean {
 function compactGuest(g: ProxmoxGuest): ProxmoxGuest {
   const rec: ProxmoxGuest = { vmid: g.vmid, name: g.name.slice(0, 64), status: g.status };
   if (g.memMb != null) rec.memMb = g.memMb;
-  if (g.diskGb != null) rec.diskGb = g.diskGb;
+  if (g.diskGb != null && g.diskGb > 0) rec.diskGb = g.diskGb;
   if (g.template) rec.template = true;
   return rec;
 }
