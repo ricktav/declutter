@@ -17,6 +17,7 @@ export const settingsRouter = createRouter({
     }
     const mask = (k?: string) => (k ? `${k.slice(0, 6)}…${k.slice(-3)}` : null);
     const env2Configured = !!(process.env.LLM2_BASE_URL && process.env.LLM2_API_KEY);
+    const xaiEnvConfigured = !!process.env.XAI_API_KEY;
     return {
       source,
       settings: {
@@ -28,7 +29,11 @@ export const settingsRouter = createRouter({
         llm2ApiKeyMasked: mask(s.llm2ApiKey),
         llm2Model: s.llm2Model ?? null,
         llm2VisionModel: s.llm2VisionModel ?? null,
+        llmTriageSlot: s.llmTriageSlot ?? "a",
+        llmDetectSlot: s.llmDetectSlot ?? "a",
       },
+      xaiEnvConfigured,
+      xaiEnv: xaiEnvConfigured ? { llmApiKeyMasked: mask(process.env.XAI_API_KEY) } : null,
       envConfigured,
       env: envConfigured
         ? {
@@ -62,6 +67,8 @@ export const settingsRouter = createRouter({
         llm2ApiKey: z.string().optional(),
         llm2Model: z.string().optional(),
         llm2VisionModel: z.string().optional(),
+        llmTriageSlot: z.enum(["a", "b"]).optional(),
+        llmDetectSlot: z.enum(["a", "b"]).optional(),
         clear: z.boolean().optional(),
       }),
     )
@@ -70,6 +77,8 @@ export const settingsRouter = createRouter({
         saveSettings({
           llmBaseUrl: "", llmApiKey: "", llmModel: "", llmVisionModel: "",
           llm2BaseUrl: "", llm2ApiKey: "", llm2Model: "", llm2VisionModel: "",
+          llmTriageSlot: undefined,
+          llmDetectSlot: undefined,
         });
       } else {
         const patch: Record<string, string> = {};
@@ -81,6 +90,8 @@ export const settingsRouter = createRouter({
         if (input.llm2ApiKey !== undefined && input.llm2ApiKey !== "") patch.llm2ApiKey = input.llm2ApiKey;
         if (input.llm2Model !== undefined) patch.llm2Model = input.llm2Model;
         if (input.llm2VisionModel !== undefined) patch.llm2VisionModel = input.llm2VisionModel;
+        if (input.llmTriageSlot !== undefined) patch.llmTriageSlot = input.llmTriageSlot;
+        if (input.llmDetectSlot !== undefined) patch.llmDetectSlot = input.llmDetectSlot;
         saveSettings(patch);
       }
       await logEvent({

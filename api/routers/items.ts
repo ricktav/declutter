@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { eq, desc, or, and, asc } from "drizzle-orm";
+import { eq, desc, or, and, asc, ne, isNull } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -12,6 +12,7 @@ import { roomSummary, setItemLocation } from "../lib/location";
 import { coverPhotos, linkAsLegacy, photoAsLegacy } from "../lib/photos";
 import { placementFor, placementSummaryFor } from "../lib/placement";
 import { snapPosToWalls } from "../lib/snapToWall";
+import { commonIpv4Prefix, identityEntries, identityKind } from "../lib/identityAttrs";
 
 /** crude name-similarity: shared significant tokens */
 function nameScore(a: string, b: string): number {
@@ -32,20 +33,34 @@ function nameScore(a: string, b: string): number {
 
 export const itemsRouter = createRouter({
   listByArea: procedure
-    .input(z.object({ areaId: z.number(), includeArchived: z.boolean().default(false) }))
-    .query(async ({ input }) => {
+    .input(
+      z.object({
+        areaId: z.number(),
+        includeArchived: z.boolean().default(false),
+        houseId: z.number().nullable().optional(),
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const houseId = input.houseId !== undefined ? input.houseId : ctx.houseId;
       const db = getDb();
       const rows = await db
         .select()
         .from(items)
         .where(
-          input.includeArchived
-            ? eq(items.areaId, input.areaId)
-            : and(eq(items.areaId, input.areaId), eq(items.status, "active")),
+          and(
+            eq(items.areaId, input.areaId),
+            input.includeArchived ? undefined : eq(items.status, "active"),
+            houseId != null ? eq(items.houseId, houseId) : undefined,
+          ),
         )
         .orderBy(desc(items.updatedAt));
       const covers = await coverPhotos(db, rows.map((r) => r.id));
-      return rows.map((r) => ({ ...r, imageKey: covers.get(r.id)?.storageKey ?? null }));
+      const roomsById = await roomSummary(db, rows.map((r) => r.roomId).filter((x): x is number => x != null));
+      return rows.map((r) => ({
+        ...r,
+        imageKey: covers.get(r.id)?.storageKey ?? null,
+        room: r.roomId != null ? (roomsById.get(r.roomId) ?? null) : null,
+      }));
     }),
 
   /** Every active item across every area, for the cross-area browser (search/sort by area or location). */
@@ -321,6 +336,7 @@ export const itemsRouter = createRouter({
         id: z.number(),
         name: z.string().min(1).optional(),
         description: z.string().nullable().optional(),
+        areaId: z.number().optional(),
         attributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
         roomId: z.number().nullable().optional(),
         houseId: z.number().nullable().optional(),
@@ -377,6 +393,7 @@ export const itemsRouter = createRouter({
         if (after?.roomId !== before?.roomId || after?.houseId !== before?.houseId) parts.push(`location set to ${label}`);
       }
       if (patch.description !== undefined) parts.push("description updated");
+      if (patch.areaId !== undefined && patch.areaId !== before?.areaId) parts.push("topic changed");
       if (patch.attributes !== undefined) parts.push("attributes updated");
       if (patch.pos !== undefined) parts.push("position updated");
 
@@ -550,10 +567,204 @@ export const itemsRouter = createRouter({
       return { ok: true, attributes: next };
     }),
 
+  /**
+   * Attribute keys (and their values) already used on active Things in a
+   * topic, most common first. ItemDetail's "add attribute" picklist uses this.
+   */
+  attributeKeysForTopic: procedure
+    .input(z.object({ areaId: z.number() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const rows = await db
+        .select({ attributes: items.attributes })
+        .from(items)
+        .where(and(eq(items.areaId, input.areaId), eq(items.status, "active")));
+      const keys = new Map<string, { count: number; values: Map<string, number> }>();
+      const ipValues: string[] = [];
+      for (const row of rows) {
+        const attrs = row.attributes;
+        if (!attrs || typeof attrs !== "object" || Array.isArray(attrs)) continue;
+        for (const [rawKey, rawVal] of Object.entries(attrs)) {
+          const key = rawKey.trim();
+          if (!key) continue;
+          let rec = keys.get(key);
+          if (!rec) {
+            rec = { count: 0, values: new Map() };
+            keys.set(key, rec);
+          }
+          rec.count += 1;
+          const value = rawVal == null ? "" : String(rawVal).trim();
+          const kind = identityKind(key);
+          // Identity values must not be picklist choices (that invites
+          // duplicates). IP is the exception: only the common /24 prefix.
+          if (kind === "ip" && value) ipValues.push(value);
+          if (kind) continue;
+          if (value) rec.values.set(value, (rec.values.get(value) ?? 0) + 1);
+        }
+      }
+      const ipPrefix = commonIpv4Prefix(ipValues);
+      return [...keys.entries()]
+        .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
+        .slice(0, 100)
+        .map(([key, rec]) => ({
+          key,
+          count: rec.count,
+          values:
+            identityKind(key) === "ip" && ipPrefix
+              ? [{ value: ipPrefix, count: rec.count }]
+              : identityKind(key)
+                ? []
+                : [...rec.values.entries()]
+                    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+                    .slice(0, 40)
+                    .map(([value, count]) => ({ value, count })),
+        }));
+    }),
+
+  /**
+   * Soft uniqueness check for serial / MAC / IP / hostname (and key variants)
+   * in the item's house. Does not block a save — existing data may already clash.
+   */
+  findAttributeDuplicates: procedure
+    .input(
+      z.object({
+        itemId: z.number(),
+        attributes: z.record(z.string().min(1).max(64), z.string().max(500)).optional(),
+      }),
+    )
+    .query(async ({ input }) => {
+      const db = getDb();
+      const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
+      const houseRows = await db
+        .select({
+          id: items.id,
+          name: items.name,
+          attributes: items.attributes,
+          status: items.status,
+          areaId: items.areaId,
+        })
+        .from(items)
+        .where(and(
+          ne(items.id, item.id),
+          item.houseId != null ? eq(items.houseId, item.houseId) : isNull(items.houseId),
+        ));
+      const index = new Map<string, { id: number; name: string; key: string; value: string; status: string }[]>();
+      const houseIps: string[] = [];
+      for (const row of houseRows) {
+        for (const e of identityEntries(row.attributes)) {
+          const k = `${e.kind}:${e.normalized}`;
+          const list = index.get(k) ?? [];
+          list.push({ id: row.id, name: row.name, key: e.key, value: e.value, status: row.status });
+          index.set(k, list);
+          if (e.kind === "ip") houseIps.push(e.value);
+        }
+      }
+      for (const e of identityEntries(item.attributes)) {
+        if (e.kind === "ip") houseIps.push(e.value);
+      }
+      let ipPrefix = commonIpv4Prefix(houseIps);
+      if (!ipPrefix) {
+        const topicRows = await db
+          .select({ attributes: items.attributes })
+          .from(items)
+          .where(and(eq(items.areaId, item.areaId), eq(items.status, "active")));
+        const topicIps: string[] = [];
+        for (const row of topicRows) {
+          for (const e of identityEntries(row.attributes)) {
+            if (e.kind === "ip") topicIps.push(e.value);
+          }
+        }
+        ipPrefix = commonIpv4Prefix(topicIps);
+      }
+      const mine = identityEntries(input.attributes ?? item.attributes);
+      const kindOrder = ["serial", "mac", "ip", "hostname"] as const;
+      const clashes = mine
+        .map((e) => {
+          const others = (index.get(`${e.kind}:${e.normalized}`) ?? []).slice(0, 8);
+          return others.length === 0 ? null : { kind: e.kind, key: e.key, value: e.value, others };
+        })
+        .filter((c): c is NonNullable<typeof c> => c != null)
+        .sort((a, b) => kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind));
+      return { clashes, ipPrefix };
+    }),
+
   /** Every relation of one type (for example "backs-up"), for views that need all links at once. */
   listRelations: procedure
     .input(z.object({ type: z.string().min(1).max(64) }))
     .query(async ({ input }) => getDb().select().from(relations).where(eq(relations.type, input.type))),
+
+  /** Move and/or retopic many Things in one go (All items batch bar). */
+  updateMany: procedure
+    .input(
+      z.object({
+        ids: z.array(z.number()).min(1).max(200),
+        roomId: z.number().nullable().optional(),
+        areaId: z.number().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      if (input.roomId === undefined && input.areaId === undefined) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Pass roomId and/or areaId." });
+      }
+      const db = getDb();
+      const uniqueIds = [...new Set(input.ids)];
+      if (input.areaId != null) {
+        const area = await db.query.areas.findFirst({ where: eq(areas.id, input.areaId) });
+        if (!area) throw new TRPCError({ code: "BAD_REQUEST", message: "Topic not found." });
+      }
+      await db.transaction(async (tx) => {
+        for (const id of uniqueIds) {
+          const before = await tx.query.items.findFirst({ where: eq(items.id, id) });
+          if (!before) continue;
+          if (input.areaId != null && input.areaId !== before.areaId) {
+            await tx.update(items).set({ areaId: input.areaId }).where(eq(items.id, id));
+          }
+          if (input.roomId !== undefined && input.roomId !== before.roomId) {
+            if (input.roomId != null) await setItemLocation(tx, id, { roomId: input.roomId });
+            else await setItemLocation(tx, id, { roomId: null, houseId: before.houseId });
+            await tx.update(items).set({ pos: null }).where(eq(items.id, id));
+          }
+          await logEvent(
+            {
+              entityType: "item",
+              entityId: id,
+              action: "updated",
+              summary: `Item "${before.name}" batch updated`,
+              payload: { roomId: input.roomId, areaId: input.areaId },
+            },
+            tx,
+          );
+        }
+      });
+      return { ok: true as const, count: uniqueIds.length };
+    }),
+
+  /** Hard-delete many Things. Refuses the whole batch if any still has sub-objects. */
+  removeMany: procedure
+    .input(z.object({ ids: z.array(z.number()).min(1).max(200) }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const uniqueIds = [...new Set(input.ids)];
+      const blocked: string[] = [];
+      for (const id of uniqueIds) {
+        const item = await db.query.items.findFirst({ where: eq(items.id, id) });
+        const children = await db.select({ id: items.id }).from(items).where(eq(items.parentId, id));
+        if (children.length > 0) blocked.push(`"${item?.name ?? `#${id}`}" (${children.length} sub-object${children.length === 1 ? "" : "s"})`);
+      }
+      if (blocked.length) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Cannot delete until sub-objects are moved or deleted: ${blocked.join(", ")}`,
+        });
+      }
+      const files: string[] = [];
+      await db.transaction(async (tx) => {
+        for (const id of uniqueIds) files.push(...(await deleteItemTx(tx, id)));
+      });
+      await releaseStoredFiles(db, files);
+      return { ok: true as const, count: uniqueIds.length };
+    }),
 
   remove: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
@@ -660,14 +871,20 @@ export const itemsRouter = createRouter({
     return { ok: true };
   }),
 
-  /** lightweight search for pickers / auto-linking */
-  search: procedure.input(z.object({ q: z.string() })).query(async ({ input }) => {
-    const db = getDb();
-    const all = await db.select().from(items).where(eq(items.status, "active"));
-    const q = input.q.toLowerCase();
-    return all
-      .filter((i) => i.name.toLowerCase().includes(q))
-      .slice(0, 10)
-      .map((i) => ({ id: i.id, name: i.name, areaId: i.areaId }));
-  }),
+  /** lightweight search for pickers / auto-linking. Defaults to the session house. */
+  search: procedure
+    .input(z.object({ q: z.string(), houseId: z.number().nullable().optional() }))
+    .query(async ({ input, ctx }) => {
+      const houseId = input.houseId !== undefined ? input.houseId : ctx.houseId;
+      const db = getDb();
+      const all = await db
+        .select()
+        .from(items)
+        .where(and(eq(items.status, "active"), houseId != null ? eq(items.houseId, houseId) : undefined));
+      const q = input.q.toLowerCase();
+      return all
+        .filter((i) => i.name.toLowerCase().includes(q))
+        .slice(0, 10)
+        .map((i) => ({ id: i.id, name: i.name, areaId: i.areaId }));
+    }),
 });

@@ -7,7 +7,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, items, photos, type PhotoCamera } from "@db/schema";
+import { captures, items, photoPins, photos, type PhotoCamera } from "@db/schema";
 import { readFileBytes, urlForKey, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
@@ -116,7 +116,8 @@ export const photosRouter = createRouter({
     if (!photo?.sourceCaptureId) {
       throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This cutout has no source photo to re-crop from." });
     }
-    const cap = await db.query.captures.findFirst({ where: eq(captures.id, photo.sourceCaptureId) });
+    const sourceCaptureId = photo.sourceCaptureId;
+    const cap = await db.query.captures.findFirst({ where: eq(captures.id, sourceCaptureId) });
     if (!cap?.storageKey) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
     const cropped = await cropPercent(await readSourceBytes(cap.storageKey), input.box);
     const saved = await withNewFile(
@@ -124,6 +125,19 @@ export const photosRouter = createRouter({
       async (file) => {
         await db.transaction(async (tx) => {
           await tx.update(photos).set({ storageKey: file.key, size: file.size, cropBox: input.box, camera: null }).where(eq(photos.id, input.photoId));
+          if (photo.itemId) {
+            const [loc] = await tx
+              .select({ id: photos.id })
+              .from(photos)
+              .where(and(eq(photos.sourceCaptureId, sourceCaptureId), isNull(photos.itemId)))
+              .limit(1);
+            if (loc) {
+              await tx
+                .update(photoPins)
+                .set({ xPct: input.box.xPct, yPct: input.box.yPct, wPct: input.box.wPct, hPct: input.box.hPct })
+                .where(and(eq(photoPins.photoId, loc.id), eq(photoPins.itemId, photo.itemId)));
+            }
+          }
           await logEvent(
             {
               entityType: "photo",
@@ -222,7 +236,8 @@ export const photosRouter = createRouter({
 
   /** The photo pool for a room: every source capture behind the cutouts of the room's active items.
    * `camera` is the camera of the capture's location photo when that photo
-   * stands in this room (null otherwise, or when it has no location photo yet). */
+   * stands in this room (null otherwise, or when it has no location photo yet).
+   * `photoId` / `photoRoomId` are that location photo (null when none exists yet). */
   forRoom: procedure.input(z.object({ roomId: z.number() })).query(async ({ input }) => {
     const db = getDb();
     const roomItems = await db
@@ -242,18 +257,29 @@ export const photosRouter = createRouter({
       .where(inArray(captures.id, captureIds))
       .orderBy(asc(captures.id));
     const locations = await db
-      .select({ sourceCaptureId: photos.sourceCaptureId, roomId: photos.roomId, camera: photos.camera })
+      .select({ id: photos.id, sourceCaptureId: photos.sourceCaptureId, roomId: photos.roomId, camera: photos.camera })
       .from(photos)
       .where(and(inArray(photos.sourceCaptureId, captureIds), isNull(photos.itemId), isNull(photos.cropBox)))
       .orderBy(asc(photos.id));
+    const locBy = new Map<number, { photoId: number; photoRoomId: number | null }>();
     const cameraBy = new Map<number, PhotoCamera>();
     for (const l of locations) {
-      if (l.sourceCaptureId == null || l.roomId !== input.roomId || !l.camera || cameraBy.has(l.sourceCaptureId)) continue;
+      if (l.sourceCaptureId == null) continue;
+      if (!locBy.has(l.sourceCaptureId)) locBy.set(l.sourceCaptureId, { photoId: l.id, photoRoomId: l.roomId });
+      if (l.roomId !== input.roomId || !l.camera || cameraBy.has(l.sourceCaptureId)) continue;
       cameraBy.set(l.sourceCaptureId, l.camera);
     }
     return caps
       .filter((c): c is { id: number; storageKey: string } => !!c.storageKey)
-      .map((c) => ({ ...c, camera: cameraBy.get(c.id) ?? null }));
+      .map((c) => {
+        const loc = locBy.get(c.id);
+        return {
+          ...c,
+          camera: cameraBy.get(c.id) ?? null,
+          photoId: loc?.photoId ?? null,
+          photoRoomId: loc?.photoRoomId ?? null,
+        };
+      });
   }),
 
   /** Change a Photo's Place (null clears it). A new room clears its camera

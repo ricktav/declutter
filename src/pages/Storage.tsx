@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { HardDrive, Server, X } from "lucide-react";
+import { Link, useSearchParams } from "react-router";
+import { HardDrive, ListTodo, Server, X } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
 import { DeviceBlock, ROLE_COLORS, formatBytes } from "@/components/storage/Blocks";
@@ -7,13 +8,35 @@ import { DeviceBlock, ROLE_COLORS, formatBytes } from "@/components/storage/Bloc
 const ROLES = ["unique", "test", "backup", "archive", "system", "media", "scratch"] as const;
 type Role = (typeof ROLES)[number];
 
+function measureDirsTask(v: { itemId: number; itemName: string; mountPoint: string; label: string | null }) {
+  const vol = v.label && v.label !== v.mountPoint ? `${v.label} (${v.mountPoint})` : v.mountPoint;
+  const cmd =
+    v.mountPoint === "/"
+      ? `node scripts/storage-report-local.mjs --item ${v.itemId}`
+      : `node scripts/storage-report-local.mjs --item ${v.itemId} --only ${v.mountPoint}`;
+  return {
+    title: `Measure directories on ${v.itemName}: ${vol}`,
+    notes: `No directory sizes yet for ${vol} on ${v.itemName} (item ${v.itemId}).\n\nOn that machine:\n${cmd}`,
+  };
+}
+
 /** Every computer with its drives and volumes as blocks; click a volume for its biggest directories and its data role. */
 export default function StoragePage() {
   const { houseId, houses } = useHouse();
-  const [allHouses, setAllHouses] = useState(false);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const idParam = (key: string) => {
+    const n = Number(searchParams.get(key));
+    return Number.isInteger(n) && n > 0 ? n : NaN;
+  };
+  const volumeParam = idParam("volume");
+  const itemParam = idParam("item");
+  const [allHouses, setAllHouses] = useState(() => Number.isInteger(volumeParam) || Number.isInteger(itemParam));
+  const [selected, setSelected] = useState<number | null>(() =>
+    Number.isInteger(volumeParam) ? volumeParam : null,
+  );
   const utils = trpc.useUtils();
   const overview = trpc.storage.overview.useQuery({ houseId: allHouses ? null : houseId });
+  const o = overview.data;
   const dirs = trpc.storage.dirs.useQuery({ volumeId: selected ?? 0 }, { enabled: selected != null });
   const setRole = trpc.storage.setRole.useMutation({
     onSuccess: () => {
@@ -24,6 +47,17 @@ export default function StoragePage() {
 
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [addingTask, setAddingTask] = useState(false);
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskNotes, setTaskNotes] = useState("");
+  const [taskCreatedId, setTaskCreatedId] = useState<number | null>(null);
+  const createTask = trpc.tasks.create.useMutation({
+    onSuccess: (row) => {
+      setTaskCreatedId(row.id);
+      setAddingTask(false);
+      void utils.tasks.list.invalidate();
+    },
+  });
   const removeVolume = trpc.storage.removeVolume.useMutation({
     onSuccess: () => {
       select(null);
@@ -41,9 +75,42 @@ export default function StoragePage() {
     setSelected(volumeId);
     setConfirmRemove(false);
     setAttachError(null);
+    setAddingTask(false);
+    setTaskTitle("");
+    setTaskNotes("");
+    setTaskCreatedId(null);
+    const next = new URLSearchParams(searchParams);
+    if (volumeId != null) next.set("volume", String(volumeId));
+    else next.delete("volume");
+    setSearchParams(next, { replace: true });
   };
 
-  const o = overview.data;
+  useEffect(() => {
+    if (Number.isInteger(volumeParam)) {
+      setSelected(volumeParam);
+      setAllHouses(true);
+    }
+  }, [volumeParam]);
+
+  useEffect(() => {
+    if (!o || !Number.isInteger(itemParam) || selected != null) return;
+    const vols: number[] = [];
+    for (const c of o.computers) {
+      if (c.id === itemParam) vols.push(...c.volumes.map((v) => v.id), ...c.drives.flatMap((d) => d.volumes.map((v) => v.id)), ...c.attached.flatMap((d) => d.volumes.map((v) => v.id)));
+      else {
+        for (const d of [...c.drives, ...c.attached]) if (d.id === itemParam) vols.push(...d.volumes.map((v) => v.id));
+      }
+    }
+    for (const d of o.externals) if (d.id === itemParam) vols.push(...d.volumes.map((v) => v.id));
+    if (vols[0] != null) select(vols[0]);
+  }, [o, itemParam, selected]);
+
+  useEffect(() => {
+    if (selected == null) return;
+    const el = document.getElementById(`storage-volume-${selected}`) ?? document.getElementById(`storage-item-${itemParam}`);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [selected, o, itemParam]);
+
   const maxBytes = useMemo(() => {
     if (!o) return 0;
     const all = [...o.computers.flatMap((c) => [c, ...c.drives, ...c.attached]), ...o.externals];
@@ -145,7 +212,7 @@ export default function StoragePage() {
           {overview.isError && <p className="text-sm text-red-600">{overview.error.message}</p>}
           {o?.computers.length === 0 && o.externals.length === 0 && <p className="text-sm text-muted-foreground">No computers, drives or NAS boxes in this house.</p>}
           {o?.computers.map((c) => (
-            <section key={c.id} className="rounded-lg border border-border bg-white p-4">
+            <section id={`storage-item-${c.id}`} className="rounded-lg border border-border bg-white p-4">
               <div className="flex items-center gap-2">
                 <Server className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-sm font-semibold">{c.name}</h2>
@@ -217,7 +284,71 @@ export default function StoragePage() {
               </div>
               <div>
                 <div className="micro-label text-muted-foreground">Biggest directories</div>
-                {dirs.data.dirs.length === 0 && <p className="mt-1 text-[12px] text-muted-foreground">No directory measurement for this volume yet.</p>}
+                {dirs.data.dirs.length === 0 && (
+                  <div className="mt-1 space-y-2">
+                    <p className="text-[12px] text-muted-foreground">No directory measurement for this volume yet.</p>
+                    {taskCreatedId != null ? (
+                      <p className="text-[12px]">
+                        <Link to="/tasks" className="text-foreground underline-offset-2 hover:underline">
+                          Task added →
+                        </Link>
+                      </p>
+                    ) : addingTask ? (
+                      <div className="space-y-1.5">
+                        <input
+                          className="w-full rounded border border-input px-2 py-1 text-[12px]"
+                          value={taskTitle}
+                          onChange={(e) => setTaskTitle(e.target.value)}
+                          aria-label="Task title"
+                          autoFocus
+                        />
+                        <textarea
+                          className="w-full rounded border border-input px-2 py-1 text-[12px] font-data min-h-[4.5rem]"
+                          value={taskNotes}
+                          onChange={(e) => setTaskNotes(e.target.value)}
+                          aria-label="Task notes"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={!taskTitle.trim() || createTask.isPending}
+                            onClick={() =>
+                              createTask.mutate({
+                                title: taskTitle.trim(),
+                                notes: taskNotes.trim() || undefined,
+                                itemId: dirs.data!.volume.itemId,
+                              })
+                            }
+                            className="rounded border border-border px-2 py-1 text-[12px] disabled:opacity-50 hover:bg-accent/40"
+                          >
+                            {createTask.isPending ? "Adding…" : "Add task"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAddingTask(false)}
+                            className="text-[12px] text-muted-foreground hover:text-foreground"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        {createTask.isError && <p className="text-[12px] text-red-600">{createTask.error.message}</p>}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const draft = measureDirsTask(dirs.data!.volume);
+                          setTaskTitle(draft.title);
+                          setTaskNotes(draft.notes);
+                          setAddingTask(true);
+                        }}
+                        className="inline-flex items-center gap-1 text-[12px] text-foreground underline-offset-2 hover:underline"
+                      >
+                        <ListTodo className="h-3 w-3" /> Add task
+                      </button>
+                    )}
+                  </div>
+                )}
                 <ul className="mt-1 space-y-1">
                   {dirs.data.dirs.map((d) => (
                     <li key={d.path} className="text-[12px]">

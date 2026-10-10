@@ -7,7 +7,7 @@ import { photoPins, photos, items, areas } from "@db/schema";
 import { coverPhotos } from "../lib/photos";
 import { readFileBytes } from "../lib/filestore";
 import { toThumbnail, cropPercent, normalizeOrientation } from "../lib/crop";
-import { getVisionModel } from "../lib/ai";
+import { getDetectVisionModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
@@ -230,7 +230,7 @@ export const pinsRouter = createRouter({
 
         const refContent = await buildReferenceContent(db, allItems, MAX_REFERENCE_PHOTOS);
 
-        const model = await getVisionModel();
+        const model = await getDetectVisionModel();
         const { object } = await generateObject({
           model,
           schema: detectSchema,
@@ -336,7 +336,7 @@ export const pinsRouter = createRouter({
             })
           : (
               await generateObject({
-                model: await getVisionModel(),
+                model: await getDetectVisionModel(),
                 schema: suggestSchema,
                 messages: [
                   { role: "user", content: [{ type: "text", text: prompt }, { type: "image", image: cropped }] },

@@ -56,6 +56,8 @@ export default function SettingsPage() {
   const [bTesting, setBTesting] = useState(false);
   const [bPromptResult, setBPromptResult] = useState<{ ok: boolean; reply?: string; ms?: number; error?: string } | null>(null);
   const [bPromptTesting, setBPromptTesting] = useState(false);
+  const [triageSlot, setTriageSlot] = useState<"a" | "b">("a");
+  const [detectSlot, setDetectSlot] = useState<"a" | "b">("a");
 
   useEffect(() => {
     if (current.data) {
@@ -64,6 +66,8 @@ export default function SettingsPage() {
       setVisionModel(current.data.settings.llmVisionModel ?? current.data.env?.llmVisionModel ?? "");
       setBBaseUrl(current.data.settings.llm2BaseUrl ?? current.data.env2?.llm2BaseUrl ?? "");
       setBModel(current.data.settings.llm2Model ?? current.data.env2?.llm2Model ?? "");
+      setTriageSlot(current.data.settings.llmTriageSlot ?? "a");
+      setDetectSlot(current.data.settings.llmDetectSlot ?? "a");
     }
   }, [current.data]);
 
@@ -153,7 +157,16 @@ export default function SettingsPage() {
   const sourceLabel: Record<string, string> = {
     settings: "Settings (this page)",
     env: ".env file",
+    "xai-env": "XAI_API_KEY in .env",
     none: "not configured",
+  };
+
+  const applyPreset = (p: (typeof PRESETS)[number]) => {
+    setBaseUrl(p.baseUrl);
+    if (p.label === "xAI Grok") {
+      if (!model) setModel("grok-4.7");
+      if (!visionModel) setVisionModel("grok-4.7");
+    }
   };
 
   return (
@@ -187,7 +200,7 @@ export default function SettingsPage() {
             {PRESETS.map((p) => (
               <button
                 key={p.label}
-                onClick={() => setBaseUrl(p.baseUrl)}
+                onClick={() => applyPreset(p)}
                 className={`rounded-full px-3 py-1 text-[12px] transition-colors ${
                   baseUrl === p.baseUrl
                     ? "bg-primary text-primary-foreground"
@@ -340,10 +353,60 @@ export default function SettingsPage() {
       </div>
 
       <p className="text-[12px] text-muted-foreground mt-4">
-        Precedence: this page → <span className="font-data">.env</span> <span className="font-data">LLM_*</span> variables.
-        Settings are stored in <span className="font-data">~/.declutter/settings.json</span>
-        (not committed to git).
+        Precedence: this page → <span className="font-data">LLM_*</span> in <span className="font-data">.env</span> →{" "}
+        <span className="font-data">XAI_API_KEY</span> (Grok at https://api.x.ai/v1, model grok-4.7).
+        Keys are stored in <span className="font-data">~/.declutter/settings.json</span>, never in the client bundle.
+        xAI’s documented API auth is a Bearer API key from the console — there is no official OAuth grant for API access.
       </p>
+      {current.data?.xaiEnvConfigured && (
+        <p className="text-[12px] text-muted-foreground mt-1">
+          <span className="font-data">XAI_API_KEY</span> is set in the environment
+          {current.data.xaiEnv?.llmApiKeyMasked ? ` (${current.data.xaiEnv.llmApiKeyMasked})` : ""}.
+        </p>
+      )}
+
+      <div className="mt-6 rounded-lg border border-border bg-white p-4 space-y-3">
+        <h2 className="text-sm font-semibold">Which provider for which job</h2>
+        <p className="text-[12px] text-muted-foreground">
+          Provider A does chat, wiki and Ask AI. Inbox triage and detect objects can use A or B.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="block text-[12px]">
+            Inbox triage
+            <select
+              className="mt-1 w-full rounded-md border border-input px-2 py-1.5 text-[13px] bg-white"
+              value={triageSlot}
+              onChange={(e) => {
+                const v = e.target.value === "b" ? "b" : "a";
+                setTriageSlot(v);
+                save.mutate({ llmTriageSlot: v });
+              }}
+            >
+              <option value="a">Provider A</option>
+              <option value="b" disabled={!current.data?.settings.llm2BaseUrl && !current.data?.env2Configured}>
+                Provider B
+              </option>
+            </select>
+          </label>
+          <label className="block text-[12px]">
+            Detect objects (vision)
+            <select
+              className="mt-1 w-full rounded-md border border-input px-2 py-1.5 text-[13px] bg-white"
+              value={detectSlot}
+              onChange={(e) => {
+                const v = e.target.value === "b" ? "b" : "a";
+                setDetectSlot(v);
+                save.mutate({ llmDetectSlot: v });
+              }}
+            >
+              <option value="a">Provider A (vision model)</option>
+              <option value="b" disabled={!current.data?.settings.llm2BaseUrl && !current.data?.env2Configured}>
+                Provider B (vision model)
+              </option>
+            </select>
+          </label>
+        </div>
+      </div>
 
       {/* Provider B */}
       <div className="mt-8 flex items-center gap-2">

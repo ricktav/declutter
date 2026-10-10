@@ -55,6 +55,33 @@ describe("items.listAll / get", () => {
     const one = await callerFor(h1).items.get({ id: mine.find((r) => r.name === "pan")!.id });
     expect(one?.room).toMatchObject({ id: keuken, name: "Keuken", floor: "ground", hasGeometry: false });
   });
+
+  it("listByArea joins the room for topic Place filters and stays in the session house", async () => {
+    const { h1, h2, areaId, keuken, hal } = await seed();
+    await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
+    await callerFor(h1).items.create({ areaId, name: "lamp" });
+    await callerFor(h1).items.create({ areaId, name: "coat", roomId: hal });
+
+    const rows = await callerFor(h1).items.listByArea({ areaId });
+    expect(rows.map((r) => [r.name, r.room?.name ?? null]).sort()).toEqual([
+      ["lamp", null],
+      ["pan", "Keuken"],
+    ]);
+    expect((await callerFor(h2).items.listByArea({ areaId })).map((r) => r.name)).toEqual(["coat"]);
+    expect(await callerFor(h1).items.listByArea({ areaId, houseId: null })).toHaveLength(3);
+  });
+});
+
+describe("items.search", () => {
+  it("defaults to the session house and can list every house", async () => {
+    const { h1, h2, areaId, keuken, hal } = await seed();
+    await callerFor(h1).items.create({ areaId, name: "pan", roomId: keuken });
+    await callerFor(h1).items.create({ areaId, name: "coat", roomId: hal });
+
+    expect((await callerFor(h1).items.search({ q: "p" })).map((r) => r.name)).toEqual(["pan"]);
+    expect((await callerFor(h2).items.search({ q: "c" })).map((r) => r.name)).toEqual(["coat"]);
+    expect((await callerFor(h1).items.search({ q: "c", houseId: null })).map((r) => r.name)).toEqual(["coat"]);
+  });
 });
 
 describe("items.create atomicity", () => {
@@ -62,6 +89,17 @@ describe("items.create atomicity", () => {
     const { db, h1, areaId } = await seed();
     await expect(callerFor(h1).items.create({ areaId, name: "ghost", roomId: 999999 })).rejects.toThrow(/does not exist/);
     expect(await db.select().from(items)).toHaveLength(0);
+  });
+});
+
+describe("items.update topic", () => {
+  it("optional areaId moves the Thing to another topic", async () => {
+    const { db, h1, areaId } = await seed();
+    const [{ id: other }] = await db.insert(areas).values({ slug: "y", name: "Y" }).$returningId();
+    const { id } = await callerFor(h1).items.create({ areaId, name: "pan" });
+    await callerFor(h1).items.update({ id, areaId: other });
+    const [it] = await db.select().from(items).where(eq(items.id, id));
+    expect(it.areaId).toBe(other);
   });
 });
 
@@ -126,5 +164,30 @@ describe("items.update with houseId only", () => {
     await callerFor(h1).items.update({ id, houseId: h1 });
     const [it] = await db.select().from(items).where(eq(items.id, id));
     expect([it.roomId, it.houseId, it.pos]).toEqual([keuken, h1, pos]);
+  });
+});
+
+describe("items.updateMany / removeMany", () => {
+  it("moves and retopics a batch, then deletes them", async () => {
+    const { db, h1, areaId, keuken } = await seed();
+    const [{ id: other }] = await db.insert(areas).values({ slug: "y", name: "Y" }).$returningId();
+    const a = await callerFor(h1).items.create({ areaId, name: "a", roomId: keuken });
+    const b = await callerFor(h1).items.create({ areaId, name: "b", roomId: keuken });
+    await callerFor(h1).items.updateMany({ ids: [a.id, b.id], areaId: other, roomId: null });
+    const rows = await db.select().from(items);
+    expect(rows.map((r) => [r.name, r.areaId, r.roomId]).sort()).toEqual([
+      ["a", other, null],
+      ["b", other, null],
+    ]);
+    await callerFor(h1).items.removeMany({ ids: [a.id, b.id] });
+    expect(await db.select().from(items)).toHaveLength(0);
+  });
+
+  it("refuses the whole batch when any item still has sub-objects", async () => {
+    const { h1, areaId, keuken } = await seed();
+    const parent = await callerFor(h1).items.create({ areaId, name: "desk", roomId: keuken });
+    await callerFor(h1).items.create({ areaId, name: "drawer", parentId: parent.id, roomId: keuken });
+    const other = await callerFor(h1).items.create({ areaId, name: "lamp", roomId: keuken });
+    await expect(callerFor(h1).items.removeMany({ ids: [parent.id, other.id] })).rejects.toThrow(/sub-object/);
   });
 });

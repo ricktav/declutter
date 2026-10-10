@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
@@ -15,6 +15,8 @@ import { GeojsonThumb } from "@/components/GeojsonThumb";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { useZoomable } from "@/hooks/use-zoomable";
 import { isGeojsonFile } from "@/lib/geojsonFloor";
+import { PhotoPlaceDialog, type PlaceTarget } from "@/components/PhotoPlaceDialog";
+import { useHouse } from "@/context/house";
 import {
   Dialog,
   DialogContent,
@@ -42,8 +44,77 @@ import {
   Camera,
   Copy,
   Pencil,
+  Home,
 } from "lucide-react";
 import type { Capture, TriageSuggestion } from "@db/schema";
+
+type InboxCapture = Capture & {
+  photoId: number | null;
+  photoRoomId: number | null;
+  roomName: string | null;
+  houseId: number | null;
+  hasCamera: boolean;
+};
+
+function placeTargetOf(c: InboxCapture): PlaceTarget {
+  if (c.photoId != null) {
+    return {
+      source: "photo",
+      photoId: c.photoId,
+      roomId: c.photoRoomId,
+      houseId: c.houseId,
+      ofThing: false,
+      hasCamera: c.hasCamera,
+    };
+  }
+  return { source: "capture", captureId: c.id };
+}
+
+/** Set or move the Photo's Place without leaving Inbox. */
+function CapturePlaceButton({
+  capture,
+  onPick,
+  compact = false,
+}: {
+  capture: InboxCapture;
+  onPick: (c: InboxCapture) => void;
+  compact?: boolean;
+}) {
+  if (capture.kind !== "image" || !capture.storageKey) return null;
+  const placed = capture.photoRoomId != null;
+  const label = placed ? (capture.roomName ?? "Place") : "Set Place";
+  if (compact) {
+    return (
+      <button
+        type="button"
+        className="mt-1 flex w-full items-center gap-1 truncate text-[10px] text-muted-foreground hover:text-foreground"
+        title={placed ? `Move from ${label}` : "Give this Photo a Place"}
+        onClick={(e) => {
+          e.stopPropagation();
+          onPick(capture);
+        }}
+      >
+        <Home className="h-3 w-3 shrink-0" />
+        <span className="truncate">{label}</span>
+      </button>
+    );
+  }
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-6 text-[11px]"
+      title={placed ? `Move from ${label}` : "Give this Photo a Place"}
+      onClick={(e) => {
+        e.stopPropagation();
+        onPick(capture);
+      }}
+    >
+      <Home className="h-3 w-3 mr-1" />
+      {label}
+    </Button>
+  );
+}
 
 const KIND_ICONS = {
   note: StickyNote,
@@ -239,6 +310,7 @@ function CaptureImage({ storageKey }: { storageKey: string }) {
  * created while pinning starts out placed instead of homeless. */
 function PinPendingButton({ captureId }: { captureId: number }) {
   const navigate = useNavigate();
+  const { houseId } = useHouse();
   const [open, setOpen] = useState(false);
   const lastRoomId = useLastRoomId();
   const [roomId, setRoomIdRaw] = useState<number | null>(null);
@@ -248,7 +320,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
     setTouched(true);
     setRoomIdRaw(id);
   };
-  const rooms = trpc.rooms.list.useQuery();
+  const rooms = trpc.rooms.list.useQuery({ houseId }, { enabled: houseId != null });
   const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "unset";
   const hasDefaultLocation = roomId != null;
   const ensure = trpc.photos.ensureForCapture.useMutation({
@@ -303,7 +375,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
           <p className="text-[12px] text-muted-foreground -mt-2">
             Confirms the location before pinning - a new item created there starts out placed.
           </p>
-          <RoomPicker value={roomId} onChange={setRoomId} />
+          <RoomPicker value={roomId} onChange={setRoomId} houseId={houseId ?? undefined} />
           <div className="flex justify-end gap-2 mt-1">
             <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
               Cancel
@@ -424,9 +496,11 @@ function TriageSpottedRow({
 function TriageCard({
   capture,
   onZoom,
+  onPlace,
 }: {
-  capture: Capture;
+  capture: InboxCapture;
   onZoom: (storageKey: string, captureId: number, isPending: boolean) => void;
+  onPlace: (c: InboxCapture) => void;
 }) {
   const utils = trpc.useUtils();
   const s = capture.suggestion;
@@ -437,9 +511,10 @@ function TriageCard({
   const areas = trpc.areas.list.useQuery();
 
   const [rows, setRows] = useState<TriageRow[]>(() => (s ? buildTriageRows(s, areas.data) : []));
+  const { houseId } = useHouse();
   const lastRoomId = useLastRoomId();
   // a suggested room id is only usable if it is one of the session house's rooms
-  const houseRooms = trpc.rooms.list.useQuery();
+  const houseRooms = trpc.rooms.list.useQuery({ houseId }, { enabled: houseId != null });
   const inHouse = (id: number | null | undefined): id is number =>
     id != null && !!houseRooms.data?.some((r) => r.id === id);
   const [roomIdRaw, setRoomIdRaw] = useState<number | null>(null);
@@ -525,7 +600,7 @@ function TriageCard({
             <div className="mt-2 flex items-start gap-3">
               <ZoomableGeojson storageKey={capture.storageKey} />
               <div className="flex flex-col gap-1.5 flex-1 max-w-xs">
-                <RoomPicker value={geoRoomId} onChange={setGeoRoomId} />
+                <RoomPicker value={geoRoomId} onChange={setGeoRoomId} houseId={houseId ?? undefined} />
                 <div className="text-[11px] text-muted-foreground">
                   Pick the room this scan belongs to, or type a new name
                 </div>
@@ -560,6 +635,7 @@ function TriageCard({
                 >
                   <ScanSearch className="h-3 w-3 mr-1" /> detect objects
                 </Button>
+                <CapturePlaceButton capture={capture} onPick={onPlace} />
                 <PinPendingButton captureId={capture.id} />
               </div>
             </div>
@@ -670,7 +746,7 @@ function TriageCard({
           <label className="block mt-2">
             <span className="micro-label text-muted-foreground">Location (applies to every new item above)</span>
             <div className="mt-0.5">
-              <RoomPicker value={roomId} onChange={setRoomId} allowNone />
+              <RoomPicker value={roomId} onChange={setRoomId} houseId={houseId ?? undefined} allowNone />
             </div>
           </label>
 
@@ -794,6 +870,13 @@ function CompareModal({
 
 export default function InboxPage() {
   const captures = trpc.inbox.list.useQuery();
+  const [placeTarget, setPlaceTarget] = useState<PlaceTarget | null>(null);
+  const [placeNote, setPlaceNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!placeNote) return;
+    const t = setTimeout(() => setPlaceNote(null), 4000);
+    return () => clearTimeout(t);
+  }, [placeNote]);
   const pending = (captures.data ?? []).filter((c) => c.status === "pending");
   // dismissed means gone - showing it anyway (just greyed out) defeats the
   // point of dismissing something, so Processed only shows statuses someone
@@ -849,7 +932,7 @@ export default function InboxPage() {
           </div>
         )}
         {pending.map((c) => (
-          <TriageCard key={c.id} capture={c} onZoom={openLightbox} />
+          <TriageCard key={c.id} capture={c} onZoom={openLightbox} onPlace={(cap) => setPlaceTarget(placeTargetOf(cap))} />
         ))}
       </div>
 
@@ -901,6 +984,7 @@ export default function InboxPage() {
                   )}
                   {c.kind === "image" && c.storageKey && <PinCaptureButton captureId={c.id} iconOnly />}
                 </div>
+                <CapturePlaceButton capture={c} onPick={(cap) => setPlaceTarget(placeTargetOf(cap))} compact />
                 <div className="mt-1 text-[10px] text-muted-foreground truncate">
                   {c.status} · {timeAgo(c.createdAt)}
                 </div>
@@ -914,18 +998,35 @@ export default function InboxPage() {
         open={!!lightbox}
         onClose={() => setLightbox(null)}
         toolbarExtra={
-          lightbox &&
-          (lightbox.isPending ? (
-            <PinPendingButton captureId={lightbox.captureId} />
-          ) : (
-            <PinCaptureButton captureId={lightbox.captureId} />
-          ))
+          lightbox && (
+            <div className="flex items-center gap-1">
+              {(() => {
+                const cap = (captures.data ?? []).find((c) => c.id === lightbox.captureId);
+                return cap ? <CapturePlaceButton capture={cap} onPick={(c) => setPlaceTarget(placeTargetOf(c))} /> : null;
+              })()}
+              {lightbox.isPending ? (
+                <PinPendingButton captureId={lightbox.captureId} />
+              ) : (
+                <PinCaptureButton captureId={lightbox.captureId} />
+              )}
+            </div>
+          )
         }
       >
         {lightboxUrl.data?.url && (
           <img src={lightboxUrl.data.url} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
         )}
       </ZoomOverlay>
+      <PhotoPlaceDialog
+        target={placeTarget}
+        onClose={() => setPlaceTarget(null)}
+        onMoved={(res) => setPlaceNote(res.roomName ? `Place: ${res.roomName}` : "Place cleared.")}
+      />
+      {placeNote && (
+        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md border border-border bg-white px-3 py-1.5 text-[12px] shadow">
+          {placeNote}
+        </div>
+      )}
     </div>
   );
 }

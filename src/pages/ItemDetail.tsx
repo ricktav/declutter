@@ -1,18 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router";
+import { useWorkbenchMode } from "@/context/workbenchMode";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { RoomPicker } from "@/components/RoomPicker";
-import { RecropDialog } from "@/components/RecropDialog";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
+import { Thumb } from "@/components/Thumb";
 import { EnergySection } from "@/components/EnergySection";
-import { ZoomOverlay } from "@/components/ZoomOverlay";
+import { StorageSection } from "@/components/StorageSection";
+import { PhotoCropZoom } from "@/components/PhotoCropZoom";
+import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
+import { cn } from "@/lib/utils";
 import {
   Sparkles,
   Archive,
@@ -38,36 +43,74 @@ import {
 import type { AttributeDef } from "@db/schema";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
+import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs";
+import { RatingStars } from "@/components/RatingStars";
+import { isMachineItem, looksLikeProxmox, parseRating, parseWeb, type Rating } from "@/lib/systemsAttrs";
+import { AttrListValue, compactJsonList, isJsonListAttr, jsonListAttrLabel, MACHINE_CORE_LIST_ATTRS, parsePortValues, PortLinks, prettyJsonList } from "@/components/AttrListValue";
+import { hostHref, pickReachHost } from "../../api/lib/serviceUrls";
 
-/** Link to the original, uncropped photo a cutout came from — opens full-size in a new tab. */
-function SourceLink({ photoId }: { photoId: number }) {
-  const source = trpc.photos.sourcePhoto.useQuery({ photoId });
-  if (!source.data?.available || !source.data.url) return null;
+type AttrClash = inferRouterOutputs<AppRouter>["items"]["findAttributeDuplicates"]["clashes"][number];
+
+function visibleItemAttrs(it: {
+  name: string;
+  attributes: Record<string, string | number> | null;
+  areaSlug?: string | null;
+  parentId?: number | null;
+  status?: string;
+}): [string, string | number][] {
+  const src = { ...(it.attributes ?? {}) };
+  if (
+    isMachineItem({
+      attributes: it.attributes,
+      areaSlug: it.areaSlug,
+      parentId: it.parentId,
+      status: it.status,
+    })
+  ) {
+    for (const k of MACHINE_CORE_LIST_ATTRS) {
+      if (src[k] == null || src[k] === "") src[k] = "[]";
+    }
+    if (looksLikeProxmox(it.attributes, it.name)) {
+      const web = parseWeb(it.attributes, it.name);
+      if (web.length) src.web = JSON.stringify(web);
+    }
+  }
+  return Object.entries(src);
+}
+
+function attrValueOptions(
+  key: string,
+  rows: { key: string; values: { value: string; count: number }[] }[] | undefined,
+) {
+  const kind = identityKind(key);
+  if (kind && kind !== "ip") return [];
+  const raw = rows?.find((r) => r.key === key)?.values ?? [];
+  if (kind === "ip") return raw.filter((v) => v.value.endsWith(".") && !/^\d+\.\d+\.\d+\.\d+$/.test(v.value));
+  return raw;
+}
+
+function IdentityClashLinks({ clash }: { clash: AttrClash }) {
   return (
-    <a
-      href={source.data.url}
-      target="_blank"
-      rel="noreferrer"
-      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
-      title="View original source photo"
-    >
-      <ExternalLink className="h-3.5 w-3.5" />
-    </a>
+    <span>
+      Same {IDENTITY_KIND_LABELS[clash.kind].toLowerCase()} as{" "}
+      {clash.others.map((o, i) => (
+        <span key={`${o.id}-${o.key}`}>
+          {i > 0 && ", "}
+          <Link to={`/items/${o.id}`} className="underline">
+            {o.name}
+          </Link>
+          {o.status === "archived" ? " (gone)" : ""}
+        </span>
+      ))}
+    </span>
   );
 }
 
 function AttachmentView({
   att,
-  onZoom,
 }: {
   att: { id: number; kind: string; title: string | null; content: string | null; url: string | null; storageKey: string | null };
-  onZoom?: (url: string) => void;
 }) {
-  const url = trpc.photos.url.useQuery(
-    { key: att.storageKey! },
-    { enabled: !!att.storageKey && att.kind === "image" },
-  );
-  const [imgFailed, setImgFailed] = useState(false);
   if (att.kind === "link")
     return (
       <a href={att.url ?? "#"} target="_blank" rel="noreferrer"
@@ -76,48 +119,6 @@ function AttachmentView({
         <span className="truncate">{att.title ?? att.url}</span>
         <ExternalLink className="h-3 w-3 shrink-0" />
       </a>
-    );
-  if (att.kind === "image" && url.isError)
-    return (
-      <div className="rounded border border-amber-300 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
-        <span className="font-medium">Image unavailable:</span>{" "}
-        {url.error instanceof Error ? url.error.message : "could not resolve storage URL"}
-        <div className="mt-0.5 font-data text-[10px] break-all text-amber-700">key: {att.storageKey}</div>
-      </div>
-    );
-  if (att.kind === "image" && imgFailed && url.data?.url)
-    return (
-      <div className="rounded border border-amber-300 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
-        <span className="font-medium">Image failed to load</span> — the file may be missing on disk.
-        <a href={url.data.url} target="_blank" rel="noreferrer" className="block mt-0.5 font-data text-[10px] break-all text-amber-700 underline">
-          {url.data.url}
-        </a>
-      </div>
-    );
-  if (att.kind === "image" && url.data?.url)
-    return (
-      <div>
-        <button
-          type="button"
-          className="cursor-zoom-in block"
-          onClick={() => onZoom?.(url.data!.url!)}
-          title="Click to enlarge"
-        >
-          <img
-            src={url.data.url}
-            alt={att.title ?? ""}
-            className="max-h-40 rounded border border-border"
-            onError={() => setImgFailed(true)}
-          />
-        </button>
-        <div className="flex items-center gap-2 mt-0.5">
-          {att.title && <div className="text-[11px] text-muted-foreground">{att.title}</div>}
-          <Link to={`/annotate/${att.id}`}
-            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
-            <MapPin className="h-3 w-3" /> Annotate
-          </Link>
-        </div>
-      </div>
     );
   return (
     <div className="text-[13px] whitespace-pre-wrap">
@@ -128,19 +129,99 @@ function AttachmentView({
   );
 }
 
+function PhotoCatalogTile({
+  photo,
+  onZoom,
+  onUnlink,
+  unlinkPending,
+}: {
+  photo: {
+    id: number;
+    title: string | null;
+    storageKey: string | null;
+    sourceCaptureId: number | null;
+    createdAt: string | Date;
+  };
+  onZoom: (photo: { id: number; storageKey: string | null }) => void;
+  onUnlink: () => void;
+  unlinkPending: boolean;
+}) {
+  return (
+    <div className="group/tile relative">
+      <button
+        type="button"
+        className="w-full rounded-lg border border-border bg-white p-1.5 text-left hover:border-primary/50"
+        title="Click to enlarge"
+        onClick={() => onZoom({ id: photo.id, storageKey: photo.storageKey })}
+      >
+        <Thumb storageKey={photo.storageKey} size="lg" />
+        <div className="mt-1 truncate text-[12px] font-medium group-hover/tile:text-primary">{photo.title ?? "Photo"}</div>
+        <div className="font-data text-[10px] text-muted-foreground">{timeAgo(photo.createdAt)}</div>
+      </button>
+      <div className="invisible absolute top-2 right-2 flex gap-0.5 group-hover/tile:visible group-focus-within/tile:visible [@media(hover:none)]:visible">
+        <Link
+          to={`/annotate/${photo.id}`}
+          className="rounded bg-white/90 p-1 text-muted-foreground shadow-sm hover:text-primary"
+          title="Annotate"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <MapPin className="h-3.5 w-3.5" />
+        </Link>
+        {photo.sourceCaptureId && (
+          <button
+            type="button"
+            className="rounded bg-white/90 p-1 text-muted-foreground shadow-sm hover:text-primary"
+            title="Re-crop from original photo"
+            onClick={(e) => {
+              e.stopPropagation();
+              onZoom({ id: photo.id, storageKey: photo.storageKey });
+            }}
+          >
+            <Crop className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <ConfirmDelete
+          trigger={
+            <button
+              type="button"
+              className="rounded bg-white/90 p-1 text-muted-foreground shadow-sm hover:text-destructive disabled:opacity-100"
+              title="Unlink this photo from the item - it stays in the Photos pool"
+              disabled={unlinkPending}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          }
+          title="Unlink this photo?"
+          description="The photo stays in the Photos pool; it is only removed from this Thing."
+          confirmLabel="Unlink"
+          pending={unlinkPending}
+          onConfirm={onUnlink}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>();
   const itemId = Number(id);
   const navigate = useNavigate();
   const { openAsk } = useAsk();
+  const { mode } = useWorkbenchMode();
   const utils = trpc.useUtils();
 
   const item = trpc.items.get.useQuery({ id: itemId });
   const history = trpc.events.forEntity.useQuery({ entityType: "item", entityId: itemId });
   const siblings = trpc.items.listByArea.useQuery(
+    { areaId: item.data?.areaId ?? 0, houseId: item.data?.houseId ?? null },
+    { enabled: !!item.data?.areaId },
+  );
+  const topicAttrKeys = trpc.items.attributeKeysForTopic.useQuery(
     { areaId: item.data?.areaId ?? 0 },
     { enabled: !!item.data?.areaId },
   );
+  const topics = trpc.areas.list.useQuery();
   const siblingIds = (siblings.data ?? []).map((s) => s.id);
   const siblingIndex = siblingIds.indexOf(itemId);
   const prevId = siblingIndex > 0 ? siblingIds[siblingIndex - 1] : null;
@@ -149,7 +230,7 @@ export default function ItemDetail() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.key === "ArrowLeft" && prevId) navigate(`/items/${prevId}`);
       if (e.key === "ArrowRight" && nextId) navigate(`/items/${nextId}`);
     };
@@ -160,6 +241,42 @@ export default function ItemDetail() {
   const [editingAttrs, setEditingAttrs] = useState(false);
   const [attrDraft, setAttrDraft] = useState<Record<string, string>>({});
   const [newAttrKey, setNewAttrKey] = useState("");
+  const [newAttrValue, setNewAttrValue] = useState("");
+  const [dupDraft, setDupDraft] = useState<Record<string, string> | undefined>(undefined);
+  const attrDups = trpc.items.findAttributeDuplicates.useQuery(
+    { itemId, attributes: editingAttrs ? dupDraft : undefined },
+    { enabled: Number.isInteger(itemId) && itemId > 0, placeholderData: (prev) => prev },
+  );
+  useEffect(() => {
+    if (!editingAttrs) {
+      setDupDraft(undefined);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      const next: Record<string, string> = {};
+      for (const [k, v] of Object.entries(attrDraft)) if (v.trim()) next[k] = v;
+      const nk = newAttrKey.trim();
+      if (nk && newAttrValue.trim()) next[nk] = newAttrValue;
+      setDupDraft(next);
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [editingAttrs, attrDraft, newAttrKey, newAttrValue]);
+  const ipPrefix = attrDups.data?.ipPrefix ?? null;
+  useEffect(() => {
+    if (!editingAttrs || !ipPrefix) return;
+    setAttrDraft((d) => {
+      let changed = false;
+      const next = { ...d };
+      for (const k of Object.keys(next)) {
+        if (identityKind(k) === "ip" && next[k].trim() === "") {
+          next[k] = ipPrefix;
+          changed = true;
+        }
+      }
+      return changed ? next : d;
+    });
+    if (identityKind(newAttrKey) === "ip" && newAttrValue.trim() === "") setNewAttrValue(ipPrefix);
+  }, [editingAttrs, ipPrefix]);
   const [newNote, setNewNote] = useState("");
   const [newLink, setNewLink] = useState("");
   const [relType, setRelType] = useState("related-to");
@@ -172,19 +289,20 @@ export default function ItemDetail() {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  const locRef = useRef<HTMLElement>(null);
   const [roomId, setRoomId] = useState<number | null>(null);
-  const [editingLoc, setEditingLoc] = useState(false);
+  const [locOpen, setLocOpen] = useState(false);
   const [childName, setChildName] = useState("");
-  const [recropId, setRecropId] = useState<number | null>(null);
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxPhoto, setLightboxPhoto] = useState<{ id: number; storageKey: string | null } | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
 
   const invalidate = () => {
     utils.items.get.invalidate({ id: itemId });
     utils.items.placement.invalidate({ itemId });
     utils.items.listByArea.invalidate();
+    utils.items.listAll.invalidate();
     utils.areas.list.invalidate();
+    utils.items.findAttributeDuplicates.invalidate();
+    utils.items.attributeKeysForTopic.invalidate();
   };
 
   const update = trpc.items.update.useMutation({ onSuccess: invalidate });
@@ -238,11 +356,26 @@ export default function ItemDetail() {
   });
   const setParent = trpc.items.setParent.useMutation({ onSuccess: invalidate });
   const createChild = trpc.items.create.useMutation({ onSuccess: invalidate });
+  const patchAttrs = trpc.items.patchAttributes.useMutation({ onSuccess: invalidate });
 
   if (item.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
   if (!item.data) return <div className="p-8 text-sm">Item not found.</div>;
   const it = item.data;
   const defs = (it.area?.attributeDefs as AttributeDef[] | null) ?? [];
+  const usedAttrKeys = new Set(Object.keys(attrDraft));
+  const topicKeyOpts = (topicAttrKeys.data ?? []).filter((r) => !usedAttrKeys.has(r.key));
+  const newKeyValOpts = attrValueOptions(newAttrKey.trim(), topicAttrKeys.data);
+  const clashes = attrDups.data?.clashes ?? [];
+  const clashFor = (key: string) => clashes.find((c) => c.key.toLowerCase() === key.trim().toLowerCase());
+  const addAttrField = () => {
+    const typed = newAttrKey.trim();
+    if (!typed || typed in attrDraft) return;
+    const kind = identityKind(typed);
+    const value = newAttrValue.trim() || (kind === "ip" && ipPrefix ? ipPrefix : "");
+    setAttrDraft((d) => ({ ...d, [typed]: value }));
+    setNewAttrKey("");
+    setNewAttrValue("");
+  };
   const suggested = it.relations.filter((r) => r.status === "suggested");
   const confirmed = it.relations.filter((r) => r.status === "confirmed");
   // photos and links/notes/files live in two tables now; the list shows
@@ -271,26 +404,33 @@ export default function ItemDetail() {
       createdAt: l.createdAt,
     })),
   ].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  const photoEntries = entries.filter((a) => a.kind === "image");
+  const docEntries = entries.filter((a) => a.kind !== "image");
 
   const startEditAttrs = () => {
     const draft: Record<string, string> = {};
-    for (const [k, v] of Object.entries(it.attributes ?? {})) draft[k] = String(v);
+    for (const [k, v] of Object.entries(it.attributes ?? {})) {
+      draft[k] = isJsonListAttr(k) ? prettyJsonList(v) : String(v);
+    }
     for (const d of defs) if (!(d.key in draft)) draft[d.key] = "";
     setAttrDraft(draft);
+    setNewAttrKey("");
+    setNewAttrValue("");
     setEditingAttrs(true);
   };
 
   const saveAttrs = () => {
-    const cleaned = Object.fromEntries(Object.entries(attrDraft).filter(([, v]) => v !== ""));
+    const cleaned = Object.fromEntries(
+      Object.entries(attrDraft)
+        .filter(([, v]) => v !== "")
+        .map(([k, v]) => [k, isJsonListAttr(k) ? compactJsonList(v) : v]),
+    );
     update.mutate({ id: itemId, attributes: cleaned });
     setEditingAttrs(false);
   };
 
-  const startEditLoc = () => {
+  const openLocPicker = () => {
     if (it.roomId == null) {
-      // nothing set yet - default to wherever the adjacent item (same area,
-      // one filed just before/after this one) landed, since items are
-      // usually filed room-by-room in a batch
       const adjacent = [prevId, nextId]
         .map((sid) => (siblings.data ?? []).find((s) => s.id === sid))
         .find((s) => s && s.roomId != null);
@@ -298,21 +438,16 @@ export default function ItemDetail() {
     } else {
       setRoomId(it.roomId);
     }
-    setEditingLoc(true);
+    setLocOpen(true);
   };
-  /** The pane's "Pick a room": open the Location editor and bring it into
-   * view (it sits further down the column). */
-  const pickRoom = () => {
-    startEditLoc();
-    requestAnimationFrame(() => locRef.current?.scrollIntoView({ block: "center" }));
-  };
-  const saveLoc = () => {
+  const applyLoc = (next: number | null) => {
+    setRoomId(next);
     update.mutate({
       id: itemId,
-      roomId,
-      houseId: roomId == null ? it.houseId : undefined,
+      roomId: next,
+      houseId: next == null ? it.houseId : undefined,
     });
-    setEditingLoc(false);
+    setLocOpen(false);
   };
 
   const uploadAttachment = async (f: File) => {
@@ -330,7 +465,13 @@ export default function ItemDetail() {
   };
 
   return (
-    <div key={itemId} className="max-w-5xl mx-auto px-6 py-8">
+    <div key={itemId} className="max-w-5xl mx-auto px-4 py-5">
+      {mode === "simple" && (
+        <div className="mb-4 flex items-center gap-2 text-[13px] text-muted-foreground">
+          <Link to="/focus" className="text-primary hover:underline">← Focus</Link>
+          <span>Full Thing page (Advanced depth). Switch to Advanced in the sidebar to keep this layout.</span>
+        </div>
+      )}
       {it.verificationStatus === "detected" && (
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
           <span className="text-[13px] text-amber-900">
@@ -351,11 +492,33 @@ export default function ItemDetail() {
       {/* header */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-[12px] text-muted-foreground flex items-center gap-2">
-            <Link to={`/areas/${it.area?.slug}`} className="hover:underline">
-              {it.area?.name}
-            </Link>{" "}
-            / item #{it.id}
+          <div className="text-[12px] text-muted-foreground flex items-center gap-2 min-w-0">
+            <span className="micro-label shrink-0">Topic</span>
+            <select
+              aria-label="Topic"
+              className="h-7 w-52 shrink-0 rounded-md border border-input bg-white px-1.5 text-[12px]"
+              value={it.areaId}
+              disabled={update.isPending}
+              onChange={(e) => {
+                const id = Number(e.target.value);
+                if (id !== it.areaId) update.mutate({ id: itemId, areaId: id });
+              }}
+            >
+              {!(topics.data ?? []).some((a) => a.id === it.areaId) && it.area && (
+                <option value={it.areaId}>{it.area.name}</option>
+              )}
+              {(topics.data ?? []).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            {it.area?.slug && (
+              <Link to={`/areas/${it.area.slug}`} className="hover:underline shrink-0">
+                Open
+              </Link>
+            )}
+            <span className="shrink-0">/ item #{it.id}</span>
             {it.status === "archived" && (
               <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                 <Archive className="h-3 w-3" /> Archived
@@ -363,7 +526,7 @@ export default function ItemDetail() {
             )}
           </div>
           <input
-            className="text-2xl font-semibold tracking-tight bg-transparent outline-none border-b border-transparent focus:border-input w-full mt-0.5"
+            className="text-xl font-semibold tracking-tight bg-transparent outline-none border-b border-transparent focus:border-input w-full mt-0.5"
             defaultValue={it.name}
             onBlur={(e) => {
               if (e.target.value.trim() && e.target.value !== it.name)
@@ -371,7 +534,7 @@ export default function ItemDetail() {
             }}
           />
           <textarea
-            className="w-full text-sm text-muted-foreground bg-transparent outline-none mt-1 min-h-[40px] resize-y"
+            className="w-full text-sm text-muted-foreground bg-transparent outline-none mt-0.5 min-h-[28px] resize-y"
             placeholder="Add a description…"
             defaultValue={it.description ?? ""}
             onBlur={(e) => {
@@ -379,6 +542,21 @@ export default function ItemDetail() {
                 update.mutate({ id: itemId, description: e.target.value });
             }}
           />
+          {isMachineItem({
+            attributes: it.attributes,
+            areaSlug: it.area?.slug,
+            parentId: it.parentId,
+            status: it.status,
+          }) && (
+            <div className="mt-1.5 flex items-center gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">Systems rating</span>
+              <RatingStars
+                value={parseRating(it.attributes)}
+                disabled={patchAttrs.isPending}
+                onChange={(n: Rating) => patchAttrs.mutate({ id: itemId, set: { rating: n } })}
+              />
+            </div>
+          )}
         </div>
         <div className="flex gap-1.5 shrink-0">
           <div className="flex rounded-md border border-input overflow-hidden mr-1" title="Prev/next item in this area (← / →)">
@@ -400,6 +578,10 @@ export default function ItemDetail() {
           <Button size="sm" variant="outline" className="h-8 text-[12px]"
             onClick={() => openAsk("item", it.id, it.name)}>
             <Sparkles className="h-3.5 w-3.5 mr-1" /> Ask AI
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 text-[12px]"
+            onClick={openLocPicker}>
+            <MapPin className="h-3.5 w-3.5 mr-1" /> Pick location
           </Button>
           <Button size="sm" variant="outline" className="h-8 text-[12px]"
             onClick={() => setArchived.mutate({ id: itemId, archived: it.status !== "archived" })}>
@@ -462,9 +644,9 @@ export default function ItemDetail() {
       )}
 
       {/* lead: pictures first, then where it sits in the room (if placed) */}
-      <div className="grid md:grid-cols-[1fr_260px] gap-6 mt-6 items-start">
+      <div className="grid md:grid-cols-[1fr_240px] gap-4 mt-4 items-start">
         <section
-          className={`rounded-lg border-2 bg-white p-4 transition-colors ${dragOver ? "border-primary border-dashed" : "border-border"}`}
+          className={`rounded-lg border-2 bg-white p-3 transition-colors ${dragOver ? "border-primary border-dashed" : "border-border"}`}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => {
@@ -478,7 +660,7 @@ export default function ItemDetail() {
             }
           }}
         >
-          <div className="flex items-center mb-2">
+          <div className="flex items-center flex-wrap gap-x-1 mb-2">
             <h2 className="micro-label text-muted-foreground">Documents & links</h2>
             <span className="micro-label text-muted-foreground/60 ml-2">drop files here</span>
             <input ref={fileRef} type="file" className="hidden"
@@ -512,63 +694,54 @@ export default function ItemDetail() {
               <Images className="h-3 w-3 mr-1" />
               library
             </Button>
+            <PlacementTrigger itemId={it.id} onPickRoom={openLocPicker} />
           </div>
           {uploadError && (
             <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
               {uploadError}
             </div>
           )}
-          <div className="space-y-2.5">
+          {photoEntries.length > 0 && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+              {photoEntries.map((a) => (
+                <PhotoCatalogTile
+                  key={`${a.entry}-${a.id}`}
+                  photo={a}
+                  onZoom={setLightboxPhoto}
+                  unlinkPending={unlinkPhoto.isPending}
+                  onUnlink={() => unlinkPhoto.mutate({ id: a.id })}
+                />
+              ))}
+            </div>
+          )}
+          <div className={photoEntries.length > 0 ? "mt-2 space-y-1.5" : "space-y-1.5"}>
             {entries.length === 0 && (
               <div className="text-[13px] text-muted-foreground">
                 Nothing attached. Drop a photo, paste a link or write a note.
               </div>
             )}
-            {entries.map((a) => (
+            {docEntries.map((a) => (
               <div key={`${a.entry}-${a.id}`} className="group flex items-start gap-2">
                 <div className="flex-1 min-w-0">
-                  <AttachmentView att={a} onZoom={setLightboxUrl} />
+                  <AttachmentView att={a} />
                   <div className="font-data text-[10px] text-muted-foreground">{timeAgo(a.createdAt)}</div>
                 </div>
-                {a.kind === "image" && a.sourceCaptureId && (
-                  <>
-                    <SourceLink photoId={a.id} />
-                    <button
-                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary"
-                      title="Re-crop from original photo"
-                      onClick={() => setRecropId(a.id)}
-                    >
-                      <Crop className="h-3.5 w-3.5" />
+                <ConfirmDelete
+                  trigger={
+                    <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
+                      <X className="h-3.5 w-3.5" />
                     </button>
-                  </>
-                )}
-                {a.entry === "photo" ? (
-                  <button
-                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive disabled:opacity-100"
-                    title="Unlink this photo from the item - it stays in the Photos pool"
-                    disabled={unlinkPhoto.isPending}
-                    onClick={() => unlinkPhoto.mutate({ id: a.id })}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                ) : (
-                  <ConfirmDelete
-                    trigger={
-                      <button className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    }
-                    title={`Delete ${a.kind === "note" ? "note" : "link"}?`}
-                    description="This will be permanently removed."
-                    confirmLabel="Delete"
-                    pending={removeLink.isPending}
-                    onConfirm={() => removeLink.mutate({ id: a.id })}
-                  />
-                )}
+                  }
+                  title={`Delete ${a.kind === "note" ? "note" : "link"}?`}
+                  description="This will be permanently removed."
+                  confirmLabel="Delete"
+                  pending={removeLink.isPending}
+                  onConfirm={() => removeLink.mutate({ id: a.id })}
+                />
               </div>
             ))}
           </div>
-          <div className="mt-3 space-y-2">
+          <div className="mt-2 space-y-1.5">
             <div className="flex gap-2">
               <StickyNote className="h-4 w-4 text-muted-foreground mt-1.5 shrink-0" />
               <input className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
@@ -597,9 +770,9 @@ export default function ItemDetail() {
         {it.roomId != null && it.pos != null && <ItemRoomPreview roomId={it.roomId} itemId={it.id} />}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6 mt-6">
+      <div className="grid md:grid-cols-2 gap-4 mt-4">
         {/* left column */}
-        <div className="space-y-6">
+        <div className="space-y-4">
           {/* attributes - collapses to a single add-button when empty */}
           {Object.entries(it.attributes ?? {}).length === 0 && !editingAttrs ? (
             <button
@@ -610,7 +783,7 @@ export default function ItemDetail() {
               <Plus className="h-3.5 w-3.5" /> Add attribute
             </button>
           ) : (
-            <section className="rounded-lg border border-border bg-white p-4">
+            <section className="rounded-lg border border-border bg-white p-3">
               <div className="flex items-center mb-2">
                 <h2 className="micro-label text-muted-foreground">Attributes</h2>
                 {!editingAttrs ? (
@@ -620,35 +793,117 @@ export default function ItemDetail() {
                 ) : (
                   <div className="ml-auto flex gap-1">
                     <Button size="sm" className="h-6 text-[11px]" onClick={saveAttrs}>Save</Button>
-                    <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => setEditingAttrs(false)}>
+                    <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => { setEditingAttrs(false); setNewAttrKey(""); setNewAttrValue(""); }}>
                       Cancel
                     </Button>
                   </div>
                 )}
               </div>
+              {clashes.length > 0 && (
+                <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
+                  {editingAttrs && <div className="mb-0.5 font-medium">Already used in this house — you can still save.</div>}
+                  <ul className="space-y-0.5">
+                    {clashes.map((c) => (
+                      <li key={`${c.kind}-${c.key}`}>
+                        <IdentityClashLinks clash={c} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {!editingAttrs ? (
                 <div className="divide-y divide-border">
-                  {Object.entries(it.attributes ?? {}).map(([k, v]) => (
-                    <div key={k} className="flex py-1.5 text-[13px]">
+                  {visibleItemAttrs({
+                    name: it.name,
+                    attributes: it.attributes,
+                    areaSlug: it.area?.slug ?? null,
+                    parentId: it.parentId,
+                    status: it.status,
+                  }).map(([k, v]) => {
+                    const clash = clashFor(k);
+                    const label = defs.find((d) => d.key === k)?.label ?? jsonListAttrLabel(k) ?? k;
+                    const reach = pickReachHost(
+                      it.attributes?.ip != null ? String(it.attributes.ip) : it.attributes?.ip_address != null ? String(it.attributes.ip_address) : null,
+                      it.attributes?.hostname != null ? String(it.attributes.hostname) : it.attributes?.host != null ? String(it.attributes.host) : null,
+                    );
+                    if (isJsonListAttr(k)) {
+                      return (
+                        <div key={k} className="py-1.5 text-[13px]">
+                          <AttrListValue attrKey={k} value={v} reachHost={reach} label={label} />
+                        </div>
+                      );
+                    }
+                    const ipHref = (k === "ip" || k === "ip_address") ? hostHref(String(v)) : null;
+                    const portList = k === "ports" ? parsePortValues(v) : [];
+                    return (
+                    <div key={k} className="flex py-1 text-[13px]">
                       <span className="w-36 shrink-0 text-muted-foreground">
-                        {defs.find((d) => d.key === k)?.label ?? k}
+                        {label}
                       </span>
-                      <span className="font-data">{String(v)}</span>
+                      <span className="font-data min-w-0 break-words">
+                        {k === "storage_gb" || k === "storage_free_gb" || k === "mount_point" ? (
+                          <Link to={`/storage?item=${it.id}`} className="text-primary hover:underline">
+                            {String(v)}
+                          </Link>
+                        ) : ipHref ? (
+                          <a href={ipHref} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                            {String(v)}
+                          </a>
+                        ) : portList.length ? (
+                          <PortLinks ports={portList} reachHost={reach} />
+                        ) : (
+                          String(v)
+                        )}
+                        {clash && (
+                          <span className="ml-1.5 align-middle rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800">
+                            duplicate
+                          </span>
+                        )}
+                      </span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  {Object.entries(attrDraft).map(([k, v]) => (
-                    <div key={k} className="flex items-center gap-2">
-                      <span className="w-36 shrink-0 text-[12px] text-muted-foreground truncate">
-                        {defs.find((d) => d.key === k)?.label ?? k}
+                  {Object.entries(attrDraft).map(([k, v]) => {
+                    const valListId = `attr-val-${itemId}-${k}`;
+                    const valOpts = attrValueOptions(k, topicAttrKeys.data);
+                    const clash = clashFor(k);
+                    const ipHint = identityKind(k) === "ip" ? ipPrefix : null;
+                    return (
+                    <div key={k} className="space-y-0.5">
+                    <div className={cn("flex gap-2", isJsonListAttr(k) ? "items-start" : "items-center")}>
+                      <span className="w-36 shrink-0 text-[12px] text-muted-foreground truncate pt-1">
+                        {defs.find((d) => d.key === k)?.label ?? jsonListAttrLabel(k) ?? k}
                       </span>
+                      {isJsonListAttr(k) ? (
+                        <textarea
+                          className="flex-1 min-h-[7rem] rounded border border-input px-2 py-1 font-mono text-[12px] leading-snug"
+                          value={v}
+                          spellCheck={false}
+                          onChange={(e) => setAttrDraft((d) => ({ ...d, [k]: e.target.value }))}
+                        />
+                      ) : (
                       <input
-                        className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
+                        className={cn(
+                          "flex-1 rounded border px-2 py-1 text-[13px]",
+                          clash ? "border-amber-400" : "border-input",
+                        )}
+                        list={valOpts.length ? valListId : undefined}
+                        autoComplete="off"
+                        placeholder={ipHint && !v.trim() ? ipHint : undefined}
                         value={v}
                         onChange={(e) => setAttrDraft((d) => ({ ...d, [k]: e.target.value }))}
                       />
+                      )}
+                      {valOpts.length > 0 && (
+                        <datalist id={valListId}>
+                          {valOpts.map((opt) => (
+                            <option key={opt.value} value={opt.value} />
+                          ))}
+                        </datalist>
+                      )}
                       <button className="text-muted-foreground hover:text-destructive"
                         onClick={() =>
                           setAttrDraft((d) => {
@@ -660,23 +915,65 @@ export default function ItemDetail() {
                         <X className="h-3.5 w-3.5" />
                       </button>
                     </div>
-                  ))}
+                    {clash && (
+                      <div className="pl-36 text-[11px] text-amber-800">
+                        <IdentityClashLinks clash={clash} />
+                      </div>
+                    )}
+                    </div>
+                    );
+                  })}
                   <div className="flex items-center gap-2 pt-1">
                     <input
                       className="w-36 rounded border border-input px-2 py-1 text-[13px]"
+                      list={topicKeyOpts.length ? `attr-key-${itemId}` : undefined}
+                      autoComplete="off"
                       placeholder="new key"
                       value={newAttrKey}
-                      onChange={(e) => setNewAttrKey(e.target.value)}
+                      onChange={(e) => {
+                        const k = e.target.value;
+                        setNewAttrKey(k);
+                        if (identityKind(k) === "ip" && !newAttrValue.trim() && ipPrefix) setNewAttrValue(ipPrefix);
+                      }}
+                      onKeyDown={(e) => { if (e.key === "Enter") addAttrField(); }}
                     />
+                    {topicKeyOpts.length > 0 && (
+                      <datalist id={`attr-key-${itemId}`}>
+                        {topicKeyOpts.map((opt) => (
+                          <option key={opt.key} value={opt.key} />
+                        ))}
+                      </datalist>
+                    )}
+                    <input
+                      className={cn(
+                        "flex-1 rounded border px-2 py-1 text-[13px]",
+                        clashFor(newAttrKey) ? "border-amber-400" : "border-input",
+                      )}
+                      list={newKeyValOpts.length ? `attr-new-val-${itemId}` : undefined}
+                      autoComplete="off"
+                      placeholder={identityKind(newAttrKey) === "ip" && ipPrefix ? ipPrefix : "value"}
+                      value={newAttrValue}
+                      onChange={(e) => setNewAttrValue(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") addAttrField(); }}
+                    />
+                    {newKeyValOpts.length > 0 && (
+                      <datalist id={`attr-new-val-${itemId}`}>
+                        {newKeyValOpts.map((opt) => (
+                          <option key={opt.value} value={opt.value} />
+                        ))}
+                      </datalist>
+                    )}
                     <Button size="sm" variant="outline" className="h-7 text-[11px]"
-                      disabled={!newAttrKey.trim() || newAttrKey in attrDraft}
-                      onClick={() => {
-                        setAttrDraft((d) => ({ ...d, [newAttrKey.trim()]: "" }));
-                        setNewAttrKey("");
-                      }}>
+                      disabled={!newAttrKey.trim() || newAttrKey.trim() in attrDraft}
+                      onClick={addAttrField}>
                       <Plus className="h-3 w-3 mr-0.5" /> field
                     </Button>
                   </div>
+                  {clashFor(newAttrKey) && (
+                    <div className="text-[11px] text-amber-800">
+                      <IdentityClashLinks clash={clashFor(newAttrKey)!} />
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -692,7 +989,7 @@ export default function ItemDetail() {
               <Link2 className="h-3.5 w-3.5" /> Add relation
             </button>
           ) : (
-            <section className="rounded-lg border border-border bg-white p-4">
+            <section className="rounded-lg border border-border bg-white p-3">
               <div className="flex items-center mb-2">
                 <h2 className="micro-label text-muted-foreground">Relations</h2>
                 {confirmed.length === 0 && (
@@ -712,10 +1009,18 @@ export default function ItemDetail() {
                     <Link to={`/items/${r.otherItemId}`} className="text-primary hover:underline">
                       {r.otherItemName}
                     </Link>
-                    <button className="ml-auto text-muted-foreground hover:text-destructive"
-                      onClick={() => removeRelation.mutate({ id: r.id })}>
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    <ConfirmDelete
+                      trigger={
+                        <button className="ml-auto text-muted-foreground hover:text-destructive">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      }
+                      title="Remove this relation?"
+                      description={`Unlink ${r.otherItemName} (${r.type}).`}
+                      confirmLabel="Unlink"
+                      pending={removeRelation.isPending}
+                      onConfirm={() => removeRelation.mutate({ id: r.id })}
+                    />
                   </div>
                 ))}
               </div>
@@ -744,46 +1049,34 @@ export default function ItemDetail() {
             </section>
           )}
 
+          <StorageSection itemId={it.id} role={String(it.attributes?.role ?? "")} />
           <EnergySection itemId={it.id} />
 
           {/* location: house → floor → room (areas are the topic, not the place) */}
-          <section ref={locRef} className="rounded-lg border border-border bg-white p-4">
+          <section className="rounded-lg border border-border bg-white p-3">
             <div className="flex items-center mb-2">
               <h2 className="micro-label text-muted-foreground">Location</h2>
-              {!editingLoc ? (
-                <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto" onClick={startEditLoc}>
-                  Edit
-                </Button>
+              <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto" onClick={openLocPicker}>
+                Pick location
+              </Button>
+            </div>
+            <div className="text-[13px] space-y-0.5">
+              {it.room ? (
+                <span className="text-[13px]">
+                  <Link to={`/items?roomId=${it.room.id}`} className="hover:underline">{it.room.name}</Link>
+                  {it.room.floor && <span className="ml-1.5 rounded bg-muted px-1 text-[10px] text-muted-foreground">{it.room.floor}</span>}
+                  {it.room.hasGeometry && <Link to={`/rooms/${it.room.id}`} className="ml-2 text-[11px] text-muted-foreground hover:underline">open plan</Link>}
+                </span>
+              ) : it.house ? (
+                <span className="text-[13px] text-muted-foreground">Unplaced in {it.house.name}</span>
               ) : (
-                <Button size="sm" className="h-6 text-[11px] ml-auto" onClick={saveLoc}>Save</Button>
+                <span className="text-[13px] text-muted-foreground">No location</span>
               )}
             </div>
-            {!editingLoc ? (
-              <div className="text-[13px] space-y-0.5">
-                {it.room ? (
-                  <span className="text-[13px]">
-                    <Link to={`/items?roomId=${it.room.id}`} className="hover:underline">{it.room.name}</Link>
-                    {it.room.floor && <span className="ml-1.5 rounded bg-muted px-1 text-[10px] text-muted-foreground">{it.room.floor}</span>}
-                    {it.room.hasGeometry && <Link to={`/rooms/${it.room.id}`} className="ml-2 text-[11px] text-muted-foreground hover:underline">open plan</Link>}
-                  </span>
-                ) : it.house ? (
-                  <span className="text-[13px] text-muted-foreground">Unplaced in {it.house.name}</span>
-                ) : (
-                  <span className="text-[13px] text-muted-foreground">No location</span>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <RoomPicker value={roomId} onChange={setRoomId} allowNone autoFocus houseId={it.houseId ?? undefined} />
-                <p className="text-[10px] text-muted-foreground">
-                  Area = what the thing is (computers). This = where it physically is.
-                </p>
-              </div>
-            )}
           </section>
 
           {/* sub-objects: set → mouse, cupboard → shelf, … (nesting) */}
-          <section className="rounded-lg border border-border bg-white p-4">
+          <section className="rounded-lg border border-border bg-white p-3">
             <h2 className="micro-label text-muted-foreground mb-2">
               Sub-objects {it.children.length > 0 && `(${it.children.length})`}
             </h2>
@@ -796,13 +1089,21 @@ export default function ItemDetail() {
                   <Link to={`/items/${c.id}`} className="text-primary hover:underline flex-1 truncate">
                     {c.name}
                   </Link>
-                  <button
-                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
-                    title="Detach (does not delete the sub-object)"
-                    onClick={() => setParent.mutate({ id: c.id, parentId: null })}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  <ConfirmDelete
+                    trigger={
+                      <button
+                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
+                        title="Detach (does not delete the sub-object)"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    }
+                    title={`Detach “${c.name}”?`}
+                    description="It stays in the inventory; it is only unlinked as a sub-object."
+                    confirmLabel="Unlink"
+                    pending={setParent.isPending}
+                    onConfirm={() => setParent.mutate({ id: c.id, parentId: null })}
+                  />
                 </div>
               ))}
             </div>
@@ -847,8 +1148,8 @@ export default function ItemDetail() {
           </section>
         </div>
 
-        {/* right column */}
-        <div className="space-y-6">
+        {/* right column: add task / add idea (Placement lives next to Documents) */}
+        <div className="space-y-4">
           {/* tasks - collapses to a single add-button when empty, to avoid a
               permanently-empty card taking up space on most items */}
           {it.tasks.length === 0 && !addingTask ? (
@@ -860,7 +1161,7 @@ export default function ItemDetail() {
               <ListTodo className="h-3.5 w-3.5" /> Add task
             </button>
           ) : (
-            <section className="rounded-lg border border-border bg-white p-4">
+            <section className="rounded-lg border border-border bg-white p-3">
               <h2 className="micro-label text-muted-foreground mb-2">Tasks</h2>
               <div className="space-y-1">
                 {it.tasks.map((t) => (
@@ -902,7 +1203,7 @@ export default function ItemDetail() {
               <Lightbulb className="h-3.5 w-3.5" /> Add idea
             </button>
           ) : (
-            <section className="rounded-lg border border-border bg-white p-4">
+            <section className="rounded-lg border border-border bg-white p-3">
               <h2 className="micro-label text-muted-foreground mb-2">Linked ideas</h2>
               <div className="space-y-1">
                 {it.ideas.map((idea) => (
@@ -926,15 +1227,12 @@ export default function ItemDetail() {
               </div>
             </section>
           )}
-
-          {/* placement: photo, 2D plan, 3D */}
-          <PlacementPane itemId={it.id} onPickRoom={pickRoom} />
         </div>
       </div>
 
       {/* history - at the bottom; useful for audit, not something you need
           while actively working on an item */}
-      <section className="mt-6 rounded-lg border border-border bg-white p-4">
+      <section className="mt-4 rounded-lg border border-border bg-white p-3">
         <h2 className="micro-label text-muted-foreground mb-2">History</h2>
         <div className="space-y-1">
           {(history.data ?? []).length === 0 && (
@@ -952,47 +1250,116 @@ export default function ItemDetail() {
         </div>
       </section>
 
-      <RecropDialog photoId={recropId} open={recropId != null} onClose={() => setRecropId(null)} />
+      <Dialog open={locOpen} onOpenChange={setLocOpen}>
+        <DialogContent className="sm:max-w-md overflow-visible">
+          <DialogHeader>
+            <DialogTitle>Pick location</DialogTitle>
+            <DialogDescription>
+              Where this Thing sits. Topic (above the name) stays what it is.
+            </DialogDescription>
+          </DialogHeader>
+          <RoomPicker
+            value={roomId}
+            onChange={(id) => {
+              setRoomId(id);
+              if (id != null) applyLoc(id);
+            }}
+            allowNone
+            autoFocus
+            houseId={it.houseId ?? undefined}
+          />
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] text-muted-foreground">
+              {it.room ? `Now: ${it.room.name}` : it.house ? `Unplaced in ${it.house.name}` : "No location yet"}
+            </p>
+            <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => applyLoc(null)}>
+              Leave unplaced
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <ChooseFromLibraryDialog itemId={itemId} open={libraryOpen} onClose={() => setLibraryOpen(false)} />
-      <ZoomOverlay open={!!lightboxUrl} onClose={() => setLightboxUrl(null)} title={it.name}>
-        {lightboxUrl && (
-          <img src={lightboxUrl} alt="" draggable={false} className="max-w-full max-h-full object-contain rounded" />
-        )}
-      </ZoomOverlay>
-    </div>
-  );
-}
-
-/** Where the Thing is placed, and where it is not yet: pinned in a photo,
- * on its room's 2D plan, and in 3D. Plan and 3D are one fact (roomId + pos);
- * 3D additionally needs the room's walls or its width and depth. Each gap
- * gets its direct action. */
-function PlacementPane({ itemId, onPickRoom }: { itemId: number; onPickRoom: () => void }) {
-  // "always": coming back from Annotate or the plan must show the new pin or
-  // position, even when the cached answer is still within staleTime
-  const placement = trpc.items.placement.useQuery({ itemId }, { refetchOnMount: "always" });
-  return (
-    <section className="rounded-lg border border-border bg-white p-4">
-      <h2 className="micro-label text-muted-foreground mb-2">Placement</h2>
-      {placement.isLoading ? (
-        <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading placement…
-        </div>
-      ) : placement.isError || !placement.data ? (
-        <div className="text-[13px] text-amber-800">Could not load placement: {placement.error?.message ?? "unknown error"}</div>
-      ) : (
-        <PlacementRows p={placement.data} onPickRoom={onPickRoom} />
+      {lightboxPhoto && (
+        <PhotoCropZoom
+          photoId={lightboxPhoto.id}
+          storageKey={lightboxPhoto.storageKey}
+          title={it.name}
+          onClose={() => setLightboxPhoto(null)}
+        />
       )}
-    </section>
+    </div>
   );
 }
 
 type PlacementData = inferRouterOutputs<AppRouter>["items"]["placement"];
 
+function placementSummary(p: PlacementData | undefined): string {
+  if (!p) return "";
+  const bits: string[] = [];
+  if (p.pins.length) bits.push(`${p.pins.length} pin${p.pins.length === 1 ? "" : "s"}`);
+  if (p.parentId != null) bits.push(`in ${p.parentName ?? `#${p.parentId}`}`);
+  else if (p.onPlan) bits.push("on plan");
+  else if (p.roomName) bits.push(p.roomName);
+  else bits.push("not placed");
+  return bits.join(" · ");
+}
+
+/** Trial: Placement as a modal next to Documents & links, instead of a card. */
+function PlacementTrigger({ itemId, onPickRoom }: { itemId: number; onPickRoom: () => void }) {
+  const [open, setOpen] = useState(false);
+  const placement = trpc.items.placement.useQuery({ itemId }, { refetchOnMount: "always" });
+  const summary = placementSummary(placement.data);
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-6 text-[11px]"
+        onClick={() => setOpen(true)}
+        title={summary || "Photo pins, 2D plan and 3D"}
+      >
+        <MapPin className="h-3 w-3 mr-1" />
+        Placement
+        {summary ? <span className="ml-1 text-muted-foreground font-normal truncate max-w-[10rem]">{summary}</span> : null}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Placement</DialogTitle>
+            <DialogDescription>Photo pins, 2D plan and 3D. Same facts as before, in a modal so the Thing page stays short.</DialogDescription>
+          </DialogHeader>
+          {placement.isLoading ? (
+            <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading placement…
+            </div>
+          ) : placement.isError || !placement.data ? (
+            <div className="text-[13px] text-amber-800">Could not load placement: {placement.error?.message ?? "unknown error"}</div>
+          ) : (
+            <PlacementRows
+              p={placement.data}
+              onPickRoom={() => {
+                setOpen(false);
+                onPickRoom();
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 /** Room photos offered as pin canvases in the pane; the rest live on /photos. */
 const PANE_ROOM_PHOTOS_MAX = 6;
 
 function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => void }) {
+  const utils = trpc.useUtils();
+  const removePin = trpc.pins.remove.useMutation({
+    onSuccess: () => {
+      utils.items.placement.invalidate();
+      utils.pins.listForItem.invalidate();
+    },
+  });
   const room = p.roomName ?? (p.roomId != null ? `room #${p.roomId}` : null);
   const canvases = p.roomPhotos.filter((r) => !r.isCutout);
   const shown = canvases.slice(0, PANE_ROOM_PHOTOS_MAX);
@@ -1022,14 +1389,28 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
                       · on the plan
                     </span>
                   ) : pin.roomId != null && !pin.isCrop ? (
-                    <Link
+                    <PlaceOnPlanButton
                       to={`/rooms/${pin.roomId}?placePhoto=${pin.photoId}`}
-                      className="text-[11px] text-primary hover:underline"
                       title="Stand this photo on its room's plan, looking where it was taken"
-                    >
-                      Place
-                    </Link>
+                      className="h-8 w-8"
+                    />
                   ) : null}
+                  <ConfirmDelete
+                    trigger={
+                      <button
+                        type="button"
+                        className="ml-auto text-muted-foreground hover:text-destructive"
+                        title="Unlink this pin"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    }
+                    title="Unlink this pin?"
+                    description={`Remove the pin on “${pin.title ?? `photo #${pin.photoId}`}”. The photo stays.`}
+                    confirmLabel="Unlink"
+                    pending={removePin.isPending}
+                    onConfirm={() => removePin.mutate({ id: pin.pinId })}
+                  />
                 </div>
               ))}
             </div>
@@ -1096,9 +1477,10 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
         ) : (
           <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
             Not on the plan yet
-            <Button asChild size="sm" variant="outline" className="h-6 text-[11px]">
-              <Link to={`/rooms/${p.roomId}?placeItem=${p.itemId}`}>Place on the plan</Link>
-            </Button>
+            <PlaceOnPlanButton
+              to={`/rooms/${p.roomId}?placeItem=${p.itemId}`}
+              title="Place on the plan"
+            />
           </div>
         )}
       </div>

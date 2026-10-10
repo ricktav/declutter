@@ -31,7 +31,8 @@ export function RecropDialog({
   );
 
   useEffect(() => {
-    if (source.data?.available && source.data.cropBox) setBox(source.data.cropBox);
+    if (!source.data?.available) return;
+    setBox(source.data.cropBox ?? { xPct: 50, yPct: 50, wPct: 30, hPct: 30 });
   }, [source.data]);
 
   const recrop = trpc.photos.recrop.useMutation({
@@ -63,11 +64,11 @@ export function RecropDialog({
           </div>
         ) : (
           <div className="flex flex-col gap-3 items-center">
-            <div className="relative select-none mx-auto max-w-full">
+            <div className="relative inline-block select-none max-w-full">
               <img
                 src={source.data.url ?? ""}
                 alt="original"
-                className="max-h-[calc(100dvh-11rem)] w-auto rounded touch-none"
+                className="block max-h-[calc(100dvh-11rem)] max-w-full w-auto h-auto rounded touch-none"
                 draggable={false}
               />
               <Box box={box} color="#7c3aed" onChange={setBox} />

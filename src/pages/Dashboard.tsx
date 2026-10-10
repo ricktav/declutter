@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,6 @@ import {
 import { timeAgo } from "@/lib/format";
 import { useHouse } from "@/context/house";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
-const HousesMap = lazy(() => import("@/components/HousesMap").then((m) => ({ default: m.HousesMap })));
 import { aerialThumbUrl, fetchParcelInfo, kadastraleKaartUrl, reverseGeocode, type AddressSuggestion, type ParcelInfo } from "@/lib/pdok";
 import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Plus } from "lucide-react";
 import {
@@ -498,15 +497,12 @@ function EditHouseDialog({
 function HouseSection({
   houseId,
   onSelectHouse,
-  onToggleMap,
 }: {
   houseId: number | null;
   onSelectHouse: (id: number | null) => void;
-  onToggleMap: () => void;
 }) {
   const houses = trpc.houses.list.useQuery();
   const [dialog, setDialog] = useState<"none" | "edit" | "add">("none");
-  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (houseId == null && houses.data && houses.data.length > 0) {
@@ -515,35 +511,15 @@ function HouseSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [houses.data, houseId]);
 
-  useEffect(() => {
-    return () => {
-      if (clickTimer.current) clearTimeout(clickTimer.current);
-    };
-  }, []);
-
   const current = houses.data?.find((h) => h.id === houseId);
 
   return (
     <>
       <button
         type="button"
-        title="Click to edit, double-click to show the map"
+        title="Edit this house"
         className="rounded-lg border border-border bg-white px-4 py-3 flex items-center gap-2.5 hover:bg-accent/40 transition-colors text-left"
-        onClick={() => {
-          // wait a beat to see if a second click turns this into a double-click
-          if (clickTimer.current) clearTimeout(clickTimer.current);
-          clickTimer.current = setTimeout(() => {
-            setDialog(current ? "edit" : "add");
-          }, 220);
-        }}
-        onDoubleClick={(e) => {
-          e.preventDefault();
-          if (clickTimer.current) {
-            clearTimeout(clickTimer.current);
-            clickTimer.current = null;
-          }
-          onToggleMap();
-        }}
+        onClick={() => setDialog(current ? "edit" : "add")}
       >
         {current?.lat != null && current.lng != null ? (
           <img
@@ -598,9 +574,6 @@ function LocationsSection() {
     <section>
       <div className="flex items-center h-7 mb-2">
         <h2 className="micro-label text-muted-foreground">Rooms</h2>
-        <Link to="/map" className="ml-auto text-[12px] text-primary hover:underline">
-          Map view →
-        </Link>
       </div>
       <div className="rounded-lg border border-border bg-white divide-y divide-border">
         {rooms.data?.length === 0 && (
@@ -609,7 +582,7 @@ function LocationsSection() {
           </div>
         )}
         {top.map((r) => (
-          <Link key={r.id} to={`/items?roomId=${r.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-accent/40 transition-colors">
+          <Link key={r.id} to={`/rooms/${r.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-accent/40 transition-colors">
             <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <span className="text-[13px] font-medium flex-1 truncate">
               {r.name}
@@ -626,8 +599,6 @@ function LocationsSection() {
 
 export default function Dashboard() {
   const { houseId, setHouseId } = useHouse();
-  const [showMap, setShowMap] = useState(false);
-
   // Topics (and the Items stat, derived from them) are scoped to whichever
   // house is "working in" - the whole dashboard reflects that context, not
   // just the house chip itself
@@ -664,7 +635,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
-        <HouseSection houseId={houseId} onSelectHouse={setHouseId} onToggleMap={() => setShowMap((v) => !v)} />
+        <HouseSection houseId={houseId} onSelectHouse={setHouseId} />
         {stats.map((s) => (
           <Link
             key={s.label}
@@ -679,14 +650,6 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
-
-      {showMap && (
-        <div className="mt-4">
-          <Suspense fallback={<div className="h-[260px] rounded-lg border border-border bg-muted/30" />}>
-            <HousesMap onSelectHouse={setHouseId} />
-          </Suspense>
-        </div>
-      )}
 
       <div className="grid md:grid-cols-2 gap-6 mt-6">
         <section>

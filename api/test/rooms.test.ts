@@ -106,11 +106,23 @@ describe("rooms.merge", () => {
     expect(await db.select().from(rooms)).toHaveLength(2);
     expect(await db.select().from(items).where(eq(items.roomId, keuken))).toHaveLength(3);
   });
-  it("refuses when both rooms carry geometry", async () => {
+  it("refuses when both rooms carry geometry unless keepGeometryFrom is set", async () => {
     const { db, h1, keuken, zolder } = await seed();
     await db.update(rooms).set({ walls: [] }).where(eq(rooms.id, keuken));
-    await db.update(rooms).set({ walls: [] }).where(eq(rooms.id, zolder));
-    await expect(callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken })).rejects.toThrow(/geometry/);
+    await db.update(rooms).set({ walls: [{ points: [[0, 0], [2, 0]] }] }).where(eq(rooms.id, zolder));
+    await expect(callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken })).rejects.toThrow(/3D scan/);
+    await callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken, keepGeometryFrom: "from" });
+    const [room] = await db.select().from(rooms).where(eq(rooms.id, keuken));
+    expect(room.walls).toEqual([{ points: [[0, 0], [2, 0]] }]);
+  });
+  it("refuses when both rooms have a floorplan unless keepPlanFrom is set", async () => {
+    const { db, h1, keuken, zolder } = await seed();
+    await db.update(rooms).set({ widthM: 4, depthM: 3 }).where(eq(rooms.id, keuken));
+    await db.update(rooms).set({ widthM: 5, depthM: 5 }).where(eq(rooms.id, zolder));
+    await expect(callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken })).rejects.toThrow(/floorplan/);
+    await callerFor(h1).rooms.merge({ fromId: zolder, toId: keuken, keepPlanFrom: "from" });
+    const [room] = await db.select().from(rooms).where(eq(rooms.id, keuken));
+    expect([room.widthM, room.depthM]).toEqual([5, 5]);
   });
   it("carries geometry over when only the source has it", async () => {
     const { db, h1, keuken, zolder } = await seed();

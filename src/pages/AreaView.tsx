@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
@@ -20,9 +20,43 @@ import type { AttributeDef } from "@db/schema";
 import { AREA_ICONS, AREA_COLORS } from "@/lib/areaStyle";
 import { cn } from "@/lib/utils";
 import type { Area } from "@db/schema";
+import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
+import { isMachineItem } from "@/lib/systemsAttrs";
+import { isJsonListAttr, jsonListAttrLabel, MACHINE_CORE_LIST_ATTRS } from "@/components/AttrListValue";
+import { useHouse } from "@/context/house";
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/** Identity / spec fields: find them in the search bar, not as dropdowns. */
+const SKIP_FILTER_KEYS = new Set(["mac", "mac_address", "serial", "serial_number", "cpu"]);
+
+function jsonListCount(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  if (Array.isArray(v)) return v.length;
+  const s = String(v).trim();
+  if (!s.startsWith("[")) return null;
+  try {
+    const a = JSON.parse(s) as unknown;
+    return Array.isArray(a) ? a.length : null;
+  } catch {
+    return null;
+  }
+}
+
+function itemMatchesQuery(
+  i: { name: string; attributes: Record<string, unknown> | null; room?: { name: string; floor: string | null } | null },
+  query: string,
+): boolean {
+  if (!query) return true;
+  if (i.name.toLowerCase().includes(query)) return true;
+  if ((i.room?.name ?? "").toLowerCase().includes(query)) return true;
+  if ((i.room?.floor ?? "").toLowerCase().includes(query)) return true;
+  for (const v of Object.values(i.attributes ?? {})) {
+    if (v != null && String(v).toLowerCase().includes(query)) return true;
+  }
+  return false;
 }
 
 function EditAreaDialog({ area }: { area: Area }) {
@@ -246,11 +280,20 @@ function AddItemDialog({ areaId, defs }: { areaId: number; defs: AttributeDef[] 
 
 export default function AreaView() {
   const { slug } = useParams<{ slug: string }>();
+  const { houseId } = useHouse();
   const { openAsk } = useAsk();
   const [q, setQ] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [view, setView] = usePersistedState<"list" | "gallery">("areaView.view", "list");
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [colFilters, setColFilters] = useState<Record<string, string>>({});
+  const [placeFilter, setPlaceFilter] = useState("");
+  const [systems, setSystems] = usePersistedState("areaView.systems", true);
   const navigate = useNavigate();
+  useEffect(() => {
+    setPlaceFilter("");
+  }, [houseId]);
 
   const area = trpc.areas.get.useQuery({ slug: slug! }, { enabled: !!slug });
   const utils = trpc.useUtils();
@@ -271,24 +314,106 @@ export default function AreaView() {
     },
   });
   const itemsList = trpc.items.listByArea.useQuery(
-    { areaId: area.data?.id ?? 0, includeArchived: showArchived },
+    { areaId: area.data?.id ?? 0, includeArchived: showArchived, houseId },
     { enabled: !!area.data },
   );
 
-  // columns: from attributeDefs if present, else union of keys seen
+  // columns: attributeDefs first, then list attrs (databases / projects / AI harness)
+  // so Systems snapshots show up even when they are not in the topic schema.
   const columns = useMemo(() => {
-    const defs = area.data?.attributeDefs as AttributeDef[] | null;
-    if (defs?.length) return defs;
-    const keys = new Map<string, string>();
+    const defs = (area.data?.attributeDefs as AttributeDef[] | null) ?? [];
+    const keys = new Map<string, { key: string; label: string; type: AttributeDef["type"] }>();
+    for (const d of defs) keys.set(d.key, { key: d.key, label: d.label, type: d.type });
     for (const it of itemsList.data ?? []) {
-      for (const k of Object.keys(it.attributes ?? {})) if (!keys.has(k)) keys.set(k, k);
+      for (const k of Object.keys(it.attributes ?? {})) {
+        if (keys.has(k)) continue;
+        if (isJsonListAttr(k) || !defs.length) keys.set(k, { key: k, label: jsonListAttrLabel(k) ?? k, type: "text" });
+      }
     }
-    return [...keys.entries()].map(([key, label]) => ({ key, label, type: "text" as const }));
-  }, [area.data, itemsList.data]);
+    if (slug === "computers") {
+      for (const k of MACHINE_CORE_LIST_ATTRS) {
+        if (!keys.has(k)) keys.set(k, { key: k, label: jsonListAttrLabel(k) ?? k, type: "text" });
+      }
+    }
+    return [...keys.values()];
+  }, [area.data, itemsList.data, slug]);
 
-  const filtered = (itemsList.data ?? []).filter(
-    (i) => !q || i.name.toLowerCase().includes(q.toLowerCase()),
-  );
+  const categorical = useMemo(() => {
+    const out: { key: string; label: string; values: string[] }[] = [];
+    for (const c of columns) {
+      if (SKIP_FILTER_KEYS.has(c.key) || isJsonListAttr(c.key)) continue;
+      const fromDef = c.type === "select";
+      const values = [...new Set((itemsList.data ?? []).map((it) => String(it.attributes?.[c.key] ?? "")).filter(Boolean))].sort();
+      if (fromDef || c.key === "role" || (values.length >= 2 && values.length <= 12)) {
+        const opts = "options" in c && Array.isArray(c.options) ? c.options : [];
+        out.push({ key: c.key, label: c.label, values: fromDef ? [...new Set([...opts, ...values])] : values });
+      }
+    }
+    return out;
+  }, [columns, itemsList.data]);
+
+  const places = useMemo(() => {
+    const map = new Map<number, { id: number; name: string; floor: string | null }>();
+    let unplaced = 0;
+    for (const it of itemsList.data ?? []) {
+      if (it.room) map.set(it.room.id, { id: it.room.id, name: it.room.name, floor: it.room.floor });
+      else unplaced += 1;
+    }
+    return {
+      rooms: [...map.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      unplaced,
+    };
+  }, [itemsList.data]);
+
+  const filtered = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    const machinesOnly = slug === "computers" && systems;
+    return (itemsList.data ?? []).filter((i) => {
+      if (!itemMatchesQuery(i, query)) return false;
+      if (placeFilter === "none") {
+        if (i.roomId != null) return false;
+      } else if (placeFilter && i.roomId !== Number(placeFilter)) {
+        return false;
+      }
+      for (const [k, v] of Object.entries(colFilters)) {
+        if (v && String(i.attributes?.[k] ?? "") !== v) return false;
+      }
+      if (
+        machinesOnly &&
+        !isMachineItem({
+          attributes: i.attributes,
+          areaSlug: slug,
+          parentId: i.parentId,
+          status: i.status,
+        })
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [itemsList.data, q, colFilters, slug, systems, placeFilter]);
+
+  const sorted = useMemo(() => {
+    const rows = [...filtered];
+    const dir = sortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      if (sortKey === "name") return a.name.localeCompare(b.name) * dir;
+      if (sortKey === "place") return (a.room?.name ?? "").localeCompare(b.room?.name ?? "") * dir;
+      if (sortKey === "updated") return (+new Date(a.updatedAt) - +new Date(b.updatedAt)) * dir;
+      const av = String(a.attributes?.[sortKey] ?? "");
+      const bv = String(b.attributes?.[sortKey] ?? "");
+      const an = Number(av), bn = Number(bv);
+      if (av !== "" && bv !== "" && Number.isFinite(an) && Number.isFinite(bn)) return (an - bn) * dir;
+      return av.localeCompare(bv) * dir;
+    });
+    return rows;
+  }, [filtered, sortKey, sortDir]);
+
+  const onSort = (column: string) => {
+    const next = nextSort(sortKey, sortDir, column);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+  };
 
   if (area.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
   if (!area.data) return <div className="p-8 text-sm">Topic not found.</div>;
@@ -299,7 +424,7 @@ export default function AreaView() {
         <span className="h-3 w-3 rounded-sm" style={{ background: area.data.color }} />
         <h1 className="text-2xl font-semibold tracking-tight">{area.data.name}</h1>
         <span className="font-data text-sm text-muted-foreground">
-          {filtered.length} item{filtered.length === 1 ? "" : "s"}
+          {sorted.length} item{sorted.length === 1 ? "" : "s"}
         </span>
         <div className="ml-auto flex gap-2">
           <Button
@@ -331,10 +456,10 @@ export default function AreaView() {
         <p className="text-sm text-muted-foreground mt-1">{area.data.description}</p>
       )}
 
-      <div className="flex items-center gap-3 mt-5">
+      <div className="flex flex-wrap items-center gap-3 mt-5">
         <input
           className="w-64 rounded-md border border-input bg-white px-3 py-1.5 text-[13px]"
-          placeholder="Filter by name…"
+          placeholder="Search name, Place, attributes…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -346,6 +471,51 @@ export default function AreaView() {
           />
           show archived
         </label>
+        {slug === "computers" && (
+          <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground" title="Hide mice, keyboards, monitors and other peripherals">
+            <input
+              type="checkbox"
+              checked={systems}
+              onChange={(e) => setSystems(e.target.checked)}
+            />
+            Systems
+          </label>
+        )}
+        {(places.rooms.length > 0 || places.unplaced > 0) && (
+          <label className="text-[12px] text-muted-foreground">
+            Place
+            <select
+              className="ml-1.5 rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
+              value={placeFilter}
+              onChange={(e) => setPlaceFilter(e.target.value)}
+            >
+              <option value="">All</option>
+              {places.unplaced > 0 && <option value="none">Unplaced</option>}
+              {places.rooms.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}{r.floor ? ` · ${r.floor}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {categorical.map((c) => (
+          <label key={c.key} className="text-[12px] text-muted-foreground">
+            {c.label}
+            <select
+              className="ml-1.5 rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
+              value={colFilters[c.key] ?? ""}
+              onChange={(e) => setColFilters((f) => ({ ...f, [c.key]: e.target.value }))}
+            >
+              <option value="">All</option>
+              {c.values.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
         <div className="ml-auto flex gap-1 rounded-md border border-border p-0.5">
           <button
             className={cn("rounded p-1", view === "list" ? "bg-muted" : "text-muted-foreground")}
@@ -366,7 +536,7 @@ export default function AreaView() {
 
       {view === "gallery" ? (
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {filtered.map((it) => (
+          {sorted.map((it) => (
             <Link
               key={it.id}
               to={`/items/${it.id}`}
@@ -374,6 +544,9 @@ export default function AreaView() {
             >
               <Thumb storageKey={it.imageKey} size="lg" />
               <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{it.name}</div>
+              {it.room?.name && (
+                <div className="truncate text-[11px] text-muted-foreground">{it.room.name}</div>
+              )}
               {it.verificationStatus === "detected" && (
                 <span className="inline-block text-[10px] font-medium text-amber-700 bg-amber-100 rounded px-1.5">
                   needs review
@@ -386,9 +559,11 @@ export default function AreaView() {
               )}
             </Link>
           ))}
-          {filtered.length === 0 && (
+            {sorted.length === 0 && (
             <div className="col-span-full text-center text-muted-foreground py-8">
-              No items yet — add one, or capture something via the inbox.
+              {slug === "computers" && systems
+                ? "No systems in this list — turn off Systems to see peripherals."
+                : "No items yet — add one, or capture something via the inbox."}
             </div>
           )}
         </div>
@@ -398,16 +573,17 @@ export default function AreaView() {
           <thead>
             <tr>
               <th className="w-12" />
-              <th>Name</th>
+              <SortableTh label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Place" column="place" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               {columns.map((c) => (
-                <th key={c.key}>{c.label}</th>
+                <SortableTh key={c.key} label={c.label} column={c.key} sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               ))}
-              <th>Updated</th>
+              <SortableTh label="Updated" column="updated" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <th className="w-8" />
             </tr>
           </thead>
           <tbody>
-            {filtered.map((it) => (
+            {sorted.map((it) => (
               <tr key={it.id} className={`group ${it.status === "archived" ? "opacity-50" : ""}`}>
                 <td>
                   <Thumb storageKey={it.imageKey} />
@@ -427,9 +603,15 @@ export default function AreaView() {
                     </span>
                   )}
                 </td>
+                <td className="text-[12px] text-muted-foreground">
+                  {it.room?.name ?? "—"}
+                  {it.room?.floor ? <span className="ml-1 text-[11px]">{it.room.floor}</span> : null}
+                </td>
                 {columns.map((c) => (
                   <td key={c.key} className="font-data text-[12px]">
-                    {String(it.attributes?.[c.key] ?? "")}
+                    {isJsonListAttr(c.key)
+                      ? (jsonListCount(it.attributes?.[c.key]) != null ? String(jsonListCount(it.attributes?.[c.key])) : "")
+                      : String(it.attributes?.[c.key] ?? "")}
                   </td>
                 ))}
                 <td className="font-data text-[11px] text-muted-foreground">{timeAgo(it.updatedAt)}</td>
@@ -449,10 +631,12 @@ export default function AreaView() {
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {sorted.length === 0 && (
               <tr>
-                <td colSpan={columns.length + 4} className="text-center text-muted-foreground py-8">
-                  No items yet — add one, or capture something via the inbox.
+                <td colSpan={columns.length + 5} className="text-center text-muted-foreground py-8">
+                  {slug === "computers" && systems
+                    ? "No systems in this list — turn off Systems to see peripherals."
+                    : "No items yet — add one, or capture something via the inbox."}
                 </td>
               </tr>
             )}

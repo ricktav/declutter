@@ -1,0 +1,133 @@
+<!-- Realistic fleet shape after 38021ed dry-run:
+     databases-table headers are kind, label, target, status, detail, checked.
+     Per-host directory tables are class="mtx directory" with tr.pdrow / div.pd-row
+     and pd-k=directory (same pattern as containers, not table.projects). -->
+
+<section class="host" id="host-102">
+  <div class="hh"><div class="hh-l"><span class="hname mono">macmini-m4</span> host-102 · 10.50.0.102:8766</div></div>
+  <table class="mtx services-table">
+    <tr><th>label</th><th>url</th><th>status</th></tr>
+    <tr><td>Workbench</td><td>http://10.50.0.102:3002</td><td>ok</td></tr>
+  </table>
+  <table class="mtx directory">
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/Volumes/T7/declutter</span></div>
+      <div class="pd-row"><span class="pd-k">kind</span> claude</div>
+      <div class="pd-row"><span class="pd-k">tokens</span> 1.2M</div>
+      <div class="pd-row"><span class="pd-k">updated</span> 2h ago</div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/Users/rick/photos-review</span></div>
+      <div class="pd-row"><span class="pd-k">kind</span> claude</div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/Users/rick/openclaw</span></div>
+      <div class="pd-row"><span class="pd-k">kind</span> openclaw</div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/Users/rick/hermes-agent</span></div>
+      <div class="pd-row"><span class="pd-k">kind</span> hermes</div>
+    </td></tr>
+  </table>
+</section>
+
+<section class="host" id="host-109">
+  <div class="hh"><div class="hh-l"><span class="hname mono">dockermac-2</span> host-109 · 10.50.0.109:8766</div></div>
+  <table class="projects">
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">container</span> <span class="cname mono">caddy</span></div>
+    </td></tr>
+  </table>
+  <table class="mtx databases-table">
+    <tr><th>kind</th><th>label</th><th>target</th><th>status</th><th>detail</th><th>checked</th></tr>
+    <tr><td>sqlite</td><td>gitea</td><td>/var/lib/gitea/gitea.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>uptime</td><td>/data/kuma.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>postgres</td><td>authentik</td><td>postgresql://10.50.0.109:5432/authentik</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>minio</td><td>objects</td><td>http://10.50.0.109:9000</td><td>ok</td><td>S3</td><td>now</td></tr>
+    <tr><td>redis</td><td>cache</td><td>redis://10.50.0.109:6379/0</td><td>ok</td><td></td><td>now</td></tr>
+  </table>
+  <table class="mtx directory">
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/opt/gitea</span></div>
+      <div class="pd-row"><span class="pd-k">kind</span> unknown</div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/opt/authentik</span></div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/home/rick/changedetection</span></div>
+    </td></tr>
+  </table>
+</section>
+
+<section class="host" id="host-10">
+  <div class="hh"><div class="hh-l"><span class="hname mono">dockermac</span> host-10 · 10.50.0.10:8766</div></div>
+  <table class="mtx databases-table">
+    <tr><th>kind</th><th>label</th><th>target</th><th>status</th><th>detail</th><th>checked</th></tr>
+    <tr><td>mysql</td><td>declutter</td><td>mysql://10.50.0.10:3306/declutter</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>mysql</td><td>declutter</td><td>mysql://10.50.0.10:3306/declutter_test</td><td>ok</td><td>test</td><td>now</td></tr>
+    <tr><td>postgres</td><td>grafana</td><td>postgresql://10.50.0.10:5432/grafana</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>postgres</td><td>nextcloud</td><td>postgresql://10.50.0.10:5432/nextcloud</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>redis</td><td>cache</td><td>redis://10.50.0.10:6379/0</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>influx</td><td>metrics</td><td>http://10.50.0.10:8086</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>pihole</td><td>/etc/pihole/pihole-FTL.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>unifi</td><td>/usr/lib/unifi/data/db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>vaultwarden</td><td>/data/db.sqlite3</td><td>ok</td><td></td><td>now</td></tr>
+  </table>
+  <table class="mtx directory">
+    <tr><th>directory</th><th>kind</th></tr>
+    <tr><td>/Volumes/T7/declutter</td><td>claude</td></tr>
+    <tr><td>/opt/plugwise</td><td>unknown</td></tr>
+    <tr><td>/home/rick/lidarventory</td><td>claude</td></tr>
+  </table>
+</section>
+
+<section class="host" id="host-142">
+  <div class="hh"><div class="hh-l"><span class="hname mono">prodesk-rt1</span> host-142 · 10.50.0.142:8766</div></div>
+  <table class="projects">
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">container</span> <span class="cname mono">homeassistant</span></div>
+    </td></tr>
+  </table>
+  <table class="mtx databases-table">
+    <tr><th>kind</th><th>label</th><th>target</th><th>status</th><th>detail</th><th>checked</th></tr>
+    <!-- same kind+label, different targets — uniq by name/engine would collapse these -->
+    <tr><td>sqlite</td><td>clawd</td><td>/home/rick/clawd/data.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>clawd</td><td>/home/rick/clawd/sessions.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>clawd</td><td>/home/rick/clawd/cache.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>clawd</td><td>/home/rick/clawd/index.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>clawd</td><td>/home/rick/clawd/audit.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>clawd</td><td>/home/rick/clawd/jobs.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>clawd</td><td>/home/rick/clawd/kv.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>clawd</td><td>/home/rick/clawd/tmp.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>home</td><td>/home/rick/homeassistant/home-assistant_v2.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>home</td><td>/home/rick/.homeassistant/home-assistant_v2.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>home</td><td>/config/home-assistant_v2.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>grafana</td><td>/var/lib/grafana/grafana.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>postgres</td><td>grafana</td><td>postgresql://10.50.0.142:5432/grafana</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>influx</td><td>metrics</td><td>http://10.50.0.142:8086</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>mysql</td><td>plex</td><td>/var/lib/plex/com.plexapp.plugins.library.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>sonarr</td><td>/config/sonarr.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>radarr</td><td>/config/radarr.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>sqlite</td><td>prowlarr</td><td>/config/prowlarr.db</td><td>ok</td><td></td><td>now</td></tr>
+    <tr><td>redis</td><td>broker</td><td>redis://10.50.0.142:6379/1</td><td>ok</td><td></td><td>now</td></tr>
+  </table>
+  <table class="mtx directory">
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/home/rick/clawd</span></div>
+      <div class="pd-row"><span class="pd-k">kind</span> openclaw</div>
+      <div class="pd-row"><span class="pd-k">tokens</span> 80k</div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/home/rick/data-tracker</span></div>
+    </td></tr>
+    <tr class="pdrow"><td>
+      <div class="pd-row"><span class="pd-k">directory</span> <span class="cname mono">/opt/homeassistant</span></div>
+    </td></tr>
+  </table>
+  <table class="mtx">
+    <caption>Projects</caption>
+    <tr><th>project</th><th>detail</th></tr>
+    <tr><td>compose</td><td>stack notes</td></tr>
+  </table>
+</section>

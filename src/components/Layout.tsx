@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { useWorkbenchMode, type WorkbenchMode } from "@/context/workbenchMode";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { HouseSwitcher } from "@/components/HouseSwitcher";
-import { RoomPicker } from "@/components/RoomPicker";
+import { SidebarRooms } from "@/components/SidebarRooms";
 import {
   LayoutDashboard,
   Inbox,
@@ -28,19 +27,21 @@ import {
   X,
   Settings,
   Search,
-  MapPin,
+  ScanSearch,
   ChevronDown,
   ChevronRight,
-  Pencil,
   Images,
   Network,
+  Share2,
   Smartphone,
   Zap,
   HardDrive,
+  Star,
   type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useTopicFavs } from "@/lib/topicFavs";
 
 const AREA_ICONS: Record<string, LucideIcon> = {
   laptop: Laptop,
@@ -134,70 +135,92 @@ function RunningTimerPill() {
 /** The live energy dashboard on dockermac-1. */
 export const METERKAST_URL = "http://10.50.0.10/meterkast.html";
 
-const NAV = [
+const PRIMARY_NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/focus", label: "Focus", icon: ScanSearch },
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/items", label: "All Items", icon: Search },
   { to: "/photos", label: "Photos", icon: Images },
-  { to: "/map", label: "Map", icon: MapPin },
-  { to: "/rooms", label: "Rooms", icon: Box },
-  { to: "/galaxy", label: "Galaxy", icon: Network },
-  { to: "/storage", label: "Storage", icon: HardDrive },
-  { to: "/ideas", label: "Ideas", icon: Lightbulb },
-  { to: "/tasks", label: "Tasks", icon: ListChecks },
-  { to: "/wiki", label: "Wiki", icon: BookOpen },
-  { to: "/activity", label: "Activity", icon: History },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
+const VIEWS_NAV = [
+  { to: "/galaxy", label: "Galaxy", icon: Network },
+  { to: "/systems", label: "Systems", icon: Share2 },
+  { to: "/storage", label: "Storage", icon: HardDrive },
+  { to: "/wiki", label: "Wiki", icon: BookOpen },
+  { to: "/activity", label: "Activity", icon: History },
+];
+
+const SIMPLE_NAV = new Set(["/focus", "/inbox", "/items", "/photos", "/settings"]);
+const HEAVY_PATHS = new Set(["/galaxy", "/systems", "/storage", "/ideas", "/tasks", "/wiki", "/activity"]);
+
+function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
+  const { mode, setMode } = useWorkbenchMode();
+  const navigate = useNavigate();
+  const pick = (next: WorkbenchMode) => {
+    setMode(next);
+    if (next === "simple") navigate("/focus");
+  };
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-2 rounded-md bg-[#32361f] p-0.5 text-[11px] font-semibold",
+        compact && "min-w-[9.5rem]",
+      )}
+      role="group"
+      aria-label="Workbench mode"
+    >
+      {(["simple", "advanced"] as const).map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => pick(m)}
+          className={cn(
+            "rounded px-2 py-1 capitalize",
+            mode === m ? "bg-[#d2ff00] text-[#282c20]" : "text-[#b4b8a5] hover:text-[#f4f4ed]",
+          )}
+        >
+          {m === "simple" ? "Simple" : "Advanced"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function Layout() {
+  const { mode } = useWorkbenchMode();
+  const location = useLocation();
   const areas = trpc.areas.list.useQuery();
-  const roomList = trpc.rooms.list.useQuery(); // context house
-  const roomData = roomList.data;
-  const byFloor = useMemo(() => {
-    const groups = new Map<string, NonNullable<typeof roomData>>();
-    for (const r of roomData ?? []) {
-      const k = r.floor ?? "";
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k)!.push(r);
-    }
-    return [...groups.entries()];
-  }, [roomData]);
+  const { favIds, toggle: toggleFav, isFaved } = useTopicFavs();
   const inbox = trpc.inbox.list.useQuery();
   const { openAsk } = useAsk();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [areasCollapsed, toggleAreas] = useCollapsed("sidebar.areas.collapsed");
   const [locationsCollapsed, toggleLocations] = useCollapsed("sidebar.locations.collapsed");
+  const [viewsCollapsed, toggleViews] = useCollapsed("sidebar.views.collapsed", true);
+  const ideasList = trpc.ideas.list.useQuery();
+  const tasksList = trpc.tasks.list.useQuery();
+  const hasIdeas = (ideasList.data ?? []).length > 0;
+  const hasTasks = (tasksList.data ?? []).length > 0;
   const pendingCount = (inbox.data ?? []).filter((c) => c.status === "pending").length;
-
-  const [editingRoom, setEditingRoom] = useState<{ id: number; name: string; floor: string | null } | null>(null);
-  const [renameTo, setRenameTo] = useState("");
-  const [floorTo, setFloorTo] = useState("");
-  const [mergeInto, setMergeInto] = useState<number | null>(null);
-  const utils = trpc.useUtils();
-  const refreshRooms = () => {
-    utils.rooms.list.invalidate();
-    utils.items.listAll.invalidate();
-    utils.items.get.invalidate();
-    utils.rooms.get.invalidate();
-  };
-  const updateRoom = trpc.rooms.update.useMutation({
-    onSuccess: () => {
-      refreshRooms();
-      setEditingRoom(null);
-    },
-  });
-  const mergeRoom = trpc.rooms.merge.useMutation({
-    onSuccess: () => {
-      refreshRooms();
-      setEditingRoom(null);
-    },
-  });
-
-  const busy = updateRoom.isPending || mergeRoom.isPending;
-  const nameChanged = !!editingRoom && renameTo.trim() !== editingRoom.name;
-  const floorChanged = !!editingRoom && (floorTo.trim() || null) !== (editingRoom.floor ?? null);
+  const primaryNav = mode === "simple" ? PRIMARY_NAV.filter((n) => SIMPLE_NAV.has(n.to)) : PRIMARY_NAV;
+  const extraPrimary = mode === "simple" ? [] : [
+    ...(hasIdeas ? [{ to: "/ideas", label: "Ideas", icon: Lightbulb }] : []),
+    ...(hasTasks ? [{ to: "/tasks", label: "Tasks", icon: ListChecks }] : []),
+  ];
+  const viewsNav = [
+    ...VIEWS_NAV,
+    ...(!hasIdeas ? [{ to: "/ideas", label: "Ideas", icon: Lightbulb }] : []),
+    ...(!hasTasks ? [{ to: "/tasks", label: "Tasks", icon: ListChecks }] : []),
+  ];
+  useEffect(() => {
+    if (mode !== "simple") return;
+    if (location.pathname === "/" || HEAVY_PATHS.has(location.pathname)) {
+      navigate("/focus", { replace: true });
+    }
+  }, [mode, location.pathname, navigate]);
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     cn(
@@ -221,13 +244,43 @@ export default function Layout() {
         </button>
       </div>
 
-      <div className="px-2 pb-2">
-        <HouseSwitcher dark />
+      <div className="px-2 pb-2 space-y-2">
+        <HouseSwitcher dark allowAll />
+        <WorkbenchModeToggle />
       </div>
 
       <nav className="px-2 space-y-0.5">
-        {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.end} className={navLinkClass}
+        {favIds.length > 0 && (
+          <div className="space-y-0.5 pb-1 mb-1 border-b border-[#3a3f2e]">
+            {favIds.map((id) => {
+              const a = (areas.data ?? []).find((x) => x.id === id);
+              if (!a) return null;
+              const Icon = AREA_ICONS[a.icon] ?? Box;
+              return (
+                <div key={`fav-${a.id}`} className="flex items-center">
+                  <NavLink
+                    to={`/areas/${a.slug}`}
+                    className={(s) => cn(navLinkClass(s), "flex-1 min-w-0")}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <Icon className="h-4 w-4" style={{ color: a.color }} />
+                    <span className="flex-1 truncate">{a.name}</span>
+                  </NavLink>
+                  <button
+                    type="button"
+                    title="Remove shortcut"
+                    className="shrink-0 rounded p-1 mr-1 text-[#b4b8a5] hover:bg-[#32361f] hover:text-[#f4f4ed]"
+                    onClick={() => toggleFav(a.id)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {[...primaryNav, ...extraPrimary].map((n) => (
+          <NavLink key={n.to} to={n.to} end={"end" in n && n.end === true} className={navLinkClass}
             onClick={() => setMenuOpen(false)}>
             <n.icon className="h-4 w-4" />
             <span className="flex-1">{n.label}</span>
@@ -238,18 +291,29 @@ export default function Layout() {
             )}
           </NavLink>
         ))}
-        {/* separate front end (own page), so a plain link rather than a NavLink */}
-        <a href="/flow/" className={navLinkClass({ isActive: false })}>
-          <Smartphone className="h-4 w-4" />
-          <span className="flex-1">Flow</span>
-          <span className="text-[11px] opacity-60">↗</span>
-        </a>
-        {/* live readings (plugs, smart meter, phases) live on the meterkast dashboard, not in HomeBase */}
-        <a href={METERKAST_URL} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
-          <Zap className="h-4 w-4" />
-          <span className="flex-1">Meterkast</span>
-          <span className="text-[11px] opacity-60">↗</span>
-        </a>
+        <SidebarSectionTitle label="Views" collapsed={viewsCollapsed} onToggle={toggleViews} />
+        {!viewsCollapsed && (
+          <div className="space-y-0.5">
+            {mode !== "simple" && viewsNav.map((n) => (
+              <NavLink key={n.to} to={n.to} className={navLinkClass} onClick={() => setMenuOpen(false)}>
+                <n.icon className="h-4 w-4" />
+                <span className="flex-1">{n.label}</span>
+              </NavLink>
+            ))}
+            <a href="/flow/" className={navLinkClass({ isActive: false })}>
+              <Smartphone className="h-4 w-4" />
+              <span className="flex-1">Flow</span>
+              <span className="text-[11px] opacity-60">↗</span>
+            </a>
+            {mode !== "simple" && (
+              <a href={METERKAST_URL} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
+                <Zap className="h-4 w-4" />
+                <span className="flex-1">Meterkast</span>
+                <span className="text-[11px] opacity-60">↗</span>
+              </a>
+            )}
+          </div>
+        )}
       </nav>
 
       <div className="flex-1 overflow-y-auto">
@@ -259,39 +323,35 @@ export default function Layout() {
             {(areas.data ?? []).map((a) => {
               const Icon = AREA_ICONS[a.icon] ?? Box;
               return (
-                <NavLink key={a.id} to={`/areas/${a.slug}`} className={navLinkClass}
-                  onClick={() => setMenuOpen(false)}>
-                  <Icon className="h-4 w-4" style={{ color: a.color }} />
-                  <span className="flex-1 truncate">{a.name}</span>
-                  <span className="font-data text-[11px] opacity-60">{a.itemCount}</span>
-                </NavLink>
+                <div key={a.id} className="flex items-center">
+                  <NavLink
+                    to={`/areas/${a.slug}`}
+                    className={(s) => cn(navLinkClass(s), "flex-1 min-w-0")}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <Icon className="h-4 w-4" style={{ color: a.color }} />
+                    <span className="flex-1 truncate">{a.name}</span>
+                    <span className="font-data text-[11px] opacity-60">{a.itemCount}</span>
+                  </NavLink>
+                  <button
+                    type="button"
+                    title={isFaved(a.id) ? "Remove shortcut" : "Pin under Home"}
+                    className={cn(
+                      "shrink-0 rounded p-1 mr-1",
+                      isFaved(a.id) ? "text-[#d2ff00]" : "text-[#b4b8a5] hover:bg-[#32361f] hover:text-[#f4f4ed]",
+                    )}
+                    onClick={() => toggleFav(a.id)}
+                  >
+                    <Star className={cn("h-3 w-3", isFaved(a.id) && "fill-current")} />
+                  </button>
+                </div>
               );
             })}
           </nav>
         )}
 
         <SidebarSectionTitle label="Locations" collapsed={locationsCollapsed} onToggle={toggleLocations} />
-        {!locationsCollapsed && (
-          <nav className="px-2 space-y-0.5">
-            {byFloor.map(([floor, list]) => (
-              <div key={floor || "nofloor"}>
-                {byFloor.length > 1 && <div className="px-2.5 pt-1 micro-label text-[#8a8e7a]">{floor || "no floor"}</div>}
-                {list.map((r) => (
-                  <NavLink key={r.id} to={`/items?roomId=${r.id}`} className={(a) => cn(navLinkClass(a), "group")} onClick={() => setMenuOpen(false)}>
-                    <MapPin className="h-4 w-4 text-[#b4b8a5] shrink-0" />
-                    <span className="flex-1 min-w-0 truncate">{r.name}</span>
-                    <span className="font-data text-[11px] opacity-60">{r.itemCount}</span>
-                    <button className="shrink-0 opacity-0 group-hover:opacity-100 hover:text-[#f4f4ed]" title="Rename or merge this room"
-                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingRoom(r); setRenameTo(r.name); setFloorTo(r.floor ?? ""); setMergeInto(null); updateRoom.reset(); mergeRoom.reset(); }}>
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                  </NavLink>
-                ))}
-              </div>
-            ))}
-            {roomList.data?.length === 0 && <div className="px-2.5 py-1 text-[12px] text-[#8a8e7a]">No rooms yet</div>}
-          </nav>
-        )}
+        {!locationsCollapsed && <SidebarRooms navLinkClass={navLinkClass} onNavigate={() => setMenuOpen(false)} />}
       </div>
 
       <div className="p-2 space-y-2">
@@ -309,7 +369,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
       {/* desktop sidebar */}
-      <aside className="hidden md:flex w-[220px] shrink-0 flex-col bg-[#282c20] text-[#e0e0d0]">
+      <aside className="hidden md:flex w-[240px] shrink-0 flex-col overflow-x-hidden bg-[#282c20] text-[#e0e0d0]">
         {sidebar}
       </aside>
 
@@ -317,55 +377,27 @@ export default function Layout() {
       {menuOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMenuOpen(false)} />
-          <aside className="absolute left-0 top-0 bottom-0 w-[260px] flex flex-col bg-[#282c20] text-[#e0e0d0]">
+          <aside className="absolute left-0 top-0 bottom-0 w-[min(260px,85vw)] flex flex-col overflow-x-hidden bg-[#282c20] text-[#e0e0d0]">
             {sidebar}
           </aside>
         </div>
       )}
 
       {/* ---- main ---- */}
-      <main className="flex-1 overflow-y-auto">
+      <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         {/* mobile top bar */}
         <div className="md:hidden sticky top-0 z-30 flex items-center gap-2 bg-[#282c20] text-[#e0e0d0] px-3 py-2">
           <button onClick={() => setMenuOpen(true)} className="p-1">
             <Menu className="h-5 w-5" />
           </button>
           <span className="font-data text-[13px] font-semibold text-[#f4f4ed]">⌂ HomeBase</span>
+          <div className="ml-auto">
+            <WorkbenchModeToggle compact />
+          </div>
           <RunningTimerPill />
         </div>
         <Outlet context={{ navigate }} />
       </main>
-
-      <Dialog open={!!editingRoom} onOpenChange={(o) => !o && setEditingRoom(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rename or merge room</DialogTitle>
-          </DialogHeader>
-          {editingRoom && (
-            <div className="space-y-3">
-              <label className="block text-[12px]">Name
-                <input id="room-rename" className="mt-1 w-full rounded border border-input px-2 py-1 text-[13px]" value={renameTo} onChange={(e) => setRenameTo(e.target.value)} />
-              </label>
-              <label className="block text-[12px]">Floor
-                <input id="room-floor" className="mt-1 w-full rounded border border-input px-2 py-1 text-[13px]" value={floorTo} onChange={(e) => setFloorTo(e.target.value)} placeholder="e.g. ground, 1, attic" />
-              </label>
-              <div className="text-[12px]">Or merge into another room
-                <RoomPicker value={mergeInto} onChange={setMergeInto} allowCreate={false} allowNone />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setEditingRoom(null)}>Cancel</Button>
-                {mergeInto != null && mergeInto !== editingRoom.id ? (
-                  <Button size="sm" disabled={busy} onClick={() => mergeRoom.mutate({ fromId: editingRoom.id, toId: mergeInto })}>Merge</Button>
-                ) : (
-                  <Button size="sm" disabled={busy || !renameTo.trim() || !nameChanged && !floorChanged}
-                    onClick={() => updateRoom.mutate({ id: editingRoom.id, ...(nameChanged ? { name: renameTo.trim() } : {}), ...(floorChanged ? { floor: floorTo.trim() || null } : {}) })}>Save</Button>
-                )}
-              </div>
-              {(updateRoom.isError || mergeRoom.isError) && <div className="text-[12px] text-destructive">{(mergeRoom.error ?? updateRoom.error)?.message}</div>}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

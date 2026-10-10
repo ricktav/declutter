@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { areas, events, items, relations } from "@db/schema";
+import { areas, events, houses, items, relations } from "@db/schema";
 import { appRouter } from "../router";
 import { getTestDb, resetTestDb } from "./db";
 
@@ -45,6 +45,86 @@ describe("items.patchAttributes", () => {
 
   it("rejects an unknown item", async () => {
     await expect(caller().items.patchAttributes({ id: 999, set: { role: "nas" } })).rejects.toThrow(/not found/);
+  });
+});
+
+describe("items.attributeKeysForTopic", () => {
+  it("returns keys and values by frequency for active items in that topic", async () => {
+    const db = getTestDb();
+    const [{ id: computers }] = await db.insert(areas).values({ slug: "computers", name: "Computers" }).$returningId();
+    const [{ id: kitchen }] = await db.insert(areas).values({ slug: "kitchen", name: "Kitchen" }).$returningId();
+    await db.insert(items).values([
+      { areaId: computers, name: "a", attributes: { role: "laptop", ram_gb: 16 } },
+      { areaId: computers, name: "b", attributes: { role: "desktop", storage_gb: 512 } },
+      { areaId: computers, name: "c", attributes: { role: "laptop" } },
+      { areaId: computers, name: "gone", status: "archived", attributes: { role: "nas", hostname: "old" } },
+      { areaId: kitchen, name: "pan", attributes: { material: "steel" } },
+    ]);
+    const rows = await caller().items.attributeKeysForTopic({ areaId: computers });
+    expect(rows.map((r) => r.key)).toEqual(["role", "ram_gb", "storage_gb"]);
+    expect(rows[0]).toMatchObject({
+      key: "role",
+      count: 3,
+      values: [
+        { value: "laptop", count: 2 },
+        { value: "desktop", count: 1 },
+      ],
+    });
+    expect(rows.find((r) => r.key === "hostname")).toBeUndefined();
+    expect(rows.find((r) => r.key === "material")).toBeUndefined();
+  });
+
+  it("keeps identity keys but does not suggest their values, only an IP prefix", async () => {
+    const db = getTestDb();
+    const [{ id: computers }] = await db.insert(areas).values({ slug: "computers", name: "Computers" }).$returningId();
+    await db.insert(items).values([
+      { areaId: computers, name: "a", attributes: { serial: "C02X", ip: "10.50.0.10", role: "laptop" } },
+      { areaId: computers, name: "b", attributes: { serial: "C02Y", ip: "10.50.0.11" } },
+    ]);
+    const rows = await caller().items.attributeKeysForTopic({ areaId: computers });
+    expect(rows.find((r) => r.key === "serial")?.values).toEqual([]);
+    expect(rows.find((r) => r.key === "ip")?.values).toEqual([{ value: "10.50.0.", count: 2 }]);
+    expect(rows.find((r) => r.key === "role")?.values.map((v) => v.value)).toEqual(["laptop"]);
+  });
+});
+
+describe("items.findAttributeDuplicates", () => {
+  it("warns on the same identity value in the same house, including key variants and MAC form", async () => {
+    const db = getTestDb();
+    const [{ id: h1 }] = await db.insert(houses).values({ name: "A" }).$returningId();
+    const [{ id: h2 }] = await db.insert(houses).values({ name: "B" }).$returningId();
+    const [{ id: areaId }] = await db.insert(areas).values({ slug: "computers", name: "Computers" }).$returningId();
+    const [{ id: a }] = await db.insert(items).values({
+      areaId, houseId: h1, name: "MacBook", attributes: { serial: " C02X ", mac: "AA:BB:CC:DD:EE:FF", ip: "10.50.0.10" },
+    }).$returningId();
+    const [{ id: b }] = await db.insert(items).values({
+      areaId, houseId: h1, name: "Clone", attributes: { serial_number: "c02x", mac_address: "aa-bb-cc-dd-ee-ff" },
+    }).$returningId();
+    await db.insert(items).values({
+      areaId, houseId: h2, name: "Other house", attributes: { serial: "C02X", hostname: "nas-1" },
+    });
+    const r = await caller().items.findAttributeDuplicates({ itemId: a });
+    expect(r.clashes.map((c) => c.kind).sort()).toEqual(["mac", "serial"]);
+    expect(r.clashes.find((c) => c.kind === "serial")?.others).toEqual([
+      expect.objectContaining({ id: b, name: "Clone", key: "serial_number" }),
+    ]);
+    expect(r.ipPrefix).toBe("10.50.0.");
+  });
+
+  it("checks draft attributes and does not treat the current item as a duplicate", async () => {
+    const db = getTestDb();
+    const [{ id: h1 }] = await db.insert(houses).values({ name: "A" }).$returningId();
+    const [{ id: areaId }] = await db.insert(areas).values({ slug: "computers", name: "Computers" }).$returningId();
+    const [{ id: a }] = await db.insert(items).values({
+      areaId, houseId: h1, name: "A", attributes: { hostname: "nas-1" },
+    }).$returningId();
+    await db.insert(items).values({
+      areaId, houseId: h1, name: "B", attributes: { host: "NAS-1" },
+    });
+    const saved = await caller().items.findAttributeDuplicates({ itemId: a });
+    expect(saved.clashes).toHaveLength(1);
+    const draft = await caller().items.findAttributeDuplicates({ itemId: a, attributes: { role: "nas" } });
+    expect(draft.clashes).toHaveLength(0);
   });
 });
 
