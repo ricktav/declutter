@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { items } from "@db/schema";
 import type { getDb } from "../queries/connection";
 import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls.ts";
-import { dbMergeKey, looksLikeProjectDir, mergeProjectRecords, projectMergeKey } from "./servicesProjects.ts";
+import { dbMergeKey, isProjectSourceLabel, looksLikeProjectDir, mergeProjectRecords, projectMergeKey } from "./servicesProjects.ts";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -78,6 +78,8 @@ export type DatabaseRecIn = {
 export type ProjectRecIn = {
   name: string;
   kind?: string;
+  /** Transcript / history origin — not the agent. */
+  source?: string;
   status?: string;
   tokens?: number;
   size?: number;
@@ -175,7 +177,12 @@ function compactDatabase(d: DatabaseRecIn, reach: string | null): Record<string,
 
 function compactProject(p: ProjectRecIn, reach: string | null): Record<string, unknown> {
   const o: Record<string, unknown> = { name: p.name.slice(0, 128) };
-  if (p.kind) o.kind = p.kind.slice(0, 32);
+  const kindRaw = (p.kind ?? "").trim();
+  const sourceRaw = (p.source ?? "").trim();
+  const source = sourceRaw || (isProjectSourceLabel(kindRaw) ? kindRaw.toLowerCase() : "");
+  const kind = kindRaw && !isProjectSourceLabel(kindRaw) ? kindRaw : "";
+  if (kind) o.kind = kind.slice(0, 32);
+  if (source) o.source = source.slice(0, 32);
   if (p.status) o.status = p.status;
   if (p.tokens != null && p.tokens > 0) o.tokens = p.tokens;
   if (p.size != null && p.size > 0) o.size = p.size;

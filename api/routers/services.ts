@@ -70,6 +70,7 @@ const databaseRec = z.object({
 const projectRec = z.object({
   name: z.string().min(1).max(128),
   kind: z.string().max(32).optional(),
+  source: z.string().max(32).optional(),
   status: z.string().max(32).optional(),
   tokens: z.number().nonnegative().max(1e15).optional(),
   size: z.number().nonnegative().max(1e16).optional(),
