@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily Systems collectors on macmini-m4 (07:40 local).
+     Copy to ~/Library/LaunchAgents/ and:
+       launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/nl.homebase.services-report.plist 2>/dev/null
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/nl.homebase.services-report.plist
+     Until workbench is on production main, set WorkingDirectory to the
+     worktree that has scripts/services-report-all.sh (e.g. /Volumes/T7/declutter-workbench).
+     HOMEBASE_BASE is the API that has services.report (production :3001 after merge). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>nl.homebase.services-report</string>
+  <key>WorkingDirectory</key>
+  <string>/Volumes/T7/declutter</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>./scripts/services-report-all.sh --apply</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOMEBASE_BASE</key>
+    <string>http://127.0.0.1:3001</string>
+    <key>HOMEBASE_PVE_SSH</key>
+    <string>root@10.50.0.155</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>40</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/ricktav/Library/Logs/homebase-services-report.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ricktav/Library/Logs/homebase-services-report.log</string>
+  <key>Nice</key>
+  <integer>10</integer>
+</dict>
+</plist>
