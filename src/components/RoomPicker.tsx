@@ -85,9 +85,12 @@ export function RoomPicker({
   }, []);
 
   const q = text.trim().toLowerCase();
+  const selectedName = (selected?.name ?? "").toLowerCase();
+  // open list shows every room of this house; typing (not the saved name) filters
+  const browsing = !q || q === selectedName;
   const matches = useMemo(
-    () => (rooms.data ?? []).filter((r) => !q || r.name.toLowerCase().includes(q)).slice(0, 12),
-    [rooms.data, q],
+    () => (rooms.data ?? []).filter((r) => browsing || r.name.toLowerCase().includes(q)),
+    [rooms.data, q, browsing],
   );
   const exact = (rooms.data ?? []).find((r) => r.name.toLowerCase() === q);
   const showCreate = allowCreate && q.length > 0 && !exact;
@@ -127,7 +130,11 @@ export function RoomPicker({
         className="w-full rounded border border-input bg-white px-2 py-1 pr-6 text-[12px]"
         placeholder="room…"
         value={text}
-        onFocus={() => setOpen(true)}
+        onFocus={(e) => {
+          setOpen(true);
+          e.currentTarget.select();
+        }}
+        onClick={() => setOpen(true)}
         onBlur={() => { if (open && !insideRef.current) commitText(); }}
         onChange={(e) => {
           setText(e.target.value);

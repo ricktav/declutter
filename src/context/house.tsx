@@ -3,20 +3,36 @@ import { trpc } from "@/providers/trpc";
 
 export const HOUSE_STORAGE_KEY = "declutter.houseId";
 
+/** Stored "all" (or "") is All houses. A missing key is first-run (unset). */
+const ALL_HOUSES_STORED = "all";
+
 // eslint-disable-next-line react-refresh/only-export-components
 export function getStoredHouseId(): number | null {
   try {
     const raw = localStorage.getItem(HOUSE_STORAGE_KEY);
-    const n = raw == null ? NaN : Number(raw);
+    if (raw == null || raw === ALL_HOUSES_STORED || raw === "") return null;
+    const n = Number(raw);
     return Number.isInteger(n) && n > 0 ? n : null;
   } catch {
     return null;
   }
 }
 
+function readHouseChoice(): { explicit: boolean; id: number | null } {
+  try {
+    const raw = localStorage.getItem(HOUSE_STORAGE_KEY);
+    if (raw == null) return { explicit: false, id: null };
+    if (raw === ALL_HOUSES_STORED || raw === "") return { explicit: true, id: null };
+    const n = Number(raw);
+    return { explicit: true, id: Number.isInteger(n) && n > 0 ? n : null };
+  } catch {
+    return { explicit: false, id: null };
+  }
+}
+
 function storeHouseId(id: number | null) {
   try {
-    if (id == null) localStorage.removeItem(HOUSE_STORAGE_KEY);
+    if (id == null) localStorage.setItem(HOUSE_STORAGE_KEY, ALL_HOUSES_STORED);
     else localStorage.setItem(HOUSE_STORAGE_KEY, String(id));
   } catch {
     // storage unavailable: the header still carries this session's choice
@@ -40,11 +56,20 @@ const Ctx = createContext<HouseState | null>(null);
 export function HouseProvider({ children }: { children: ReactNode }) {
   const utils = trpc.useUtils();
   const houses = trpc.houses.list.useQuery();
-  const [chosen, setState] = useState<number | null>(() => getStoredHouseId());
+  const [chosen, setState] = useState<number | null | undefined>(() => {
+    const { explicit, id } = readHouseChoice();
+    return explicit ? id : undefined;
+  });
 
-  // first run, or the stored house was deleted: fall back to the first house
-  const valid = houses.data ? chosen != null && houses.data.some((h) => h.id === chosen) : true;
-  const houseId = valid ? chosen : (houses.data?.[0]?.id ?? null);
+  // All houses (null) is a real choice. First run (undefined) or a deleted
+  // stored id falls back to the first house.
+  const valid =
+    chosen === undefined
+      ? false
+      : chosen === null
+        ? true
+        : !houses.data || houses.data.some((h) => h.id === chosen);
+  const houseId = valid ? (chosen ?? null) : (houses.data?.[0]?.id ?? null);
 
   // settle on the fallback: adopt it as the choice (a guarded state update
   // during render), so the next render has houseId === chosen and stops here

@@ -960,7 +960,6 @@ export default function InboxPage() {
   const [hidden, setHidden] = useState(false);
   const [roomFilter, setRoomFilter] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [assignOpen, setAssignOpen] = useState(false);
   const [assignHouse, setAssignHouse] = useState<number | null>(houseId);
   const [assignRoom, setAssignRoom] = useState<number | null>(null);
   const captures = trpc.inbox.list.useQuery({
@@ -1047,7 +1046,6 @@ export default function InboxPage() {
   const assignPlace = trpc.inbox.assignPlace.useMutation({
     onSuccess: (res) => {
       refresh();
-      setAssignOpen(false);
       setPlaceNote(
         res.roomId != null
           ? `Place set on ${res.count} item${res.count === 1 ? "" : "s"}.`
@@ -1119,19 +1117,34 @@ export default function InboxPage() {
       </div>
 
       {batchCount > 0 && (
-        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-md border border-border bg-accent/40 px-3 py-2 text-[13px]">
-          <span className="font-medium">{batchCount} selected</span>
+        <div className="mt-4 flex flex-wrap items-end gap-2 rounded-md border border-border bg-accent/40 px-3 py-2 text-[13px]">
+          <span className="self-center font-medium">{batchCount} selected</span>
+          <div className="min-w-[14rem] flex-1">
+            <HouseRoomFields
+              houseId={assignHouse}
+              roomId={assignRoom}
+              onHouse={setAssignHouse}
+              onRoom={setAssignRoom}
+              allowNone
+              lockToSession={false}
+            />
+          </div>
           <Button
             size="sm"
             variant="outline"
             className="h-7 text-[12px]"
-            onClick={() => {
-              setAssignHouse(houseId);
-              setAssignRoom(null);
-              setAssignOpen(true);
-            }}
+            disabled={assignPlace.isPending || assignHouse == null}
+            onClick={() => assignPlace.mutate({ ids: batchIds, houseId: assignHouse })}
           >
-            <FolderInput className="mr-1 h-3.5 w-3.5" /> Assign
+            House only
+          </Button>
+          <Button
+            size="sm"
+            className="h-7 text-[12px]"
+            disabled={assignPlace.isPending || assignRoom == null}
+            onClick={() => assignPlace.mutate({ ids: batchIds, roomId: assignRoom })}
+          >
+            <FolderInput className="mr-1 h-3.5 w-3.5" /> Assign Place
           </Button>
           {hidden ? (
             <Button
@@ -1271,43 +1284,6 @@ export default function InboxPage() {
       )}
         </>
       )}
-
-      <Dialog open={assignOpen} onOpenChange={(o) => { if (!o) setAssignOpen(false); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Assign {batchCount} item{batchCount === 1 ? "" : "s"}</DialogTitle>
-          </DialogHeader>
-          <HouseRoomFields
-            houseId={assignHouse}
-            roomId={assignRoom}
-            onHouse={setAssignHouse}
-            onRoom={setAssignRoom}
-            allowNone
-          />
-          <p className="text-[12px] text-muted-foreground">
-            A Place sets the house too. House only leaves the room for later.
-          </p>
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setAssignOpen(false)}>Cancel</Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={assignPlace.isPending || assignHouse == null}
-              onClick={() => assignPlace.mutate({ ids: batchIds, houseId: assignHouse })}
-            >
-              House only
-            </Button>
-            <Button
-              size="sm"
-              disabled={assignPlace.isPending || assignRoom == null}
-              onClick={() => assignPlace.mutate({ ids: batchIds, roomId: assignRoom })}
-            >
-              Assign Place
-            </Button>
-          </div>
-          {assignPlace.isError && <p className="text-[12px] text-destructive">{assignPlace.error.message}</p>}
-        </DialogContent>
-      </Dialog>
 
       <ZoomOverlay
         open={!!lightbox}

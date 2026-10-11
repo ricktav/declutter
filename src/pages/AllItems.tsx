@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { RoomPicker } from "@/components/RoomPicker";
 import { AreaPicker } from "@/components/AreaPicker";
 import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
+import { useHouse } from "@/context/house";
 
 type ItemRow = {
   id: number;
@@ -28,13 +29,14 @@ type ItemRow = {
 };
 
 export default function AllItems() {
+  const { houseId } = useHouse();
   const [searchParams, setSearchParams] = useSearchParams();
   const roomIdParam = searchParams.get("roomId");
   const initialRoom =
     roomIdParam && roomIdParam !== "none" && Number.isFinite(Number(roomIdParam)) ? Number(roomIdParam) : null;
 
-  const items = trpc.items.listAll.useQuery({ includeArchived: false, houseId: null });
-  const roomsQuery = trpc.rooms.list.useQuery({ houseId: null });
+  const items = trpc.items.listAll.useQuery({ includeArchived: false, houseId });
+  const roomsQuery = trpc.rooms.list.useQuery({ houseId });
   const areasQuery = trpc.areas.list.useQuery();
   const [q, setQ] = useState("");
   const [view, setView] = usePersistedState<"list" | "gallery">("allItems.view", "list");

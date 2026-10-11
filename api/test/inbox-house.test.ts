@@ -83,6 +83,15 @@ describe("inbox.assignPlace / restore", () => {
     expect(ev.some((e) => e.entityType === "capture" && e.action === "placed" && e.entityId === id)).toBe(true);
   });
 
+  it("house only accepts a house other than the session house", async () => {
+    const { db, h1, h2 } = await seed();
+    const [{ id }] = await db.insert(captures).values({ kind: "note", rawText: "x", houseId: h1 }).$returningId();
+    const res = await callerFor(h1).inbox.assignPlace({ ids: [id], houseId: h2 });
+    expect(res).toMatchObject({ ok: true, count: 1, houseId: h2, roomId: null });
+    const [row] = await db.select().from(captures).where(eq(captures.id, id));
+    expect(row.houseId).toBe(h2);
+  });
+
   it("room makes a location photo and sets the house from that Place", async () => {
     const { db, h1, keuken } = await seed();
     const key = await writeTestJpeg();

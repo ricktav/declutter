@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
 import { Button } from "@/components/ui/button";
@@ -504,13 +504,6 @@ function HouseSection({
   const houses = trpc.houses.list.useQuery();
   const [dialog, setDialog] = useState<"none" | "edit" | "add">("none");
 
-  useEffect(() => {
-    if (houseId == null && houses.data && houses.data.length > 0) {
-      onSelectHouse(houses.data[0].id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [houses.data, houseId]);
-
   const current = houses.data?.find((h) => h.id === houseId);
 
   return (
@@ -533,7 +526,7 @@ function HouseSection({
           </div>
         )}
         <div className="min-w-0">
-          <div className="text-[13px] font-semibold truncate">{current?.name ?? "Add a house"}</div>
+          <div className="text-[13px] font-semibold truncate">{current?.name ?? (houseId == null ? "All houses" : "Add a house")}</div>
           {current && (
             <div className="font-data text-[11px] text-muted-foreground truncate">
               {current.itemCount} item{current.itemCount === 1 ? "" : "s"}
