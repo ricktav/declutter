@@ -16,18 +16,21 @@ import { dbMergeKey, projectMergeKey } from "../../api/lib/servicesProjects";
  *               or a comma/newline list of names
  *   docker / containers   list of container names (kind docker).
  *               Collectors write this with services.report (not the Systems
- *               view itself). A daily claudemux fleet HTML page can feed the
- *               importer script; Systems never fetches that URL. Local Docker
- *               on the Mini merges into containers and leaves fleet `web`.
- *   vms / lxc             Proxmox guests [{ vmid, name, status, memMb?, diskGb?, template? }].
- *               Collector: scripts/services-report-proxmox.ts. Not mixed into docker.
+ *               view itself). Daily on the Mini: scripts/services-report-all.sh
+ *               (fleet HTML + /projects/ + Proxmox). Systems never fetches those
+ *               URLs. Local Docker on the Mini merges into containers and leaves
+ *               fleet `web`.
+ *   vms / lxc             Proxmox guests [{ vmid, name, status, memMb?, diskGb?,
+ *               template?, ip?, url?, ports? }]. Collector:
+ *               scripts/services-report-proxmox.ts. Not mixed into docker.
  *   databases             [{ name, engine?, status?, port?, size?, url?, target?,
  *               detail?, checked? }]. Fleet `databases-table` maps kind→engine,
  *               label→name, plus target. Same list shape as vms/lxc.
  *   projects              Claude Code / Grok / Hermes / OpenClaw
- *               [{ name, kind?, status?, tokens?, size?, updatedAt?, minutes?, url?, path? }].
- *               Collectors: scripts/services-report-projects.ts (`/projects/`) and
- *               fleet per-host directory tables (class directory / pd-k directory).
+ *               [{ name, kind?, source?, status?, tokens?, size?, updatedAt?, minutes?, url?, path? }].
+ *               `source` is transcript/history, not the agent. Collectors:
+ *               scripts/services-report-projects.ts (`/projects/`) and fleet
+ *               per-host directory tables (one tr.pdrow with a directory cell).
  *               Same machine + path is one entry. Web service labels stay in `web`.
  *               Active is green; older rows fade.
  *   units / systemd       list of unit names (kind systemd)
