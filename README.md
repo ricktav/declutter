@@ -33,7 +33,7 @@ tRPC API and database. In development `npm run dev` serves both on one port (`/`
 Production runs on port 3001 (`PORT=3001 NODE_ENV=production node dist/boot.js`).
 
 Other clients of the same API: the native iOS app in `ios/` and the Computer Lab adapter
-(`/Volumes/T7/computer-lab-ssot`, `server-ssot.js`). AGENTS.md §2 lists the procedures each one depends on.
+(`/Volumes/T7/computer-lab`, `server-ssot.js`). AGENTS.md §2 lists the procedures each one depends on.
 
 ## Configuration
 
