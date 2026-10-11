@@ -7,6 +7,7 @@ import { and, count, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzl
 import { TRPCError } from "@trpc/server";
 import { items, photoPins, photos, rooms, type PhotoCamera } from "@db/schema";
 import type { getDb } from "../queries/connection";
+import { isWholeSceneBox } from "./photos";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -114,6 +115,9 @@ export interface RoomPhoto {
   camera: PhotoCamera | null;
   /** confirmed pins on the photo */
   pinCount: number;
+  /** Things linked to this scene without a crop (whole-scene pin, or an
+   * uncropped copy of the same capture). Shown as chips, not frames. */
+  linkedItems: Array<{ id: number; name: string }>;
 }
 
 /** The photos of a room: the room's item-less photos, plus what
@@ -175,6 +179,26 @@ export async function roomPhotosFor(
   for (const p of [...itemless, ...cutouts, ...standing]) {
     if (!byId.has(p.id)) byId.set(p.id, { ...p, isCutout: p.cropBox != null || p.itemId != null, isCrop: p.cropBox != null });
   }
+  // one canvas per capture for uncropped copies: prefer the item-less
+  // location photo. Hidden copies' Things become chips on the kept row.
+  const uncroppedByCapture = new Map<number, Array<(typeof itemless)[number] & { isCutout: boolean; isCrop: boolean }>>();
+  for (const p of byId.values()) {
+    if (p.isCrop || p.sourceCaptureId == null) continue;
+    const g = uncroppedByCapture.get(p.sourceCaptureId) ?? [];
+    g.push(p);
+    uncroppedByCapture.set(p.sourceCaptureId, g);
+  }
+  const hiddenOwners = new Map<number, number[]>();
+  for (const group of uncroppedByCapture.values()) {
+    if (group.length < 2) continue;
+    const keep = [...group].sort((a, b) => Number(a.itemId != null) - Number(b.itemId != null) || a.id - b.id)[0];
+    const owners: number[] = [];
+    for (const p of group) {
+      if (p.itemId != null) owners.push(p.itemId);
+      if (p.id !== keep.id) byId.delete(p.id);
+    }
+    if (owners.length) hiddenOwners.set(keep.id, owners);
+  }
   // a viewpoint (a full image, or a Thing's uncropped photo with a camera) ranks first
   const rank = (p: { isCutout: boolean; isCrop: boolean; camera: unknown }) => Number(p.isCutout && !(p.camera != null && !p.isCrop));
   const picked = [...byId.values()]
@@ -184,15 +208,30 @@ export async function roomPhotosFor(
 
   const ids = picked.map((p) => p.id);
   const pinRows = await db
-    .select({ photoId: photoPins.photoId, n: count() })
+    .select({
+      photoId: photoPins.photoId,
+      itemId: photoPins.itemId,
+      wPct: photoPins.wPct,
+      hPct: photoPins.hPct,
+    })
     .from(photoPins)
-    .where(and(inArray(photoPins.photoId, ids), eq(photoPins.status, "confirmed")))
-    .groupBy(photoPins.photoId);
-  const pinsBy = new Map(pinRows.map((r) => [r.photoId, Number(r.n)]));
-  const ownerIds = [...new Set(picked.map((p) => p.itemId).filter((x): x is number => x != null))];
+    .where(and(inArray(photoPins.photoId, ids), eq(photoPins.status, "confirmed")));
+  const pinCountBy = new Map<number, number>();
+  const sceneItemIds = new Map<number, number[]>();
+  for (const r of pinRows) {
+    pinCountBy.set(r.photoId, (pinCountBy.get(r.photoId) ?? 0) + 1);
+    if (r.itemId != null && isWholeSceneBox(r)) {
+      const list = sceneItemIds.get(r.photoId) ?? [];
+      list.push(r.itemId);
+      sceneItemIds.set(r.photoId, list);
+    }
+  }
+  const linkedIdLists = picked.map((p) => [...new Set([...(hiddenOwners.get(p.id) ?? []), ...(sceneItemIds.get(p.id) ?? [])])]);
+  const linkedIds = [...new Set(linkedIdLists.flat())];
+  const ownerIds = [...new Set([...picked.map((p) => p.itemId).filter((x): x is number => x != null), ...linkedIds])];
   const owners = ownerIds.length ? await db.select({ id: items.id, name: items.name }).from(items).where(inArray(items.id, ownerIds)) : [];
   const nameBy = new Map(owners.map((o) => [o.id, o.name]));
-  return picked.map((p) => ({
+  return picked.map((p, i) => ({
     photoId: p.id,
     title: p.title,
     storageKey: p.storageKey,
@@ -202,7 +241,8 @@ export async function roomPhotosFor(
     isCutout: p.isCutout,
     isCrop: p.isCrop,
     camera: p.camera ?? null,
-    pinCount: pinsBy.get(p.id) ?? 0,
+    pinCount: pinCountBy.get(p.id) ?? 0,
+    linkedItems: linkedIdLists[i].map((id) => ({ id, name: nameBy.get(id) ?? `#${id}` })),
   }));
 }
 

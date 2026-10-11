@@ -35,6 +35,10 @@ function boxOf(p: { xPct: number; yPct: number; wPct?: number | null; hPct?: num
   return { xPct: p.xPct, yPct: p.yPct, wPct: p.wPct && p.wPct > 0 ? p.wPct : 12, hPct: p.hPct && p.hPct > 0 ? p.hPct : 12 };
 }
 
+function isWholeScenePin(p: { wPct?: number | null; hPct?: number | null }) {
+  return p.wPct === 0 && p.hPct === 0;
+}
+
 function frameLabel(p: Pin, num: number) {
   return p.itemName || p.label || `Frame ${num}`;
 }
@@ -426,7 +430,7 @@ export default function FocusPage() {
   const houseItems = trpc.items.listAll.useQuery({ includeArchived: false });
 
   const frames = useMemo(() => {
-    const pins = [...(pinsQ.data ?? [])].sort((a, b) => a.id - b.id);
+    const pins = [...(pinsQ.data ?? [])].filter((p) => !isWholeScenePin(p)).sort((a, b) => a.id - b.id);
     return pins.map((p, i) => ({ pin: p, num: i + 1, box: boxOf(p) }));
   }, [pinsQ.data]);
 
@@ -580,6 +584,20 @@ export default function FocusPage() {
                   );
                 })}
               </FramedRoomPhoto>
+            )}
+
+            {selectedPhoto && selectedPhoto.linkedItems.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {selectedPhoto.linkedItems.map((it) => (
+                  <Link
+                    key={it.id}
+                    to={`/items/${it.id}`}
+                    className="rounded-full border border-border bg-white px-2.5 py-0.5 text-[12px] hover:border-primary"
+                  >
+                    {it.name}
+                  </Link>
+                ))}
+              </div>
             )}
 
             <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
