@@ -129,6 +129,26 @@ describe("inbox.acceptMany with a box", () => {
     }
   });
 
+  it("a later box upgrades a whole-scene pin instead of adding a second pin", async () => {
+    const { db, h1, areaId, capId } = await seed();
+    await callerFor(h1).inbox.acceptMany({ id: capId, items: [{ areaId, itemId: null, itemName: "pan", box: null }] });
+    const [thing] = await db.select().from(items);
+    await callerFor(h1).inbox.acceptMany({ id: capId, items: [{ areaId, itemId: thing.id, itemName: "pan", box: pot }] });
+    const pins = await db.select().from(photoPins);
+    expect(pins).toHaveLength(1);
+    expect([pins[0].wPct, pins[0].hPct]).toEqual([pot.wPct, pot.hPct]);
+  });
+
+  it("an existing match without a box is linked to the location photo, not copied", async () => {
+    const { db, h1, areaId, capId } = await seed();
+    const [{ id: kettle }] = await db.insert(items).values({ areaId, name: "kettle", houseId: h1 }).$returningId();
+    await callerFor(h1).inbox.acceptMany({ id: capId, items: [{ areaId, itemId: kettle, itemName: "kettle", box: null }] });
+    expect(await db.select().from(photos).where(eq(photos.itemId, kettle))).toHaveLength(0);
+    const [loc] = await db.select().from(photos).where(isNull(photos.itemId));
+    const pins = await db.select().from(photoPins);
+    expect(pins.map((p) => [p.photoId, p.itemId, p.wPct, p.hPct])).toEqual([[loc.id, kettle, 0, 0]]);
+  });
+
   it("pins an existing match without re-photographing it", async () => {
     const { db, h1, areaId, capId } = await seed();
     const [{ id: kettle }] = await db.insert(items).values({ areaId, name: "kettle", houseId: h1 }).$returningId();
@@ -138,15 +158,68 @@ describe("inbox.acceptMany with a box", () => {
     expect(pins.map((p) => [p.itemId, p.status])).toEqual([[kettle, "confirmed"]]);
   });
 
-  it("without a box behaves as before: a full copy, no location photo, no pin", async () => {
+  it("without a box links the Thing to the location photo; no per-Thing copy", async () => {
     const { db, h1, areaId, capId } = await seed();
-    await callerFor(h1).inbox.acceptMany({ id: capId, items: [{ areaId, itemId: null, itemName: "pan", box: null }] });
-    const [thing] = await db.select().from(items);
-    const own = await db.select().from(photos).where(eq(photos.itemId, thing.id));
-    expect(own).toHaveLength(1);
-    expect(own[0].cropBox).toBeNull();
-    expect(await db.select().from(photos).where(isNull(photos.itemId))).toHaveLength(0);
-    expect(await db.select().from(photoPins)).toHaveLength(0);
+    await callerFor(h1).inbox.acceptMany({
+      id: capId,
+      items: [
+        { areaId, itemId: null, itemName: "pan", box: null },
+        { areaId, itemId: null, itemName: "pot", box: null },
+      ],
+    });
+    const things = await db.select().from(items).orderBy(items.id);
+    expect(things.map((t) => t.name)).toEqual(["pan", "pot"]);
+    expect(await db.select().from(photos).where(eq(photos.itemId, things[0].id))).toHaveLength(0);
+    expect(await db.select().from(photos).where(eq(photos.itemId, things[1].id))).toHaveLength(0);
+    const locations = await db.select().from(photos).where(and(eq(photos.sourceCaptureId, capId), isNull(photos.itemId)));
+    expect(locations).toHaveLength(1);
+    const pins = await db.select().from(photoPins).orderBy(photoPins.id);
+    expect(pins.map((p) => [p.photoId, p.itemId, p.wPct, p.hPct])).toEqual([
+      [locations[0].id, things[0].id, 0, 0],
+      [locations[0].id, things[1].id, 0, 0],
+    ]);
+    const detail = await callerFor(h1).items.get({ id: things[0].id });
+    expect(detail?.photos.map((p) => [p.id, "shared" in p && p.shared])).toEqual([[locations[0].id, true]]);
+    await callerFor(h1).items.remove({ id: things[0].id });
+    expect((await db.select().from(photos)).map((p) => p.id)).toEqual([locations[0].id]);
+    expect(fs.existsSync(keyPath(locations[0].storageKey))).toBe(true);
+    expect((await db.select().from(photoPins)).map((p) => p.itemId)).toEqual([things[1].id]);
+  });
+
+  it("roomPhotos shows the shared scene once with the linked Things as chips", async () => {
+    const { h1, areaId, keuken, capId } = await seed();
+    await callerFor(h1).inbox.acceptMany({
+      id: capId,
+      roomId: keuken,
+      items: [
+        { areaId, itemId: null, itemName: "wardrobe", box: null },
+        { areaId, itemId: null, itemName: "desk", box: null },
+      ],
+    });
+    const rows = await callerFor(h1).photos.roomPhotos({ roomId: keuken });
+    const full = rows.filter((r) => !r.isCrop);
+    expect(full).toHaveLength(1);
+    expect(full[0].linkedItems.map((i) => i.name).sort()).toEqual(["desk", "wardrobe"]);
+  });
+
+  it("hides existing uncropped copies of the same capture behind one canvas", async () => {
+    const { db, h1, areaId, keuken } = await seed();
+    const key = await writeTestJpeg();
+    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: key }).$returningId();
+    const [{ id: loc }] = await db
+      .insert(photos)
+      .values({ storageKey: key, sourceCaptureId: capId, roomId: keuken, title: "Location photo" })
+      .$returningId();
+    const [{ id: a }] = await db.insert(items).values({ areaId, name: "Wardrobe", houseId: h1, roomId: keuken }).$returningId();
+    const [{ id: b }] = await db.insert(items).values({ areaId, name: "Chest", houseId: h1, roomId: keuken }).$returningId();
+    await db.insert(photos).values([
+      { itemId: a, storageKey: key, sourceCaptureId: capId, title: "copy a" },
+      { itemId: b, storageKey: key, sourceCaptureId: capId, title: "copy b" },
+    ]);
+    const rows = await callerFor(h1).photos.roomPhotos({ roomId: keuken });
+    const full = rows.filter((r) => !r.isCrop);
+    expect(full.map((r) => r.photoId)).toEqual([loc]);
+    expect(full[0].linkedItems.map((i) => i.name).sort()).toEqual(["Chest", "Wardrobe"]);
   });
 
   it("ignores a box on a capture without an image", async () => {

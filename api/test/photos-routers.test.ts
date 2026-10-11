@@ -391,6 +391,22 @@ describe("coverPhotos", () => {
     await add(itemId, "b", null);
     expect((await coverPhotos(db, [itemId])).get(itemId)?.id).toBe(first);
   });
+
+  it("falls back to a whole-scene pin on a location photo", async () => {
+    const { db, itemId } = await seed();
+    const [{ id: loc }] = await db.insert(photos).values({ storageKey: "local/cover-scene.jpg" }).$returningId();
+    await db.insert(photoPins).values({
+      photoId: loc,
+      itemId,
+      xPct: 50,
+      yPct: 50,
+      wPct: 0,
+      hPct: 0,
+      label: "pan",
+      status: "confirmed",
+    });
+    expect((await coverPhotos(db, [itemId])).get(itemId)?.id).toBe(loc);
+  });
 });
 
 describe("photos.setRoom", () => {

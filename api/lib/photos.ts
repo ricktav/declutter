@@ -23,10 +23,20 @@ export interface PinBox {
   hPct: number;
 }
 
+/** A Thing accepted without a crop: pin it on the location photo as "this
+ * scene is the Thing's photo" without drawing a frame. Focus treats 0×0 as
+ * a chip, not an overlay. */
+export const WHOLE_SCENE_BOX: PinBox = { xPct: 50, yPct: 50, wPct: 0, hPct: 0 };
+
+export function isWholeSceneBox(box: { wPct?: number | null; hPct?: number | null } | null | undefined): boolean {
+  return box != null && box.wPct === 0 && box.hPct === 0;
+}
+
 /** A cutout means its item is in the source photo: make sure that photo
  * carries a confirmed pin for the item, so the item's "Seen in photos"
  * (pins.listForItem) shows it. One pin per (photo, item): an existing one
- * (an AI suggestion, a pin drawn first) is confirmed and keeps its box. */
+ * (an AI suggestion, a pin drawn first) is confirmed and keeps its box,
+ * unless that box was a whole-scene link and a real crop has arrived. */
 export async function ensurePinForCutout(
   tx: Tx,
   input: { sourcePhotoId: number; itemId: number; box: PinBox; label: string; summary?: string },
@@ -35,7 +45,17 @@ export async function ensurePinForCutout(
     where: and(eq(photoPins.photoId, input.sourcePhotoId), eq(photoPins.itemId, input.itemId)),
   });
   if (existing) {
-    if (existing.status !== "confirmed") {
+    const upgrade = isWholeSceneBox(existing) && !isWholeSceneBox(input.box);
+    if (upgrade) {
+      await tx.update(photoPins).set({
+        status: "confirmed",
+        xPct: input.box.xPct,
+        yPct: input.box.yPct,
+        wPct: input.box.wPct,
+        hPct: input.box.hPct,
+        label: input.label.slice(0, 255),
+      }).where(eq(photoPins.id, existing.id));
+    } else if (existing.status !== "confirmed") {
       await tx.update(photoPins).set({ status: "confirmed" }).where(eq(photoPins.id, existing.id));
     }
     return { id: existing.id, created: false };
@@ -147,6 +167,26 @@ export type ItemLinkKind = "link" | "note" | "file";
  * with a cropBox) beats a whole Photo, the newest cutout wins (a fresh crop is
  * the best reading of the Thing); with no cutout the first whole Photo (lowest
  * id). Every item with a photo when itemIds is omitted. */
+/** Photos of a Thing: its own rows, plus location photos linked by a
+ * whole-scene pin (no file copy). Additive `shared` / `linkPinId` so
+ * ItemDetail can unlink the pin instead of deleting the shared file. */
+export async function photosForItem(db: Db, itemId: number): Promise<Array<Photo & { shared: boolean; linkPinId: number | null }>> {
+  const own = await db.select().from(photos).where(eq(photos.itemId, itemId));
+  const scenePins = await db
+    .select()
+    .from(photoPins)
+    .where(and(eq(photoPins.itemId, itemId), eq(photoPins.status, "confirmed")));
+  const whole = scenePins.filter((p) => isWholeSceneBox(p));
+  const ownIds = new Set(own.map((p) => p.id));
+  const sharedIds = [...new Set(whole.map((p) => p.photoId).filter((id) => !ownIds.has(id)))];
+  const shared = sharedIds.length ? await db.select().from(photos).where(inArray(photos.id, sharedIds)) : [];
+  const pinByPhoto = new Map(whole.map((p) => [p.photoId, p.id]));
+  return [
+    ...own.map((p) => ({ ...p, shared: false, linkPinId: null as number | null })),
+    ...shared.map((p) => ({ ...p, shared: true, linkPinId: pinByPhoto.get(p.id) ?? null })),
+  ].sort((a, b) => +b.createdAt - +a.createdAt || b.id - a.id);
+}
+
 export async function coverPhotos(db: Db, itemIds?: number[]): Promise<Map<number, { id: number; storageKey: string }>> {
   const out = new Map<number, { id: number; storageKey: string }>();
   if (itemIds && itemIds.length === 0) return out;
@@ -160,6 +200,31 @@ export async function coverPhotos(db: Db, itemIds?: number[]): Promise<Map<numbe
     if (r.cropBox) {
       out.set(r.itemId, { id: r.id, storageKey: r.storageKey }); // ascending ids: the last cutout is the newest
     } else if (!out.has(r.itemId)) out.set(r.itemId, { id: r.id, storageKey: r.storageKey });
+  }
+  // a whole-scene pin on a location photo is the Thing's photo when it has none of its own
+  const missing = itemIds ? itemIds.filter((id) => !out.has(id)) : null;
+  if (missing && missing.length === 0) return out;
+  const pinRows = await db
+    .select({
+      itemId: photoPins.itemId,
+      photoId: photos.id,
+      storageKey: photos.storageKey,
+      wPct: photoPins.wPct,
+      hPct: photoPins.hPct,
+    })
+    .from(photoPins)
+    .innerJoin(photos, eq(photos.id, photoPins.photoId))
+    .where(
+      and(
+        eq(photoPins.status, "confirmed"),
+        isNotNull(photoPins.itemId),
+        missing ? inArray(photoPins.itemId, missing) : undefined,
+      ),
+    )
+    .orderBy(asc(photos.id));
+  for (const r of pinRows) {
+    if (r.itemId == null || out.has(r.itemId) || !isWholeSceneBox(r)) continue;
+    out.set(r.itemId, { id: r.photoId, storageKey: r.storageKey });
   }
   return out;
 }
@@ -457,7 +522,7 @@ export function linkAsLegacy(l: ItemLink): LegacyAttachment {
 }
 
 export async function legacyAttachmentsForItem(db: Db, itemId: number): Promise<LegacyAttachment[]> {
-  const pics = await db.select().from(photos).where(eq(photos.itemId, itemId));
+  const pics = await photosForItem(db, itemId);
   const links = await db.select().from(itemLinks).where(eq(itemLinks.itemId, itemId));
   return [...pics.map(photoAsLegacy), ...links.map(linkAsLegacy)].sort(
     (a, b) => +b.createdAt - +a.createdAt || b.id - a.id,

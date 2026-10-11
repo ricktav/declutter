@@ -203,10 +203,10 @@ describe("photos.roomPhotos", () => {
 
     const rows = await api.photos.roomPhotos({ roomId: keuken });
     expect(rows).toEqual([
-      { photoId: newer, title: "Newer", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, isCrop: false, camera: null, pinCount: 2 },
-      { photoId: location, title: "Location photo", storageKey: expect.any(String), itemId: null, itemName: null, roomId: zolder, isCutout: false, isCrop: false, camera: null, pinCount: 0 },
-      { photoId: older, title: "Older", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, isCrop: false, camera: cam, pinCount: 0 },
-      { photoId: cut, title: "Kettle cut", storageKey: expect.any(String), itemId: kettle, itemName: "Kettle", roomId: null, isCutout: true, isCrop: true, camera: null, pinCount: 0 },
+      { photoId: newer, title: "Newer", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, isCrop: false, camera: null, pinCount: 2, linkedItems: [] },
+      { photoId: location, title: "Location photo", storageKey: expect.any(String), itemId: null, itemName: null, roomId: zolder, isCutout: false, isCrop: false, camera: null, pinCount: 0, linkedItems: [] },
+      { photoId: older, title: "Older", storageKey: expect.any(String), itemId: null, itemName: null, roomId: keuken, isCutout: false, isCrop: false, camera: cam, pinCount: 0, linkedItems: [] },
+      { photoId: cut, title: "Kettle cut", storageKey: expect.any(String), itemId: kettle, itemName: "Kettle", roomId: null, isCutout: true, isCrop: true, camera: null, pinCount: 0, linkedItems: [] },
     ]);
 
     // items.placement shares the query: same rows minus the Thing's own photos, plus hasPinForItem; pins carry camera
@@ -218,6 +218,20 @@ describe("photos.roomPhotos", () => {
     expect(pl.pins).toEqual([
       { pinId: expect.any(Number), photoId: newer, title: "Newer", label: "kettle", camera: null, roomId: keuken, isCutout: false, isCrop: false },
     ]);
+  });
+
+  it("shows an uncropped capture once and lists the linked Things as chips", async () => {
+    const { db, keuken, thing, photo, api } = await seed();
+    const wardrobe = await thing("Wardrobe", { roomId: keuken });
+    const chest = await thing("Chest", { roomId: keuken });
+    const [{ id: capId }] = await db.insert(captures).values({ kind: "image", storageKey: await writeTestJpeg() }).$returningId();
+    const location = await photo({ sourceCaptureId: capId, roomId: keuken, title: "Location photo" });
+    await photo({ itemId: wardrobe, sourceCaptureId: capId, title: "copy 1" });
+    await photo({ itemId: chest, sourceCaptureId: capId, title: "copy 2" });
+    const rows = await api.photos.roomPhotos({ roomId: keuken });
+    const full = rows.filter((r) => !r.isCrop);
+    expect(full.map((r) => r.photoId)).toEqual([location]);
+    expect(full[0].linkedItems.map((i) => i.name).sort()).toEqual(["Chest", "Wardrobe"]);
   });
 
   it("caps the list at 60", async () => {

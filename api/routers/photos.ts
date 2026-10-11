@@ -3,7 +3,7 @@
 // Took over the image half of the old attachments router and the two photo
 // procedures of api/routers/map.ts.
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -20,6 +20,7 @@ import {
   ensureLocationPhotoForCapture,
   ensurePinForCutout,
   listPhotoCatalog,
+  photosForItem,
   removePhoto,
   setPhotoCamera,
   setPhotoRoom,
@@ -95,9 +96,7 @@ export const photosRouter = createRouter({
     .input(z.object({ photoId: z.number(), itemId: z.number(), force: z.boolean().optional(), fromItemId: z.number().optional() }))
     .mutation(({ input }) => attachPhotoToItem(getDb(), input)),
 
-  listForItem: procedure.input(z.object({ itemId: z.number() })).query(({ input }) =>
-    getDb().select().from(photos).where(eq(photos.itemId, input.itemId)).orderBy(desc(photos.createdAt)),
-  ),
+  listForItem: procedure.input(z.object({ itemId: z.number() })).query(({ input }) => photosForItem(getDb(), input.itemId)),
 
   /** The original photo a cutout was cropped from, plus its current box, for the re-crop UI. */
   sourcePhoto: procedure.input(z.object({ photoId: z.number() })).query(async ({ input }) => {
