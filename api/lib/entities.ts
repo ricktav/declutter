@@ -30,9 +30,16 @@ export async function deleteItemTx(tx: Tx, id: number, opts: { summary?: string 
 
   await tx.update(items).set({ parentId: null }).where(eq(items.parentId, id));
   await tx.delete(relations).where(or(eq(relations.fromItemId, id), eq(relations.toItemId, id)));
-  // pins drawn ON this item's photos go with the photos; pins on other
-  // photos that point AT this item only lose the link
+  // pins drawn ON this item's photos go with the photos; whole-scene pins
+  // are the item↔location-photo link and go with the item; boxed pins on
+  // other photos that point AT this item only lose the link
   if (ownPhotos.length) await tx.delete(photoPins).where(inArray(photoPins.photoId, ownPhotos.map((p) => p.id)));
+  const scenePins = await tx
+    .select({ id: photoPins.id, wPct: photoPins.wPct, hPct: photoPins.hPct })
+    .from(photoPins)
+    .where(eq(photoPins.itemId, id));
+  const sceneIds = scenePins.filter((p) => p.wPct === 0 && p.hPct === 0).map((p) => p.id);
+  if (sceneIds.length) await tx.delete(photoPins).where(inArray(photoPins.id, sceneIds));
   await tx.update(photoPins).set({ itemId: null }).where(eq(photoPins.itemId, id));
   await tx.update(tasks).set({ itemId: null }).where(eq(tasks.itemId, id));
   await tx.delete(ideaItems).where(eq(ideaItems.itemId, id));

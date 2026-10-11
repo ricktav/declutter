@@ -155,7 +155,12 @@ describe("items.placement", () => {
 
     const kitchenShot = await photo({ roomId: keuken, title: "Kitchen" }); // item-less, in the room
     const locationShot = await photo({ sourceCaptureId: capId, title: "Location photo" }); // item-less, no room, behind a cutout
-    const toasterCut = await photo({ itemId: toaster, sourceCaptureId: capId, title: "Toaster cut" });
+    const toasterCut = await photo({
+      itemId: toaster,
+      sourceCaptureId: capId,
+      title: "Toaster cut",
+      cropBox: { xPct: 50, yPct: 50, wPct: 20, hPct: 20 },
+    });
     await photo({ itemId: toaster, title: "Toaster upload" }); // no source capture: not a room photo
     await photo({ roomId: zolder, title: "Attic" }); // another room
     await photo({ itemId: kettle, title: "Kettle own" });

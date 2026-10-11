@@ -56,7 +56,7 @@ describe("after the cutover, a filed object is visible everywhere", () => {
 });
 
 describe("inbox.acceptMany after the cutover", () => {
-  it("an image capture gives the new item its own photo copy; a note capture an item_link; both remember the capture", async () => {
+  it("an image capture links the new item to the location photo; a note capture an item_link; both remember the capture", async () => {
     const { db, h1, areaId } = await seed();
     const capKey = await writeTestJpeg();
     const [{ id: imgCap }] = await db.insert(captures).values({ kind: "image", storageKey: capKey }).$returningId();
@@ -67,9 +67,13 @@ describe("inbox.acceptMany after the cutover", () => {
 
     const [lamp] = await db.select().from(items).where(eq(items.name, "Lamp"));
     const [idea] = await db.select().from(items).where(eq(items.name, "Idea"));
-    const [photo] = await db.select().from(photos).where(eq(photos.itemId, lamp.id));
-    expect(photo.storageKey).not.toBe(capKey);
-    expect(photo.sourceCaptureId).toBe(imgCap);
+    expect(await db.select().from(photos).where(eq(photos.itemId, lamp.id))).toHaveLength(0);
+    const [location] = await db.select().from(photos).where(and(eq(photos.sourceCaptureId, imgCap), isNull(photos.itemId)));
+    expect(location.storageKey).not.toBe(capKey);
+    const [pin] = await db.select().from(photoPins);
+    expect([pin.photoId, pin.itemId, pin.wPct, pin.hPct]).toEqual([location.id, lamp.id, 0, 0]);
+    const listed = await callerFor(h1).items.listAll({});
+    expect(listed.find((i) => i.id === lamp.id)?.imageKey).toBe(location.storageKey);
     const [note] = await db.select().from(itemLinks).where(eq(itemLinks.itemId, idea.id));
     expect([note.kind, note.content, note.sourceCaptureId]).toEqual(["note", "a lamp with a broken switch", noteCap]);
     expect(await db.select().from(photos).where(eq(photos.itemId, idea.id))).toHaveLength(0);
@@ -105,7 +109,7 @@ describe("inbox.acceptMany after the cutover", () => {
         ],
       }),
     ).rejects.toThrow();
-    const copies = trackedUploads().filter((k) => k.includes("-items_"));
+    const copies = trackedUploads().filter((k) => k.includes("-locations_"));
     expect(copies).toHaveLength(1);
     expect(copies.filter((k) => fs.existsSync(keyPath(k)))).toEqual([]);
     expect(fs.existsSync(keyPath(capKey))).toBe(true);

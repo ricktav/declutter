@@ -4,12 +4,12 @@ import { eq, desc, or, and, asc, ne, isNull } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, photos, itemLinks, relations, tasks, ideaItems, ideas, events, houses, rooms, ITEM_DECISIONS, type ItemPos } from "@db/schema";
+import { areas, items, itemLinks, relations, tasks, ideaItems, ideas, events, houses, rooms, ITEM_DECISIONS, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { getModel } from "../lib/ai";
 import { roomSummary, setItemLocation } from "../lib/location";
-import { coverPhotos, linkAsLegacy, photoAsLegacy } from "../lib/photos";
+import { coverPhotos, linkAsLegacy, photoAsLegacy, photosForItem } from "../lib/photos";
 import { placementFor, placementSummaryFor } from "../lib/placement";
 import { snapPosToWalls } from "../lib/snapToWall";
 import { commonIpv4Prefix, identityEntries, identityKind } from "../lib/identityAttrs";
@@ -108,7 +108,7 @@ export const itemsRouter = createRouter({
       ? await db.query.houses.findFirst({ where: eq(houses.id, item.houseId) })
       : null;
     const room = item.roomId != null ? ((await roomSummary(db, [item.roomId])).get(item.roomId) ?? null) : null;
-    const itemPhotos = await db.select().from(photos).where(eq(photos.itemId, item.id)).orderBy(desc(photos.createdAt));
+    const itemPhotos = await photosForItem(db, item.id);
     const itemLinkRows = await db.select().from(itemLinks).where(eq(itemLinks.itemId, item.id)).orderBy(desc(itemLinks.createdAt));
     const rels = await db
       .select()

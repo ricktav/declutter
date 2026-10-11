@@ -145,6 +145,7 @@ function PhotoCatalogTile({
     storageKey: string | null;
     sourceCaptureId: number | null;
     createdAt: string | Date;
+    shared?: boolean;
   };
   onZoom: (photo: { id: number; storageKey: string | null }) => void;
   onRemove: () => void;
@@ -189,16 +190,20 @@ function PhotoCatalogTile({
             <button
               type="button"
               className="rounded bg-white/90 p-1 text-muted-foreground shadow-sm hover:text-destructive disabled:opacity-100"
-              title="Delete this Photo"
+              title={photo.shared ? "Unlink this Photo from the Thing" : "Delete this Photo"}
               disabled={removePending}
               onClick={(e) => e.stopPropagation()}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           }
-          title="Delete this Photo?"
-          description="It is removed from this Thing and from Photos. Pins on it go too. The file is deleted if nothing else uses it."
-          confirmLabel="Delete"
+          title={photo.shared ? "Unlink this Photo?" : "Delete this Photo?"}
+          description={
+            photo.shared
+              ? "The Photo stays in Photos and on other Things. Only this Thing loses the link."
+              : "It is removed from this Thing and from Photos. Pins on it go too. The file is deleted if nothing else uses it."
+          }
+          confirmLabel={photo.shared ? "Unlink" : "Delete"}
           pending={removePending}
           onConfirm={onRemove}
         />
@@ -340,6 +345,13 @@ export default function ItemDetail() {
       void utils.photos.listAll.invalidate();
     },
   });
+  const unlinkShared = trpc.pins.remove.useMutation({
+    onSuccess: () => {
+      invalidate();
+      void utils.photos.listAll.invalidate();
+      void utils.photos.roomPhotos.invalidate();
+    },
+  });
   const addRelation = trpc.items.addRelation.useMutation({ onSuccess: invalidate });
   const resolveRelation = trpc.items.resolveRelation.useMutation({
     onSuccess: () => {
@@ -400,6 +412,8 @@ export default function ItemDetail() {
       storageKey: p.storageKey as string | null,
       sourceCaptureId: p.sourceCaptureId,
       createdAt: p.createdAt,
+      shared: "shared" in p ? !!p.shared : false,
+      linkPinId: "linkPinId" in p && typeof p.linkPinId === "number" ? p.linkPinId : null,
     })),
     ...it.links.map((l) => ({
       entry: "link" as const,
@@ -717,8 +731,11 @@ export default function ItemDetail() {
                   key={`${a.entry}-${a.id}`}
                   photo={a}
                   onZoom={setLightboxPhoto}
-                  removePending={removePhoto.isPending}
-                  onRemove={() => removePhoto.mutate({ id: a.id })}
+                  removePending={removePhoto.isPending || unlinkShared.isPending}
+                  onRemove={() => {
+                    if (a.shared && a.linkPinId != null) unlinkShared.mutate({ id: a.linkPinId });
+                    else removePhoto.mutate({ id: a.id });
+                  }}
                 />
               ))}
             </div>

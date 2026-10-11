@@ -19,7 +19,7 @@ import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 import { setItemLocation } from "../lib/location";
-import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom } from "../lib/photos";
+import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom, WHOLE_SCENE_BOX } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -667,7 +667,9 @@ export const inboxRouter = createRouter({
    * is just acknowledged, not re-photographed - the whole-scene photo isn't
    * a useful addition to an item that's already catalogued. An item with a
    * triage `box` (image captures only) is pinned on the capture's location
-   * photo, and a new one gets the crop instead of the whole scene. */
+   * photo, and a new one gets the crop instead of the whole scene. Without
+   * a box the Thing is linked to that location photo (a whole-scene pin);
+   * the file is not copied. */
   acceptMany: procedure
     .input(
       z.object({
@@ -763,36 +765,35 @@ export const inboxRouter = createRouter({
                   payload: { box: it.box },
                 }, tx);
                 await ensurePinForCutout(tx, { sourcePhotoId: await locationPhoto(), itemId, box: it.box, label: it.itemName });
+              } else if (framed) {
+                // no crop: link the Thing to the capture's location photo
+                // instead of copying the whole scene for each Thing
+                const sourcePhotoId = await locationPhoto();
+                await ensurePinForCutout(tx, {
+                  sourcePhotoId,
+                  itemId,
+                  box: WHOLE_SCENE_BOX,
+                  label: it.itemName,
+                  summary: `Pin "${it.itemName}" linked to photo #${sourcePhotoId} for item #${itemId} (whole scene)`,
+                });
               } else if (cap.rawText || cap.url || cap.storageKey) {
-                // the item gets its own copy of the file: a capture and a
-                // photo/link must never share one storage key (deleting one
-                // would delete the other's bytes)
+                // notes / files still get their own copy: a capture and a
+                // link must never share one storage key
                 const copy = cap.storageKey
                   ? await copyStoredFile(cap.storageKey, `items/${itemId}/${cap.storageKey.split("/").pop() ?? "photo"}`)
                   : null;
                 if (copy) copies.push(copy.key);
-                if (cap.kind === "image" && copy) {
-                  await tx.insert(photos).values({
-                    itemId,
-                    areaId: it.areaId,
-                    title: cap.url ?? it.itemName,
-                    storageKey: copy.key,
-                    size: copy.size,
-                    sourceCaptureId: cap.id,
-                  });
-                } else {
-                  await tx.insert(itemLinks).values({
-                    itemId,
-                    areaId: it.areaId,
-                    kind: cap.kind === "link" ? "link" : copy ? "file" : "note",
-                    title: cap.url ?? it.itemName,
-                    content: cap.rawText ?? null,
-                    url: cap.url ?? null,
-                    storageKey: copy?.key ?? null,
-                    size: copy?.size ?? null,
-                    sourceCaptureId: cap.id,
-                  });
-                }
+                await tx.insert(itemLinks).values({
+                  itemId,
+                  areaId: it.areaId,
+                  kind: cap.kind === "link" ? "link" : copy ? "file" : "note",
+                  title: cap.url ?? it.itemName,
+                  content: cap.rawText ?? null,
+                  url: cap.url ?? null,
+                  storageKey: copy?.key ?? null,
+                  size: copy?.size ?? null,
+                  sourceCaptureId: cap.id,
+                });
               }
             } else {
               if (it.attributes && Object.keys(it.attributes).length) {
@@ -801,12 +802,12 @@ export const inboxRouter = createRouter({
                 await tx.update(items).set({ attributes: merged }).where(eq(items.id, itemId));
               }
               // an existing Thing is not re-photographed, but it is seen here
-              if (framed && it.box) {
+              if (framed) {
                 const sourcePhotoId = await locationPhoto();
                 await ensurePinForCutout(tx, {
                   sourcePhotoId,
                   itemId,
-                  box: it.box,
+                  box: it.box ?? WHOLE_SCENE_BOX,
                   label: it.itemName,
                   summary: `Pin "${it.itemName}" added to photo #${sourcePhotoId} for item #${itemId} from triage`,
                 });
