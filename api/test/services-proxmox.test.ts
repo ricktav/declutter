@@ -183,7 +183,9 @@ describe("guest IP, URL and Proxmox GUI", () => {
       url: "http://10.50.0.40:8080/guacamole",
       ports: [8080],
     });
-    expect(guessGuestAccess("win11", "10.50.0.80")).toEqual({});
+    expect(guessGuestAccess("lxc-guacamole", "10.50.0.40")?.ports).toEqual([8080]);
+    expect(guessGuestAccess("win11", "10.50.0.80")).toEqual({ ports: [3389] });
+    expect(guessGuestAccess("puppet", "10.50.0.30")).toEqual({ ports: [8140] });
     expect(proxmoxHostWeb("10.50.0.155")).toEqual({
       label: "Proxmox",
       url: "https://10.50.0.155:8006",
@@ -198,6 +200,14 @@ describe("guest IP, URL and Proxmox GUI", () => {
     expect(g.ip).toBe("10.50.0.40");
     expect(g.url).toBe("http://10.50.0.40:8080/guacamole");
     expect(g.ports).toEqual([8080]);
+    const win = applyPveGuestConfig(
+      { vmid: 100, name: "win11", status: "stopped" },
+      { ipconfig0: "ip=10.50.0.80/24,gw=10.50.0.1", scsi0: "local-zfs:vm-100-disk-0,size=64G" },
+      "qemu",
+    );
+    expect(win.ip).toBe("10.50.0.80");
+    expect(win.ports).toEqual([3389]);
+    expect(win.url).toBeUndefined();
   });
 });
 
