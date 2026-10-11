@@ -164,7 +164,7 @@ describe("room changes reset the camera", () => {
     const { keuken, zolder, photo, cameraOf, api } = await seed();
     const p = await photo({ roomId: keuken });
     await api.photos.setCamera({ id: p, camera: cam });
-    await api.rooms.merge({ fromId: keuken, toId: zolder });
+    await api.rooms.merge({ fromId: keuken, toId: zolder, keepPlanFrom: "to" });
     expect(await cameraOf(p)).toBeNull();
     await api.photos.setCamera({ id: p, camera: cam });
     await api.rooms.remove({ id: zolder, force: true });
