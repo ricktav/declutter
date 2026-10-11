@@ -78,6 +78,10 @@ function visibleItemAttrs(it: {
   return Object.entries(src);
 }
 
+function attrsScalarsThenLists<T extends [string, unknown]>(pairs: T[]): T[] {
+  return [...pairs.filter(([k]) => !isJsonListAttr(k)), ...pairs.filter(([k]) => isJsonListAttr(k))];
+}
+
 function attrValueOptions(
   key: string,
   rows: { key: string; values: { value: string; count: number }[] }[] | undefined,
@@ -813,13 +817,13 @@ export default function ItemDetail() {
               )}
               {!editingAttrs ? (
                 <div className="divide-y divide-border">
-                  {visibleItemAttrs({
+                  {attrsScalarsThenLists(visibleItemAttrs({
                     name: it.name,
                     attributes: it.attributes,
                     areaSlug: it.area?.slug ?? null,
                     parentId: it.parentId,
                     status: it.status,
-                  }).map(([k, v]) => {
+                  })).map(([k, v]) => {
                     const clash = clashFor(k);
                     const label = defs.find((d) => d.key === k)?.label ?? jsonListAttrLabel(k) ?? k;
                     const reach = pickReachHost(
@@ -866,7 +870,7 @@ export default function ItemDetail() {
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  {Object.entries(attrDraft).map(([k, v]) => {
+                  {attrsScalarsThenLists(Object.entries(attrDraft)).map(([k, v]) => {
                     const valListId = `attr-val-${itemId}-${k}`;
                     const valOpts = attrValueOptions(k, topicAttrKeys.data);
                     const clash = clashFor(k);
