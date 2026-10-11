@@ -504,6 +504,8 @@ function guestNode(machineId: number, kind: "vm" | "lxc", g: GuestRec): GraphNod
       { k: "vmid", v: String(g.vmid) },
       { k: "status", v: g.status },
       ...(g.ip ? [{ k: "ip", v: g.ip }] : []),
+      ...(g.ports?.length ? [{ k: "ports", v: g.ports.join(", ") }] : []),
+      ...(g.url ? [{ k: "url", v: g.url }] : []),
       ...(g.hostname && g.hostname !== g.name ? [{ k: "host", v: g.hostname }] : []),
       ...(g.memMb != null ? [{ k: "mem", v: `${g.memMb} MB` }] : []),
       ...(g.diskGb != null && g.diskGb > 0 ? [{ k: "disk", v: `${g.diskGb} GB` }] : []),

@@ -257,18 +257,20 @@ export function parsePveIpv4(raw: string): string | undefined {
   return undefined;
 }
 
-const GUEST_HTTP: Record<string, { port: number; https?: boolean; path?: string }> = {
-  guacamole: { port: 8080, path: "/guacamole" },
-};
+const GUEST_ACCESS: { test: (n: string) => boolean; port: number; https?: boolean; path?: string; url?: boolean }[] = [
+  { test: (n) => /\bguacamole\b/.test(n), port: 8080, path: "/guacamole" },
+  { test: (n) => /\bpuppet\b/.test(n), port: 8140, url: false },
+  { test: (n) => /\b(win11|win7|windows|paperport|werkplek|sharedwin)\b/.test(n), port: 3389, url: false },
+];
 
-/** Well-known HTTP UI from the guest name (guacamole :8080, …). */
+/** Well-known guest port from the name (guacamole HTTP, Windows RDP, puppet). */
 export function guessGuestAccess(name: string, ip?: string | null): { url?: string; ports?: number[] } {
   const key = name.trim().toLowerCase();
-  const spec = GUEST_HTTP[key];
+  const spec = GUEST_ACCESS.find((s) => s.test(key));
   if (!spec) return {};
   const ports = [spec.port];
   const host = String(ip ?? "").trim();
-  if (!host) return { ports };
+  if (!host || spec.url === false) return { ports };
   const proto = spec.https ? "https" : "http";
   const path = spec.path ?? "";
   return { url: `${proto}://${host}:${spec.port}${path}`, ports };
