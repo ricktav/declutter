@@ -521,10 +521,8 @@ export default function SystemsPage() {
             href: d.href,
             usedPct: d.usedPct,
           };
-          const { w: W } = sizeRef.current;
-          const svgEl = svgRef.current;
-          const screenX = svgEl ? ev.clientX - svgEl.getBoundingClientRect().left : ev.clientX;
-          setDetailSide(screenX > W / 2 ? "left" : "right");
+          const cx = sizeRef.current.w / 2;
+          setDetailSide((d.x ?? cx) < cx ? "left" : "right");
           setSelected(copy);
           applyHighlight(d.id);
         }
