@@ -151,7 +151,7 @@ describe("photos.ensureForCapture / createCutout / recrop", () => {
 
 describe("photos.listAll / forRoom", () => {
   it("lists filed photos with room, topic and cover flag, plus inbox photos that have no photo yet", async () => {
-    const { db, h1, itemId, keuken } = await seed();
+    const { db, h1, itemId, keuken, areaId } = await seed();
     const [{ id: filedCap }] = await db.insert(captures).values({ kind: "image", storageKey: "local/test-fake-list-a.jpg" }).$returningId();
     const [{ id: looseCap }] = await db
       .insert(captures)
@@ -173,12 +173,13 @@ describe("photos.listAll / forRoom", () => {
       roomName: "Keuken",
       floor: "ground",
       houseId: h1,
+      areaId,
       areaName: "Kitchen stuff",
       isItemCover: true,
     });
     expect(byKey.get(`photo:${second}`)?.isItemCover).toBe(false);
-    expect(byKey.get(`photo:${location}`)).toMatchObject({ itemId: null, roomId: keuken, roomName: "Keuken", isItemCover: false });
-    expect(byKey.get(`capture:${looseCap}`)).toMatchObject({ captureId: looseCap, captureStatus: "triaged", isItemCover: false });
+    expect(byKey.get(`photo:${location}`)).toMatchObject({ itemId: null, roomId: keuken, roomName: "Keuken", isItemCover: false, areaId: null });
+    expect(byKey.get(`capture:${looseCap}`)).toMatchObject({ captureId: looseCap, captureStatus: "triaged", isItemCover: false, areaId: null });
     expect(byKey.has(`capture:${filedCap}`)).toBe(false);
   });
 

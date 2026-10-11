@@ -299,6 +299,8 @@ export interface CatalogRow {
   roomName: string | null;
   floor: string | null;
   houseId: number | null;
+  /** Thing topic; null for a location photo or an inbox capture */
+  areaId: number | null;
   areaName: string | null;
   isItemCover: boolean;
   /** a crop of a Thing (cropBox set): never a camera */
@@ -343,7 +345,8 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
       roomName: room?.name ?? null,
       floor: room?.floor ?? null,
       houseId: room?.houseId ?? it?.houseId ?? null,
-      areaName: it ? (areaById.get(it.areaId)?.name ?? null) : null,
+      areaId: it?.areaId ?? p.areaId ?? null,
+      areaName: it ? (areaById.get(it.areaId)?.name ?? null) : p.areaId != null ? (areaById.get(p.areaId)?.name ?? null) : null,
       isItemCover: p.itemId != null && covers.get(p.itemId)?.id === p.id,
       isCutout: p.cropBox != null,
       photoRoomId: p.roomId ?? null,
@@ -370,6 +373,7 @@ export async function listPhotoCatalog(db: Db): Promise<CatalogRow[]> {
       roomName: null,
       floor: null,
       houseId: null,
+      areaId: null,
       areaName: null,
       isItemCover: false,
       isCutout: false,

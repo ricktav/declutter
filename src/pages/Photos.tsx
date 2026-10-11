@@ -5,7 +5,7 @@ import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { timeAgo } from "@/lib/format";
-import { Search, Loader2, MapPin, LayoutGrid, Link2, X, Camera, Home } from "lucide-react";
+import { Search, Loader2, MapPin, LayoutGrid, Link2, Camera, Home } from "lucide-react";
 import { usePersistedState } from "@/hooks/use-persisted-state";
 import { AttachPhotoDialog, type AttachTarget } from "@/components/AttachPhotoDialog";
 import { PhotoPlaceDialog, type PlaceResult, type PlaceTarget } from "@/components/PhotoPlaceDialog";
@@ -32,6 +32,7 @@ type Photo = {
   floor: string | null;
   /** the photo's own Place; roomId is its Thing's room first */
   photoRoomId: number | null;
+  areaId: number | null;
   areaName: string | null;
   isCutout: boolean;
   /** where the photo stands on its room's plan */
@@ -299,18 +300,30 @@ export default function PhotosPage() {
   const photos = trpc.photos.listAll.useQuery();
   const houses = trpc.houses.list.useQuery();
   const rooms = trpc.rooms.list.useQuery(); // the session house's rooms, for a capture's "Place on the plan"
+  const areas = trpc.areas.list.useQuery();
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = usePersistedState<SortBy>("photos.sortBy", "location");
   const [showObjects, setShowObjects] = usePersistedState("photos.showObjects", true);
+  const [showCutouts, setShowCutouts] = usePersistedState("photos.showCutouts", true);
   const [zoomed, setZoomed] = useState<Photo | null>(null);
   const [notPlaced, setNotPlaced] = useState(false);
-  // ?room=<id> (from an item's Placement pane): only that room's photos
+  const [noPlace, setNoPlace] = useState(false);
+  // ?room=<id> (from an item's Placement pane) and ?area=<id> share the URL
   const [searchParams, setSearchParams] = useSearchParams();
   const roomParam = Number(searchParams.get("room"));
   const roomFilter = Number.isInteger(roomParam) && roomParam > 0 ? roomParam : null;
-  const clearRoomFilter = () => {
+  const areaParam = Number(searchParams.get("area"));
+  const areaFilter = Number.isInteger(areaParam) && areaParam > 0 ? areaParam : null;
+  const patchParams = (patch: { room?: number | null; area?: number | null }) => {
     const next = new URLSearchParams(searchParams);
-    next.delete("room");
+    if (patch.room !== undefined) {
+      if (patch.room != null) next.set("room", String(patch.room));
+      else next.delete("room");
+    }
+    if (patch.area !== undefined) {
+      if (patch.area != null) next.set("area", String(patch.area));
+      else next.delete("area");
+    }
     setSearchParams(next, { replace: true });
   };
   const [attachTarget, setAttachTarget] = useState<AttachTarget | null>(null);
@@ -353,10 +366,26 @@ export default function PhotosPage() {
     [summary.data]
   );
 
+  const roomOptions = useMemo(() => {
+    const map = new Map<number, { id: number; name: string; floor: string | null }>();
+    for (const r of rooms.data ?? []) map.set(r.id, { id: r.id, name: r.name, floor: r.floor });
+    for (const p of photos.data ?? []) {
+      if (p.roomId != null && !map.has(p.roomId)) {
+        map.set(p.roomId, { id: p.roomId, name: p.roomName ?? `Room #${p.roomId}`, floor: p.floor });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [rooms.data, photos.data]);
+
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     return (photos.data ?? []).filter((p) => {
-      if (roomFilter != null && p.roomId !== roomFilter) return false;
+      if (areaFilter != null && p.areaId !== areaFilter) return false;
+      if (noPlace) {
+        // inbox captures, plus photos that have neither their own Place nor a Thing's
+        if (p.source !== "capture" && (p.photoRoomId != null || p.roomId != null)) return false;
+      } else if (roomFilter != null && p.roomId !== roomFilter) return false;
+      if (!showCutouts && p.isCutout) return false;
       if (notPlaced) {
         // only Things that still lack a pin or a spot on the plan; this shows
         // them even with "Items" off, since that is what the chip asks for.
@@ -373,9 +402,13 @@ export default function PhotosPage() {
         (p.areaName ?? "").toLowerCase().includes(query)
       );
     });
-  }, [photos.data, q, showObjects, notPlaced, placementOf, roomFilter]);
+  }, [photos.data, q, showObjects, showCutouts, notPlaced, noPlace, placementOf, roomFilter, areaFilter]);
   const roomFilterName =
-    roomFilter != null ? ((photos.data ?? []).find((p) => p.roomId === roomFilter)?.roomName ?? `Room #${roomFilter}`) : null;
+    roomFilter != null
+      ? (roomOptions.find((r) => r.id === roomFilter)?.name ??
+          (photos.data ?? []).find((p) => p.roomId === roomFilter)?.roomName ??
+          `Room #${roomFilter}`)
+      : null;
 
   const groups = useMemo(() => {
     if (sortBy === "recent") {
@@ -423,6 +456,37 @@ export default function PhotosPage() {
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+        <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          Place
+          <select
+            className="rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
+            value={roomFilter ?? ""}
+            disabled={noPlace}
+            onChange={(e) => patchParams({ room: e.target.value ? Number(e.target.value) : null })}
+          >
+            <option value="">All Places</option>
+            {roomOptions.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.floor ? `${r.name} · ${r.floor}` : r.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          Topic
+          <select
+            className="rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
+            value={areaFilter ?? ""}
+            onChange={(e) => patchParams({ area: e.target.value ? Number(e.target.value) : null })}
+          >
+            <option value="">All topics</option>
+            {(areas.data ?? []).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
           group by
           <select
@@ -447,6 +511,31 @@ export default function PhotosPage() {
           Items
           {notPlaced && <span className="text-[11px] italic">(showing unplaced Things)</span>}
         </label>
+        <label
+          className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
+          title="Toggle off to hide framed cutouts — the cropped Thing photos. Location photos (a room, no crop box) stay."
+        >
+          <input
+            type="checkbox"
+            checked={showCutouts}
+            onChange={(e) => setShowCutouts(e.target.checked)}
+          />
+          Cutouts
+        </label>
+        <button
+          type="button"
+          aria-pressed={noPlace}
+          onClick={() => setNoPlace((v) => !v)}
+          className={cn(
+            "rounded-full border px-2.5 py-1 text-[12px]",
+            noPlace
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-white text-muted-foreground hover:text-foreground"
+          )}
+          title="Inbox captures and photos that have no Place yet"
+        >
+          No Place
+        </button>
         <button
           type="button"
           aria-pressed={notPlaced}
@@ -461,14 +550,6 @@ export default function PhotosPage() {
         >
           Not placed
         </button>
-        {roomFilter != null && (
-          <span className="flex items-center gap-1 rounded-full border border-primary/40 bg-primary/5 px-2.5 py-1 text-[12px]">
-            {roomFilterName} · room filter ·
-            <button type="button" onClick={clearRoomFilter} className="flex items-center gap-0.5 text-primary hover:underline">
-              <X className="h-3 w-3" /> clear
-            </button>
-          </span>
-        )}
       </div>
 
       {placeNote && (
@@ -511,9 +592,15 @@ export default function PhotosPage() {
                     "Checking placement…"
                   : notPlaced && !q
                     ? "Every Thing with a photo is pinned and on its plan."
-                    : !q && roomFilter != null
-                      ? `No photos of ${roomFilterName} here.`
-                      : `No photos match "${q}".`}
+                    : noPlace && !q
+                      ? "No inbox captures or photos without a Place."
+                      : !q && roomFilter != null
+                        ? `No photos of ${roomFilterName} here.`
+                        : !q && areaFilter != null
+                          ? "No photos in that topic."
+                          : !q && !showCutouts
+                            ? "No location photos match the other filters."
+                            : `No photos match "${q}".`}
           </div>
         )}
       </div>
