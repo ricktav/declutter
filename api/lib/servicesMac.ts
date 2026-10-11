@@ -32,10 +32,77 @@ export type SqliteFile = {
   size: number;
 };
 
-const KEEP_LABEL = /^(nl\.ricktav\.|nl\.homebase\.)/i;
+export const LAUNCHD_LABEL_RE = /^(nl\.ricktav\.|nl\.homebase\.)/i;
 const DOCKER_CMD = /^(docker|com\.docker|docker-proxy|vpnkit|orbstack|qemu-system)/i;
 const LOOPBACK = /^(127\.0\.0\.1|::1|\[::1\]|localhost)$/i;
 const WILDCARD = /^(\*|0\.0\.0\.0|::|\[::\])$/i;
+
+/** Extra listen processes we never promote to web (lsof truncates names). */
+export const DEFAULT_LISTEN_DENY = [
+  "ControlCenter",
+  "ControlCe",
+  "rapportd",
+  "EEventManager",
+  "EEventMan",
+  "Spotify",
+  "sharingd",
+  "AirPlay",
+  "AirPlayXPC",
+  "identityservicesd",
+  "identitys",
+  "notifyd",
+  "configd",
+  "mDNSResponder",
+  "mDNSRespo",
+  "cupsd",
+  "WindowServer",
+  "SystemUIServer",
+  "SystemUISe",
+  "coreaudiod",
+  "bluetoothd",
+  "WiFiAgent",
+  "UserEventAgent",
+  "UserEventA",
+  "nsurlsessiond",
+  "nsurlsessio",
+  "Safari",
+  "Google",
+  "Chrome",
+  "Chromium",
+  "Photos",
+  "photoanalysisd",
+  "cloudphotod",
+  "Music",
+  "Mail",
+  "Messages",
+  "FaceTime",
+  "Calendar",
+  "Contacts",
+  "Reminders",
+  "Notes",
+  "Finder",
+  "Dock",
+  "loginwindow",
+  "apsd",
+  "cloudd",
+  "accountsd",
+  "fileproviderd",
+  "Adobe",
+  "Dropbox",
+  "OneDrive",
+  "Zoom",
+  "Slack",
+  "Discord",
+  "Microsoft",
+];
+
+const KEEP_LISTEN = /^(node|nodejs|ollama|python\d*|pythonw|docker|com\.docker|docker-proxy|orbstack|caddy|nginx|httpd|apache|ruby|java|bun|deno|php|redis|postgres|mysql|mariadbd|mongod|vite|esbuild)$/i;
+
+export const SQLITE_HOME_RELS = ["Documents", "Projects", "code", ".claudemux", "termsessions"];
+const SQLITE_PATH_SKIP =
+  /\/(Library|Pictures|Music|Photos|Mail|Messages|Safari|iCloud|Google\/Chrome|Chromium|Microsoft Edge|node_modules|\.git|\.Trash|Application Support)\//i;
+const SQLITE_NAME_SKIP =
+  /^(keychain|thumbs\.db$|finance|frontboard|textreplacements|identityservices|com\.apple)/i;
 
 export function isLoopbackAddr(addr: string): boolean {
   const a = String(addr ?? "").trim().toLowerCase();
@@ -50,8 +117,40 @@ export function isLoopbackAddr(addr: string): boolean {
 export function keepLaunchdJob(job: LaunchdJob): boolean {
   const label = String(job.label ?? "").trim();
   if (!label) return false;
-  if (KEEP_LABEL.test(label)) return true;
+  if (LAUNCHD_LABEL_RE.test(label)) return true;
   return Boolean(job.program);
+}
+
+/** HOMEBASE_MAC=0 / --no-mac disables; --mac or HOMEBASE_MAC=1 forces on. Default: darwin. */
+export function macCollectorEnabled(opts: {
+  platform?: string;
+  env?: NodeJS.ProcessEnv;
+  flag?: string | true;
+  noMac?: boolean;
+} = {}): boolean {
+  const env = opts.env ?? {};
+  const v = String(env.HOMEBASE_MAC ?? "").trim().toLowerCase();
+  if (opts.noMac === true || v === "0" || v === "off" || v === "false") return false;
+  if (opts.flag === true || opts.flag === "1" || v === "1" || v === "on") return true;
+  return (opts.platform ?? process.platform) === "darwin";
+}
+
+export function listenDenyList(extra: string[] = []): string[] {
+  return [...DEFAULT_LISTEN_DENY, ...extra.map((s) => String(s).trim()).filter(Boolean)];
+}
+
+/** Drop macOS/app listeners; never drop node / ollama / python / docker. */
+export function isDeniedListener(command: string, extra: string[] = []): boolean {
+  const cmd = String(command ?? "").trim();
+  if (!cmd) return true;
+  if (KEEP_LISTEN.test(cmd)) return false;
+  const low = cmd.toLowerCase();
+  for (const d of listenDenyList(extra)) {
+    const n = d.toLowerCase();
+    if (!n) continue;
+    if (low === n || low.startsWith(n) || n.startsWith(low)) return true;
+  }
+  return false;
 }
 
 function plistStringAfter(xml: string, key: string): string | undefined {
@@ -117,8 +216,7 @@ export function parseLaunchctlPrint(text: string): LaunchdRuntime {
   const pidRaw = s.match(/^\s*pid\s*=\s*(\d+)/m)?.[1];
   const exitRaw =
     s.match(/^\s*last exit code\s*=\s*(-?\d+)/m)?.[1] ??
-    s.match(/^\s*last exit status\s*=\s*(-?\d+)/m)?.[1] ??
-    s.match(/^\s*last exit code\s*=\s*\(never exited\)/m)?.[1];
+    s.match(/^\s*last exit status\s*=\s*(-?\d+)/m)?.[1];
   const out: LaunchdRuntime = {};
   if (state) out.state = state.slice(0, 32);
   if (pidRaw) out.pid = Number(pidRaw);
@@ -127,6 +225,49 @@ export function parseLaunchctlPrint(text: string): LaunchdRuntime {
     if (Number.isFinite(n)) out.lastExit = n;
   }
   return out;
+}
+
+/** `launchctl print` also carries path / program / working directory for jobs outside LaunchAgents. */
+export function parseLaunchctlPrintDetails(text: string, labelHint?: string): (LaunchdJob & LaunchdRuntime) | null {
+  const s = String(text ?? "");
+  const label =
+    s.match(/^gui\/\d+\/(\S+)/m)?.[1] ??
+    s.match(/^\s*label\s*=\s*(\S+)/im)?.[1] ??
+    labelHint;
+  if (!label) return null;
+  const rt = parseLaunchctlPrint(s);
+  const program = s.match(/^\s*program\s*=\s*(.+)$/m)?.[1]?.trim();
+  const cwd = s.match(/^\s*working directory\s*=\s*(.+)$/m)?.[1]?.trim();
+  const plistPath = s.match(/^\s*path\s*=\s*(.+)$/m)?.[1]?.trim();
+  const job: LaunchdJob & LaunchdRuntime = { label: label.slice(0, 128), ...rt };
+  if (program && program !== "-") job.program = program.slice(0, 255);
+  if (cwd && cwd !== "-") job.cwd = cwd.slice(0, 255);
+  if (plistPath && plistPath !== "-") job.plistPath = plistPath.slice(0, 255);
+  return job;
+}
+
+/** `launchctl list` PID / Status / Label. */
+export function parseLaunchctlList(text: string): Array<{ label: string; pid?: number; status?: number }> {
+  const out: Array<{ label: string; pid?: number; status?: number }> = [];
+  for (const line of String(text ?? "").split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || /^PID\b/i.test(t)) continue;
+    const m = t.match(/^(\S+)\s+(-?\d+)\s+(\S+)\s*$/);
+    if (!m) continue;
+    const rec: { label: string; pid?: number; status?: number } = { label: m[3] };
+    if (m[1] !== "-") {
+      const pid = Number(m[1]);
+      if (Number.isInteger(pid) && pid > 0) rec.pid = pid;
+    }
+    const status = Number(m[2]);
+    if (Number.isFinite(status)) rec.status = status;
+    out.push(rec);
+  }
+  return out;
+}
+
+export function prefixLaunchdLabels(rows: Array<{ label: string }>): string[] {
+  return rows.map((r) => r.label).filter((l) => LAUNCHD_LABEL_RE.test(l));
 }
 
 export function launchdIsRunning(rt: LaunchdRuntime): boolean {
@@ -253,16 +394,45 @@ export function parseMysqlUrlPublic(raw: string): { host: string; port?: number;
   }
 }
 
-const T7_DATA = /^\/Volumes\/T7\/[^/]+\/data\//i;
-const SQLITE_SKIP = /\/(node_modules|Library\/Caches|\.Trash|Library\/Containers|\.git|Library\/Application Support)\//i;
+function normDir(p: string): string {
+  return String(p ?? "").trim().replace(/\/+$/, "");
+}
 
-export function keepSqlitePath(path: string, home = ""): { keep: boolean; reason?: string } {
+function pathUnder(p: string, root: string): boolean {
+  const a = normDir(p);
+  const r = normDir(root);
+  return Boolean(r) && (a === r || a.startsWith(`${r}/`));
+}
+
+/** Roots we will `find` (T7 projects, a few home dirs, launchd WorkingDirectories). */
+export function sqliteAllowRoots(home = "", extraRoots: string[] = []): string[] {
+  const out: string[] = [];
+  const add = (p: string) => {
+    const n = normDir(p);
+    if (!n || n === "/") return;
+    if (out.includes(n)) return;
+    out.push(n);
+  };
+  add("/Volumes/T7");
+  const h = normDir(home);
+  if (h) for (const rel of SQLITE_HOME_RELS) add(`${h}/${rel}`);
+  for (const e of extraRoots) {
+    const n = normDir(e);
+    if (!n || n === "/" || n === h) continue;
+    if (SQLITE_PATH_SKIP.test(`${n}/`)) continue;
+    add(n);
+  }
+  return out;
+}
+
+export function keepSqlitePath(path: string, home = "", extraRoots: string[] = []): { keep: boolean; reason?: string } {
   const p = String(path ?? "").trim();
   if (!p.toLowerCase().endsWith(".db")) return { keep: false, reason: "not-db" };
-  if (SQLITE_SKIP.test(p)) return { keep: false, reason: "skip-dir" };
-  if (T7_DATA.test(p)) return { keep: true };
-  if (home && (p === home || p.startsWith(`${home}/`))) return { keep: true };
-  if (p.startsWith("/Volumes/T7/")) return { keep: false, reason: "not-t7-data" };
+  const base = p.split("/").pop() ?? "";
+  if (SQLITE_NAME_SKIP.test(base)) return { keep: false, reason: "system-db" };
+  if (SQLITE_PATH_SKIP.test(`${p}/`)) return { keep: false, reason: "skip-dir" };
+  const roots = sqliteAllowRoots(home, extraRoots);
+  if (!roots.some((r) => pathUnder(p, r))) return { keep: false, reason: "outside-roots" };
   return { keep: true };
 }
 
@@ -438,6 +608,7 @@ export type MacAssembleInput = {
   postgres?: DatabaseRecIn[];
   mysql?: DatabaseRecIn | null;
   caddy?: CaddyRoute[];
+  listenDeny?: string[];
 };
 
 export type MacAssembleResult = {
@@ -496,7 +667,7 @@ export function assembleMacReport(input: MacAssembleInput): MacAssembleResult {
   for (const [pid, rows] of byPid) {
     if (ownedPids.has(pid)) continue;
     const cmd = rows[0]?.command ?? "listen";
-    if (isDockerCommand(cmd)) continue;
+    if (isDockerCommand(cmd) || isDeniedListener(cmd, input.listenDeny)) continue;
     const ports = uniquePorts(rows, false).filter((p) => !dockerPorts.has(p));
     const loop = loopbackOnlyPorts(rows);
     if (loop.length) loopbackNotes.push(`${cmd}#${pid} loopback :${loop.join(",:")}`);

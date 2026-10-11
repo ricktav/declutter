@@ -4,6 +4,7 @@
 # then Proxmox (VMs / LXC / guest ports / GUI). Dry unless --apply.
 # Optional --local / HOMEBASE_LOCAL=1 adds this host via services-report-local.ts
 # (Docker plus, on darwin, launchd / leftover ports / Mini databases / Caddy).
+# HOMEBASE_MAC=0 or --no-mac skips the Mac extras inside the local collector.
 #
 #   ./scripts/services-report-all.sh
 #   ./scripts/services-report-all.sh --apply
@@ -33,6 +34,7 @@ while [ $# -gt 0 ]; do
     --apply) APPLY=--apply; shift ;;
     --dry) APPLY=""; shift ;;
     --local) LOCAL=1; shift ;;
+    --no-mac) export HOMEBASE_MAC=0; shift ;;
     --timeout)
       if [ -z "${2:-}" ] || [ "${2#--}" != "$2" ]; then
         echo "services-report-all: --timeout needs seconds" >&2

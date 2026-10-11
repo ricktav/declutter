@@ -2,6 +2,7 @@
 // Snapshot this machine onto a device Thing via services.report.
 // Docker/OrbStack containers always (when docker works). On darwin or --mac,
 // also LaunchAgents, leftover listen ports, Mini databases and Caddy.
+// HOMEBASE_MAC=0 or --no-mac skips the Mac extras.
 // Default is a dry run; pass --apply to write. Always merge-only: omitted
 // keys stay (fleet web / databases are not replaced).
 //   node --experimental-strip-types scripts/services-report-local.ts
@@ -12,7 +13,7 @@ import { execFileSync } from "child_process";
 import os from "os";
 import { dockerPathEnv, enrichDockerContainers, parseDockerPs } from "../api/lib/servicesDocker.ts";
 import { machineHintFromItem, matchMachine } from "../api/lib/servicesFleet.ts";
-import { MAC_MINI_HOST, MAC_MINI_IP, MAC_MINI_ITEM_ID } from "../api/lib/servicesMac.ts";
+import { MAC_MINI_HOST, MAC_MINI_IP, MAC_MINI_ITEM_ID, macCollectorEnabled } from "../api/lib/servicesMac.ts";
 import { collectMacLive } from "./services-report-mac.ts";
 
 const argv = process.argv.slice(2);
@@ -26,7 +27,12 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 const apply = args.apply === true && args.dry !== true;
-const wantMac = args.mac === true || args.mac === "1" || process.platform === "darwin";
+const wantMac = macCollectorEnabled({
+  platform: process.platform,
+  env: process.env,
+  flag: args.mac,
+  noMac: args["no-mac"] === true,
+});
 const base = String(args.base || "http://localhost:3001").replace(/\/$/, "");
 const itemArg = args.item === true || args.item == null ? null : Number(args.item);
 const hostIpArg = typeof args["host-ip"] === "string" ? args["host-ip"] : undefined;

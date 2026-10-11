@@ -19,9 +19,10 @@ import { dbMergeKey, projectMergeKey } from "../../api/lib/servicesProjects";
  *               view itself). Daily on the Mini: scripts/services-report-all.sh
  *               (fleet HTML + /projects/ + Proxmox). Systems never fetches those
  *               URLs. Local collector on the Mini (`services-report-local.ts`,
- *               darwin / `--mac`) merges Docker `containers`, launchd `services`,
- *               leftover listen `web`, and Mini `databases`. Caddy marks matching
- *               web rows `public` + host. Omitted keys stay (fleet web stays).
+ *               darwin / `--mac`; `HOMEBASE_MAC=0` skips) merges Docker
+ *               `containers`, launchd `services`, leftover listen `web`, and Mini
+ *               `databases`. Caddy marks matching web rows `public` + host.
+ *               Omitted keys stay (fleet web stays).
  *   vms / lxc             Proxmox guests [{ vmid, name, status, memMb?, diskGb?,
  *               template?, ip?, url?, ports? }]. Collector:
  *               scripts/services-report-proxmox.ts. Not mixed into docker.

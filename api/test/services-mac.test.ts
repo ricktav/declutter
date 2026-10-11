@@ -1,17 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
   assembleMacReport,
+  isDeniedListener,
   isLoopbackAddr,
   keepLaunchdJob,
   keepSqlitePath,
   launchdStatus,
+  macCollectorEnabled,
   parseCaddyAdapt,
   parseCaddyfile,
+  parseLaunchctlList,
   parseLaunchctlPrint,
+  parseLaunchctlPrintDetails,
   parseLaunchdPlist,
   parseLsofListen,
   parseMysqlUrlPublic,
   parsePsPidPpid,
+  prefixLaunchdLabels,
   descendantPids,
   postgresFromDocker,
 } from "../lib/servicesMac";
@@ -88,6 +93,35 @@ describe("launchd plist / print", () => {
     expect(launchdStatus(parseLaunchctlPrint(launchctlFailed), [])).toBe("error");
     expect(launchdStatus({ state: "waiting" }, [])).toBe("stopped");
   });
+
+  it("reads path / cwd from launchctl print and prefix labels from list", () => {
+    const printed = `
+gui/501/nl.ricktav.declutter-focus-test = {
+	path = /Volumes/T7/declutter-workbench/scripts/launchd/nl.ricktav.declutter-focus-test.plist
+	state = running
+	program = /usr/local/bin/node
+	working directory = /Volumes/T7/declutter-workbench
+	pid = 3002
+	last exit code = (never exited)
+}
+`;
+    expect(parseLaunchctlPrintDetails(printed)).toEqual(
+      expect.objectContaining({
+        label: "nl.ricktav.declutter-focus-test",
+        program: "/usr/local/bin/node",
+        cwd: "/Volumes/T7/declutter-workbench",
+        plistPath: "/Volumes/T7/declutter-workbench/scripts/launchd/nl.ricktav.declutter-focus-test.plist",
+        pid: 3002,
+        state: "running",
+      }),
+    );
+    const listed = parseLaunchctlList(`PID	Status	Label
+-	0	com.apple.Safari
+3002	0	nl.ricktav.declutter-focus-test
+4242	0	nl.homebase.workbench
+`);
+    expect(prefixLaunchdLabels(listed)).toEqual(["nl.ricktav.declutter-focus-test", "nl.homebase.workbench"]);
+  });
 });
 
 describe("lsof / ps", () => {
@@ -99,6 +133,32 @@ describe("lsof / ps", () => {
     expect(isLoopbackAddr("*")).toBe(false);
     const kids = parsePsPidPpid(ps);
     expect(descendantPids(4242, kids)).toEqual([4243]);
+  });
+
+  it("drops macOS/app listeners and keeps node/python/ollama", () => {
+    expect(isDeniedListener("ControlCenter")).toBe(true);
+    expect(isDeniedListener("ControlCe")).toBe(true);
+    expect(isDeniedListener("rapportd")).toBe(true);
+    expect(isDeniedListener("EEventManager")).toBe(true);
+    expect(isDeniedListener("Spotify")).toBe(true);
+    expect(isDeniedListener("sharingd")).toBe(true);
+    expect(isDeniedListener("AirPlayXPC")).toBe(true);
+    expect(isDeniedListener("node")).toBe(false);
+    expect(isDeniedListener("python3")).toBe(false);
+    expect(isDeniedListener("ollama")).toBe(false);
+    expect(isDeniedListener("docker")).toBe(false);
+    expect(isDeniedListener("weirdapp", ["weirdapp"])).toBe(true);
+  });
+});
+
+describe("macCollectorEnabled", () => {
+  it("defaults to darwin and honors HOMEBASE_MAC=0 / --no-mac", () => {
+    expect(macCollectorEnabled({ platform: "darwin", env: {} })).toBe(true);
+    expect(macCollectorEnabled({ platform: "linux", env: {} })).toBe(false);
+    expect(macCollectorEnabled({ platform: "darwin", env: { HOMEBASE_MAC: "0" } })).toBe(false);
+    expect(macCollectorEnabled({ platform: "darwin", env: {}, noMac: true })).toBe(false);
+    expect(macCollectorEnabled({ platform: "linux", env: { HOMEBASE_MAC: "1" } })).toBe(true);
+    expect(macCollectorEnabled({ platform: "linux", env: {}, flag: true })).toBe(true);
   });
 });
 
@@ -113,12 +173,22 @@ describe("mysql URL / sqlite / postgres", () => {
     expect(raw).not.toMatch(/s3cret|rick:/);
   });
 
-  it("keeps T7 data sqlite and home dbs, skips caches", () => {
+  it("keeps allowlisted sqlite roots and drops system/app dbs", () => {
     expect(keepSqlitePath("/Volumes/T7/declutter/data/app.db").keep).toBe(true);
+    expect(keepSqlitePath("/Volumes/T7/declutter/app.db").keep).toBe(true);
     expect(keepSqlitePath("/Volumes/T7/declutter/node_modules/x.db").keep).toBe(false);
+    expect(keepSqlitePath("/Users/rick/Documents/notes.db", "/Users/rick").keep).toBe(true);
+    expect(keepSqlitePath("/Users/rick/code/app.db", "/Users/rick").keep).toBe(true);
+    expect(keepSqlitePath("/Users/rick/.claudemux/store.db", "/Users/rick").keep).toBe(true);
     expect(keepSqlitePath("/Users/rick/Library/Caches/foo.db", "/Users/rick").keep).toBe(false);
-    expect(keepSqlitePath("/Users/rick/src/notes.db", "/Users/rick").keep).toBe(true);
+    expect(keepSqlitePath("/Users/rick/Pictures/foo.db", "/Users/rick").keep).toBe(false);
+    expect(keepSqlitePath("/Users/rick/src/notes.db", "/Users/rick").keep).toBe(false);
+    expect(keepSqlitePath("/Users/rick/termsessions/sess.db", "/Users/rick").keep).toBe(true);
+    expect(keepSqlitePath("/Volumes/T7/foo/keychain-2.db").keep).toBe(false);
+    expect(keepSqlitePath("/Volumes/T7/foo/com.apple.foo.db").keep).toBe(false);
+    expect(keepSqlitePath("/Volumes/T7/foo/Finance.db").keep).toBe(false);
     expect(keepSqlitePath("/Volumes/T7/declutter/README.md").keep).toBe(false);
+    expect(keepSqlitePath("/opt/extra/proj.db", "/Users/rick", ["/opt/extra"]).keep).toBe(true);
   });
 
   it("lifts postgres containers", () => {
@@ -191,6 +261,14 @@ describe("assembleMacReport", () => {
     expect(wb).toMatchObject({ port: 3001, public: true, host: "home.example", status: "ok" });
     expect(wb?.urls).toEqual(expect.arrayContaining(["http://10.50.0.102:3001/", "https://home.example/"]));
     expect(out.web.find((w) => w.label === "python:8765")).toMatchObject({ port: 8765, status: "ok" });
+    const noisy = assembleMacReport({
+      jobs: [],
+      listeners: parseLsofListen(`${lsof}\nControlCe  88 rick  8u  IPv4 0x  0t0  TCP *:5000 (LISTEN)\nSpotify   89 rick  8u  IPv4 0x  0t0  TCP *:57621 (LISTEN)\n`),
+      children: new Map(),
+      hostIp: "10.50.0.102",
+    });
+    expect(noisy.web.some((w) => /Control|Spotify/i.test(w.label))).toBe(false);
+    expect(noisy.web.find((w) => w.label === "python:8765")).toBeTruthy();
     expect(out.web.some((w) => w.port === 8001)).toBe(false);
     expect(out.web.some((w) => w.port === 3306)).toBe(false);
     expect(out.loopbackNotes.some((n) => n.includes("3306"))).toBe(true);
