@@ -1,6 +1,7 @@
 import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls.ts";
 import {
   dbMergeKey,
+  isProjectSourceLabel,
   looksLikeProjectDir,
   mergeProjectRecords,
   normalizeProjectKind,
@@ -957,57 +958,96 @@ function pdValue(block: string): string {
   return innerText(stripped);
 }
 
-function directoryPdBlocks(html: string): string[] {
-  const pdRows = extractClassBlocks(html, "div", "pd-row");
-  if (pdRows.length) return pdRows;
-  const out: string[] = [];
-  for (const m of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
-    if (!hasClass(`<tr${m[1]}>`, "pdrow")) continue;
-    const nested = extractClassBlocks(m[2], "div", "pd-row");
-    if (nested.length) out.push(...nested);
-    else out.push(m[2]);
+const PD_FOLLOW_UP = new Set(["ports", "port", "container", "containers", "image", "mount", "mounts", "volume", "volumes"]);
+const PD_PATH_KEYS = new Set(["directory", "path", "dir", "project"]);
+
+function pdKey(block: string): string {
+  return innerText(block.match(/<span\b[^>]*class=["'][^"']*\bpd-k\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "").toLowerCase();
+}
+
+function pdPairsFrom(html: string): { k: string; value: string }[] {
+  const blocks = extractClassBlocks(html, "div", "pd-row");
+  const src = blocks.length ? blocks : [html];
+  const out: { k: string; value: string }[] = [];
+  for (const block of src) {
+    const k = pdKey(block);
+    const value = pdValue(block);
+    if (!k && !value) continue;
+    out.push({ k, value });
   }
   return out;
 }
 
-function parseDirectoryPdRows(html: string): ProjectRec[] {
-  const out: ProjectRec[] = [];
-  let cur: ProjectRec | null = null;
-  const flush = () => {
-    if (cur?.name) out.push(cur);
-    cur = null;
-  };
-  for (const block of directoryPdBlocks(html)) {
-    const k = innerText(block.match(/<span\b[^>]*class=["'][^"']*\bpd-k\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "").toLowerCase();
-    if (k === "container" || k === "ports" || k === "image") {
-      flush();
-      continue;
-    }
-    const value = pdValue(block);
+function projectFromPdPairs(pairs: { k: string; value: string }[]): ProjectRec | null {
+  if (!pairs.length) return null;
+  if (PD_FOLLOW_UP.has(pairs[0].k)) return null;
+  const rec: ProjectRec = { name: "", kind: "unknown" };
+  for (const { k, value } of pairs) {
+    if (PD_FOLLOW_UP.has(k)) continue;
     const pathLike = looksLikeProjectDir(value);
-    if (pathLike && (k === "directory" || k === "path" || k === "dir" || k === "project" || !k)) {
-      flush();
-      cur = { name: dirBasename(value), path: value.slice(0, 255), kind: "unknown" };
+    if (pathLike && (PD_PATH_KEYS.has(k) || !k)) {
+      if (!rec.path) {
+        rec.path = value.slice(0, 255);
+        rec.name = dirBasename(value);
+      }
       continue;
     }
-    if (!cur) continue;
-    if (k === "kind" || k === "agent" || k === "source") {
+    if (k === "source") {
+      if (value && !isJunkCell(value)) rec.source = value.trim().toLowerCase().slice(0, 32);
+      continue;
+    }
+    if (k === "kind" || k === "agent") {
+      if (isProjectSourceLabel(value)) {
+        rec.source = value.trim().toLowerCase().slice(0, 32);
+        continue;
+      }
       const kind = normalizeProjectKind(value) ?? value.trim().toLowerCase().slice(0, 32);
-      if (kind) cur.kind = kind;
-    } else if (k === "tokens" || k === "token" || k === "usage") {
+      if (kind) rec.kind = kind;
+      continue;
+    }
+    if (k === "tokens" || k === "token" || k === "usage") {
       const tokens = parseTokenCount(value);
-      if (tokens != null) cur.tokens = tokens;
+      if (tokens != null) rec.tokens = tokens;
     } else if (k === "size" || k === "bytes" || k === "disk") {
       const size = parseSizeBytes(value);
-      if (size != null) cur.size = size;
+      if (size != null) rec.size = size;
     } else if (k === "updated" || k === "last" || k === "seen" || k === "activity" || k === "time") {
-      if (value && !isJunkCell(value)) cur.updatedAt = value.slice(0, 40);
+      if (value && !isJunkCell(value)) rec.updatedAt = value.slice(0, 40);
     } else if (k === "status" || k === "state") {
-      if (value && !isJunkCell(value)) cur.status = value;
+      if (value && !isJunkCell(value)) rec.status = value;
     }
   }
+  if (!rec.path) return null;
+  if (!rec.name) rec.name = dirBasename(rec.path);
+  return rec;
+}
+
+/** One `tr.pdrow` is one project. Follow-ups (ports/containers/mounts) and rows without a directory/path cell are skipped. */
+function parseDirectoryPdRows(html: string): ProjectRec[] {
+  const trs = [...html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)];
+  const pdTrs = trs.filter((m) => hasClass(`<tr${m[1]}>`, "pdrow"));
+  if (pdTrs.length) {
+    return uniqByProject(pdTrs.map((m) => projectFromPdPairs(pdPairsFrom(m[2]))).filter((p): p is ProjectRec => p != null));
+  }
+  const pairs = pdPairsFrom(html);
+  if (!pairs.length) return [];
+  const groups: { k: string; value: string }[][] = [];
+  let cur: { k: string; value: string }[] = [];
+  const flush = () => {
+    if (cur.length) groups.push(cur);
+    cur = [];
+  };
+  for (const pair of pairs) {
+    if (looksLikeProjectDir(pair.value) && (PD_PATH_KEYS.has(pair.k) || !pair.k)) {
+      flush();
+      cur = [pair];
+      continue;
+    }
+    if (PD_FOLLOW_UP.has(pair.k)) continue;
+    if (cur.length) cur.push(pair);
+  }
   flush();
-  return out;
+  return uniqByProject(groups.map(projectFromPdPairs).filter((p): p is ProjectRec => p != null));
 }
 
 function parseProjectDirsTable(html: string): { projects: ProjectRec[]; skipped: Omit<SkippedProjectTable, "host">[] } {
@@ -1041,7 +1081,8 @@ function parseProjectDirsTable(html: string): { projects: ProjectRec[]; skipped:
       const idx = (...names: string[]) => headers.findIndex((h) => names.includes(h));
       const pathIdx = idx("path", "dir", "directory", "folder", "root");
       const nameIdx = idx("project", "name", "label");
-      const kindIdx = idx("kind", "agent", "source");
+      const kindIdx = idx("kind", "agent");
+      const sourceIdx = idx("source");
       const statusIdx = idx("status", "state");
       const tokensIdx = idx("tokens", "token", "usage");
       const sizeIdx = idx("size", "bytes", "disk");
@@ -1049,25 +1090,32 @@ function parseProjectDirsTable(html: string): { projects: ProjectRec[]; skipped:
       for (const cols of rows) {
         if (isHeaderWordRow(cols)) continue;
         const path = (pathIdx >= 0 ? cols[pathIdx] : "") || cols.find((c) => looksLikeProjectDir(c)) || "";
-        const label = (nameIdx >= 0 ? cols[nameIdx] : "") || (path ? dirBasename(path) : cols[0] ?? "");
-        const rawName = (looksLikeProjectDir(path) ? path : label).trim();
+        const pathVal = looksLikeProjectDir(path) ? path : "";
+        if (!pathVal) continue;
+        const label = (nameIdx >= 0 ? cols[nameIdx] : "") || dirBasename(pathVal);
+        const rawName = (label || dirBasename(pathVal)).trim();
         if (!rawName || isJunkCell(rawName) || DB_HEADER_WORD.test(rawName)) continue;
         if (/^https?:\/\//i.test(rawName)) continue;
         const kindRaw = kindIdx >= 0 ? cols[kindIdx] ?? "" : "";
-        const kind = kindRaw && !isJunkCell(kindRaw) ? (normalizeProjectKind(kindRaw) ?? kindRaw.trim().toLowerCase().slice(0, 32)) : "unknown";
+        const sourceRaw = sourceIdx >= 0 ? cols[sourceIdx] ?? "" : "";
+        const kind =
+          kindRaw && !isJunkCell(kindRaw) && !isProjectSourceLabel(kindRaw)
+            ? (normalizeProjectKind(kindRaw) ?? kindRaw.trim().toLowerCase().slice(0, 32))
+            : "unknown";
+        const source = sourceRaw && !isJunkCell(sourceRaw) ? sourceRaw.trim().toLowerCase().slice(0, 32) : isProjectSourceLabel(kindRaw) ? kindRaw.trim().toLowerCase() : "";
         const status = statusIdx >= 0 ? cols[statusIdx] ?? "" : "";
         const tokens = tokensIdx >= 0 ? parseTokenCount(cols[tokensIdx]) : undefined;
         const size = sizeIdx >= 0 ? parseSizeBytes(cols[sizeIdx]) : undefined;
         const updatedAt = updatedIdx >= 0 ? cols[updatedIdx] ?? "" : "";
-        const pathVal = looksLikeProjectDir(path) ? path : looksLikeProjectDir(rawName) ? rawName : "";
         projects.push({
-          name: (pathVal ? dirBasename(pathVal) : rawName).slice(0, 128),
+          name: (looksLikeProjectDir(rawName) ? dirBasename(pathVal) : rawName).slice(0, 128) || dirBasename(pathVal),
           kind,
+          ...(source ? { source } : {}),
           ...(status && !isJunkCell(status) ? { status } : {}),
           ...(tokens != null ? { tokens } : {}),
           ...(size != null ? { size } : {}),
           ...(updatedAt && !isJunkCell(updatedAt) ? { updatedAt: updatedAt.slice(0, 40) } : {}),
-          ...(pathVal ? { path: pathVal.slice(0, 255) } : {}),
+          path: pathVal.slice(0, 255),
         });
       }
     }

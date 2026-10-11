@@ -13,6 +13,8 @@ export const PROJECT_KIND_COLOR: Record<string, string> = {
 export type ProjectRec = {
   name: string;
   kind?: string;
+  /** Origin of the row (transcript / history), not the agent. */
+  source?: string;
   status?: string;
   tokens?: number;
   size?: number;
@@ -21,6 +23,18 @@ export type ProjectRec = {
   url?: string;
   path?: string;
 };
+
+const PROJECT_SOURCE_LABELS = new Set(["transcript", "history", "chat", "session", "log"]);
+
+export function isProjectSourceLabel(s: string | undefined | null): boolean {
+  return PROJECT_SOURCE_LABELS.has(String(s ?? "").trim().toLowerCase());
+}
+
+export function isAgentProjectKind(s: string | undefined | null): boolean {
+  const t = String(s ?? "").trim().toLowerCase();
+  if ((PROJECT_KINDS as readonly string[]).includes(t)) return true;
+  return detectProjectKind(t) != null;
+}
 
 export type DatabaseRec = {
   name: string;
@@ -244,11 +258,16 @@ export function projectMergeKey(p: { name?: string; path?: string; kind?: string
 }
 
 function preferKind(a?: string, b?: string): string | undefined {
-  const pick = (k?: string) => {
-    const t = String(k ?? "").trim().toLowerCase();
-    return t && t !== "unknown" ? t : "";
+  const norm = (k?: string) => {
+    const raw = String(k ?? "").trim();
+    if (!raw || raw.toLowerCase() === "unknown" || isProjectSourceLabel(raw)) return "";
+    return detectProjectKind(raw) ?? (raw.length <= 32 ? raw.toLowerCase() : "");
   };
-  return pick(b) || pick(a) || String(b || a || "").trim() || undefined;
+  const nb = norm(b);
+  const na = norm(a);
+  if (isAgentProjectKind(nb)) return detectProjectKind(nb) ?? nb;
+  if (isAgentProjectKind(na)) return detectProjectKind(na) ?? na;
+  return nb || na || undefined;
 }
 
 function newerStamp(a?: string, b?: string): string | undefined {
@@ -284,10 +303,14 @@ export function mergeProjectRecords(a: Record<string, unknown>, b: Record<string
   const minutes = maxNum(a.minutes, b.minutes);
   const updatedAt = newerStamp(a.updatedAt != null ? String(a.updatedAt) : undefined, b.updatedAt != null ? String(b.updatedAt) : undefined);
   const kind = preferKind(a.kind != null ? String(a.kind) : undefined, b.kind != null ? String(b.kind) : undefined);
+  const source = String(a.source ?? b.source ?? "").trim() || String(b.source ?? a.source ?? "").trim();
   const status = String(b.status ?? a.status ?? "").trim();
   const url = String(b.url ?? a.url ?? "").trim();
   const o: Record<string, unknown> = { ...a, ...b, name: (display || path).slice(0, 128) };
   if (kind) o.kind = kind;
+  else delete o.kind;
+  if (source) o.source = source.slice(0, 32);
+  else delete o.source;
   if (status) o.status = status;
   else delete o.status;
   if (tokens != null) o.tokens = tokens;
@@ -324,7 +347,12 @@ function asProject(x: unknown, fallbackKind?: string): ProjectRec | null {
   if (!o) return null;
   const name = str(o.name ?? o.project ?? o.path ?? o.label ?? o.id);
   if (!name) return null;
-  const kind = normalizeProjectKind(str(o.kind ?? o.agent ?? o.source ?? o.runtime) ?? "") ?? detectProjectKind(name) ?? fallbackKind;
+  const rawKind = str(o.kind ?? o.agent ?? o.runtime);
+  const source = str(o.source) ?? (rawKind && isProjectSourceLabel(rawKind) ? rawKind.toLowerCase() : null);
+  let kind = normalizeProjectKind(rawKind ?? "") ?? detectProjectKind(name) ?? fallbackKind;
+  if (kind && isProjectSourceLabel(kind)) {
+    kind = detectProjectKind(name) ?? fallbackKind;
+  }
   const status = str(o.status ?? o.state);
   const tokens = parseTokenCount(o.tokens ?? o.token ?? o.usage);
   const size = parseSizeBytes(o.size ?? o.bytes ?? o.projectSize);
@@ -335,6 +363,7 @@ function asProject(x: unknown, fallbackKind?: string): ProjectRec | null {
   return {
     name,
     ...(kind ? { kind } : {}),
+    ...(source ? { source: source.slice(0, 32) } : {}),
     ...(status ? { status } : {}),
     ...(tokens != null ? { tokens } : {}),
     ...(size != null && size > 0 ? { size } : {}),
@@ -537,7 +566,8 @@ function projectFromCols(headers: string[], cols: string[], fallbackKind?: strin
   const idx = (...names: string[]) => headerIndex(headers, ...names);
   const name = (idx("project", "name", "path", "label", "directory") >= 0 ? cols[idx("project", "name", "path", "label", "directory")] : cols[0]) ?? "";
   if (!name) return null;
-  const kindRaw = idx("kind", "agent", "source") >= 0 ? cols[idx("kind", "agent", "source")] : "";
+  const kindRaw = idx("kind", "agent") >= 0 ? cols[idx("kind", "agent")] : "";
+  const sourceRaw = idx("source") >= 0 ? cols[idx("source")] : isProjectSourceLabel(kindRaw) ? kindRaw : "";
   const status = idx("status", "state") >= 0 ? cols[idx("status", "state")] : "";
   const tokens = parseTokenCount(idx("tokens", "token", "usage") >= 0 ? cols[idx("tokens", "token", "usage")] : "");
   const size = parseSizeBytes(idx("size", "bytes", "disk") >= 0 ? cols[idx("size", "bytes", "disk")] : "");
@@ -551,6 +581,7 @@ function projectFromCols(headers: string[], cols: string[], fallbackKind?: strin
     {
       name,
       ...(kind ? { kind } : {}),
+      ...(sourceRaw ? { source: sourceRaw } : {}),
       ...(status ? { status } : {}),
       ...(tokens != null ? { tokens } : {}),
       ...(size != null ? { size } : {}),
@@ -665,7 +696,8 @@ export function parseDatabasesList(raw: unknown): DatabaseRec[] {
 export function countProjectsByKind(projects: Array<{ kind?: string }>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const p of projects) {
-    const k = String(p.kind ?? "unknown").trim().toLowerCase() || "unknown";
+    const k = detectProjectKind(String(p.kind ?? "")) ?? "";
+    if (!(PROJECT_KINDS as readonly string[]).includes(k)) continue;
     out[k] = (out[k] ?? 0) + 1;
   }
   return out;

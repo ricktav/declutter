@@ -1,4 +1,4 @@
-import { dbMergeKey, projectMergeKey } from "../../api/lib/servicesProjects";
+import { dbMergeKey, isProjectSourceLabel, projectMergeKey } from "../../api/lib/servicesProjects";
 
 /**
  * Attribute convention for the Systems mindmap. Other bots can fill these
@@ -175,6 +175,7 @@ export type DatabaseRec = {
 export type ProjectRec = {
   name: string;
   kind?: string;
+  source?: string;
   status?: string;
   tokens?: number;
   size?: number;
@@ -511,9 +512,13 @@ function asProject(x: unknown): ProjectRec | null {
   const o = x as Record<string, unknown>;
   const name = String(o.name ?? o.project ?? o.path ?? o.label ?? "").trim();
   if (!name) return null;
+  const rawKind = o.kind != null || o.agent != null ? String(o.kind ?? o.agent) : "";
+  const source = o.source != null ? String(o.source) : isProjectSourceLabel(rawKind) ? rawKind.toLowerCase() : "";
+  const kind = rawKind && !isProjectSourceLabel(rawKind) ? rawKind : "";
   return {
     name,
-    ...(o.kind != null || o.agent != null ? { kind: String(o.kind ?? o.agent) } : {}),
+    ...(kind ? { kind } : {}),
+    ...(source ? { source: source.slice(0, 32) } : {}),
     ...(o.status != null ? { status: String(o.status) } : {}),
     ...(num(o.tokens) != null ? { tokens: num(o.tokens) } : {}),
     ...(num(o.size) != null ? { size: num(o.size) } : {}),

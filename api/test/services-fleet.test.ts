@@ -448,12 +448,24 @@ describe("realistic fleet databases-table + directory tables", () => {
     expect(byHost["dockermac-2"]).toBe(3);
     expect(byHost.dockermac).toBe(3);
     expect(byHost["prodesk-rt1"]).toBe(3);
+    const paths = hosts.flatMap((h) => h.projects.map((p) => p.path));
+    expect(paths).not.toEqual(expect.arrayContaining(["/Volumes/T7/uploads", "/var/lib/gitea", "/config"]));
     const mini = hosts.find((h) => h.host === "macmini-m4")!;
     expect(mini.projects.find((p) => p.path === "/Volumes/T7/declutter")).toEqual(
       expect.objectContaining({ name: "declutter", kind: "claude", tokens: 1.2e6 }),
     );
+    expect(mini.projects.find((p) => p.path === "/Users/rick/photos-review")).toEqual(
+      expect.objectContaining({ name: "photos-review", kind: "claude", source: "transcript" }),
+    );
     expect(mini.databases).toEqual([]);
-    expect(hosts.find((h) => h.host === "dockermac-2")?.containers.map((c) => c.name)).toEqual(["caddy"]);
+    const d2 = hosts.find((h) => h.host === "dockermac-2")!;
+    expect(d2.containers.map((c) => c.name)).toEqual(["caddy"]);
+    expect(d2.projects.find((p) => p.path === "/opt/gitea")).toEqual(
+      expect.objectContaining({ name: "gitea", kind: "unknown", source: "transcript" }),
+    );
+    expect(hosts.find((h) => h.host === "prodesk-rt1")?.projects.find((p) => p.path === "/home/rick/clawd")).toEqual(
+      expect.objectContaining({ name: "clawd", kind: "openclaw", source: "history" }),
+    );
     expect(skippedProjectTables).toEqual([
       expect.objectContaining({
         host: "prodesk-rt1",
@@ -462,6 +474,8 @@ describe("realistic fleet databases-table + directory tables", () => {
       }),
     ]);
     expect(countProjectsByKind(mini.projects)).toEqual({ claude: 2, openclaw: 1, hermes: 1 });
+    expect(countProjectsByKind(d2.projects)).toEqual({});
+    expect(countProjectsByKind([{ kind: "claude" }, { kind: "transcript" }, { kind: "history" }])).toEqual({ claude: 1 });
   });
 
   it("never silently drops a directory-looking table", () => {
@@ -485,6 +499,13 @@ describe("project merge key", () => {
     );
     expect(merged).toEqual(
       expect.objectContaining({ name: "declutter", path: "/Volumes/T7/declutter", kind: "claude", tokens: 1.2e6 }),
+    );
+    const fromTranscript = mergeProjectRecords(
+      { name: "declutter", path: "/Volumes/T7/declutter", kind: "transcript", source: "transcript" },
+      { name: "declutter", path: "/Volumes/T7/declutter", kind: "claude" },
+    );
+    expect(fromTranscript).toEqual(
+      expect.objectContaining({ kind: "claude", source: "transcript" }),
     );
   });
 });
