@@ -1,15 +1,19 @@
 #!/usr/bin/env -S node --experimental-strip-types
-// Snapshot this machine's running Docker/OrbStack containers onto a device
-// Thing via services.report. Default is a dry run; pass --apply to write.
-// Merges into `containers` and does not send `web`, so fleet services stay.
+// Snapshot this machine onto a device Thing via services.report.
+// Docker/OrbStack containers always (when docker works). On darwin or --mac,
+// also LaunchAgents, leftover listen ports, Mini databases and Caddy.
+// Default is a dry run; pass --apply to write. Always merge-only: omitted
+// keys stay (fleet web / databases are not replaced).
 //   node --experimental-strip-types scripts/services-report-local.ts
 //   node --experimental-strip-types scripts/services-report-local.ts --item 51 --apply --base http://10.50.0.102:3001
-// Docker PATH includes ~/.orbstack/bin.
+// Docker PATH includes ~/.orbstack/bin. Mac extras: scripts/services-report-mac.ts.
 import "dotenv/config";
 import { execFileSync } from "child_process";
 import os from "os";
 import { dockerPathEnv, enrichDockerContainers, parseDockerPs } from "../api/lib/servicesDocker.ts";
 import { machineHintFromItem, matchMachine } from "../api/lib/servicesFleet.ts";
+import { MAC_MINI_HOST, MAC_MINI_IP, MAC_MINI_ITEM_ID } from "../api/lib/servicesMac.ts";
+import { collectMacLive } from "./services-report-mac.ts";
 
 const argv = process.argv.slice(2);
 const args: Record<string, string | true> = {};
@@ -22,8 +26,10 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 const apply = args.apply === true && args.dry !== true;
+const wantMac = args.mac === true || args.mac === "1" || process.platform === "darwin";
 const base = String(args.base || "http://localhost:3001").replace(/\/$/, "");
 const itemArg = args.item === true || args.item == null ? null : Number(args.item);
+const hostIpArg = typeof args["host-ip"] === "string" ? args["host-ip"] : undefined;
 
 const headers: Record<string, string> = {
   "content-type": "application/json",
@@ -44,42 +50,48 @@ async function trpc(path: string, input: unknown, method: "GET" | "POST" = "GET"
 }
 
 const env = dockerPathEnv();
-let text: string;
+let containers: ReturnType<typeof enrichDockerContainers> = [];
+let dockerError: string | null = null;
 try {
-  text = execFileSync("docker", ["ps", "--size", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}\t{{.Size}}"], {
+  const text = execFileSync("docker", ["ps", "--size", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}\t{{.Size}}"], {
     encoding: "utf8",
     env,
   });
+  function dockerJson(dargs: string[]): unknown {
+    try {
+      const raw = execFileSync("docker", dargs, { encoding: "utf8", env }).trim();
+      return raw ? (JSON.parse(raw) as unknown) : null;
+    } catch {
+      return null;
+    }
+  }
+  const parsed = parseDockerPs(text);
+  const ids = execFileSync("docker", ["ps", "-q"], { encoding: "utf8", env }).trim().split(/\s+/).filter(Boolean);
+  const inspect = ids.length ? dockerJson(["inspect", "--size", ...ids]) ?? dockerJson(["inspect", ...ids]) : null;
+  const images = [...new Set(parsed.map((c) => c.image).filter(Boolean))] as string[];
+  const imageInspect = images.length ? dockerJson(["image", "inspect", ...images]) : null;
+  let dfText = "";
+  try {
+    dfText = execFileSync("docker", ["system", "df", "-v"], { encoding: "utf8", env });
+  } catch {
+    dfText = "";
+  }
+  containers = enrichDockerContainers(parsed, inspect, imageInspect, dfText);
 } catch (e) {
   const err = e as { message?: string };
-  console.error(`docker ps failed: ${err.message || e} (PATH includes ~/.orbstack/bin)`);
-  process.exit(1);
+  dockerError = err.message || String(e);
 }
 
-function dockerJson(args: string[]): unknown {
-  try {
-    const raw = execFileSync("docker", args, { encoding: "utf8", env }).trim();
-    return raw ? (JSON.parse(raw) as unknown) : null;
-  } catch {
-    return null;
-  }
-}
+const mac = wantMac
+  ? await collectMacLive({
+      hostIp: hostIpArg,
+      dockerContainers: containers,
+      databaseUrl: process.env.DATABASE_URL ?? null,
+    })
+  : null;
 
-const parsed = parseDockerPs(text);
-const ids = execFileSync("docker", ["ps", "-q"], { encoding: "utf8", env }).trim().split(/\s+/).filter(Boolean);
-const inspect = ids.length ? dockerJson(["inspect", "--size", ...ids]) ?? dockerJson(["inspect", ...ids]) : null;
-const images = [...new Set(parsed.map((c) => c.image).filter(Boolean))] as string[];
-const imageInspect = images.length ? dockerJson(["image", "inspect", ...images]) : null;
-let dfText = "";
-try {
-  dfText = execFileSync("docker", ["system", "df", "-v"], { encoding: "utf8", env });
-} catch {
-  dfText = "";
-}
-
-const containers = enrichDockerContainers(parsed, inspect, imageInspect, dfText);
-if (!containers.length) {
-  console.error("no running docker containers found");
+if (!containers.length && !mac?.services.length && !mac?.web.length && !mac?.databases.length) {
+  console.error(dockerError ? `docker ps failed: ${dockerError} (PATH includes ~/.orbstack/bin)` : "no local containers, launchd jobs, listeners or databases found");
   process.exit(1);
 }
 
@@ -92,16 +104,29 @@ const pinned = itemArg != null && Number.isInteger(itemArg) ? machines.find((m) 
 const matched =
   pinned ??
   matchMachine({ host: hostName }, machines) ??
-  matchMachine({ host: "macmini-m4" }, machines);
+  matchMachine({ host: MAC_MINI_HOST }, machines) ??
+  (wantMac ? { id: MAC_MINI_ITEM_ID, name: MAC_MINI_HOST } : null);
 
 const plan = {
   dry: !apply,
-  source: "local-docker",
+  source: mac ? "local" : "local-docker",
   host: hostName,
+  hostIp: mac?.hostIp ?? hostIpArg ?? (wantMac ? MAC_MINI_IP : undefined),
   containers: containers.length,
   containerNames: containers.map((c) => c.name),
-  items: containers,
+  services: mac?.services.length ?? 0,
+  web: mac?.web.length ?? 0,
+  databases: mac?.databases.length ?? 0,
+  commands: mac?.commands ?? [],
+  loopback: mac?.loopbackNotes ?? [],
+  items: {
+    containers,
+    services: mac?.services ?? [],
+    web: mac?.web ?? [],
+    databases: mac?.databases ?? [],
+  },
   matched: matched ? { itemId: matched.id, name: matched.name } : null,
+  dockerError,
 };
 
 if (!matched) {
@@ -112,13 +137,31 @@ if (!matched) {
 
 if (!apply) {
   console.log(JSON.stringify(plan, null, 2));
-  console.error("dry run (pass --apply to write services.report; web is not sent, fleet services stay)");
+  console.error("dry run (pass --apply to write services.report; merge-only; omitted keys stay)");
+  if (mac?.loopbackNotes.length) console.error(`loopback listeners (not sent): ${mac.loopbackNotes.join("; ")}`);
   process.exit(0);
 }
 
-const result = (await trpc(
-  "services.report",
-  { itemId: matched.id, source: "local-docker", merge: true, containers },
-  "POST",
-)) as { containers: number };
-console.log(`${matched.name} (#${matched.id}): merged ${result.containers} container(s) from local docker`);
+const payload: Record<string, unknown> = {
+  itemId: matched.id,
+  source: plan.source,
+  merge: true,
+};
+if (containers.length) payload.containers = containers;
+if (mac?.services.length) payload.services = mac.services;
+if (mac?.web.length) payload.web = mac.web;
+if (mac?.databases.length) payload.databases = mac.databases;
+
+const result = (await trpc("services.report", payload, "POST")) as {
+  containers: number;
+  services?: number;
+  web?: number;
+  databases?: number;
+};
+console.log(
+  `${matched.name} (#${matched.id}): merged ${result.containers} container(s)` +
+    (result.services != null ? `, ${result.services} service(s)` : "") +
+    (result.web != null ? `, ${result.web} web` : "") +
+    (result.databases != null ? `, ${result.databases} database(s)` : "") +
+    " from local",
+);

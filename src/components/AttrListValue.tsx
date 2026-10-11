@@ -12,7 +12,7 @@ import {
 } from "../../api/lib/servicesProjects.ts";
 
 const LIST_KEYS = new Set(["containers", "docker", "node", "web", "vms", "lxc", "services", "databases", "projects"]);
-const COLLAPSE_KEYS = new Set(["containers", "docker", "web", "vms", "lxc", "databases", "projects", "node"]);
+const COLLAPSE_KEYS = new Set(["containers", "docker", "web", "vms", "lxc", "databases", "projects", "node", "services"]);
 export const MACHINE_CORE_LIST_ATTRS = ["databases", "projects", "node"] as const;
 
 export function isJsonListAttr(key: string): boolean {
@@ -194,7 +194,7 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
       hrefs,
       sizeLabel: "",
       sizeBytes: 0,
-      extra: [],
+      extra: [o.public === true || o.public === 1 ? "public" : "", str(o.host)].filter(Boolean),
       mounts: [],
     };
   }
@@ -313,6 +313,7 @@ function rowFrom(key: string, x: unknown, i: number, reach: string | null): Tabl
     Number.isFinite(imageSize) && imageSize > 0 ? `img ${fmtBytes(imageSize)}` : "",
     o.layers != null && Number(o.layers) > 0 ? `${o.layers} layers` : "",
     str(o.created),
+    str(o.cwd),
   ].filter(Boolean);
   return {
     key: `${name}-${i}`,

@@ -2,7 +2,8 @@
 # Run the Mini-side Systems collectors against one HomeBase API.
 # Fleet (containers / web / databases / directory projects), /projects/ (tokens),
 # then Proxmox (VMs / LXC / guest ports / GUI). Dry unless --apply.
-# Optional --local adds this host's Docker via services-report-local.ts.
+# Optional --local / HOMEBASE_LOCAL=1 adds this host via services-report-local.ts
+# (Docker plus, on darwin, launchd / leftover ports / Mini databases / Caddy).
 #
 #   ./scripts/services-report-all.sh
 #   ./scripts/services-report-all.sh --apply

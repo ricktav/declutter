@@ -25,6 +25,8 @@
     <string>http://127.0.0.1:3001</string>
     <key>HOMEBASE_PVE_SSH</key>
     <string>root@10.50.0.155</string>
+    <key>HOMEBASE_LOCAL</key>
+    <string>1</string>
   </dict>
   <key>StartCalendarInterval</key>
   <dict>

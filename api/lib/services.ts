@@ -31,6 +31,7 @@ export type ServiceRecIn = {
   port?: number;
   ports?: number[];
   url?: string;
+  cwd?: string;
   size?: number;
   imageSize?: number;
   layers?: number;
@@ -45,6 +46,8 @@ export type WebRecIn = {
   urls?: string[];
   ports?: number[];
   status?: string;
+  public?: boolean;
+  host?: string;
 };
 
 export type GuestRecIn = {
@@ -93,6 +96,7 @@ export type ServicesReportInput = {
   merge?: boolean;
   containers?: ServiceRecIn[];
   node?: ServiceRecIn[];
+  services?: ServiceRecIn[];
   web?: WebRecIn[];
   vms?: GuestRecIn[];
   lxc?: GuestRecIn[];
@@ -124,6 +128,7 @@ function compactService(s: ServiceRecIn, reach: string | null): Record<string, u
   if (ports[0] != null) o.port = ports[0];
   if (ports.length > 1) o.ports = ports;
   if (s.url) o.url = rewriteLocalHostUrl(s.url, reach);
+  if (s.cwd) o.cwd = String(s.cwd).slice(0, 255);
   if (s.size != null && s.size > 0) o.size = s.size;
   if (s.imageSize != null && s.imageSize > 0) o.imageSize = s.imageSize;
   if (s.layers != null && s.layers > 0) o.layers = s.layers;
@@ -149,6 +154,8 @@ function compactWeb(w: WebRecIn): Record<string, string | number | string[] | nu
   if (urls.length) o.urls = urls;
   if (ports.length) o.ports = ports;
   if (w.status) o.status = w.status;
+  if (w.public === true) o.public = 1;
+  if (w.host) o.host = String(w.host).slice(0, 128);
   return o;
 }
 
@@ -324,6 +331,7 @@ function applyList<T>(
 export type ServicesReportResult = {
   containers: number;
   node: number;
+  services: number;
   web: number;
   vms: number;
   lxc: number;
@@ -350,13 +358,14 @@ export async function applyServicesReport(db: Db, input: ServicesReportInput): P
   if (
     input.containers === undefined &&
     input.node === undefined &&
+    input.services === undefined &&
     input.web === undefined &&
     input.vms === undefined &&
     input.lxc === undefined &&
     input.databases === undefined &&
     input.projects === undefined
   ) {
-    throw new ServicesReportError("Report a containers, node, web, vms, lxc, databases or projects list.");
+    throw new ServicesReportError("Report a containers, node, services, web, vms, lxc, databases or projects list.");
   }
   const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
   const merge = input.merge === true;
@@ -366,6 +375,7 @@ export async function applyServicesReport(db: Db, input: ServicesReportInput): P
   );
   const containers = applyList(next, "containers", input.containers, merge, (s) => compactService(s, reach), existingServices, (x) => String(x.name ?? "").toLowerCase());
   const node = applyList(next, "node", input.node, merge, (s) => compactService(s, reach), existingServices, (x) => String(x.name ?? "").toLowerCase());
+  const services = applyList(next, "services", input.services, merge, (s) => compactService(s, reach), existingServices, (x) => String(x.name ?? "").toLowerCase());
   const web = applyList(next, "web", input.web, merge, (w) => compactWebAt(w, reach), existingWeb, (x) => String(x.label ?? x.name ?? "").toLowerCase());
   const vms = applyList(next, "vms", input.vms, merge, compactGuest, existingGuests, (x) => String(x.vmid ?? ""));
   const lxc = applyList(next, "lxc", input.lxc, merge, compactGuest, existingGuests, (x) => String(x.vmid ?? ""));
@@ -389,5 +399,5 @@ export async function applyServicesReport(db: Db, input: ServicesReportInput): P
     mergeProjectRecords,
   );
   await db.update(items).set({ attributes: next }).where(eq(items.id, input.itemId));
-  return { containers, node, web, vms, lxc, databases, projects };
+  return { containers, node, services, web, vms, lxc, databases, projects };
 }

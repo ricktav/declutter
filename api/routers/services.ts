@@ -23,6 +23,7 @@ const rec = z.object({
   layers: z.number().int().nonnegative().max(10_000).optional(),
   created: z.string().max(32).optional(),
   mounts: z.array(mountRec).max(32).optional(),
+  cwd: z.string().max(255).optional(),
 });
 const webRec = z.object({
   label: z.string().min(1).max(64),
@@ -31,6 +32,8 @@ const webRec = z.object({
   urls: z.array(z.string().max(255)).max(32).optional(),
   ports: z.array(z.number().int().positive().max(65535)).max(32).optional(),
   status: z.string().max(32).optional(),
+  public: z.boolean().optional(),
+  host: z.string().max(128).optional(),
 });
 const guestRec = z.object({
   vmid: z.number().int().nonnegative().max(999_999),
@@ -95,6 +98,7 @@ export const servicesRouter = createRouter({
           merge: z.boolean().optional(),
           containers: z.array(rec).max(200).optional(),
           node: z.array(rec).max(100).optional(),
+          services: z.array(rec).max(200).optional(),
           web: z.array(webRec).max(100).optional(),
           vms: z.array(guestRec).max(100).optional(),
           lxc: z.array(guestRec).max(100).optional(),
@@ -105,12 +109,13 @@ export const servicesRouter = createRouter({
           (v) =>
             v.containers !== undefined ||
             v.node !== undefined ||
+            v.services !== undefined ||
             v.web !== undefined ||
             v.vms !== undefined ||
             v.lxc !== undefined ||
             v.databases !== undefined ||
             v.projects !== undefined,
-          { message: "Report a containers, node, web, vms, lxc, databases or projects list." },
+          { message: "Report a containers, node, services, web, vms, lxc, databases or projects list." },
         ),
     )
     .mutation(async ({ input }) => {
@@ -127,6 +132,7 @@ export const servicesRouter = createRouter({
             merge: input.merge === true,
             containers: result.containers,
             node: result.node,
+            services: result.services,
             web: result.web,
             vms: result.vms,
             lxc: result.lxc,

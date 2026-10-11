@@ -30,7 +30,7 @@ describe("services.report", () => {
         { name: "caddy", status: "running" },
       ],
     });
-    expect(first).toEqual({ containers: 2, node: 0, web: 0, vms: 0, lxc: 0, databases: 0, projects: 0 });
+    expect(first).toEqual({ containers: 2, node: 0, services: 0, web: 0, vms: 0, lxc: 0, databases: 0, projects: 0 });
     const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
     expect(JSON.parse(String(row.attributes?.containers))).toEqual([
       { name: "nginx", status: "running", port: 80 },
@@ -187,6 +187,25 @@ describe("services.report", () => {
         tokens: 1_200_000,
         updatedAt: "2026-10-10",
       }),
+    ]);
+  });
+
+  it("merges launchd services and marks public web", async () => {
+    const { houseId, pc } = await seed();
+    const c = callerFor(houseId);
+    await c.services.report({
+      itemId: pc,
+      source: "local",
+      merge: true,
+      services: [{ name: "nl.homebase.workbench", status: "ok", image: "/usr/bin/node", cwd: "/Volumes/T7/declutter", port: 3001 }],
+      web: [{ label: "nl.homebase.workbench", url: "http://10.50.0.102:3001/", port: 3001, status: "ok", public: true, host: "home.example" }],
+    });
+    const [row] = await getTestDb().select().from(items).where(eq(items.id, pc));
+    expect(JSON.parse(String(row.attributes?.services))).toEqual([
+      expect.objectContaining({ name: "nl.homebase.workbench", status: "ok", cwd: "/Volumes/T7/declutter", port: 3001 }),
+    ]);
+    expect(JSON.parse(String(row.attributes?.web))).toEqual([
+      expect.objectContaining({ label: "nl.homebase.workbench", public: 1, host: "home.example", port: 3001 }),
     ]);
   });
 
