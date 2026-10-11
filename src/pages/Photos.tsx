@@ -11,6 +11,7 @@ import { usePersistedState } from "@/hooks/use-persisted-state";
 import { AttachPhotoDialog, type AttachTarget } from "@/components/AttachPhotoDialog";
 import { PhotoPlaceDialog, type PlaceResult, type PlaceTarget } from "@/components/PhotoPlaceDialog";
 import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
+import { useHouse } from "@/context/house";
 import { cn } from "@/lib/utils";
 import type { PhotoCamera } from "@db/schema";
 
@@ -336,9 +337,10 @@ function FullImage({ storageKey }: { storageKey: string }) {
  * location by default, since that's usually how you'd go looking for "the
  * photo of that thing in the living room" rather than by item name. */
 export default function PhotosPage() {
+  const { houseId } = useHouse();
   const photos = trpc.photos.listAll.useQuery();
   const houses = trpc.houses.list.useQuery();
-  const rooms = trpc.rooms.list.useQuery(); // the session house's rooms, for a capture's "Place on the plan"
+  const rooms = trpc.rooms.list.useQuery({ houseId });
   const areas = trpc.areas.list.useQuery();
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = usePersistedState<SortBy>("photos.sortBy", "location");
@@ -385,15 +387,24 @@ export default function PhotosPage() {
         .join(" ")
     );
 
+  const inHouse = useMemo(() => {
+    return (photos.data ?? []).filter((p) => {
+      // inbox leftovers and photos with no house belong in Inbox, not here
+      if (p.source === "capture" || p.houseId == null) return false;
+      if (houseId != null && p.houseId !== houseId) return false;
+      return true;
+    });
+  }, [photos.data, houseId]);
+
   // One placementSummary call for every Thing on the page (never one per
   // tile). The ids come from the whole list, not the filtered one, so typing
   // in the search box does not start a new query each keystroke.
   const itemIds = useMemo(
     () =>
-      [...new Set((photos.data ?? []).flatMap((p) => (p.itemId != null ? [p.itemId] : [])))]
+      [...new Set(inHouse.flatMap((p) => (p.itemId != null ? [p.itemId] : [])))]
         .sort((a, b) => a - b)
         .slice(0, 500), // placementSummary takes at most 500 ids; Things past that get no badge
-    [photos.data]
+    [inHouse]
   );
   const summary = trpc.items.placementSummary.useQuery(
     { itemIds },
@@ -408,22 +419,17 @@ export default function PhotosPage() {
   const roomOptions = useMemo(() => {
     const map = new Map<number, { id: number; name: string; floor: string | null }>();
     for (const r of rooms.data ?? []) map.set(r.id, { id: r.id, name: r.name, floor: r.floor });
-    for (const p of photos.data ?? []) {
-      if (p.roomId != null && !map.has(p.roomId)) {
-        map.set(p.roomId, { id: p.roomId, name: p.roomName ?? `Room #${p.roomId}`, floor: p.floor });
-      }
-    }
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [rooms.data, photos.data]);
+  }, [rooms.data]);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
-    return (photos.data ?? []).filter((p) => {
+    const roomOk = roomFilter != null && roomOptions.some((r) => r.id === roomFilter) ? roomFilter : null;
+    return inHouse.filter((p) => {
       if (areaFilter != null && p.areaId !== areaFilter) return false;
       if (noPlace) {
-        // inbox captures, plus photos that have neither their own Place nor a Thing's
-        if (p.source !== "capture" && (p.photoRoomId != null || p.roomId != null)) return false;
-      } else if (roomFilter != null && p.roomId !== roomFilter) return false;
+        if (p.photoRoomId != null || p.roomId != null) return false;
+      } else if (roomOk != null && p.roomId !== roomOk) return false;
       if (!showCutouts && p.isCutout) return false;
       if (notPlaced) {
         // only Things that still lack a pin or a spot on the plan; this shows
@@ -441,7 +447,7 @@ export default function PhotosPage() {
         (p.areaName ?? "").toLowerCase().includes(query)
       );
     });
-  }, [photos.data, q, showObjects, showCutouts, notPlaced, noPlace, placementOf, roomFilter, areaFilter]);
+  }, [inHouse, q, showObjects, showCutouts, notPlaced, noPlace, placementOf, roomFilter, areaFilter, roomOptions]);
   const roomFilterName =
     roomFilter != null
       ? (roomOptions.find((r) => r.id === roomFilter)?.name ??
@@ -478,11 +484,11 @@ export default function PhotosPage() {
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Photos</h1>
         <span className="font-data text-sm text-muted-foreground">
-          {filtered.length} of {photos.data?.length ?? 0}
+          {filtered.length} of {inHouse.length}
         </span>
       </div>
       <p className="text-sm text-muted-foreground mt-1">
-        Every photo in the system — pinned to an item, confirmed to a location, or still sitting in the inbox.
+        Photos with a Place in {houseId != null ? "this house" : "any house"}. Inbox still holds captures with no house yet.
       </p>
 
       <div className="flex flex-wrap items-center gap-3 mt-5">
@@ -621,8 +627,8 @@ export default function PhotosPage() {
         ))}
         {filtered.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
-            {photos.data?.length === 0
-              ? "No photos yet — pin items on photos or add one from an item's page."
+            {inHouse.length === 0
+              ? "No photos in this house — unplaced captures stay in Inbox."
               : notPlaced && itemIds.length > 0 && summary.isError
                 ? `Could not check placement: ${summary.error.message}`
                 : notPlaced && itemIds.length > 0 && !(summary.isSuccess && !summary.isPlaceholderData)

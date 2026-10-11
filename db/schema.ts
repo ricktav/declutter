@@ -343,9 +343,13 @@ export const captures = mysqlTable(
     exifGps: json("exifGps").$type<{ lat: number; lng: number } | null>(),
     status: varchar("status", { length: 32 }).$type<"pending" | "triaged" | "dismissed" | "processed">().notNull().default("pending"),
     suggestion: json("suggestion").$type<TriageSuggestion>(),
+    // session house when the capture landed (or a later house-only assign).
+    // A room still lives on the location photo; this lets Inbox keep a house
+    // before anyone picks a Place.
+    houseId: bigint("houseId", { mode: "number", unsigned: true }),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
-  (t) => [index("captures_hash_idx").on(t.contentHash)],
+  (t) => [index("captures_hash_idx").on(t.contentHash), index("captures_house_idx").on(t.houseId)],
 );
 
 export interface TriageSpottedItem {

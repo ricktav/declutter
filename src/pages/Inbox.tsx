@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { CaptureBar } from "@/components/CaptureBar";
@@ -16,6 +16,7 @@ import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { useZoomable } from "@/hooks/use-zoomable";
 import { isGeojsonFile } from "@/lib/geojsonFloor";
 import { PhotoPlaceDialog, type PlaceTarget } from "@/components/PhotoPlaceDialog";
+import { HouseRoomFields } from "@/components/HouseRoomFields";
 import { useHouse } from "@/context/house";
 import {
   Dialog,
@@ -45,6 +46,9 @@ import {
   Copy,
   Pencil,
   Home,
+  Undo2,
+  FolderInput,
+  EyeOff,
 } from "lucide-react";
 import type { Capture, TriageSuggestion } from "@db/schema";
 
@@ -53,6 +57,7 @@ type InboxCapture = Capture & {
   photoRoomId: number | null;
   roomName: string | null;
   houseId: number | null;
+  houseName: string | null;
   hasCamera: boolean;
 };
 
@@ -497,10 +502,14 @@ function TriageCard({
   capture,
   onZoom,
   onPlace,
+  selected,
+  onToggle,
 }: {
   capture: InboxCapture;
   onZoom: (storageKey: string, captureId: number, isPending: boolean) => void;
   onPlace: (c: InboxCapture) => void;
+  selected?: boolean;
+  onToggle?: () => void;
 }) {
   const utils = trpc.useUtils();
   const s = capture.suggestion;
@@ -527,8 +536,10 @@ function TriageCard({
   const [aiError, setAiError] = useState<string | null>(null);
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
   const [detectOpen, setDetectOpen] = useState(false);
+  const [geoHouseId, setGeoHouseId] = useState<number | null>(houseId);
   const [geoRoomId, setGeoRoomId] = useState<number | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [fileHouseId, setFileHouseId] = useState<number | null>(houseId);
 
   const triage = trpc.inbox.triage.useMutation({
     onSuccess: (res) => {
@@ -583,6 +594,15 @@ function TriageCard({
   return (
     <div className="rounded-lg border border-border bg-white p-4">
       <div className="flex items-start gap-3">
+        {onToggle && (
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 shrink-0"
+            checked={!!selected}
+            onChange={onToggle}
+            aria-label={`Select capture ${capture.id}`}
+          />
+        )}
         <KindIcon className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
         <div className="flex-1 min-w-0">
           {(capture.url || capture.rawText || capture.kind !== "image") && (
@@ -600,7 +620,13 @@ function TriageCard({
             <div className="mt-2 flex items-start gap-3">
               <ZoomableGeojson storageKey={capture.storageKey} />
               <div className="flex flex-col gap-1.5 flex-1 max-w-xs">
-                <RoomPicker value={geoRoomId} onChange={setGeoRoomId} houseId={houseId ?? undefined} />
+                <HouseRoomFields
+                  houseId={geoHouseId}
+                  roomId={geoRoomId}
+                  onHouse={setGeoHouseId}
+                  onRoom={setGeoRoomId}
+                  allowNone={false}
+                />
                 <div className="text-[11px] text-muted-foreground">
                   Pick the room this scan belongs to, or type a new name
                 </div>
@@ -746,7 +772,16 @@ function TriageCard({
           <label className="block mt-2">
             <span className="micro-label text-muted-foreground">Location (applies to every new item above)</span>
             <div className="mt-0.5">
-              <RoomPicker value={roomId} onChange={setRoomId} houseId={houseId ?? undefined} allowNone />
+              <HouseRoomFields
+                houseId={fileHouseId}
+                roomId={roomId}
+                onHouse={(id) => {
+                  setFileHouseId(id);
+                  if (id == null) setRoomId(null);
+                }}
+                onRoom={setRoomId}
+                allowNone
+              />
             </div>
           </label>
 
@@ -760,6 +795,7 @@ function TriageCard({
                 acceptMany.mutate({
                   id: capture.id,
                   roomId,
+                  houseId: fileHouseId,
                   items: rows.map((r) => ({
                     areaId: r.areaId ?? 0,
                     itemId: r.matchedId,
@@ -868,8 +904,71 @@ function CompareModal({
   );
 }
 
+function DismissedCard({
+  capture,
+  selected,
+  onToggle,
+  onRestore,
+  restorePending,
+  onPlace,
+}: {
+  capture: InboxCapture;
+  selected: boolean;
+  onToggle: () => void;
+  onRestore: () => void;
+  restorePending: boolean;
+  onPlace: (c: InboxCapture) => void;
+}) {
+  const KindIcon = KIND_ICONS[capture.kind];
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-border bg-white p-3">
+      <input
+        type="checkbox"
+        className="mt-1 h-4 w-4 shrink-0"
+        checked={selected}
+        onChange={onToggle}
+        aria-label={`Select capture ${capture.id}`}
+      />
+      <KindIcon className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px]">{capture.rawText || capture.url || capture.kind}</div>
+        <div className="font-data text-[11px] text-muted-foreground">
+          {capture.houseName ?? "no house"}
+          {capture.roomName ? ` · ${capture.roomName}` : ""}
+          {" · "}
+          {timeAgo(capture.createdAt)}
+        </div>
+        <CapturePlaceButton capture={capture} onPick={onPlace} compact />
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 shrink-0 text-[12px]"
+        disabled={restorePending}
+        onClick={onRestore}
+      >
+        <Undo2 className="mr-1 h-3.5 w-3.5" />
+        Restore
+      </Button>
+    </div>
+  );
+}
+
 export default function InboxPage() {
-  const captures = trpc.inbox.list.useQuery();
+  const { houseId } = useHouse();
+  const [unknownRooms, setUnknownRooms] = useState(false);
+  const [hidden, setHidden] = useState(false);
+  const [roomFilter, setRoomFilter] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignHouse, setAssignHouse] = useState<number | null>(houseId);
+  const [assignRoom, setAssignRoom] = useState<number | null>(null);
+  const captures = trpc.inbox.list.useQuery({
+    houseId,
+    includeUnknown: unknownRooms || houseId == null,
+    view: hidden ? "dismissed" : "open",
+  });
+  const rooms = trpc.rooms.list.useQuery({ houseId });
   const [placeTarget, setPlaceTarget] = useState<PlaceTarget | null>(null);
   const [placeNote, setPlaceNote] = useState<string | null>(null);
   useEffect(() => {
@@ -877,11 +976,39 @@ export default function InboxPage() {
     const t = setTimeout(() => setPlaceNote(null), 4000);
     return () => clearTimeout(t);
   }, [placeNote]);
-  const pending = (captures.data ?? []).filter((c) => c.status === "pending");
-  // dismissed means gone - showing it anyway (just greyed out) defeats the
-  // point of dismissing something, so Processed only shows statuses someone
-  // might still want to look back on
-  const done = (captures.data ?? []).filter((c) => c.status !== "pending" && c.status !== "dismissed");
+  useEffect(() => {
+    setSelected(new Set());
+    setRoomFilter(null);
+    setAssignHouse(houseId);
+    setAssignRoom(null);
+  }, [houseId, hidden, unknownRooms]);
+
+  const visible = useMemo(() => {
+    const rows = captures.data ?? [];
+    if (roomFilter == null) return rows;
+    return rows.filter((c) => c.photoRoomId === roomFilter);
+  }, [captures.data, roomFilter]);
+  const pending = visible.filter((c) => c.status === "pending");
+  const done = visible.filter((c) => c.status !== "pending" && c.status !== "dismissed");
+  const dismissed = visible.filter((c) => c.status === "dismissed");
+  const listIds = (hidden ? dismissed : [...pending, ...done]).map((c) => c.id);
+  const allSelected = listIds.length > 0 && listIds.every((id) => selected.has(id));
+  const toggleAll = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) for (const id of listIds) next.delete(id);
+      else for (const id of listIds) next.add(id);
+      return next;
+    });
+  };
+  const toggleOne = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [lightbox, setLightbox] = useState<{ storageKey: string; captureId: number; isPending: boolean } | null>(
     null,
   );
@@ -893,6 +1020,12 @@ export default function InboxPage() {
     setLightbox({ storageKey, captureId, isPending });
 
   const utils = trpc.useUtils();
+  const refresh = () => {
+    utils.inbox.list.invalidate();
+    utils.photos.listAll.invalidate();
+    utils.rooms.list.invalidate();
+    setSelected(new Set());
+  };
   const [mergeResult, setMergeResult] = useState<string | null>(null);
   const mergeDuplicates = trpc.inbox.mergeDuplicates.useMutation({
     onSuccess: (res) => {
@@ -909,9 +1042,24 @@ export default function InboxPage() {
       );
     },
   });
+  const dismissMany = trpc.inbox.dismissMany.useMutation({ onSuccess: refresh });
+  const restore = trpc.inbox.restore.useMutation({ onSuccess: refresh });
+  const assignPlace = trpc.inbox.assignPlace.useMutation({
+    onSuccess: (res) => {
+      refresh();
+      setAssignOpen(false);
+      setPlaceNote(
+        res.roomId != null
+          ? `Place set on ${res.count} item${res.count === 1 ? "" : "s"}.`
+          : `House set on ${res.count} item${res.count === 1 ? "" : "s"}.`,
+      );
+    },
+  });
+  const batchIds = [...selected];
+  const batchCount = batchIds.length;
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8">
+    <div className="max-w-3xl mx-auto px-6 py-8 pb-24">
       <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
       <p className="text-sm text-muted-foreground mt-1">
         Drop anything here. AI triage proposes where it belongs — you confirm, it files.
@@ -922,17 +1070,142 @@ export default function InboxPage() {
         <CaptureBar />
       </div>
 
+      <div className="mt-5 flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          Place
+          <select
+            className="rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
+            value={roomFilter ?? ""}
+            onChange={(e) => setRoomFilter(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">All Places</option>
+            {(rooms.data ?? []).map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.floor ? `${r.name} · ${r.floor}` : r.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {houseId != null && (
+          <label
+            className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
+            title="Also show captures with no house or Place yet"
+          >
+            <input type="checkbox" checked={unknownRooms} onChange={(e) => setUnknownRooms(e.target.checked)} />
+            Unknown rooms
+          </label>
+        )}
+        <button
+          type="button"
+          aria-pressed={hidden}
+          onClick={() => setHidden((v) => !v)}
+          className={cn(
+            "rounded-full border px-2.5 py-1 text-[12px]",
+            hidden
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-white text-muted-foreground hover:text-foreground",
+          )}
+          title="Captures you dismissed with X"
+        >
+          <EyeOff className="mr-1 inline h-3 w-3" />
+          Hidden
+        </button>
+        {listIds.length > 0 && (
+          <label className="ml-auto flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none">
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all" />
+            Select all
+          </label>
+        )}
+      </div>
+
+      {batchCount > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-md border border-border bg-accent/40 px-3 py-2 text-[13px]">
+          <span className="font-medium">{batchCount} selected</span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[12px]"
+            onClick={() => {
+              setAssignHouse(houseId);
+              setAssignRoom(null);
+              setAssignOpen(true);
+            }}
+          >
+            <FolderInput className="mr-1 h-3.5 w-3.5" /> Assign
+          </Button>
+          {hidden ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[12px]"
+              disabled={restore.isPending}
+              onClick={() => restore.mutate({ ids: batchIds })}
+            >
+              <Undo2 className="mr-1 h-3.5 w-3.5" /> Restore
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-[12px] text-destructive"
+              disabled={dismissMany.isPending}
+              onClick={() => dismissMany.mutate({ ids: batchIds })}
+            >
+              <X className="mr-1 h-3.5 w-3.5" /> Dismiss
+            </Button>
+          )}
+          {(assignPlace.isError || restore.isError || dismissMany.isError) && (
+            <span className="text-[12px] text-destructive">
+              {(assignPlace.error ?? restore.error ?? dismissMany.error)?.message}
+            </span>
+          )}
+        </div>
+      )}
+
+      {hidden ? (
+        <>
+          <h2 className="micro-label text-muted-foreground mt-8 mb-2">Hidden ({dismissed.length})</h2>
+          <div className="space-y-2">
+            {dismissed.length === 0 && (
+              <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
+                Nothing hidden.
+              </div>
+            )}
+            {dismissed.map((c) => (
+              <DismissedCard
+                key={c.id}
+                capture={c}
+                selected={selected.has(c.id)}
+                onToggle={() => toggleOne(c.id)}
+                restorePending={restore.isPending}
+                onRestore={() => restore.mutate({ ids: [c.id] })}
+                onPlace={(cap) => setPlaceTarget(placeTargetOf(cap))}
+              />
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
       <h2 className="micro-label text-muted-foreground mt-8 mb-2">
         Pending ({pending.length})
       </h2>
       <div className="space-y-3">
         {pending.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
-            Inbox zero. Nice.
+            {unknownRooms || houseId == null
+              ? "Inbox zero. Nice."
+              : "Nothing in this house. Turn on Unknown rooms or All houses to see unplaced captures."}
           </div>
         )}
         {pending.map((c) => (
-          <TriageCard key={c.id} capture={c} onZoom={openLightbox} onPlace={(cap) => setPlaceTarget(placeTargetOf(cap))} />
+          <TriageCard
+            key={c.id}
+            capture={c}
+            onZoom={openLightbox}
+            onPlace={(cap) => setPlaceTarget(placeTargetOf(cap))}
+            selected={selected.has(c.id)}
+            onToggle={() => toggleOne(c.id)}
+          />
         ))}
       </div>
 
@@ -969,7 +1242,10 @@ export default function InboxPage() {
           )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {done.slice(0, 24).map((c) => (
-              <div key={c.id} className="rounded-lg border border-border bg-white p-1.5">
+              <div key={c.id} className="relative rounded-lg border border-border bg-white p-1.5">
+                <label className="absolute top-2 left-2 z-10">
+                  <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} />
+                </label>
                 <div className="relative">
                   {c.kind === "image" && c.storageKey ? (
                     <button
@@ -993,6 +1269,45 @@ export default function InboxPage() {
           </div>
         </>
       )}
+        </>
+      )}
+
+      <Dialog open={assignOpen} onOpenChange={(o) => { if (!o) setAssignOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign {batchCount} item{batchCount === 1 ? "" : "s"}</DialogTitle>
+          </DialogHeader>
+          <HouseRoomFields
+            houseId={assignHouse}
+            roomId={assignRoom}
+            onHouse={setAssignHouse}
+            onRoom={setAssignRoom}
+            allowNone
+          />
+          <p className="text-[12px] text-muted-foreground">
+            A Place sets the house too. House only leaves the room for later.
+          </p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setAssignOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={assignPlace.isPending || assignHouse == null}
+              onClick={() => assignPlace.mutate({ ids: batchIds, houseId: assignHouse })}
+            >
+              House only
+            </Button>
+            <Button
+              size="sm"
+              disabled={assignPlace.isPending || assignRoom == null}
+              onClick={() => assignPlace.mutate({ ids: batchIds, roomId: assignRoom })}
+            >
+              Assign Place
+            </Button>
+          </div>
+          {assignPlace.isError && <p className="text-[12px] text-destructive">{assignPlace.error.message}</p>}
+        </DialogContent>
+      </Dialog>
 
       <ZoomOverlay
         open={!!lightbox}

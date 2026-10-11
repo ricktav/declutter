@@ -21,6 +21,8 @@ export interface CreateCaptureInput {
   exifGps?: { lat: number; lng: number } | null;
   /** who/what produced this capture, for the event log */
   source?: "user" | "telegram" | "system";
+  /** session house when it landed; null = unknown until someone assigns one */
+  houseId?: number | null;
 }
 
 /**
@@ -71,6 +73,7 @@ export async function createCapture(input: CreateCaptureInput): Promise<Capture>
       storageKey,
       contentHash,
       exifGps: input.exifGps ?? null,
+      houseId: input.houseId ?? null,
     })
     .$returningId();
 

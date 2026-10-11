@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
-import { RoomPicker } from "@/components/RoomPicker";
+import { HouseRoomFields } from "@/components/HouseRoomFields";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 /** The photo whose Place changes: a real photo (photos.setRoom), or an inbox
@@ -63,10 +63,12 @@ function PlaceBody({
 }) {
   const utils = trpc.useUtils();
   const { houseId: sessionHouseId } = useHouse();
-  // the chosen house only — never every Place, and not the photo's other house
-  const houseId = sessionHouseId ?? undefined;
-  const rooms = trpc.rooms.list.useQuery({ houseId: houseId ?? null }, { enabled: houseId != null });
   const storedRoomId = target.source === "photo" ? target.roomId : null;
+  const storedHouseId = target.source === "photo" ? target.houseId : null;
+  const [pickHouse, setPickHouse] = useState<number | null>(sessionHouseId ?? storedHouseId);
+  // header house when one is selected; otherwise the house picked in this dialog
+  const houseId = sessionHouseId ?? pickHouse ?? undefined;
+  const rooms = trpc.rooms.list.useQuery({ houseId: houseId ?? null }, { enabled: houseId != null });
   const [value, setValue] = useState<number | null>(storedRoomId);
   // remounts the picker so its text snaps back to the stored room after a failed save
   const [pickerKey, setPickerKey] = useState(0);
@@ -126,16 +128,23 @@ function PlaceBody({
           {target.source === "photo" && target.ofThing && " The Thing itself stays where it is."}
         </DialogDescription>
       </DialogHeader>
-      {houseId == null ? (
-        <p className="text-[12px] text-muted-foreground">Choose a house first (top bar).</p>
-      ) : (
-        <div className="flex items-center gap-2">
-          <div className="flex-1">
-            <RoomPicker key={pickerKey} value={value} onChange={pick} houseId={houseId} autoFocus />
-          </div>
-          {pending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+      <div className="flex items-start gap-2">
+        <div className="flex-1">
+          <HouseRoomFields
+            key={pickerKey}
+            houseId={houseId ?? null}
+            roomId={value}
+            onHouse={(id) => {
+              setPickHouse(id);
+              setValue(null);
+            }}
+            onRoom={pick}
+            allowNone={false}
+            autoFocus
+          />
         </div>
-      )}
+        {pending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground mt-1.5" />}
+      </div>
       {target.source === "photo" && target.roomId != null && (
         <div className="flex flex-wrap items-center gap-2 text-[12px]">
           {confirmClear ? (

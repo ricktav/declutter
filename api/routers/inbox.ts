@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { createHash } from "crypto";
-import { eq, desc, isNull, and, inArray, sql } from "drizzle-orm";
+import { eq, desc, isNull, and, inArray, sql, ne, asc } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, areas, items, itemLinks, photos, rooms, type TriageSuggestion, type CropBox, type RoomGeometry } from "@db/schema";
+import { captures, areas, items, itemLinks, photos, rooms, houses, type TriageSuggestion, type CropBox, type RoomGeometry } from "@db/schema";
 import { parseGeojsonFloor } from "../lib/geojsonFloor";
 import { type ScanPoly } from "../lib/scanMerge";
 import { mergeScanObjects, scanMeta, localDate } from "../lib/scanObjects";
@@ -19,7 +19,7 @@ import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 import { setItemLocation } from "../lib/location";
-import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture } from "../lib/photos";
+import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -239,29 +239,30 @@ function providerErrorDetail(err: unknown): string | null {
   }
 }
 
-async function listCapturesWithPlace() {
+type ListCapturesOpts = {
+  houseId?: number | null;
+  includeUnknown?: boolean;
+  view?: "open" | "dismissed" | "all";
+};
+
+async function listCapturesWithPlace(opts: ListCapturesOpts = {}) {
   const db = getDb();
-  const rows = await db.select().from(captures).orderBy(desc(captures.createdAt)).limit(100);
+  const view = opts.view ?? "all";
+  const statusWhere =
+    view === "dismissed" ? eq(captures.status, "dismissed") : view === "open" ? ne(captures.status, "dismissed") : undefined;
+  const rows = await db.select().from(captures).where(statusWhere).orderBy(desc(captures.createdAt)).limit(200);
   const imageIds = rows.filter((c) => c.kind === "image").map((c) => c.id);
-  if (!imageIds.length) {
-    return rows.map((c) => ({
-      ...c,
-      photoId: null as number | null,
-      photoRoomId: null as number | null,
-      roomName: null as string | null,
-      houseId: null as number | null,
-      hasCamera: false,
-    }));
-  }
-  const locs = await db
-    .select({
-      id: photos.id,
-      sourceCaptureId: photos.sourceCaptureId,
-      roomId: photos.roomId,
-      camera: photos.camera,
-    })
-    .from(photos)
-    .where(and(inArray(photos.sourceCaptureId, imageIds), isNull(photos.itemId)));
+  const locs = imageIds.length
+    ? await db
+        .select({
+          id: photos.id,
+          sourceCaptureId: photos.sourceCaptureId,
+          roomId: photos.roomId,
+          camera: photos.camera,
+        })
+        .from(photos)
+        .where(and(inArray(photos.sourceCaptureId, imageIds), isNull(photos.itemId)))
+    : [];
   const locBy = new Map<number, (typeof locs)[number]>();
   for (const l of locs) {
     if (l.sourceCaptureId == null) continue;
@@ -273,25 +274,56 @@ async function listCapturesWithPlace() {
     ? await db.select({ id: rooms.id, name: rooms.name, houseId: rooms.houseId }).from(rooms).where(inArray(rooms.id, roomIds))
     : [];
   const roomBy = new Map(roomRows.map((r) => [r.id, r]));
-  return rows.map((c) => {
+  const houseIds = [
+    ...new Set(
+      [...roomRows.map((r) => r.houseId), ...rows.map((c) => c.houseId)].filter((id): id is number => id != null),
+    ),
+  ];
+  const houseRows = houseIds.length
+    ? await db.select({ id: houses.id, name: houses.name }).from(houses).where(inArray(houses.id, houseIds))
+    : [];
+  const houseBy = new Map(houseRows.map((h) => [h.id, h]));
+  const mapped = rows.map((c) => {
     const loc = locBy.get(c.id);
     const room = loc?.roomId != null ? roomBy.get(loc.roomId) : undefined;
+    const houseId = room?.houseId ?? c.houseId ?? null;
     return {
       ...c,
       photoId: loc?.id ?? null,
       photoRoomId: loc?.roomId ?? null,
       roomName: room?.name ?? null,
-      houseId: room?.houseId ?? null,
+      houseId,
+      houseName: houseId != null ? (houseBy.get(houseId)?.name ?? null) : null,
       hasCamera: loc?.camera != null,
     };
   });
+  if (opts.houseId == null) return mapped;
+  const includeUnknown = opts.includeUnknown === true;
+  return mapped.filter((c) => c.houseId === opts.houseId || (includeUnknown && c.houseId == null));
 }
 
 export const inboxRouter = createRouter({
   /** Newest first. Image rows carry the location Photo's Place when one exists
-   * (`photoId`, `photoRoomId`, `roomName`, `houseId`, `hasCamera`) so Inbox
-   * can set or move it without going to Photos. */
-  list: procedure.query(() => listCapturesWithPlace()),
+   * (`photoId`, `photoRoomId`, `roomName`, `houseId`, `houseName`, `hasCamera`) so Inbox
+   * can set or move it without going to Photos. No input (Flow / iOS) lists
+   * every status; Workbench passes `view` / `houseId` / `includeUnknown`. */
+  list: procedure
+    .input(
+      z
+        .object({
+          houseId: z.number().nullable().optional(),
+          includeUnknown: z.boolean().optional(),
+          view: z.enum(["open", "dismissed", "all"]).optional(),
+        })
+        .optional(),
+    )
+    .query(({ input }) =>
+      listCapturesWithPlace({
+        houseId: input?.houseId,
+        includeUnknown: input?.includeUnknown,
+        view: input?.view,
+      }),
+    ),
 
   create: procedure
     .input(
@@ -306,7 +338,7 @@ export const inboxRouter = createRouter({
         exifGps: z.object({ lat: z.number(), lng: z.number() }).nullable().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const row = await createCapture({
         kind: input.kind,
         rawText: input.rawText,
@@ -316,6 +348,7 @@ export const inboxRouter = createRouter({
         contentType: input.mimeType,
         exifGps: input.exifGps,
         source: "user",
+        houseId: ctx.houseId,
       });
       return { id: row.id, storageKey: row.storageKey };
     }),
@@ -933,6 +966,101 @@ export const inboxRouter = createRouter({
     });
     return { ok: true };
   }),
+
+  dismissMany: procedure
+    .input(z.object({ ids: z.array(z.number()).min(1).max(100) }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const rows = await db.select({ id: captures.id }).from(captures).where(inArray(captures.id, input.ids));
+      for (const row of rows) {
+        await db.update(captures).set({ status: "dismissed" }).where(eq(captures.id, row.id));
+        await logEvent({
+          entityType: "capture",
+          entityId: row.id,
+          action: "dismissed",
+          summary: `Capture #${row.id} dismissed`,
+        });
+      }
+      return { ok: true as const, count: rows.length };
+    }),
+
+  /** Put dismissed captures back in Pending. */
+  restore: procedure
+    .input(z.object({ ids: z.array(z.number()).min(1).max(100) }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const rows = await db.select({ id: captures.id, status: captures.status }).from(captures).where(inArray(captures.id, input.ids));
+      let count = 0;
+      for (const row of rows) {
+        if (row.status !== "dismissed") continue;
+        await db.update(captures).set({ status: "pending" }).where(eq(captures.id, row.id));
+        await logEvent({
+          entityType: "capture",
+          entityId: row.id,
+          action: "restored",
+          summary: `Capture #${row.id} restored to pending`,
+        });
+        count += 1;
+      }
+      return { ok: true as const, count };
+    }),
+
+  /** Stamp a house and/or Place on several inbox rows. Room wins (and sets
+   * the house). House alone leaves the room for later. Image captures get a
+   * location photo when a room is given. */
+  assignPlace: procedure
+    .input(
+      z
+        .object({
+          ids: z.array(z.number()).min(1).max(100),
+          houseId: z.number().nullable().optional(),
+          roomId: z.number().nullable().optional(),
+        })
+        .refine((v) => v.roomId != null || v.houseId != null, { message: "Pick a house or a Place." }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const room =
+        input.roomId != null ? await db.query.rooms.findFirst({ where: eq(rooms.id, input.roomId) }) : undefined;
+      if (input.roomId != null && !room) throw new TRPCError({ code: "BAD_REQUEST", message: "Place not found." });
+      const houseId = room?.houseId ?? input.houseId ?? null;
+      if (houseId == null) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a house or a Place." });
+      const [house] = await db.select({ id: houses.id, name: houses.name }).from(houses).where(eq(houses.id, houseId));
+      if (!house) throw new TRPCError({ code: "BAD_REQUEST", message: "House not found." });
+
+      const caps = await db.select().from(captures).where(inArray(captures.id, input.ids));
+      let count = 0;
+      for (const cap of caps) {
+        if (input.roomId != null && cap.kind === "image" && cap.storageKey) {
+          const { photoId } = await ensureLocationPhotoForCapture(db, cap.id, input.roomId);
+          const [photo] = await db.select().from(photos).where(eq(photos.id, photoId));
+          if (photo && photo.roomId !== input.roomId) await setPhotoRoom(db, { id: photoId, roomId: input.roomId });
+        } else if (input.roomId == null) {
+          const [loc] = await db
+            .select({ id: photos.id, roomId: photos.roomId })
+            .from(photos)
+            .where(and(eq(photos.sourceCaptureId, cap.id), isNull(photos.itemId)))
+            .orderBy(asc(photos.id))
+            .limit(1);
+          if (loc?.roomId != null) {
+            const [locRoom] = await db.select({ houseId: rooms.houseId }).from(rooms).where(eq(rooms.id, loc.roomId));
+            if (locRoom && locRoom.houseId !== houseId) await setPhotoRoom(db, { id: loc.id, roomId: null });
+          }
+        }
+        await db.update(captures).set({ houseId }).where(eq(captures.id, cap.id));
+        await logEvent({
+          entityType: "capture",
+          entityId: cap.id,
+          action: "placed",
+          summary: room
+            ? `Capture #${cap.id} Place set to ${room.name}`
+            : `Capture #${cap.id} house set to ${house.name}`,
+          payload: { houseId, roomId: input.roomId ?? null },
+        });
+        count += 1;
+      }
+      return { ok: true as const, count, houseId, roomId: input.roomId ?? null };
+    }),
 
   /** Hard-delete an inbox photo that was never filed as a Photo. */
   remove: procedure.input(z.object({ id: z.number() })).mutation(({ input }) => removeUnfiledCapture(getDb(), input.id)),
