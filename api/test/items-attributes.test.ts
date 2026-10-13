@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { areas, events, houses, items, relations } from "@db/schema";
 import { appRouter } from "../router";
+import { IP_REFRESHED_AT, isIpRecent } from "../lib/ipRefresh";
 import { getTestDb, resetTestDb } from "./db";
 
 const caller = () => appRouter.createCaller({ req: new Request("http://test.local/"), resHeaders: new Headers(), houseId: null });
@@ -125,6 +126,54 @@ describe("items.findAttributeDuplicates", () => {
     expect(saved.clashes).toHaveLength(1);
     const draft = await caller().items.findAttributeDuplicates({ itemId: a, attributes: { role: "nas" } });
     expect(draft.clashes).toHaveLength(0);
+  });
+});
+
+describe("IP refresh stamp", () => {
+  it("stamps a changed IP as recent, and leaves a stamp older than 24 hours stale", async () => {
+    const id = await makeItem({ role: "laptop", ip: "10.50.0.10" });
+    expect((await attrsOf(id))?.[IP_REFRESHED_AT]).toBeUndefined();
+
+    await caller().items.patchAttributes({ id, set: { ip: "10.50.0.11" } });
+    const fresh = (await attrsOf(id))?.[IP_REFRESHED_AT];
+    expect(typeof fresh).toBe("string");
+    expect(isIpRecent(String(fresh))).toBe(true);
+
+    const stale = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    await getTestDb().update(items).set({
+      attributes: { role: "laptop", ip: "10.50.0.11", [IP_REFRESHED_AT]: stale },
+    }).where(eq(items.id, id));
+    expect(isIpRecent(String((await attrsOf(id))?.[IP_REFRESHED_AT]))).toBe(false);
+
+    await caller().items.patchAttributes({ id, set: { model: "Air" } });
+    expect((await attrsOf(id))?.[IP_REFRESHED_AT]).toBe(stale);
+    expect(isIpRecent(String((await attrsOf(id))?.[IP_REFRESHED_AT]))).toBe(false);
+
+    await caller().items.update({
+      id,
+      attributes: { role: "laptop", ip: "10.50.0.11", model: "Air", [IP_REFRESHED_AT]: "2099-01-01T00:00:00.000Z" },
+    });
+    expect((await attrsOf(id))?.[IP_REFRESHED_AT]).toBe(stale);
+
+    await caller().items.update({ id, attributes: { role: "laptop", ip: "10.50.0.12", model: "Air" } });
+    expect(isIpRecent(String((await attrsOf(id))?.[IP_REFRESHED_AT]))).toBe(true);
+  });
+
+  it("stamps an IP set at create, ignores a client clock, and does not offer the stamp as a topic key", async () => {
+    const db = getTestDb();
+    const [{ id: areaId }] = await db.insert(areas).values({ slug: "computers", name: "Computers" }).$returningId();
+    const { id } = await caller().items.create({
+      areaId,
+      name: "NAS",
+      attributes: { ip: "10.50.0.5", [IP_REFRESHED_AT]: "2000-01-01T00:00:00.000Z" },
+      suggestLinks: false,
+    });
+    expect(isIpRecent(String((await attrsOf(id))?.[IP_REFRESHED_AT]))).toBe(true);
+    await caller().items.patchAttributes({ id, set: { [IP_REFRESHED_AT]: "2099-01-01T00:00:00.000Z" } });
+    expect(isIpRecent(String((await attrsOf(id))?.[IP_REFRESHED_AT]))).toBe(true);
+    const keys = await caller().items.attributeKeysForTopic({ areaId });
+    expect(keys.find((r) => r.key === IP_REFRESHED_AT)).toBeUndefined();
+    expect(keys.find((r) => r.key === "ip")?.values).toEqual([{ value: "10.50.0.", count: 1 }]);
   });
 });
 

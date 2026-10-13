@@ -44,6 +44,8 @@ import type { AttributeDef } from "@db/schema";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
 import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs";
+import { IP_REFRESHED_AT, ipRefreshedAt, isIpRecent } from "../../api/lib/ipRefresh";
+import { IpFreshDot } from "@/components/IpFreshDot";
 import { RatingStars } from "@/components/RatingStars";
 import { isMachineItem, looksLikeProxmox, parseRating, parseWeb, type Rating } from "@/lib/systemsAttrs";
 import { AttrListValue, compactJsonList, isJsonListAttr, jsonListAttrLabel, MACHINE_CORE_LIST_ATTRS, parsePortValues, PortLinks, prettyJsonList } from "@/components/AttrListValue";
@@ -59,6 +61,7 @@ function visibleItemAttrs(it: {
   status?: string;
 }): [string, string | number][] {
   const src = { ...(it.attributes ?? {}) };
+  delete src[IP_REFRESHED_AT];
   if (
     isMachineItem({
       attributes: it.attributes,
@@ -433,6 +436,7 @@ export default function ItemDetail() {
   const startEditAttrs = () => {
     const draft: Record<string, string> = {};
     for (const [k, v] of Object.entries(it.attributes ?? {})) {
+      if (k === IP_REFRESHED_AT) continue;
       draft[k] = isJsonListAttr(k) ? prettyJsonList(v) : String(v);
     }
     for (const d of defs) if (!(d.key in draft)) draft[d.key] = "";
@@ -880,6 +884,7 @@ export default function ItemDetail() {
                         ) : (
                           String(v)
                         )}
+                        {identityKind(k) === "ip" && <IpFreshDot recent={isIpRecent(ipRefreshedAt(it.attributes))} />}
                         {clash && (
                           <span className="ml-1.5 align-middle rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800">
                             duplicate

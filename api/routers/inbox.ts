@@ -23,6 +23,7 @@ import { clearTriageJobState, maybeAutoTriage, triageJobState } from "../lib/job
 import { setItemLocation } from "../lib/location";
 import { captureScope, promptInventory } from "../lib/aiContext";
 import { defaultAreaId } from "../lib/defaultTopic";
+import { stampIpRefresh } from "../lib/ipRefresh";
 import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom, WHOLE_SCENE_BOX } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
@@ -741,7 +742,7 @@ export const inboxRouter = createRouter({
                   areaId,
                   name: it.itemName,
                   description: cap.rawText?.slice(0, 500) ?? null,
-                  attributes: it.attributes ?? null,
+                  attributes: stampIpRefresh(null, it.attributes ?? null),
                   houseId: input.houseId ?? ctx.houseId ?? null,
                 })
                 .$returningId();
@@ -823,7 +824,7 @@ export const inboxRouter = createRouter({
             } else {
               if (it.attributes && Object.keys(it.attributes).length) {
                 const existing = await tx.query.items.findFirst({ where: eq(items.id, itemId) });
-                const merged = { ...(existing?.attributes ?? {}), ...it.attributes };
+                const merged = stampIpRefresh(existing?.attributes, { ...(existing?.attributes ?? {}), ...it.attributes });
                 await tx.update(items).set({ attributes: merged }).where(eq(items.id, itemId));
               }
               // an existing Thing is not re-photographed, but it is seen here

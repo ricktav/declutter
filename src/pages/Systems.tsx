@@ -29,6 +29,8 @@ import {
 } from "@/lib/systemsGraph";
 import { parseRating, type Importance, type Rating } from "@/lib/systemsAttrs";
 import { hostHref, portHref, STATUS_DOT } from "../../api/lib/serviceUrls";
+import { ipRefreshedAt, isIpRecent } from "../../api/lib/ipRefresh";
+import { IpFreshDot } from "@/components/IpFreshDot";
 
 type SimNode = SimulationNodeDatum & GraphNode;
 type SimLink = SimulationLinkDatum<SimNode> & { strength: number; cross?: boolean; tight?: boolean };
@@ -110,6 +112,14 @@ function runtimeChipLabel(k: string): string {
 }
 
 const HUB_TYPES = new Set(["center", "machine", "network", "other"]);
+
+/** The hub's own `ip` attribute, not a guest address stored on vms/lxc. */
+function itemIpRecent(node: { type: string; itemId?: number } | null | undefined, items: GraphItem[]): boolean {
+  if (!node || node.itemId == null) return false;
+  if (node.type !== "machine" && node.type !== "network" && node.type !== "other") return false;
+  return isIpRecent(ipRefreshedAt(items.find((it) => it.id === node.itemId)?.attributes));
+}
+
 const LEAF_TYPES = new Set(["service", "web", "vm", "lxc", "database", "project", "disk", "volume"]);
 
 function fitTransform(nodes: { x?: number; y?: number; radius: number; type: string }[], w: number, h: number) {
@@ -813,6 +823,7 @@ export default function SystemsPage() {
             {tooltip.node.lines.slice(0, 4).map((row) => (
               <div key={row.k} className="text-[#aaa] text-[0.85em] leading-relaxed">
                 {row.k}: {row.v}
+                {row.k === "ip" && <IpFreshDot recent={itemIpRecent(tooltip.node, graphItems)} />}
               </div>
             ))}
             {tooltip.node.tags.length > 0 && (
@@ -911,10 +922,17 @@ export default function SystemsPage() {
                       <a href={row.v} target="_blank" rel="noreferrer" className="text-[#4A90E2] underline">
                         {row.v}
                       </a>
-                    ) : row.k === "ip" && hostHref(row.v) ? (
-                      <a href={hostHref(row.v)!} target="_blank" rel="noreferrer" className="text-[#4A90E2] underline">
-                        {row.v}
-                      </a>
+                    ) : row.k === "ip" ? (
+                      <>
+                        {hostHref(row.v) ? (
+                          <a href={hostHref(row.v)!} target="_blank" rel="noreferrer" className="text-[#4A90E2] underline">
+                            {row.v}
+                          </a>
+                        ) : (
+                          row.v
+                        )}
+                        <IpFreshDot recent={itemIpRecent(selected, graphItems)} />
+                      </>
                     ) : row.k === "ports" ? (
                       <span className="inline-flex flex-wrap gap-x-1.5">
                         {row.v.split(/[\s,]+/).filter(Boolean).map((p) => {

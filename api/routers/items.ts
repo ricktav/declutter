@@ -17,6 +17,7 @@ import { placementFor, placementSummaryFor } from "../lib/placement";
 import { snapPosToWalls } from "../lib/snapToWall";
 import { commonIpv4Prefix, identityEntries, identityKind } from "../lib/identityAttrs";
 import { itemMatchesQuery } from "../../src/lib/itemSearch";
+import { IP_REFRESHED_AT, stampIpRefresh } from "../lib/ipRefresh";
 
 export const itemsRouter = createRouter({
   listByArea: procedure
@@ -223,6 +224,7 @@ export const itemsRouter = createRouter({
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const areaId = input.areaId ?? (await defaultAreaId(db));
+      const attributes = stampIpRefresh(null, input.attributes ?? null);
       // insert + location + event are atomic: a bad roomId must not leave an orphan item
       const id = await db.transaction(async (tx) => {
         const [{ id: newId }] = await tx
@@ -231,7 +233,7 @@ export const itemsRouter = createRouter({
             areaId,
             name: input.name,
             description: input.description ?? null,
-            attributes: input.attributes ?? null,
+            attributes,
             parentId: input.parentId ?? null,
             houseId: input.houseId ?? ctx.houseId ?? null,
             roomId: null,
@@ -245,7 +247,7 @@ export const itemsRouter = createRouter({
             entityId: newId,
             action: "created",
             summary: `Item "${input.name}" created`,
-            payload: { areaId, attributes: input.attributes },
+            payload: { areaId, attributes },
           },
           tx,
         );
@@ -377,13 +379,13 @@ export const itemsRouter = createRouter({
       const { id, attributes, pos, roomId, houseId, ...rest } = input;
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
-      if (attributes !== undefined) patch.attributes = attributes;
       if (pos !== undefined) patch.pos = pos as ItemPos | null;
 
       // fetch the pre-update row so the history entry can name what actually
       // changed (e.g. "renamed from X to Y") instead of just listing which
       // field keys were touched
       const before = await db.query.items.findFirst({ where: eq(items.id, id) });
+      if (attributes !== undefined) patch.attributes = stampIpRefresh(before?.attributes ?? null, attributes);
       const beforeRoomId = before?.roomId ?? null;
       const beforeHouseId = before?.houseId ?? null;
       // houseId alone moves the item, unplaced, into ANOTHER house; for the
@@ -559,6 +561,8 @@ export const itemsRouter = createRouter({
       const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
       const changed: string[] = [];
       for (const [key, value] of Object.entries(input.set)) {
+        // server-owned: set only when the IP set actually changes
+        if (key === IP_REFRESHED_AT) continue;
         if (value === null || value === "") {
           if (key in next) {
             delete next[key];
@@ -570,9 +574,10 @@ export const itemsRouter = createRouter({
         }
       }
       if (changed.length > 0) {
+        const stamped = stampIpRefresh(item.attributes, Object.keys(next).length > 0 ? next : null);
         await db
           .update(items)
-          .set({ attributes: Object.keys(next).length > 0 ? next : null })
+          .set({ attributes: stamped })
           .where(eq(items.id, input.id));
         await logEvent({
           entityType: "item",
@@ -581,6 +586,7 @@ export const itemsRouter = createRouter({
           summary: `Item "${item.name}" details: ${changed.join(", ")}`,
           payload: input.set,
         });
+        return { ok: true, attributes: stamped ?? {} };
       }
       return { ok: true, attributes: next };
     }),
@@ -604,7 +610,7 @@ export const itemsRouter = createRouter({
         if (!attrs || typeof attrs !== "object" || Array.isArray(attrs)) continue;
         for (const [rawKey, rawVal] of Object.entries(attrs)) {
           const key = rawKey.trim();
-          if (!key) continue;
+          if (!key || key === IP_REFRESHED_AT) continue;
           let rec = keys.get(key);
           if (!rec) {
             rec = { count: 0, values: new Map() };
