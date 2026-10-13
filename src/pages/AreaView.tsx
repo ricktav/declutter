@@ -24,6 +24,7 @@ import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
 import { isMachineItem } from "@/lib/systemsAttrs";
 import { isJsonListAttr, jsonListAttrLabel, MACHINE_CORE_LIST_ATTRS } from "@/components/AttrListValue";
 import { useHouse } from "@/context/house";
+import { itemMatchesQuery } from "@/lib/itemSearch";
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -43,20 +44,6 @@ function jsonListCount(v: unknown): number | null {
   } catch {
     return null;
   }
-}
-
-function itemMatchesQuery(
-  i: { name: string; attributes: Record<string, unknown> | null; room?: { name: string; floor: string | null } | null },
-  query: string,
-): boolean {
-  if (!query) return true;
-  if (i.name.toLowerCase().includes(query)) return true;
-  if ((i.room?.name ?? "").toLowerCase().includes(query)) return true;
-  if ((i.room?.floor ?? "").toLowerCase().includes(query)) return true;
-  for (const v of Object.values(i.attributes ?? {})) {
-    if (v != null && String(v).toLowerCase().includes(query)) return true;
-  }
-  return false;
 }
 
 function EditAreaDialog({ area }: { area: Area }) {
@@ -366,10 +353,9 @@ export default function AreaView() {
   }, [itemsList.data]);
 
   const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
     const machinesOnly = slug === "computers" && systems;
     return (itemsList.data ?? []).filter((i) => {
-      if (!itemMatchesQuery(i, query)) return false;
+      if (!itemMatchesQuery(i, q)) return false;
       if (placeFilter === "none") {
         if (i.roomId != null) return false;
       } else if (placeFilter && i.roomId !== Number(placeFilter)) {
@@ -459,7 +445,7 @@ export default function AreaView() {
       <div className="flex flex-wrap items-center gap-3 mt-5">
         <input
           className="w-64 rounded-md border border-input bg-white px-3 py-1.5 text-[13px]"
-          placeholder="Search name, Place, attributes…"
+          placeholder="Search Thing, note, Place, Decision…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />

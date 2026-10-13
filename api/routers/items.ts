@@ -16,6 +16,7 @@ import { coverPhotos, linkAsLegacy, photoAsLegacy, photosForItem } from "../lib/
 import { placementFor, placementSummaryFor } from "../lib/placement";
 import { snapPosToWalls } from "../lib/snapToWall";
 import { commonIpv4Prefix, identityEntries, identityKind } from "../lib/identityAttrs";
+import { itemMatchesQuery } from "../../src/lib/itemSearch";
 
 export const itemsRouter = createRouter({
   listByArea: procedure
@@ -77,6 +78,12 @@ export const itemsRouter = createRouter({
         includeArchived: z.boolean().default(false),
         houseId: z.number().nullable().optional(),
         roomId: z.number().optional(),
+        /**
+         * Optional. Blank or omitted returns the same list as before.
+         * Matches the Thing's own text (name, description, attributes, Decision)
+         * and its Place name. See itemMatchesQuery.
+         */
+        q: z.string().optional(),
       }),
     )
     .query(async ({ input, ctx }) => {
@@ -97,13 +104,15 @@ export const itemsRouter = createRouter({
       const areaById = new Map(allAreas.map((a) => [a.id, a]));
       const roomsById = await roomSummary(db, rows.map((r) => r.roomId).filter((x): x is number => x != null));
       const covers = await coverPhotos(db, rows.map((r) => r.id));
-      return rows.map((r) => ({
+      const listed = rows.map((r) => ({
         ...r,
         imageKey: covers.get(r.id)?.storageKey ?? null,
         areaName: areaById.get(r.areaId)?.name ?? null,
         areaSlug: areaById.get(r.areaId)?.slug ?? null,
         room: r.roomId != null ? (roomsById.get(r.roomId) ?? null) : null,
       }));
+      const q = input.q?.trim();
+      return q ? listed.filter((r) => itemMatchesQuery(r, q)) : listed;
     }),
 
   get: procedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
@@ -880,10 +889,10 @@ export const itemsRouter = createRouter({
     return { ok: true };
   }),
 
-  /** lightweight search for pickers / auto-linking. Defaults to the session house. */
   /** Name search in the database (names starting with the text first), scoped
    * to the session house. `fields` also matches attribute values (brand,
-   * serial, hostname, ...). */
+   * serial, hostname, ...), never attribute keys. Notes, Decisions, Places
+   * and workflow keys are matched by `listAll`'s `q` and the Workbench lists. */
   search: procedure
     .input(
       z.object({

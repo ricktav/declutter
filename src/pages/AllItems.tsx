@@ -13,6 +13,7 @@ import { RoomPicker } from "@/components/RoomPicker";
 import { AreaPicker } from "@/components/AreaPicker";
 import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
 import { useHouse } from "@/context/house";
+import { itemMatchesQuery } from "@/lib/itemSearch";
 
 type ItemRow = {
   id: number;
@@ -56,17 +57,10 @@ export default function AllItems() {
   }, [initialRoom]);
 
   const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
     return (items.data ?? []).filter((i) => {
       if (areaId != null && i.areaId !== areaId) return false;
       if (roomIds.length > 0 && (i.roomId == null || !roomIds.includes(i.roomId))) return false;
-      if (!query) return true;
-      return (
-        i.name.toLowerCase().includes(query) ||
-        (i.room?.name ?? "").toLowerCase().includes(query) ||
-        (i.room?.floor ?? "").toLowerCase().includes(query) ||
-        (i.areaName ?? "").toLowerCase().includes(query)
-      );
+      return itemMatchesQuery(i, q);
     });
   }, [items.data, q, areaId, roomIds]);
 
@@ -167,7 +161,7 @@ export default function AllItems() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <input
             className="w-full rounded-md border border-input bg-white pl-8 pr-3 py-1.5 text-[13px]"
-            placeholder="Search name, Place, kind…"
+            placeholder="Search Thing, note, Place, Decision…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />

@@ -82,6 +82,48 @@ describe("items.search", () => {
     expect((await callerFor(h2).items.search({ q: "c" })).map((r) => r.name)).toEqual(["coat"]);
     expect((await callerFor(h1).items.search({ q: "c", houseId: null })).map((r) => r.name)).toEqual(["coat"]);
   });
+
+  it("matches an attribute value and a description, and leaves a non-matching Thing out", async () => {
+    const { h1, areaId, keuken } = await seed();
+    const caller = callerFor(h1);
+    const { id: laptopId } = await caller.items.create({
+      areaId,
+      name: "laptop",
+      description: "spare charger in the drawer",
+      attributes: { serial: "SN-88421", "lab.notes": "wiped yesterday" },
+      roomId: keuken,
+      suggestLinks: false,
+    });
+    await caller.items.setDecision({ id: laptopId, decision: "donate" });
+    await caller.items.create({
+      areaId,
+      name: "lamp",
+      description: "brass",
+      attributes: { color: "brass" },
+      suggestLinks: false,
+    });
+
+    // Broad text goes through listAll's q. items.search stays the database
+    // name search (attribute values only with fields, never keys).
+    const names = async (q: string) => (await caller.items.listAll({ q })).map((r) => r.name);
+    expect(await names("SN-88421")).toEqual(["laptop"]);
+    expect(await names("charger")).toEqual(["laptop"]);
+    expect(await names("lab.notes")).toEqual(["laptop"]);
+    expect(await names("wiped")).toEqual(["laptop"]);
+    expect(await names("donate")).toEqual(["laptop"]);
+    expect(await names("keuken")).toEqual(["laptop"]);
+    expect(await names("brass")).toEqual(["lamp"]);
+    expect(await names("no-such-thing")).toEqual([]);
+    expect(await caller.items.search({ q: "SN-88421" })).toEqual([]);
+    expect((await caller.items.search({ q: "laptop" })).map((r) => r.name)).toEqual(["laptop"]);
+    expect((await caller.items.search({ q: "SN-88421", fields: true })).map((r) => r.name)).toEqual(["laptop"]);
+    expect(await caller.items.search({ q: "lab.notes", fields: true })).toEqual([]);
+
+    const listed = await caller.items.listAll({ q: "SN-88421" });
+    expect(listed.map((r) => r.name)).toEqual(["laptop"]);
+    expect(await caller.items.listAll({})).toHaveLength(2);
+    expect((await caller.items.listAll({ q: "  " })).map((r) => r.name).sort()).toEqual(["lamp", "laptop"]);
+  });
 });
 
 describe("items.create atomicity", () => {
