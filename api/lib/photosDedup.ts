@@ -1,5 +1,6 @@
 // Pure plan for scripts/photos-dedup.ts. No DB, no filestore, no @db
-// imports — the script hashes files and calls this. Apply is gated.
+// imports — the script hashes files and calls this. Apply is gated by
+// DEDUP_APPLY_ENABLED=true plus --apply --i-have-a-snapshot.
 //
 // Live dry-run of the first script (248 photos, 18 groups, 60 extras)
 // showed two holes this plan closes:
@@ -14,9 +15,12 @@
  * script can import this file without drizzle / @db path aliases. */
 export const DEDUP_WHOLE_SCENE_BOX = { xPct: 50, yPct: 50, wPct: 0, hPct: 0 } as const;
 
-/** Flip to true only after a DB snapshot. `--apply` still needs the CLI
- * flag and `--i-have-a-snapshot`. */
-export const DEDUP_APPLY_ENABLED = false;
+/** Must equal the string `true` in the environment. `--apply` still needs
+ * `--i-have-a-snapshot` after a DB snapshot. Read at call time so tests can
+ * flip it. */
+export function isDedupApplyEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.DEDUP_APPLY_ENABLED === "true";
+}
 
 export const APPLY_SNAPSHOT_FLAG = "--i-have-a-snapshot";
 
@@ -94,11 +98,11 @@ export function applyGuard(args: string[]): { mode: "dry-run" } | { mode: "block
   const wantsApply = args.includes("--apply") || args.includes("--write");
   if (!wantsApply) return { mode: "dry-run" };
   const snapshot =
-    "When you enable it: take a MySQL snapshot of declutter and a copy of uploads/, then set DEDUP_APPLY_ENABLED = true and pass --apply --i-have-a-snapshot.";
-  if (!DEDUP_APPLY_ENABLED) {
+    "When you enable it: take a MySQL snapshot of declutter and a copy of uploads/, then set DEDUP_APPLY_ENABLED=true and pass --apply --i-have-a-snapshot.";
+  if (!isDedupApplyEnabled()) {
     return {
       mode: "blocked",
-      message: ["photos-dedup --apply is not enabled yet (DEDUP_APPLY_ENABLED is false).", snapshot].join("\n"),
+      message: ["photos-dedup --apply is not enabled yet (DEDUP_APPLY_ENABLED is not 'true').", snapshot].join("\n"),
     };
   }
   if (!args.includes(APPLY_SNAPSHOT_FLAG)) {
@@ -114,22 +118,27 @@ export function applyGuard(args: string[]): { mode: "dry-run" } | { mode: "block
 }
 
 export type DedupApplyIo = {
+  /** DB writes only. Files are unlinked after this resolves (after commit). */
+  withTransaction: <T>(work: () => Promise<T>) => Promise<T>;
   createPin: (pin: PlannedPin) => Promise<void>;
   rePointPin: (move: RePointPin) => Promise<void>;
   removePhotoRow: (photoId: number) => Promise<void>;
   deleteFileIfUnused: (storageKey: string) => Promise<void>;
 };
 
-/** Pins first, then extra rows, then files. The I/O still refcounts files. */
+/** Pins first, then extra rows, inside one transaction; files only after commit.
+ * deleteFileIfUnused must still refcount (a capture, link, or remaining photo). */
 export async function applyPhotosDedupPlan(plan: PhotosDedupPlan, io: DedupApplyIo): Promise<void> {
-  if (!DEDUP_APPLY_ENABLED) {
+  if (!isDedupApplyEnabled()) {
     throw new Error(
-      "photos-dedup apply is not enabled (DEDUP_APPLY_ENABLED is false). Take a DB snapshot first.",
+      "photos-dedup apply is not enabled (DEDUP_APPLY_ENABLED is not 'true'). Take a DB snapshot first.",
     );
   }
-  for (const pin of plan.createPins) await io.createPin(pin);
-  for (const move of plan.rePointPins) await io.rePointPin(move);
-  for (const id of plan.removePhotoIds) await io.removePhotoRow(id);
+  await io.withTransaction(async () => {
+    for (const pin of plan.createPins) await io.createPin(pin);
+    for (const move of plan.rePointPins) await io.rePointPin(move);
+    for (const id of plan.removePhotoIds) await io.removePhotoRow(id);
+  });
   for (const key of plan.deleteFiles) await io.deleteFileIfUnused(key);
 }
 
