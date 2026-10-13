@@ -1,16 +1,13 @@
 #!/usr/bin/env -S node --experimental-strip-types
-// Dry-run: report duplicate uncropped photo files (same sha256) and what a
-// cleanup would do. Does not write. Does not delete.
+// Report duplicate uncropped photo files (same sha256) and what a cleanup
+// would do. Dry-run by default.
 //
 //   node --experimental-strip-types scripts/photos-dedup.ts
 //   node --experimental-strip-types scripts/photos-dedup.ts --url <mysql url>
 //
-// --apply is structured but disabled (DEDUP_APPLY_ENABLED). When it is
-// flipped on, pass --apply --i-have-a-snapshot after a MySQL dump of
-// declutter and a copy of uploads/.
+// Apply: DEDUP_APPLY_ENABLED=true --apply --i-have-a-snapshot after a MySQL
+// dump of declutter and a copy of uploads/.
 import "dotenv/config";
-import { createHash } from "crypto";
-import fs from "fs";
 import path from "path";
 import mysql from "mysql2/promise";
 import {
@@ -18,9 +15,8 @@ import {
   applyPhotosDedupPlan,
   buildPhotosDedupPlan,
   formatPhotosDedupReport,
-  type DedupPhoto,
-  type DedupPin,
 } from "../api/lib/photosDedup.ts";
+import { loadPhotosDedupInput, makePhotosDedupApplyIo, photosDedupPathOf } from "../api/lib/photosDedupApply.ts";
 
 const args = process.argv.slice(2);
 const guard = applyGuard(args);
@@ -37,65 +33,17 @@ if (!url) {
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 function pathOf(key: string): string {
-  const rel = key.startsWith("local/") ? key.slice("local/".length) : key.replace(/^uploads\//, "");
-  return path.resolve(UPLOAD_DIR, rel);
+  return photosDedupPathOf(UPLOAD_DIR, key);
 }
-
-type PhotoRow = {
-  id: number;
-  itemId: number | null;
-  sourceCaptureId: number | null;
-  storageKey: string;
-  cropBox: unknown;
-  title: string | null;
-};
 
 const c = await mysql.createConnection({ uri: url });
 try {
-  const [photos] = await c.query<mysql.RowDataPacket[]>(
-    "select id, itemId, sourceCaptureId, storageKey, cropBox, title from photos order by id",
-  );
-  const [pins] = await c.query<mysql.RowDataPacket[]>("select id, photoId, itemId from photo_pins");
-  const [links] = await c.query<mysql.RowDataPacket[]>("select storageKey from item_links where storageKey is not null");
-  const [caps] = await c.query<mysql.RowDataPacket[]>("select storageKey from captures where storageKey is not null");
-  const rows = photos as PhotoRow[];
-  const pinRows = pins as DedupPin[];
-  const otherFileRefs = [
-    ...(links as { storageKey: string }[]).map((r) => r.storageKey),
-    ...(caps as { storageKey: string }[]).map((r) => r.storageKey),
-  ];
-
-  const hashed: DedupPhoto[] = [];
-  let missing = 0;
-  for (const p of rows) {
-    const abs = pathOf(p.storageKey);
-    if (!fs.existsSync(abs)) {
-      missing++;
-      hashed.push({ ...p, hash: "" });
-      continue;
-    }
-    const hash = createHash("sha256").update(fs.readFileSync(abs)).digest("hex");
-    hashed.push({ ...p, hash });
-  }
-
-  const plan = buildPhotosDedupPlan({ photos: hashed, pins: pinRows, otherFileRefs });
-  console.log(formatPhotosDedupReport(plan, { missing }));
+  const loaded = await loadPhotosDedupInput(c, pathOf);
+  const plan = buildPhotosDedupPlan(loaded);
+  console.log(formatPhotosDedupReport(plan, { missing: loaded.missing }));
 
   if (guard.mode === "apply") {
-    await applyPhotosDedupPlan(plan, {
-      createPin: async () => {
-        throw new Error("photos-dedup apply I/O is not wired yet");
-      },
-      rePointPin: async () => {
-        throw new Error("photos-dedup apply I/O is not wired yet");
-      },
-      removePhotoRow: async () => {
-        throw new Error("photos-dedup apply I/O is not wired yet");
-      },
-      deleteFileIfUnused: async () => {
-        throw new Error("photos-dedup apply I/O is not wired yet");
-      },
-    });
+    await applyPhotosDedupPlan(plan, makePhotosDedupApplyIo(c, { pathOf }));
   }
 } finally {
   await c.end();
