@@ -85,17 +85,21 @@ export const pinsRouter = createRouter({
         ? await db.select().from(items).where(or(...itemIds.map((i) => eq(items.id, i))))
         : [];
       const nameMap = new Map(linked.map((i) => [i.id, i.name]));
+      const descMap = new Map(linked.map((i) => [i.id, i.description ?? null]));
       // area color, not just name - the pin marker's fill reflects the
       // linked item's category, so a "black desk lamp" and a "Sonos
       // speaker" read differently on the photo at a glance
       const allAreas = await db.select().from(areas);
       const areaColorById = new Map(allAreas.map((a) => [a.id, a.color]));
       const areaColorByItem = new Map(linked.map((i) => [i.id, areaColorById.get(i.areaId) ?? null]));
-      return pins.map((p) => ({
-        ...p,
-        itemName: p.itemId ? (nameMap.get(p.itemId) ?? null) : null,
-        itemAreaColor: p.itemId ? (areaColorByItem.get(p.itemId) ?? null) : null,
-      }));
+      return pins
+        .filter((p) => p.status !== "dismissed")
+        .map((p) => ({
+          ...p,
+          itemName: p.itemId ? (nameMap.get(p.itemId) ?? null) : null,
+          itemDescription: p.itemId ? (descMap.get(p.itemId) ?? null) : null,
+          itemAreaColor: p.itemId ? (areaColorByItem.get(p.itemId) ?? null) : null,
+        }));
     }),
 
   /** items pinned anywhere (back-references for the item page) */
@@ -105,7 +109,7 @@ export const pinsRouter = createRouter({
     const photoIds = [...new Set(pins.map((p) => p.photoId))];
     const pics = photoIds.length ? await db.select().from(photos).where(inArray(photos.id, photoIds)) : [];
     const byId = new Map(pics.map((p) => [p.id, p]));
-    return pins.map((p) => ({ ...p, photo: byId.get(p.photoId) ?? null }));
+    return pins.filter((p) => p.status !== "dismissed").map((p) => ({ ...p, photo: byId.get(p.photoId) ?? null }));
   }),
 
   add: procedure
@@ -183,13 +187,14 @@ export const pinsRouter = createRouter({
         if (input.itemId !== undefined) patch.itemId = input.itemId;
         await db.update(photoPins).set(patch).where(eq(photoPins.id, input.id));
       } else {
-        await db.delete(photoPins).where(eq(photoPins.id, input.id));
+        // hide the detection; do not delete a saved Thing, photo or file
+        await db.update(photoPins).set({ status: "dismissed" }).where(eq(photoPins.id, input.id));
       }
       await logEvent({
         entityType: "pin",
         entityId: input.id,
-        action: input.confirm ? "pin-confirmed" : "pin-rejected",
-        summary: `AI pin #${input.id} ${input.confirm ? "confirmed" : "rejected"}`,
+        action: input.confirm ? "pin-confirmed" : "pin-dismissed",
+        summary: `AI pin #${input.id} ${input.confirm ? "confirmed" : "dismissed"}`,
       });
       return { ok: true };
     }),
