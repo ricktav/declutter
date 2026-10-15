@@ -244,7 +244,14 @@ describe("pins", () => {
     const forItem = await callerFor(h1).pins.listForItem({ itemId });
     expect([forItem[0].photoId, forItem[0].photo?.title]).toEqual([photoId, "Kitchen wall"]);
     await callerFor(h1).pins.resolve({ id: pinId, confirm: false });
-    expect(await db.select().from(photoPins)).toHaveLength(0);
+    expect(await callerFor(h1).pins.listForPhoto({ photoId })).toEqual([]);
+    expect(await db.select().from(photoPins)).toMatchObject([{ id: pinId, status: "dismissed" }]);
+    expect(await db.select().from(photos).where(eq(photos.id, photoId))).toHaveLength(1);
+    expect(await db.select().from(items).where(eq(items.id, itemId))).toHaveLength(1);
+    await callerFor(h1).pins.update({ id: pinId, status: "confirmed" });
+    expect((await callerFor(h1).pins.listForPhoto({ photoId })).map((p) => [p.id, p.status])).toEqual([
+      [pinId, "confirmed"],
+    ]);
   });
 
   it("detect on a photo that does not exist says so instead of throwing", async () => {

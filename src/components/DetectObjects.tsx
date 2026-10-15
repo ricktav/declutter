@@ -14,11 +14,21 @@ import { AiProgressBar } from "@/components/AiProgressBar";
 import { setLastRoomId } from "@/lib/lastRoom";
 import { useLastRoomId } from "@/hooks/use-last-room";
 import { useHouse } from "@/context/house";
-import { Check, Loader2, ScanSearch, AlertTriangle, RefreshCw } from "lucide-react";
+import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  discardDetection,
+  framesOnPhoto,
+  hiddenExistingCount,
+  isMatchedOpenSuggestion,
+  toggleSelection,
+  visibleDetections,
+} from "@/lib/detectFrames";
+import { Check, Loader2, ScanSearch, AlertTriangle, RefreshCw, X } from "lucide-react";
 
 type Suggestion = {
   key: string;
   label: string;
+  description: string | null;
   xPct: number;
   yPct: number;
   wPct: number;
@@ -29,31 +39,48 @@ type Suggestion = {
   state: "open" | "filed";
 };
 
+const DRAG_CLICK_PX = 5;
+
 /** One draggable/resizable detection box on the original snap. */
 export function Box({
   box,
   color,
   onChange,
+  onSelect,
+  selected,
+  label,
+  description,
+  showInlineLabel,
 }: {
   box: { xPct: number; yPct: number; wPct: number; hPct: number };
   color: string;
   onChange: (b: { xPct: number; yPct: number; wPct: number; hPct: number }) => void;
+  onSelect?: () => void;
+  selected?: boolean;
+  label?: string;
+  description?: string | null;
+  showInlineLabel?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   type Corner = "tl" | "tr" | "bl" | "br";
   // a corner drag moves that corner only; the opposite corner stays where it is
   const drag = useRef<{ mode: "move" | Corner; startX: number; startY: number; orig: typeof box } | null>(null);
+  const moved = useRef(false);
 
   const onPointerDown = (e: React.PointerEvent, mode: "move" | Corner) => {
     e.stopPropagation();
     e.preventDefault();
     (e.target as Element).setPointerCapture(e.pointerId);
+    moved.current = false;
     drag.current = { mode, startX: e.clientX, startY: e.clientY, orig: { ...box } };
   };
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
     const rect = ref.current?.parentElement?.getBoundingClientRect();
     if (!d || !rect) return;
+    if (Math.abs(e.clientX - d.startX) > DRAG_CLICK_PX || Math.abs(e.clientY - d.startY) > DRAG_CLICK_PX) {
+      moved.current = true;
+    }
     const dx = ((e.clientX - d.startX) / rect.width) * 100;
     const dy = ((e.clientY - d.startY) / rect.height) * 100;
     if (d.mode === "move") {
@@ -76,7 +103,13 @@ export function Box({
     if (d.mode === "bl" || d.mode === "br") bottom = clamp(Math.max(bottom + dy, top + 4));
     onChange({ xPct: (left + right) / 2, yPct: (top + bottom) / 2, wPct: right - left, hPct: bottom - top });
   };
-  const onPointerUp = () => (drag.current = null);
+  const onPointerUp = (e: React.PointerEvent) => {
+    const mode = drag.current?.mode;
+    const wasDrag = moved.current;
+    drag.current = null;
+    moved.current = false;
+    if (!wasDrag && onSelect && e.button !== 2 && mode === "move") onSelect();
+  };
 
   const handleClass: Record<Corner, string> = {
     tl: "-top-1.5 -left-1.5 cursor-nwse-resize",
@@ -85,11 +118,13 @@ export function Box({
     br: "-bottom-1.5 -right-1.5 cursor-nwse-resize",
   };
 
+  const tip = [label, description].filter((t): t is string => !!t && t.trim().length > 0);
+
   return (
     <div
       ref={ref}
       data-zoom-ignore
-      className="absolute border-2 touch-none z-10"
+      className="absolute border-2 touch-none group"
       style={{
         left: `${box.xPct - box.wPct / 2}%`,
         top: `${box.yPct - box.hPct / 2}%`,
@@ -98,11 +133,24 @@ export function Box({
         borderColor: color,
         background: `${color}14`,
         cursor: "move",
+        zIndex: selected ? 20 : 10,
       }}
       onPointerDown={(e) => onPointerDown(e, "move")}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
+      {tip.length > 0 && (
+        <div
+          className={`pointer-events-none absolute left-0 z-20 max-w-[14rem] rounded-md bg-black/85 px-2 py-1 text-[11px] leading-snug text-white ${
+            showInlineLabel
+              ? "bottom-full mb-1"
+              : "bottom-full mb-1 hidden group-hover:block"
+          }`}
+        >
+          {label && <div className="font-semibold">{label}</div>}
+          {description && <div className="text-white/80">{description}</div>}
+        </div>
+      )}
       {(["tl", "tr", "bl", "br"] as const).map((corner) => (
         <div
           key={corner}
@@ -127,8 +175,10 @@ export function DetectObjectsModal({
   onClose: () => void;
 }) {
   const utils = trpc.useUtils();
+  const isMobile = useIsMobile();
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [captureKey, setCaptureKey] = useState<string | null>(null);
   const [mode, setMode] = useState<"existing" | "new">("existing");
@@ -145,6 +195,7 @@ export function DetectObjectsModal({
     setRoomIdRaw(id);
   };
   const areas = trpc.areas.list.useQuery();
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const captureQuery = trpc.inbox.list.useQuery(undefined, { enabled: open });
   const capture = (captureQuery.data ?? []).find((c) => c.id === captureId) ?? null;
@@ -162,6 +213,7 @@ export function DetectObjectsModal({
     if (open) {
       setSuggestions([]);
       setSelected(null);
+      setShowAll(false);
       setAiError(null);
       setMode("existing");
       setNewName("");
@@ -183,11 +235,13 @@ export function DetectObjectsModal({
       setSuggestions(
         res.suggestions.map((s, i) => ({
           ...s,
+          description: s.description ?? null,
           key: `${i}-${s.label}`,
           state: "open",
         })),
       );
-      setSelected(res.suggestions[0] ? `0-${res.suggestions[0].label}` : null);
+      // leave nothing selected so every new (not already-known) frame shows
+      setSelected(null);
 
       // everything in one photo is almost certainly in the same room - if
       // any object was recognized as an item we already know the location
@@ -226,8 +280,30 @@ export function DetectObjectsModal({
     },
   });
 
-  const sel = suggestions.find((s) => s.key === selected) ?? null;
+  const listed = visibleDetections(suggestions, showAll, isMatchedOpenSuggestion);
+  const hiddenExisting = hiddenExistingCount(suggestions, isMatchedOpenSuggestion);
+  const framed = framesOnPhoto(listed, selected, (s) => s.key);
+  const listedKeys = listed.map((s) => s.key).join(",");
+  const sel = listed.find((s) => s.key === selected) ?? null;
   const selAreaDefault = areas.data?.[0]?.id ?? null;
+
+  useEffect(() => {
+    if (selected == null) return;
+    if (!listedKeys.split(",").filter(Boolean).includes(selected)) {
+      setSelected(null);
+      return;
+    }
+    rowRefs.current[selected]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selected, listedKeys]);
+
+  const select = (key: string) => setSelected((cur) => toggleSelection(cur, key));
+
+  const discard = (key: string) => {
+    // detections here are suggestions only — hide this one, never a saved Thing / photo / file
+    const next = discardDetection(suggestions, key, selected, (s) => s.key);
+    setSuggestions(next.rows);
+    setSelected(next.selectedKey);
+  };
 
   const file = (markProcessed: boolean) => {
     if (!sel || !captureId) return;
@@ -252,12 +328,12 @@ export function DetectObjectsModal({
         <DialogHeader>
           <DialogTitle>Detect objects in snap</DialogTitle>
           <p className="text-[12px] text-muted-foreground">
-            Boxes are the cutouts — drag to move, corner handle to resize.
+            Boxes are the cutouts — drag to move, corner handle to resize. Tap a frame or a row to focus it.
           </p>
         </DialogHeader>
 
-        <div className="flex gap-4 items-start h-[calc(100dvh-7rem)]">
-          <div className="flex-1 min-w-0 rounded-lg border border-border bg-white p-2 overflow-auto h-full flex items-center justify-center">
+        <div className="flex flex-col lg:flex-row gap-4 items-start h-[calc(100dvh-7rem)]">
+          <div className="flex-1 min-w-0 min-h-[40vh] rounded-lg border border-border bg-white p-2 overflow-auto h-full flex items-center justify-center">
             {imgUrl.isError ? (
               <div className="py-16 text-center text-[13px]">
                 <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 inline-block">
@@ -268,11 +344,24 @@ export function DetectObjectsModal({
             ) : imgUrl.data?.url ? (
               <div className="relative inline-block select-none max-w-full">
                 <img src={imgUrl.data.url} alt="snap" className="block max-h-[calc(100dvh-9rem)] max-w-full w-auto h-auto rounded" draggable={false} />
-                {suggestions.map((s) => (
+                {framed.map((s) => (
                   <Box
                     key={s.key}
                     box={s}
-                    color={s.state === "filed" ? "#16a34a" : s.key === selected ? "#7c3aed" : "#94a3b8"}
+                    color={
+                      s.state === "filed"
+                        ? "#16a34a"
+                        : s.key === selected
+                          ? "#7c3aed"
+                          : isMatchedOpenSuggestion(s)
+                            ? "#94a3b8"
+                            : "#a78bfa"
+                    }
+                    selected={s.key === selected}
+                    label={s.matchedItemName ?? s.label}
+                    description={s.description}
+                    showInlineLabel={s.key === selected && (isMobile || !!s.description || !!s.label)}
+                    onSelect={() => select(s.key)}
                     onChange={(b) =>
                       setSuggestions((prev) => prev.map((p) => (p.key === s.key ? { ...p, ...b } : p)))
                     }
@@ -284,7 +373,7 @@ export function DetectObjectsModal({
             )}
           </div>
 
-          <aside className="w-80 shrink-0 space-y-3 overflow-y-auto h-full pb-4">
+          <aside className="w-full lg:w-80 shrink-0 space-y-3 overflow-y-auto h-full pb-4">
             <Button
               size="sm"
               variant={suggestions.length > 0 ? "outline" : "default"}
@@ -309,24 +398,71 @@ export function DetectObjectsModal({
             )}
 
             {suggestions.length > 0 && (
-              <div className="space-y-1 max-h-44 overflow-y-auto">
-                {suggestions.map((s, i) => (
-                  <button
-                    key={s.key}
-                    onClick={() => setSelected(s.key)}
-                    className={`w-full rounded border px-2 py-1.5 text-left text-[12px] ${
-                      s.key === selected
-                        ? "border-violet-400 bg-violet-50"
-                        : s.state === "filed"
-                          ? "border-emerald-300 bg-emerald-50/60"
-                          : "border-border bg-white"
-                    }`}
-                  >
-                    <span className="font-data text-[10px] text-muted-foreground mr-1">{i + 1}.</span>
-                    {s.label}
-                    {s.state === "filed" && <span className="ml-1 text-emerald-700 text-[10px]">✓ filed</span>}
-                  </button>
-                ))}
+              <div className="space-y-1">
+                <label className="flex items-center justify-between gap-2 px-0.5 text-[12px] text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={showAll}
+                      onChange={(e) => setShowAll(e.target.checked)}
+                      className="h-4 w-4 accent-[#7c3aed]"
+                      aria-label="Show all detections, including ones that already exist as a Thing"
+                    />
+                    Show all
+                  </span>
+                  <span className="font-data">
+                    {hiddenExisting === 0
+                      ? "none existing"
+                      : showAll
+                        ? `${hiddenExisting} existing`
+                        : `${hiddenExisting} existing hidden`}
+                  </span>
+                </label>
+                <div className="space-y-1 max-h-44 overflow-y-auto">
+                  {listed.map((s, i) => (
+                    <div
+                      key={s.key}
+                      ref={(el) => {
+                        rowRefs.current[s.key] = el;
+                      }}
+                      className={`flex items-center gap-1 rounded border ${
+                        s.key === selected
+                          ? "border-violet-400 bg-violet-50"
+                          : s.state === "filed"
+                            ? "border-emerald-300 bg-emerald-50/60"
+                            : isMatchedOpenSuggestion(s)
+                              ? "border-border bg-muted/40"
+                              : "border-border bg-white"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => select(s.key)}
+                        className="min-w-0 flex-1 px-2 py-1.5 text-left text-[12px]"
+                      >
+                        <span className="font-data text-[10px] text-muted-foreground mr-1">{i + 1}.</span>
+                        {s.label}
+                        {isMatchedOpenSuggestion(s) && (
+                          <span className="ml-1 rounded bg-slate-200 px-1 py-0.5 font-data text-[10px] text-slate-700">
+                            existing
+                          </span>
+                        )}
+                        {s.state === "filed" && <span className="ml-1 text-emerald-700 text-[10px]">✓ filed</span>}
+                      </button>
+                      {s.state === "open" && (
+                        <button
+                          type="button"
+                          className="mr-1 h-6 w-6 shrink-0 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          title="Discard this detection"
+                          aria-label={`Discard ${s.label}`}
+                          onClick={() => discard(s.key)}
+                        >
+                          <X className="h-3.5 w-3.5 mx-auto" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

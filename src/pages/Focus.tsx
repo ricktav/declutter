@@ -17,7 +17,17 @@ import { cn } from "@/lib/utils";
 import type { ItemDecision } from "@db/schema";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
-import { Check, Loader2, MapPin, ScanSearch, Sparkles } from "lucide-react";
+import { Check, Loader2, MapPin, ScanSearch, Sparkles, Trash2, Undo2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type Pin = inferRouterOutputs<AppRouter>["pins"]["listForPhoto"][number];
 type RoomPhoto = inferRouterOutputs<AppRouter>["photos"]["roomPhotos"][number];
@@ -175,6 +185,7 @@ function FocusSheetBody({
   roomId,
   photoId,
   onClose,
+  onHide,
 }: {
   sel: Sel;
   pin: Pin | null;
@@ -182,6 +193,7 @@ function FocusSheetBody({
   roomId: number | null;
   photoId: number | null;
   onClose: () => void;
+  onHide: () => void;
 }) {
   const utils = trpc.useUtils();
   const itemId = sel.kind === "item" ? sel.itemId : (pin?.itemId ?? null);
@@ -376,6 +388,16 @@ function FocusSheetBody({
             Save
           </Button>
         )}
+        <Button
+          size="sm"
+          variant="outline"
+          className="text-destructive hover:bg-destructive/10"
+          disabled={busy}
+          onClick={onHide}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          {pin ? (itemId != null ? "Hide from photo" : "Discard") : "Hide from list"}
+        </Button>
         {itemId != null && (
           <Link to={`/items/${itemId}`} className="text-[12px] text-primary hover:underline ml-auto">
             Full Thing →
@@ -406,6 +428,17 @@ export default function FocusPage() {
   const [photoId, setPhotoId] = useState<number | null>(null);
   const [sel, setSel] = useState<Sel | null>(null);
   const [listFilter, setListFilter] = useState<"focus" | "all">("focus");
+  const [hiddenItemIds, setHiddenItemIds] = useState<number[]>([]);
+  const [undo, setUndo] = useState<
+    | { kind: "pin"; pinId: number; status: "suggested" | "confirmed"; label: string }
+    | { kind: "item"; itemId: number; label: string }
+    | null
+  >(null);
+  const [confirmTrash, setConfirmTrash] = useState<
+    | { kind: "pin"; pin: Pin; num: number }
+    | { kind: "item"; itemId: number; name: string }
+    | null
+  >(null);
 
   const selectRoom = (id: number) => {
     setLastRoomId(id);
@@ -441,7 +474,11 @@ export default function FocusPage() {
 
   const pinnedItemIds = useMemo(() => new Set(frames.map((f) => f.pin.itemId).filter((id): id is number => id != null)), [frames]);
   const extraItems = (houseItems.data ?? []).filter(
-    (it) => it.roomId === roomId && it.verificationStatus !== "rejected" && !pinnedItemIds.has(it.id),
+    (it) =>
+      it.roomId === roomId &&
+      it.verificationStatus !== "rejected" &&
+      !pinnedItemIds.has(it.id) &&
+      !hiddenItemIds.includes(it.id),
   );
 
   const frameUnhandled = (f: (typeof frames)[number]) => {
@@ -468,6 +505,71 @@ export default function FocusPage() {
       utils.photos.roomPhotos.invalidate();
     },
   });
+  const dismissPin = trpc.pins.resolve.useMutation({
+    onSuccess: () => {
+      utils.pins.listForPhoto.invalidate();
+      utils.photos.roomPhotos.invalidate();
+    },
+  });
+  const restorePin = trpc.pins.update.useMutation({
+    onSuccess: () => {
+      utils.pins.listForPhoto.invalidate();
+      utils.photos.roomPhotos.invalidate();
+    },
+  });
+
+  const pinStatusForUndo = (p: Pin): "suggested" | "confirmed" =>
+    p.status === "suggested" ? "suggested" : "confirmed";
+
+  const hidePin = (pin: Pin, num: number) => {
+    const label = frameLabel(pin, num);
+    dismissPin.mutate(
+      { id: pin.id, confirm: false },
+      {
+        onSuccess: () => {
+          if (sel?.kind === "pin" && sel.pinId === pin.id) setSel(null);
+          setUndo({ kind: "pin", pinId: pin.id, status: pinStatusForUndo(pin), label });
+        },
+      },
+    );
+  };
+
+  const hideExtraItem = (itemId: number, name: string) => {
+    setHiddenItemIds((ids) => (ids.includes(itemId) ? ids : [...ids, itemId]));
+    if (sel?.kind === "item" && sel.itemId === itemId) setSel(null);
+    setUndo({ kind: "item", itemId, label: name });
+  };
+
+  const requestHidePin = (pin: Pin, num: number) => {
+    if (pin.itemId) setConfirmTrash({ kind: "pin", pin, num });
+    else hidePin(pin, num);
+  };
+
+  const requestHideExtra = (itemId: number, name: string) => {
+    setConfirmTrash({ kind: "item", itemId, name });
+  };
+
+  const undoHide = () => {
+    if (!undo) return;
+    if (undo.kind === "pin") {
+      restorePin.mutate({ id: undo.pinId, status: undo.status });
+    } else {
+      setHiddenItemIds((ids) => ids.filter((id) => id !== undo.itemId));
+    }
+    setUndo(null);
+  };
+
+  useEffect(() => {
+    if (!undo) return;
+    const t = window.setTimeout(() => setUndo(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [undo]);
+
+  useEffect(() => {
+    setHiddenItemIds([]);
+    setUndo(null);
+    setConfirmTrash(null);
+  }, [roomId, activePhotoId]);
 
   const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "this room";
   const unhandledCount =
@@ -632,7 +734,7 @@ export default function FocusPage() {
                     listFilter === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted",
                   )}
                 >
-                  {k === "focus" ? "Unhandled" : "All"}
+                  {k === "focus" ? "Unhandled" : "Show all"}
                 </button>
               ))}
             </div>
@@ -642,22 +744,35 @@ export default function FocusPage() {
                 const it = f.pin.itemId ? itemsById.get(f.pin.itemId) : undefined;
                 const open = frameUnhandled(f);
                 return (
-                  <button
+                  <div
                     key={f.pin.id}
-                    type="button"
-                    onClick={() => setSel({ kind: "pin", pinId: f.pin.id })}
-                    className={cn("w-full text-left px-3 py-2 flex items-center gap-2", on ? "bg-accent" : "hover:bg-muted/60")}
+                    className={cn("flex items-center gap-1 pr-1", on ? "bg-accent" : "hover:bg-muted/60")}
                   >
-                    <span className="font-data h-6 w-6 rounded-full bg-[#282c20] text-white text-[11px] flex items-center justify-center shrink-0">
-                      {f.num}
-                    </span>
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-[13px] truncate">{frameLabel(f.pin, f.num)}</span>
-                      <span className="block text-[11px] text-muted-foreground">
-                        {open ? "needs admit or decision" : it?.decision ?? "handled"}
+                    <button
+                      type="button"
+                      onClick={() => setSel({ kind: "pin", pinId: f.pin.id })}
+                      className="min-w-0 flex-1 text-left px-3 py-2 flex items-center gap-2"
+                    >
+                      <span className="font-data h-6 w-6 rounded-full bg-[#282c20] text-white text-[11px] flex items-center justify-center shrink-0">
+                        {f.num}
                       </span>
-                    </span>
-                  </button>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-[13px] truncate">{frameLabel(f.pin, f.num)}</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {open ? "needs admit or decision" : it?.decision ?? "handled"}
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="h-7 w-7 shrink-0 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      title={f.pin.itemId ? "Hide from this photo" : "Discard this detection"}
+                      aria-label={f.pin.itemId ? `Hide ${frameLabel(f.pin, f.num)} from this photo` : `Discard ${frameLabel(f.pin, f.num)}`}
+                      onClick={() => requestHidePin(f.pin, f.num)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mx-auto" />
+                    </button>
+                  </div>
                 );
               })}
               {visibleExtra.length > 0 && (
@@ -666,25 +781,38 @@ export default function FocusPage() {
               {visibleExtra.map((it) => {
                 const on = sel?.kind === "item" && sel.itemId === it.id;
                 return (
-                  <button
+                  <div
                     key={it.id}
-                    type="button"
-                    onClick={() => setSel({ kind: "item", itemId: it.id })}
-                    className={cn("w-full text-left px-3 py-2 flex items-center gap-2", on ? "bg-accent" : "hover:bg-muted/60")}
+                    className={cn("flex items-center gap-1 pr-1", on ? "bg-accent" : "hover:bg-muted/60")}
                   >
-                    <MapPin className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-[13px] truncate">{it.name}</span>
-                      <span className="block text-[11px] text-muted-foreground">
-                        {it.areaName ?? "no topic"} · {it.decision ?? "no decision"}
+                    <button
+                      type="button"
+                      onClick={() => setSel({ kind: "item", itemId: it.id })}
+                      className="min-w-0 flex-1 text-left px-3 py-2 flex items-center gap-2"
+                    >
+                      <MapPin className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-[13px] truncate">{it.name}</span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {it.areaName ?? "no topic"} · {it.decision ?? "no decision"}
+                        </span>
                       </span>
-                    </span>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      className="h-7 w-7 shrink-0 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      title="Hide from this list"
+                      aria-label={`Hide ${it.name} from this list`}
+                      onClick={() => requestHideExtra(it.id, it.name)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mx-auto" />
+                    </button>
+                  </div>
                 );
               })}
               {visibleFrames.length === 0 && visibleExtra.length === 0 && (
                 <div className="px-3 py-6 text-[13px] text-muted-foreground">
-                  {listFilter === "focus" ? "Nothing unhandled in this photo or room." : "No frames yet — draw a box on the photo."}
+                  {listFilter === "focus" ? "Nothing unhandled in this photo or room." : "No frames yet — draw a box on the photo. Show all also lists handled Things."}
                 </div>
               )}
             </div>
@@ -706,6 +834,14 @@ export default function FocusPage() {
                 roomId={roomId}
                 photoId={activePhotoId}
                 onClose={() => setSel(null)}
+                onHide={() => {
+                  if (sel.kind === "pin" && selectedPin) {
+                    requestHidePin(selectedPin, selectedNum ?? 0);
+                  } else if (sel.kind === "item") {
+                    const name = houseItems.data?.find((it) => it.id === sel.itemId)?.name ?? "Thing";
+                    requestHideExtra(sel.itemId, name);
+                  }
+                }}
               />
               {sel.kind === "item" && (
                 <button type="button" className="text-[12px] text-muted-foreground hover:underline" onClick={() => navigate(`/items/${sel.itemId}`)}>
@@ -716,6 +852,51 @@ export default function FocusPage() {
           )}
         </SheetContent>
       </Sheet>
+
+      <AlertDialog open={confirmTrash != null} onOpenChange={(o) => !o && setConfirmTrash(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmTrash?.kind === "pin" ? "Hide from this photo?" : "Hide from this list?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmTrash?.kind === "pin"
+                ? `${frameLabel(confirmTrash.pin, confirmTrash.num)} stays in the inventory. This only hides the frame on this photo — the Thing, its photos and files are not deleted.`
+                : `${confirmTrash?.kind === "item" ? confirmTrash.name : "This Thing"} stays in the room. This only hides it from the Focus list.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => {
+                if (confirmTrash?.kind === "pin") hidePin(confirmTrash.pin, confirmTrash.num);
+                else if (confirmTrash?.kind === "item") hideExtraItem(confirmTrash.itemId, confirmTrash.name);
+                setConfirmTrash(null);
+              }}
+            >
+              Hide
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {undo && (
+        <div
+          role="status"
+          className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-white px-3 py-2 text-[13px] shadow-md"
+        >
+          <span className="max-w-[16rem] truncate">Hidden “{undo.label}”</span>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 font-data text-[12px] text-primary hover:underline"
+            onClick={undoHide}
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+            Undo
+          </button>
+        </div>
+      )}
     </div>
   );
 }

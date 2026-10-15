@@ -25,6 +25,11 @@ const detectObjectsSchema = z.object({
   objects: z.array(
     z.object({
       label: z.string().describe("short specific name of the detected object"),
+      description: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("optional one-line description beyond the name, or null"),
       xPct: z.number().min(0).max(100).describe("horizontal center, 0-100% of image width"),
       yPct: z.number().min(0).max(100).describe("vertical center, 0-100% of image height"),
       wPct: z.number().min(1).max(100).describe("width of the bounding box, 0-100% of image width"),
@@ -497,7 +502,7 @@ export const inboxRouter = createRouter({
             textPrompt: detectPrompt,
             imageBytes: bytes,
             schema: detectObjectsSchema,
-            jsonShape: `{ "objects": [ { "label": string, "xPct": number, "yPct": number, "wPct": number, "hPct": number, "matchedItemId": number or null }, ... ] }`,
+            jsonShape: `{ "objects": [ { "label": string, "description": string or null, "xPct": number, "yPct": number, "wPct": number, "hPct": number, "matchedItemId": number or null }, ... ] }`,
           })
         : (
             await generateObject({
@@ -524,7 +529,13 @@ export const inboxRouter = createRouter({
         // text similarity; fall back to name-overlap only when it found nothing
         const visualMatch = o.matchedItemId != null ? itemById.get(o.matchedItemId) : undefined;
         if (visualMatch) {
-          return { ...o, matchedItemId: visualMatch.id, matchedItemName: visualMatch.name, matchScore: 95 };
+          return {
+            ...o,
+            matchedItemId: visualMatch.id,
+            matchedItemName: visualMatch.name,
+            matchScore: 95,
+            description: visualMatch.description ?? o.description ?? null,
+          };
         }
         let matchedItemId: number | null = null;
         let matchedItemName: string | null = null;
@@ -541,7 +552,14 @@ export const inboxRouter = createRouter({
           matchedItemId = null;
           matchedItemName = null;
         }
-        return { ...o, matchedItemId, matchedItemName, matchScore: Math.round(best * 100) };
+        const matched = matchedItemId != null ? itemById.get(matchedItemId) : undefined;
+        return {
+          ...o,
+          matchedItemId,
+          matchedItemName,
+          matchScore: Math.round(best * 100),
+          description: matched?.description ?? o.description ?? null,
+        };
       });
       await logEvent({
         entityType: "capture",

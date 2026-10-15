@@ -6,6 +6,13 @@ import { ItemPicker } from "@/components/ItemPicker";
 import { AreaPicker } from "@/components/AreaPicker";
 import { Box } from "@/components/DetectObjects";
 import { cn } from "@/lib/utils";
+import {
+  framesOnPhoto,
+  hiddenExistingCount,
+  isExistingSuggestedPin,
+  toggleSelection,
+  visibleDetections,
+} from "@/lib/detectFrames";
 import { RoomPicker } from "@/components/RoomPicker";
 import { invalidatePhotoPlace } from "@/components/PhotoPlaceDialog";
 import { useHouse } from "@/context/house";
@@ -126,9 +133,10 @@ type Pin = {
   label: string;
   itemId: number | null;
   itemName: string | null;
+  itemDescription?: string | null;
   itemAreaColor: string | null;
   origin: "user" | "ai";
-  status: "suggested" | "confirmed";
+  status: "suggested" | "confirmed" | "dismissed";
   flagged: boolean;
 };
 
@@ -215,6 +223,8 @@ export default function AnnotatePage() {
   const [selectedSuggestionId, setSelectedSuggestionId] = useState<number | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<number | null>(null);
   const [hoveredSuggestionId, setHoveredSuggestionId] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const suggestionRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const [suggestionDrafts, setSuggestionDrafts] = useState<Record<number, Draft>>({});
   const [editingPinId, setEditingPinId] = useState<number | null>(null);
   const [editLabel, setEditLabel] = useState("");
@@ -297,9 +307,21 @@ export default function AnnotatePage() {
   const pins: Pin[] = pinsQuery.data ?? [];
   const confirmed = pins.filter((p) => p.status === "confirmed");
   const suggestedAll = pins.filter((p) => p.status === "suggested");
-  const visibleSuggested = suggestedAll.filter((p) => !isLikelyDuplicate(p, confirmed));
-  const hiddenDuplicateCount = suggestedAll.length - visibleSuggested.length;
+  const isExisting = (p: Pin) => isExistingSuggestedPin(p, isLikelyDuplicate(p, confirmed));
+  const visibleSuggested = visibleDetections(suggestedAll, showAll, isExisting);
+  const hiddenExisting = hiddenExistingCount(suggestedAll, isExisting);
+  const framedSuggested = framesOnPhoto(visibleSuggested, selectedSuggestionId, (p) => p.id);
   const pinNumber = new Map(pins.map((p, i) => [p.id, i + 1]));
+  const visibleSuggestedIds = visibleSuggested.map((p) => p.id).join(",");
+
+  useEffect(() => {
+    if (selectedSuggestionId == null) return;
+    if (!visibleSuggestedIds.split(",").filter(Boolean).includes(String(selectedSuggestionId))) {
+      setSelectedSuggestionId(null);
+      return;
+    }
+    suggestionRowRefs.current[selectedSuggestionId]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedSuggestionId, visibleSuggestedIds]);
   const editingPin = confirmed.find((p) => p.id === editingPinId) ?? null;
 
   // current on-screen box for a pin, folding in any in-progress drag/resize
@@ -721,11 +743,12 @@ export default function AnnotatePage() {
                 viewBox="0 0 100 100"
                 preserveAspectRatio="none"
               >
-                {[...visibleSuggested, ...confirmed]
+                {[...framedSuggested, ...confirmed]
                   .filter((p) => p.wPct != null && p.hPct != null)
                   .filter((p) => p.status === "suggested" || p.id === selectedPinId)
                   .map((p) => {
                     const pos = boxFor(p);
+                    const existing = p.status === "suggested" && isExisting(p);
                     const emphasized =
                       p.status === "suggested" && (hoveredSuggestionId === p.id || selectedSuggestionId === p.id);
                     return (
@@ -740,18 +763,22 @@ export default function AnnotatePage() {
                       strokeWidth={emphasized ? 3 : 2}
                       fill={
                         p.status === "suggested"
-                          ? emphasized
-                            ? "rgba(124,58,237,0.20)"
-                            : "rgba(124,58,237,0.10)"
+                          ? existing
+                            ? "rgba(148,163,184,0.12)"
+                            : emphasized
+                              ? "rgba(124,58,237,0.20)"
+                              : "rgba(124,58,237,0.10)"
                           : p.itemId
                             ? "rgba(210,255,0,0.12)"
                             : "rgba(40,44,32,0.10)"
                       }
                       stroke={
                         p.status === "suggested"
-                          ? emphasized
-                            ? "#5b21b6"
-                            : "#7c3aed"
+                          ? existing
+                            ? "#64748b"
+                            : emphasized
+                              ? "#5b21b6"
+                              : "#7c3aed"
                           : p.itemId
                             ? "#2d4a22"
                             : "#282c20"
@@ -761,7 +788,7 @@ export default function AnnotatePage() {
                     );
                   })}
               </svg>
-              {visibleSuggested
+              {framedSuggested
                 .filter((p) => p.wPct != null && p.hPct != null)
                 .map((p) => {
                   const box = boxFor(p);
@@ -769,6 +796,8 @@ export default function AnnotatePage() {
                   const h = box.hPct ?? 10;
                   const isSelected = selectedSuggestionId === p.id;
                   const showIcons = isSelected || hoveredSuggestionId === p.id;
+                  const frameName = p.itemName || p.label || "untitled";
+                  const frameDesc = p.itemDescription ?? null;
                   // the icon toolbar floats above the box; extend this wrapper's
                   // own hoverable area upward to include it so moving the
                   // mouse up to the icons never exits the hover region (a gap
@@ -788,10 +817,19 @@ export default function AnnotatePage() {
                       onMouseLeave={() => setHoveredSuggestionId((cur) => (cur === p.id ? null : cur))}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setSelectedSuggestionId(p.id);
+                        setSelectedSuggestionId((cur) => toggleSelection(cur, p.id));
                         setSelectedPinId(null);
                       }}
                     >
+                      {(isSelected || hoveredSuggestionId === p.id) && (
+                        <div
+                          className="pointer-events-none absolute left-0 z-20 max-w-[14rem] rounded-md bg-black/85 px-2 py-1 text-[11px] leading-snug text-white"
+                          style={{ top: TOOLBAR_PAD - 2, transform: "translateY(-100%)" }}
+                        >
+                          <div className="font-semibold">{frameName}</div>
+                          {frameDesc && <div className="text-white/80">{frameDesc}</div>}
+                        </div>
+                      )}
                       <div
                         data-suggestion-frame={p.id}
                         className="absolute inset-x-0 bottom-0"
@@ -801,7 +839,7 @@ export default function AnnotatePage() {
                           <div className="absolute -top-8 right-0 flex gap-1 z-10">
                             <button
                               className="h-5 w-5 rounded-full bg-white shadow border border-destructive/50 text-destructive flex items-center justify-center hover:bg-destructive/10"
-                              title="Reject suggestion"
+                              title="Discard this detection"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 rejectSuggestion(p);
@@ -881,7 +919,9 @@ export default function AnnotatePage() {
                   </div>
                 );
               })()}
-              {pins.map((p) => {
+              {pins
+                .filter((p) => p.status !== "suggested" || framedSuggested.some((s) => s.id === p.id))
+                .map((p) => {
                 const pos = boxFor(p);
                 const i = pinNumber.get(p.id)! - 1;
                 return (
@@ -924,8 +964,9 @@ export default function AnnotatePage() {
                   >
                     {i + 1}
                   </div>
-                  <div className="absolute left-1/2 -translate-x-1/2 top-7 whitespace-nowrap rounded bg-black/80 text-white text-[10px] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                    {p.itemName || p.label || "untitled"}
+                  <div className="absolute left-1/2 -translate-x-1/2 top-7 whitespace-nowrap rounded bg-black/80 text-white text-[10px] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none max-w-[14rem] text-center">
+                    <div>{p.itemName || p.label || "untitled"}</div>
+                    {p.itemDescription && <div className="text-white/75 whitespace-normal">{p.itemDescription}</div>}
                   </div>
                 </div>
                 );
@@ -1154,26 +1195,50 @@ export default function AnnotatePage() {
             </div>
           )}
 
-          {visibleSuggested.length > 0 && (
+          {(visibleSuggested.length > 0 || hiddenExisting > 0) && (
             <div className="rounded-lg border border-violet-300 bg-violet-50/60 p-3 space-y-2">
-              <div className="micro-label text-violet-700">AI suggestions ({visibleSuggested.length})</div>
-              {hiddenDuplicateCount > 0 && (
-                <div className="text-[11px] text-violet-700/70">
-                  {hiddenDuplicateCount} likely duplicate{hiddenDuplicateCount === 1 ? "" : "s"} of an existing pin hidden
-                </div>
-              )}
+              <div className="flex items-center justify-between gap-2">
+                <div className="micro-label text-violet-700">AI suggestions ({visibleSuggested.length})</div>
+                <label className="flex items-center gap-1.5 text-[11px] text-violet-700/80">
+                  <input
+                    type="checkbox"
+                    checked={showAll}
+                    onChange={(e) => setShowAll(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-[#7c3aed]"
+                    aria-label="Show all detections, including ones that already exist as a Thing"
+                  />
+                  Show all
+                  <span className="font-data">
+                    {hiddenExisting === 0
+                      ? "none existing"
+                      : showAll
+                        ? `${hiddenExisting} existing`
+                        : `${hiddenExisting} existing hidden`}
+                  </span>
+                </label>
+              </div>
               {visibleSuggested.map((p) => (
-                <SuggestedPinRow
+                <div
                   key={p.id}
-                  number={pinNumber.get(p.id) ?? 0}
-                  draft={getDraft(p)}
-                  onDraftChange={(next) => setDraft(p, next)}
-                  selected={selectedSuggestionId === p.id}
-                  onSelect={() => setSelectedSuggestionId(p.id)}
-                  onConfirm={() => confirmSuggestion(p)}
-                  onReject={() => rejectSuggestion(p)}
-                  currentAttachmentId={attId}
-                />
+                  ref={(el) => {
+                    suggestionRowRefs.current[p.id] = el;
+                  }}
+                >
+                  <SuggestedPinRow
+                    number={pinNumber.get(p.id) ?? 0}
+                    draft={getDraft(p)}
+                    onDraftChange={(next) => setDraft(p, next)}
+                    selected={selectedSuggestionId === p.id}
+                    existing={isExisting(p)}
+                    onSelect={() => {
+                      setSelectedSuggestionId((cur) => toggleSelection(cur, p.id));
+                      setSelectedPinId(null);
+                    }}
+                    onConfirm={() => confirmSuggestion(p)}
+                    onReject={() => rejectSuggestion(p)}
+                    currentAttachmentId={attId}
+                  />
+                </div>
               ))}
             </div>
           )}
@@ -1226,6 +1291,7 @@ function SuggestedPinRow({
   draft,
   onDraftChange,
   selected,
+  existing,
   onSelect,
   onConfirm,
   onReject,
@@ -1235,6 +1301,7 @@ function SuggestedPinRow({
   draft: Draft;
   onDraftChange: (next: Partial<Draft>) => void;
   selected: boolean;
+  existing: boolean;
   onSelect: () => void;
   onConfirm: () => void;
   onReject: () => void;
@@ -1244,7 +1311,11 @@ function SuggestedPinRow({
     <div
       className={cn(
         "rounded border p-2 space-y-1.5 cursor-pointer",
-        selected ? "border-violet-500 ring-1 ring-violet-300 bg-violet-50" : "border-violet-200 bg-white",
+        selected
+          ? "border-violet-500 ring-1 ring-violet-300 bg-violet-50"
+          : existing
+            ? "border-slate-300 bg-muted/40"
+            : "border-violet-200 bg-white",
       )}
       onClick={onSelect}
     >
@@ -1252,6 +1323,9 @@ function SuggestedPinRow({
         <span className="shrink-0 h-5 w-5 rounded-full bg-violet-500 text-white text-[10px] font-data shadow flex items-center justify-center">
           {number}
         </span>
+        {existing && (
+          <span className="shrink-0 rounded bg-slate-200 px-1 py-0.5 font-data text-[10px] text-slate-700">existing</span>
+        )}
         <div className="flex-1 min-w-0">
           <ItemPicker
             placeholder="Search or name this object…"
@@ -1264,7 +1338,7 @@ function SuggestedPinRow({
         </div>
         <button
           className="shrink-0 h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-          title="Reject"
+          title="Discard this detection"
           onClick={(e) => {
             e.stopPropagation();
             onReject();

@@ -295,7 +295,7 @@ export const photoPins = mysqlTable(
     label: varchar("label", { length: 255 }).notNull().default(""),
     itemId: bigint("itemId", { mode: "number", unsigned: true }),
     origin: varchar("origin", { length: 32 }).$type<"user" | "ai">().notNull().default("user"),
-    status: varchar("status", { length: 32 }).$type<"suggested" | "confirmed">().notNull().default("confirmed"),
+    status: varchar("status", { length: 32 }).$type<"suggested" | "confirmed" | "dismissed">().notNull().default("confirmed"),
     // "needs attention", independent of confirm status - the Map view's focus marker
     flagged: boolean("flagged").notNull().default(false),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
