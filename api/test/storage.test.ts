@@ -174,6 +174,65 @@ describe("storage.overview", () => {
   });
 });
 
+describe("storage.setFlags", () => {
+  it("stars a computer so it sorts above unstarred ones, and hides without dropping volumes", async () => {
+    const { areaId, houseId, pc } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: alpha }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "alpha-pi", attributes: { role: "sbc" } })
+      .$returningId();
+    const [{ id: zeta }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "zeta-box", attributes: { role: "server" } })
+      .$returningId();
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: pc, source: "test", volumes: [{ mountPoint: "/", capacityBytes: GB, usedBytes: 1 }] });
+
+    const before = await c.storage.overview({});
+    expect(before.computers.map((x) => [x.name, x.starred, x.hidden])).toEqual([
+      ["alpha-pi", false, false],
+      ["mac-mini", false, false],
+      ["zeta-box", false, false],
+    ]);
+
+    expect(await c.storage.setFlags({ itemId: zeta, starred: true })).toEqual({ id: zeta, starred: true, hidden: false });
+    expect(await c.storage.setFlags({ itemId: pc, hidden: true })).toEqual({ id: pc, starred: false, hidden: true });
+
+    const o = await c.storage.overview({});
+    expect(o.computers.map((x) => [x.name, x.starred, x.hidden])).toEqual([
+      ["zeta-box", true, false],
+      ["alpha-pi", false, false],
+      ["mac-mini", false, true],
+    ]);
+    const mini = o.computers.find((x) => x.id === pc)!;
+    expect(mini.volumes.map((v) => v.mountPoint)).toEqual(["/"]);
+    expect(mini.volumes[0].usedBytes).toBe(1);
+    expect(o.capacityBytes).toBe(GB);
+
+    await c.storage.report({ itemId: pc, source: "test", volumes: [{ mountPoint: "/", capacityBytes: 2 * GB, usedBytes: 3 }] });
+    const afterReport = await c.storage.overview({});
+    const still = afterReport.computers.find((x) => x.id === pc)!;
+    expect([still.hidden, still.starred, still.volumes[0].capacityBytes]).toEqual([true, false, 2 * GB]);
+    expect((await db.query.items.findFirst({ where: eq(items.id, pc) }))?.attributes?.["storage.hidden"]).toBe("yes");
+
+    expect(await c.storage.setFlags({ itemId: zeta, starred: false })).toEqual({ id: zeta, starred: false, hidden: false });
+    expect(await c.storage.setFlags({ itemId: pc, hidden: false })).toEqual({ id: pc, starred: false, hidden: false });
+    expect((await c.storage.overview({})).computers.map((x) => x.name)).toEqual(["alpha-pi", "mac-mini", "zeta-box"]);
+    expect((await db.query.items.findFirst({ where: eq(items.id, pc) }))?.attributes?.["storage.hidden"]).toBeUndefined();
+  });
+
+  it("refuses a NAS, furniture, or a missing item, and needs a flag", async () => {
+    const { houseId, nas, chair } = await seedDevices();
+    const c = callerFor(houseId);
+    await expect(c.storage.setFlags({ itemId: nas, hidden: true })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(c.storage.setFlags({ itemId: chair, starred: true })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(c.storage.setFlags({ itemId: 999999, starred: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(c.storage.setFlags({ itemId: chair })).rejects.toThrow();
+    expect((await getTestDb().query.items.findFirst({ where: eq(items.id, nas) }))?.attributes?.["storage.hidden"]).toBeUndefined();
+  });
+});
+
 describe("storage.dirs", () => {
   it("lists a volume's directories biggest first with its device", async () => {
     const { houseId, ssd } = await seedDevices();

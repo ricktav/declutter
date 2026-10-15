@@ -5,7 +5,18 @@ import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { items, storageDirs, storageVolumes } from "@db/schema";
 import { logEvent } from "../lib/events";
-import { DATA_ROLES, StorageReportError, applyReport, overviewFor, removeVolume } from "../lib/storage";
+import {
+  DATA_ROLES,
+  STORAGE_HIDDEN_KEY,
+  STORAGE_STARRED_KEY,
+  StorageReportError,
+  applyReport,
+  applyStorageViewFlag,
+  isStorageComputer,
+  overviewFor,
+  removeVolume,
+  storageViewFlags,
+} from "../lib/storage";
 
 const reportVolume = z.object({
   mountPoint: z.string().min(1).max(255),
@@ -79,6 +90,49 @@ export const storageRouter = createRouter({
     .query(async ({ input, ctx }) => {
       const houseId = input?.houseId !== undefined ? input.houseId : ctx.houseId;
       return overviewFor(getDb(), houseId);
+    }),
+
+  /**
+   * Star or hide a computer on the Storage page. View-only: the Thing and its
+   * volumes stay. `starred` / `hidden` write the `storage.starred` /
+   * `storage.hidden` attributes (`yes` or removed).
+   */
+  setFlags: procedure
+    .input(
+      z
+        .object({
+          itemId: z.number().int(),
+          starred: z.boolean().optional(),
+          hidden: z.boolean().optional(),
+        })
+        .refine((v) => v.starred !== undefined || v.hidden !== undefined, { message: "Set starred or hidden." }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
+      if (!isStorageComputer(item)) throw new TRPCError({ code: "BAD_REQUEST", message: "Not a computer." });
+      const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
+      const changed: string[] = [];
+      if (input.starred !== undefined && applyStorageViewFlag(next, STORAGE_STARRED_KEY, input.starred)) {
+        changed.push(input.starred ? `${STORAGE_STARRED_KEY} = yes` : `${STORAGE_STARRED_KEY} removed`);
+      }
+      if (input.hidden !== undefined && applyStorageViewFlag(next, STORAGE_HIDDEN_KEY, input.hidden)) {
+        changed.push(input.hidden ? `${STORAGE_HIDDEN_KEY} = yes` : `${STORAGE_HIDDEN_KEY} removed`);
+      }
+      if (changed.length > 0) {
+        await db
+          .update(items)
+          .set({ attributes: Object.keys(next).length > 0 ? next : null })
+          .where(eq(items.id, input.itemId));
+        await logEvent({
+          entityType: "item",
+          entityId: input.itemId,
+          action: "storage.flags",
+          summary: `${item.name}: ${changed.join(", ")}`,
+        });
+      }
+      return { id: item.id, ...storageViewFlags(next) };
     }),
 
   dirs: procedure.input(z.object({ volumeId: z.number().int() })).query(async ({ input }) => {
