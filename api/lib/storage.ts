@@ -247,6 +247,34 @@ export async function volumesForItems(db: Db, itemIds: number[]) {
 
 const COMPUTER_ROLES = new Set(["laptop", "desktop", "server", "sbc"]);
 
+/** Workflow keys on a computer: Storage pins starred machines first and hides the rest until "Show hidden". */
+export const STORAGE_STARRED_KEY = "storage.starred";
+export const STORAGE_HIDDEN_KEY = "storage.hidden";
+const STORAGE_FLAG_YES = "yes";
+
+export function isStorageComputer(item: { attributes: Record<string, string | number> | null }): boolean {
+  return COMPUTER_ROLES.has(String(item.attributes?.role ?? ""));
+}
+
+export function storageViewFlags(attrs: Record<string, string | number> | null | undefined): { starred: boolean; hidden: boolean } {
+  return {
+    starred: attrs?.[STORAGE_STARRED_KEY] === STORAGE_FLAG_YES,
+    hidden: attrs?.[STORAGE_HIDDEN_KEY] === STORAGE_FLAG_YES,
+  };
+}
+
+/** Set or clear a Storage view flag on an attributes map. Returns whether anything changed. */
+export function applyStorageViewFlag(next: Record<string, string | number>, key: typeof STORAGE_STARRED_KEY | typeof STORAGE_HIDDEN_KEY, on: boolean): boolean {
+  if (on) {
+    if (next[key] === STORAGE_FLAG_YES) return false;
+    next[key] = STORAGE_FLAG_YES;
+    return true;
+  }
+  if (!(key in next)) return false;
+  delete next[key];
+  return true;
+}
+
 type DeviceRow = { id: number; name: string; parentId: number | null; roomId: number | null; attributes: Record<string, string | number> | null };
 
 function num(v: string | number | undefined): number | null {
@@ -375,11 +403,14 @@ export async function overviewFor(db: Db, houseId: number | null) {
   const totals = await roleTotals(db);
   const { capacityBytes, freeBytes } = await capacityTotals(db);
   return {
-    computers: computers.map((c) => ({
-      ...deviceOf(c, volumes, c.roomName, links),
-      drives: internal.filter((d) => d.parentId === c.id).map((d) => deviceOf(d, volumes, d.roomName, links)),
-      attached: attached.filter((d) => hostOf(d.id) === c.id).map((d) => deviceOf(d, volumes, d.roomName, links)),
-    })),
+    computers: computers
+      .map((c) => ({
+        ...deviceOf(c, volumes, c.roomName, links),
+        ...storageViewFlags(c.attributes),
+        drives: internal.filter((d) => d.parentId === c.id).map((d) => deviceOf(d, volumes, d.roomName, links)),
+        attached: attached.filter((d) => hostOf(d.id) === c.id).map((d) => deviceOf(d, volumes, d.roomName, links)),
+      }))
+      .sort((a, b) => Number(b.starred) - Number(a.starred) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
     externals: externals.map((d) => deviceOf(d, volumes, d.roomName, links)),
     totals,
     capacityBytes,

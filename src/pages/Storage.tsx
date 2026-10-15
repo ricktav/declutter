@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { HardDrive, ListTodo, Server, X } from "lucide-react";
+import { Eye, EyeOff, HardDrive, ListTodo, Server, Star, X } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
 import { DeviceBlock, ROLE_COLORS, formatBytes } from "@/components/storage/Blocks";
+import { cn } from "@/lib/utils";
+import { usePersistedState } from "@/hooks/use-persisted-state";
 
 const ROLES = ["unique", "test", "backup", "archive", "system", "media", "scratch"] as const;
 type Role = (typeof ROLES)[number];
@@ -31,6 +33,7 @@ export default function StoragePage() {
   const volumeParam = idParam("volume");
   const itemParam = idParam("item");
   const [allHouses, setAllHouses] = useState(() => Number.isInteger(volumeParam) || Number.isInteger(itemParam));
+  const [showHidden, setShowHidden] = usePersistedState("storage.showHidden", false);
   const [selected, setSelected] = useState<number | null>(() =>
     Number.isInteger(volumeParam) ? volumeParam : null,
   );
@@ -61,6 +64,11 @@ export default function StoragePage() {
   const removeVolume = trpc.storage.removeVolume.useMutation({
     onSuccess: () => {
       select(null);
+      utils.storage.overview.invalidate();
+    },
+  });
+  const setFlags = trpc.storage.setFlags.useMutation({
+    onSuccess: () => {
       utils.storage.overview.invalidate();
     },
   });
@@ -118,6 +126,11 @@ export default function StoragePage() {
   }, [o]);
   const totalUsed = o?.totals.reduce((s, t) => s + t.usedBytes, 0) ?? 0;
   const barBytes = o ? Math.max(o.capacityBytes, totalUsed + Math.max(0, o.freeBytes)) : 0;
+  const hiddenCount = o?.computers.filter((c) => c.hidden).length ?? 0;
+  const listedComputers = useMemo(
+    () => (o?.computers ?? []).filter((c) => showHidden || !c.hidden),
+    [o?.computers, showHidden],
+  );
 
   // the device that holds the selected volume, and where the overview draws it
   const holder = (() => {
@@ -161,10 +174,20 @@ export default function StoragePage() {
             Computers with their disks and volumes as blocks: width is capacity, each volume is a segment as wide as its use, colour is the data role, the light rest is free. Click a volume for its biggest directories.
           </p>
         </div>
-        {houses.length > 1 && (
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={allHouses} onChange={(e) => setAllHouses(e.target.checked)} /> All houses
-          </label>
+        {(houses.length > 1 || hiddenCount > 0) && (
+          <div className="flex flex-wrap items-center gap-4">
+            {houses.length > 1 && (
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={allHouses} onChange={(e) => setAllHouses(e.target.checked)} /> All houses
+              </label>
+            )}
+            {hiddenCount > 0 && (
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> Show hidden
+                <span className="text-muted-foreground">({hiddenCount})</span>
+              </label>
+            )}
+          </div>
         )}
       </div>
 
@@ -210,13 +233,47 @@ export default function StoragePage() {
         <div className="space-y-6">
           {overview.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
           {overview.isError && <p className="text-sm text-red-600">{overview.error.message}</p>}
+          {setFlags.isError && <p className="text-sm text-red-600">{setFlags.error.message}</p>}
           {o?.computers.length === 0 && o.externals.length === 0 && <p className="text-sm text-muted-foreground">No computers, drives or NAS boxes in this house.</p>}
-          {o?.computers.map((c) => (
-            <section id={`storage-item-${c.id}`} className="rounded-lg border border-border bg-white p-4">
+          {listedComputers.length === 0 && hiddenCount > 0 && (
+            <p className="text-sm text-muted-foreground">
+              {hiddenCount} hidden computer{hiddenCount === 1 ? "" : "s"}. Turn on Show hidden to see {hiddenCount === 1 ? "it" : "them"}.
+            </p>
+          )}
+          {listedComputers.map((c) => (
+            <section
+              key={c.id}
+              id={`storage-item-${c.id}`}
+              className={cn("rounded-lg border bg-white p-4", c.hidden ? "border-dashed border-border opacity-80" : "border-border")}
+            >
               <div className="flex items-center gap-2">
                 <Server className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-sm font-semibold">{c.name}</h2>
-                <span className="text-[12px] text-muted-foreground">{c.kind}{c.roomName ? ` · ${c.roomName}` : ""}</span>
+                <span className="text-[12px] text-muted-foreground">{c.kind}{c.roomName ? ` · ${c.roomName}` : ""}{c.hidden ? " · hidden" : ""}</span>
+                <div className="ml-auto flex items-center">
+                  <button
+                    type="button"
+                    disabled={setFlags.isPending}
+                    aria-label={c.starred ? "Unstar" : "Star"}
+                    aria-pressed={c.starred}
+                    title={c.starred ? "Unstar" : "Star"}
+                    onClick={() => setFlags.mutate({ itemId: c.id, starred: !c.starred })}
+                    className={cn("rounded p-1 hover:bg-accent/40 disabled:opacity-50", c.starred ? "text-amber-500" : "text-muted-foreground hover:text-foreground")}
+                  >
+                    <Star className={cn("h-4 w-4", c.starred && "fill-current")} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={setFlags.isPending}
+                    aria-label={c.hidden ? "Unhide" : "Hide from Storage"}
+                    aria-pressed={c.hidden}
+                    title={c.hidden ? "Unhide" : "Hide from Storage"}
+                    onClick={() => setFlags.mutate({ itemId: c.id, hidden: !c.hidden })}
+                    className="rounded p-1 text-muted-foreground hover:bg-accent/40 hover:text-foreground disabled:opacity-50"
+                  >
+                    {c.hidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
               <div className="mt-3 flex flex-wrap items-start gap-4">
                 {c.drives.length === 0 || c.volumes.length > 0 ? <DeviceBlock device={c} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={select} /> : null}
