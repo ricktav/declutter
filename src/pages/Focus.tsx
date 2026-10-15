@@ -228,12 +228,13 @@ function FocusSheetBody({
     }
   }, [sel, pin, item.data, itemId, num, roomId]);
 
-  const refresh = () => {
-    utils.pins.listForPhoto.invalidate();
-    utils.items.listAll.invalidate();
-    utils.items.get.invalidate();
-    utils.photos.roomPhotos.invalidate();
-  };
+  const refresh = () =>
+    Promise.all([
+      utils.pins.listForPhoto.invalidate(),
+      utils.items.listAll.invalidate(),
+      utils.items.get.invalidate(),
+      utils.photos.roomPhotos.invalidate(),
+    ]);
 
   const create = trpc.items.create.useMutation({ onError: (e) => setError(e.message) });
   const update = trpc.items.update.useMutation({ onError: (e) => setError(e.message) });
@@ -273,7 +274,7 @@ function FocusSheetBody({
     }
     if (draftDecision) await setDecision.mutateAsync({ id: created.id, decision: draftDecision });
     if (placeHere && roomId != null) setLastRoomId(roomId);
-    refresh();
+    await refresh();
     onClose();
   };
 
@@ -285,16 +286,21 @@ function FocusSheetBody({
       setError("Name is required.");
       return;
     }
-    await update.mutateAsync({
-      id: itemId,
-      name: trimmed,
-      description: note.trim() ? note.trim() : null,
-      roomId: placeHere && roomId != null ? roomId : undefined,
-      ...(areaId != null ? { areaId } : {}),
-    });
-    if (pin) await pinUpdate.mutateAsync({ id: pin.id, label: trimmed, itemId });
-    if (placeHere && roomId != null) setLastRoomId(roomId);
-    refresh();
+    try {
+      await update.mutateAsync({
+        id: itemId,
+        name: trimmed,
+        description: note.trim() ? note.trim() : null,
+        roomId: placeHere && roomId != null ? roomId : undefined,
+        ...(areaId != null ? { areaId } : {}),
+      });
+      if (pin) await pinUpdate.mutateAsync({ id: pin.id, label: trimmed, itemId });
+      if (placeHere && roomId != null) setLastRoomId(roomId);
+      await refresh();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save.");
+    }
   };
 
   const pickDecision = async (d: ItemDecision) => {
@@ -302,7 +308,7 @@ function FocusSheetBody({
     if (itemId == null) return;
     setError(null);
     await setDecision.mutateAsync({ id: itemId, decision: d });
-    refresh();
+    await refresh();
   };
 
   const existing = itemId != null ? item.data : null;
