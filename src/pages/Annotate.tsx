@@ -1199,20 +1199,23 @@ export default function AnnotatePage() {
             <div className="rounded-lg border border-violet-300 bg-violet-50/60 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="micro-label text-violet-700">AI suggestions ({visibleSuggested.length})</div>
-                {hiddenExisting > 0 && (
-                  <label className="flex items-center gap-1.5 text-[11px] text-violet-700/80">
-                    <input
-                      type="checkbox"
-                      checked={showAll}
-                      onChange={(e) => setShowAll(e.target.checked)}
-                      className="h-3.5 w-3.5 accent-[#7c3aed]"
-                    />
-                    Show all
-                    <span className="font-data">
-                      {showAll ? `${hiddenExisting} existing` : `${hiddenExisting} existing hidden`}
-                    </span>
-                  </label>
-                )}
+                <label className="flex items-center gap-1.5 text-[11px] text-violet-700/80">
+                  <input
+                    type="checkbox"
+                    checked={showAll}
+                    onChange={(e) => setShowAll(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-[#7c3aed]"
+                    aria-label="Show all detections, including ones that already exist as a Thing"
+                  />
+                  Show all
+                  <span className="font-data">
+                    {hiddenExisting === 0
+                      ? "none existing"
+                      : showAll
+                        ? `${hiddenExisting} existing`
+                        : `${hiddenExisting} existing hidden`}
+                  </span>
+                </label>
               </div>
               {visibleSuggested.map((p) => (
                 <div

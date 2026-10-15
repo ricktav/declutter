@@ -160,6 +160,7 @@ export const pinsRouter = createRouter({
         wPct: z.number().min(0).max(100).optional(),
         hPct: z.number().min(0).max(100).optional(),
         flagged: z.boolean().optional(),
+        status: z.enum(["suggested", "confirmed", "dismissed"]).optional(),
       }),
     )
     .mutation(async ({ input }) => {

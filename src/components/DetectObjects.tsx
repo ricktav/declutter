@@ -399,22 +399,25 @@ export function DetectObjectsModal({
 
             {suggestions.length > 0 && (
               <div className="space-y-1">
-                {hiddenExisting > 0 && (
-                  <label className="flex items-center justify-between gap-2 px-0.5 text-[12px] text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        checked={showAll}
-                        onChange={(e) => setShowAll(e.target.checked)}
-                        className="h-4 w-4 accent-[#7c3aed]"
-                      />
-                      Show all
-                    </span>
-                    <span className="font-data">
-                      {showAll ? `${hiddenExisting} existing` : `${hiddenExisting} existing hidden`}
-                    </span>
-                  </label>
-                )}
+                <label className="flex items-center justify-between gap-2 px-0.5 text-[12px] text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={showAll}
+                      onChange={(e) => setShowAll(e.target.checked)}
+                      className="h-4 w-4 accent-[#7c3aed]"
+                      aria-label="Show all detections, including ones that already exist as a Thing"
+                    />
+                    Show all
+                  </span>
+                  <span className="font-data">
+                    {hiddenExisting === 0
+                      ? "none existing"
+                      : showAll
+                        ? `${hiddenExisting} existing`
+                        : `${hiddenExisting} existing hidden`}
+                  </span>
+                </label>
                 <div className="space-y-1 max-h-44 overflow-y-auto">
                   {listed.map((s, i) => (
                     <div
