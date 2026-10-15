@@ -16,10 +16,21 @@ import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { readFileBytes, copyStoredFile, deleteStoredFile, putFile, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
-import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
+import { cropPercent, normalizeOrientation, forDetectVision } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 import { setItemLocation } from "../lib/location";
-import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom, WHOLE_SCENE_BOX } from "../lib/photos";
+import { ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom, WHOLE_SCENE_BOX } from "../lib/photos";
+import {
+  MAX_REFERENCE_PHOTOS,
+  DETECT_BOX_INSTRUCTIONS,
+  buildReferenceContent,
+  detectInventoryPrompt,
+  houseIdForRoom,
+  loadHouseInventory,
+  matchDetectedItem,
+  normalizeDetectBox,
+  pickDetectHouseId,
+} from "../lib/detectMatch";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -30,8 +41,8 @@ const detectObjectsSchema = z.object({
         .nullable()
         .optional()
         .describe("optional one-line description beyond the name, or null"),
-      xPct: z.number().min(0).max(100).describe("horizontal center, 0-100% of image width"),
-      yPct: z.number().min(0).max(100).describe("vertical center, 0-100% of image height"),
+      xPct: z.number().min(0).max(100).describe("box CENTER x, 0-100% of image width — not top-left"),
+      yPct: z.number().min(0).max(100).describe("box CENTER y, 0-100% of image height — not top-left"),
       wPct: z.number().min(1).max(100).describe("width of the bounding box, 0-100% of image width"),
       hPct: z.number().min(1).max(100).describe("height of the bounding box, 0-100% of image height"),
       matchedItemId: z
@@ -43,20 +54,6 @@ const detectObjectsSchema = z.object({
     }),
   ),
 });
-
-const MAX_REFERENCE_PHOTOS = 20;
-
-/** crude name-similarity, same approach as the items router */
-function nameScore(a: string, b: string): number {
-  const tok = (s: string) =>
-    new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2));
-  const A = tok(a);
-  const B = tok(b);
-  if (!A.size || !B.size) return 0;
-  let shared = 0;
-  for (const t of A) if (B.has(t)) shared++;
-  return shared / Math.min(A.size, B.size);
-}
 
 /** A frame on the photo in percent of the image (centre + size), the
  * CropBox / pins.detect convention: inside 0-100 and never zero-sized. */
@@ -465,33 +462,18 @@ export const inboxRouter = createRouter({
       return { ok: false as const, error: "This capture has no stored image." };
     }
     try {
-      // normalized: the model's xPct/yPct/wPct/hPct must be computed
-      // against the same upright frame the browser displays, or every
-      // returned box ends up offset/rotated relative to the real objects
-      const bytes = await normalizeOrientation(await readFileBytes(cap.storageKey));
-      const allItems = await db
-        .select()
-        .from(items)
-        .where(eq(items.status, "active"))
-        .orderBy(desc(items.updatedAt));
+      // upright + capped: same frame the browser displays, so percent boxes overlay
+      const bytes = await forDetectVision(await readFileBytes(cap.storageKey));
+      const loc = await db.query.photos.findFirst({
+        where: and(eq(photos.sourceCaptureId, cap.id), isNull(photos.itemId)),
+      });
+      const photoHouseId = await houseIdForRoom(db, loc?.roomId ?? null);
+      const houseId = pickDetectHouseId({ photoHouseId, captureHouseId: cap.houseId });
+      const allItems = await loadHouseInventory(db, houseId);
 
-      // reference photos let the model recognize a re-photographed item by
-      // sight instead of guessing from name text alone (which misses
-      // whenever it phrases the label differently the second time round)
-      const photoByItem = new Map([...(await coverPhotos(db))].map(([itemId, p]) => [itemId, p.storageKey] as const));
-      const refItems = allItems.filter((it) => photoByItem.has(it.id)).slice(0, MAX_REFERENCE_PHOTOS);
-      const refContent: Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }> = [];
-      for (const it of refItems) {
-        try {
-          const refBytes = await toThumbnail(await readFileBytes(photoByItem.get(it.id)!));
-          refContent.push({ type: "text", text: `Reference photo — existing item [id ${it.id}]: "${it.name}"` });
-          refContent.push({ type: "image", image: refBytes });
-        } catch {
-          // file missing on disk — skip this one reference, not fatal
-        }
-      }
+      const refContent = await buildReferenceContent(db, allItems, MAX_REFERENCE_PHOTOS);
 
-      const detectPrompt = `Identify the distinct physical objects worth inventorying in the PHOTO (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. For each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height. Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\nThe user's full existing inventory, for name-based matching only - set matchedItemId when an object is clearly the same item by name, otherwise null:\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`;
+      const detectPrompt = `Identify the distinct physical objects worth inventorying in the PHOTO (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. ${DETECT_BOX_INSTRUCTIONS} Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\n${detectInventoryPrompt(allItems)}`;
 
       const object = isClaudeCliDevMode()
         ? await claudeCliObject({
@@ -524,42 +506,21 @@ export const inboxRouter = createRouter({
             })
           ).object;
       const itemById = new Map(allItems.map((it) => [it.id, it]));
-      const suggestions = object.objects.slice(0, 15).map((o) => {
-        // trust the model's own visual match (it saw the reference photo) over
-        // text similarity; fall back to name-overlap only when it found nothing
-        const visualMatch = o.matchedItemId != null ? itemById.get(o.matchedItemId) : undefined;
-        if (visualMatch) {
-          return {
+      const suggestions = object.objects.slice(0, 15).flatMap((o) => {
+        const box = normalizeDetectBox(o);
+        if (!box) return [];
+        const hit = matchDetectedItem(o.label, o.matchedItemId, allItems);
+        const matched = hit.itemId != null ? itemById.get(hit.itemId) : undefined;
+        return [
+          {
             ...o,
-            matchedItemId: visualMatch.id,
-            matchedItemName: visualMatch.name,
-            matchScore: 95,
-            description: visualMatch.description ?? o.description ?? null,
-          };
-        }
-        let matchedItemId: number | null = null;
-        let matchedItemName: string | null = null;
-        let best = 0;
-        for (const it of allItems) {
-          const s = nameScore(o.label, it.name);
-          if (s > best) {
-            best = s;
-            matchedItemId = it.id;
-            matchedItemName = it.name;
-          }
-        }
-        if (best < 0.5) {
-          matchedItemId = null;
-          matchedItemName = null;
-        }
-        const matched = matchedItemId != null ? itemById.get(matchedItemId) : undefined;
-        return {
-          ...o,
-          matchedItemId,
-          matchedItemName,
-          matchScore: Math.round(best * 100),
-          description: matched?.description ?? o.description ?? null,
-        };
+            ...box,
+            matchedItemId: hit.itemId,
+            matchedItemName: matched?.name ?? null,
+            matchScore: hit.via === "visual" ? 95 : Math.round(hit.score * 100),
+            description: matched?.description ?? o.description ?? null,
+          },
+        ];
       });
       await logEvent({
         entityType: "capture",
