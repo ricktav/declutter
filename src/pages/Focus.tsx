@@ -53,6 +53,10 @@ function frameLabel(p: Pin, num: number) {
   return p.itemName || p.label || `Frame ${num}`;
 }
 
+function isPlaceholderFrameLabel(label: string) {
+  return !label.trim() || /^Frame\s+\d+$/i.test(label.trim());
+}
+
 function isUnhandledItem(it: { decision: ItemDecision | null; verificationStatus: string; status: string }) {
   return it.status === "active" && it.verificationStatus !== "rejected" && it.decision == null;
 }
@@ -184,6 +188,7 @@ function FocusSheetBody({
   num,
   roomId,
   photoId,
+  identifying,
   onClose,
   onHide,
 }: {
@@ -192,6 +197,7 @@ function FocusSheetBody({
   num: number | null;
   roomId: number | null;
   photoId: number | null;
+  identifying?: boolean;
   onClose: () => void;
   onHide: () => void;
 }) {
@@ -205,10 +211,12 @@ function FocusSheetBody({
   const [draftDecision, setDraftDecision] = useState<ItemDecision | null>(null);
   const [error, setError] = useState<string | null>(null);
   const seeded = useRef<string | null>(null);
+  const nameTouched = useRef(false);
 
   useEffect(() => {
     const key = sel.kind === "pin" ? `pin:${sel.pinId}:${itemId ?? 0}` : `item:${sel.itemId}`;
     if (seeded.current === key) return;
+    nameTouched.current = false;
     if (itemId != null && item.data) {
       seeded.current = key;
       setName(item.data.name);
@@ -227,6 +235,13 @@ function FocusSheetBody({
       setError(null);
     }
   }, [sel, pin, item.data, itemId, num, roomId]);
+
+  // Claude named the crop after the sheet opened: fill Name if the user
+  // hasn't typed over the generic Frame N placeholder.
+  useEffect(() => {
+    if (itemId != null || !pin?.label || nameTouched.current) return;
+    if (isPlaceholderFrameLabel(name) && pin.label !== name) setName(pin.label);
+  }, [pin?.label, itemId, name]);
 
   const refresh = () => {
     utils.pins.listForPhoto.invalidate();
@@ -318,12 +333,23 @@ function FocusSheetBody({
       </SheetHeader>
 
       <label className="block text-[12px] font-medium">
-        Name
+        <span className="flex items-center gap-1.5">
+          Name
+          {identifying && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-normal text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Identifying…
+            </span>
+          )}
+        </span>
         <input
           className="mt-1 w-full rounded-md border border-input bg-white px-2 py-1.5 text-[13px]"
           value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={num != null ? `Frame ${num}` : "Name"}
+          onChange={(e) => {
+            nameTouched.current = true;
+            setName(e.target.value);
+          }}
+          placeholder={identifying ? "Identifying…" : num != null ? `Frame ${num}` : "Name"}
         />
       </label>
 
@@ -439,6 +465,8 @@ export default function FocusPage() {
     | { kind: "item"; itemId: number; name: string }
     | null
   >(null);
+  const [labelingPinIds, setLabelingPinIds] = useState<number[]>([]);
+  const [labelError, setLabelError] = useState<string | null>(null);
 
   const selectRoom = (id: number) => {
     setLastRoomId(id);
@@ -492,11 +520,33 @@ export default function FocusPage() {
   const visibleExtra = listFilter === "focus" ? extraItems.filter(isUnhandledItem) : extraItems;
 
   const utils = trpc.useUtils();
+  const finishLabeling = (pinId: number) => {
+    setLabelingPinIds((ids) => ids.filter((id) => id !== pinId));
+  };
+  const labelPin = trpc.pins.labelWithClaude.useMutation({
+    onSuccess: (res, vars) => {
+      if (res.ok && res.label && activePhotoId != null) {
+        utils.pins.listForPhoto.setData({ photoId: activePhotoId }, (old) =>
+          old?.map((p) => (p.id === vars.id ? { ...p, label: res.label } : p)),
+        );
+      }
+      finishLabeling(vars.id);
+      if (res.ok) utils.pins.listForPhoto.invalidate();
+      else if (res.error) setLabelError(res.error);
+    },
+    onError: (e, vars) => {
+      finishLabeling(vars.id);
+      setLabelError(e.message);
+    },
+  });
   const addPin = trpc.pins.add.useMutation({
     onSuccess: (r) => {
       utils.pins.listForPhoto.invalidate();
       utils.photos.roomPhotos.invalidate();
       setSel({ kind: "pin", pinId: r.id });
+      setLabelError(null);
+      setLabelingPinIds((ids) => (ids.includes(r.id) ? ids : [...ids, r.id]));
+      labelPin.mutate({ id: r.id });
     },
   });
   const detect = trpc.pins.detect.useMutation({
@@ -569,7 +619,15 @@ export default function FocusPage() {
     setHiddenItemIds([]);
     setUndo(null);
     setConfirmTrash(null);
+    setLabelingPinIds([]);
+    setLabelError(null);
   }, [roomId, activePhotoId]);
+
+  useEffect(() => {
+    if (!labelError) return;
+    const t = window.setTimeout(() => setLabelError(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [labelError]);
 
   const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "this room";
   const unhandledCount =
@@ -655,6 +713,7 @@ export default function FocusPage() {
                 {frames.map((f) => {
                   const color = f.pin.itemAreaColor ?? (f.pin.itemId ? "#5b8c5a" : "#282c20");
                   const on = sel?.kind === "pin" && sel.pinId === f.pin.id;
+                  const identifying = labelingPinIds.includes(f.pin.id);
                   return (
                     <button
                       key={f.pin.id}
@@ -680,7 +739,7 @@ export default function FocusPage() {
                         className="absolute -top-2.5 -left-2.5 h-5 min-w-5 px-1 rounded-full text-[10px] font-data font-semibold flex items-center justify-center text-white shadow"
                         style={{ background: on ? "#282c20" : color }}
                       >
-                        {f.num}
+                        {identifying ? <Loader2 className="h-3 w-3 animate-spin" /> : f.num}
                       </span>
                     </button>
                   );
@@ -720,6 +779,11 @@ export default function FocusPage() {
             </div>
             {detect.isError && <div className="text-[12px] text-destructive">{detect.error.message}</div>}
             {addPin.isError && <div className="text-[12px] text-destructive">{addPin.error.message}</div>}
+            {labelError && (
+              <div role="status" className="text-[12px] text-muted-foreground">
+                {labelError} Keeping the Frame label — Admit still works.
+              </div>
+            )}
           </div>
 
           <div className="rounded-lg border border-border bg-white">
@@ -743,6 +807,7 @@ export default function FocusPage() {
                 const on = sel?.kind === "pin" && sel.pinId === f.pin.id;
                 const it = f.pin.itemId ? itemsById.get(f.pin.itemId) : undefined;
                 const open = frameUnhandled(f);
+                const identifying = labelingPinIds.includes(f.pin.id);
                 return (
                   <div
                     key={f.pin.id}
@@ -754,12 +819,14 @@ export default function FocusPage() {
                       className="min-w-0 flex-1 text-left px-3 py-2 flex items-center gap-2"
                     >
                       <span className="font-data h-6 w-6 rounded-full bg-[#282c20] text-white text-[11px] flex items-center justify-center shrink-0">
-                        {f.num}
+                        {identifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : f.num}
                       </span>
                       <span className="flex-1 min-w-0">
-                        <span className="block text-[13px] truncate">{frameLabel(f.pin, f.num)}</span>
+                        <span className="block text-[13px] truncate">
+                          {identifying ? "Identifying…" : frameLabel(f.pin, f.num)}
+                        </span>
                         <span className="block text-[11px] text-muted-foreground">
-                          {open ? "needs admit or decision" : it?.decision ?? "handled"}
+                          {identifying ? "Claude is naming this crop" : open ? "needs admit or decision" : it?.decision ?? "handled"}
                         </span>
                       </span>
                     </button>
@@ -833,6 +900,7 @@ export default function FocusPage() {
                 num={selectedNum}
                 roomId={roomId}
                 photoId={activePhotoId}
+                identifying={sel.kind === "pin" && labelingPinIds.includes(sel.pinId)}
                 onClose={() => setSel(null)}
                 onHide={() => {
                   if (sel.kind === "pin" && selectedPin) {
