@@ -67,8 +67,22 @@ app.use("/api/trpc/*", async (c) => {
     router: appRouter,
     createContext,
     // one line per failed procedure in the server log, so a client error can be traced
-    onError({ error, path, type }) {
-      console.error(`[trpc] ${type} ${path ?? "?"} ${error.code}: ${error.message.split("\n")[0].slice(0, 300)}`);
+    onError({ error, path, type, input, req }) {
+      // one line: zod issues as path=message, the input and the caller, so a bad client is traceable
+      const cause = error.cause as { issues?: Array<{ path: (string | number)[]; message: string }> } | undefined;
+      const detail = cause?.issues?.length
+        ? cause.issues.map((i) => `${i.path.join(".") || "(root)"}=${i.message}`).join("; ")
+        : error.message.replace(/\s+/g, " ");
+      let shownInput = "";
+      try {
+        shownInput = JSON.stringify(input);
+      } catch {
+        shownInput = String(input);
+      }
+      const ua = req.headers.get("user-agent") ?? "-";
+      console.error(
+        `[trpc] ${type} ${path ?? "?"} ${error.code}: ${detail.slice(0, 300)} input=${(shownInput ?? "").slice(0, 300)} ua=${ua.slice(0, 40)} url=${req.url.slice(0, 200)}`,
+      );
     },
   });
 });
