@@ -8,6 +8,7 @@ import { getDb } from "../queries/connection";
 import { areas, items, itemLinks, relations, tasks, ideaItems, ideas, events, houses, rooms, ITEM_DECISIONS, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { nameScore } from "../lib/text";
+import { queueFor, QUEUE_LENSES } from "../lib/queue";
 import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { getModel } from "../lib/ai";
 import { roomSummary, setItemLocation } from "../lib/location";
@@ -47,6 +48,27 @@ export const itemsRouter = createRouter({
         room: r.roomId != null ? (roomsById.get(r.roomId) ?? null) : null,
       }));
     }),
+
+  /** What still needs a person: snaps to sort and Things to check, place and
+   * decide, plus the lens's own questions. One definition for every client;
+   * `houseId` defaults to the session house (null = every house). */
+  queue: procedure
+    .input(
+      z
+        .object({
+          houseId: z.number().nullable().optional(),
+          roomId: z.number().optional(),
+          lens: z.enum(QUEUE_LENSES).optional(),
+        })
+        .optional(),
+    )
+    .query(({ input, ctx }) =>
+      queueFor(getDb(), {
+        houseId: input?.houseId !== undefined ? input.houseId : ctx.houseId,
+        roomId: input?.roomId ?? null,
+        lens: input?.lens ?? null,
+      }),
+    ),
 
   /** Every active item across every area, for the cross-area browser (search/sort by area or location). */
   listAll: procedure
