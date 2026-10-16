@@ -9,8 +9,23 @@ Rick's decisions on `docs/review-2026-10-16.html`, given 2026-10-16. 36 accepted
 | C6 | TRPCError codes for the 17 plain throws; also fixes the `inbox-triage-boxes` test mock that failed on `main` without an LLM key | [#26](https://github.com/ricktav/declutter/pull/26) |
 | H1, H2 | Production exits without `APP_TOKEN` (or explicit `ALLOW_OPEN_ACCESS=1`), `GET /api/health`, `scripts/backup.sh` | [#27](https://github.com/ricktav/declutter/pull/27) |
 | C5 | AI prompt inventories scoped to the capture's or Photo's house, room first | [#28](https://github.com/ricktav/declutter/pull/28) |
+| D4 | `@huggingface/transformers` to devDependencies (script-only) | [#30](https://github.com/ricktav/declutter/pull/30) |
+| E7 (Workbench) | Meterkast and parcel-viewer URLs are settings (`settings.links` / `setLinks`), links hidden when unset; collector host defaults stay until the launchd plist carries them | [#31](https://github.com/ricktav/declutter/pull/31) |
+| A2 | Default topic "Things" on the server: `areaId` optional on `items.create`, `inbox.fileObject`, `inbox.acceptMany` | [#33](https://github.com/ricktav/declutter/pull/33) |
+| B1, G2 | Depth (Quick / Standard / Detail) stored on the server; Provider B and A/B at Detail only | [#34](https://github.com/ricktav/declutter/pull/34) |
+| (found) | `npm run dev` served a blank Workbench since 2026-10-08: `/api/lib/*.ts` went to the API | [#35](https://github.com/ricktav/declutter/pull/35) |
+| D3 | Services collector parsers moved to `scripts/collectors/services/`; host helpers to `api/lib/hostNames.ts` | [#36](https://github.com/ricktav/declutter/pull/36) |
+| E2 | One topic icon list (also fixes icons AreaView offered that the sidebar showed as a box), `DECISIONS`, `nameScore`, `StoredImage` | [#37](https://github.com/ricktav/declutter/pull/37) |
+| E1 | `hb-*` and `decision-*` colour tokens (CSS variables); 82 Workbench literals replaced, rendering identical | [#38](https://github.com/ricktav/declutter/pull/38) |
+| B4 (data half) | Systems and Storage in the sidebar only when the house has machines / drives (`settings.views`); stacked on #34 | [#39](https://github.com/ricktav/declutter/pull/39) |
+| C1 | `items.queue` (to sort / check / place / decide, lab role and backup), Focus uses it | [#40](https://github.com/ricktav/declutter/pull/40) |
+| G1 | Background triage of new photo snaps (`autoTriage` setting, `triageState` on `inbox.list`, failures visible); stacked on #28 | [#41](https://github.com/ricktav/declutter/pull/41) |
 
 Before #27 is deployed: check that production's `.env` has `APP_TOKEN`, or the next boot stops with an explanation.
+
+After merging: #31 needs the two URLs entered under Settings → Links; #41 does nothing until "Triage new photos automatically" is switched on.
+
+Merge order that avoids conflicts: #35 first (dev server), then #26, #28 → #41, #34 → #39, and the rest in any order. #37, #38 and the coming F3 copy pass touch the same Workbench files at different lines.
 
 ## F1: does deriving cutouts slow down catalog views?
 
