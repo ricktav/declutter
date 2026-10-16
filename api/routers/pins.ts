@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { eq, or, desc, inArray } from "drizzle-orm";
+import { eq, or, inArray } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { photoPins, photos, items, areas } from "@db/schema";
 import { coverPhotos } from "../lib/photos";
+import { photoScope, promptInventory } from "../lib/aiContext";
 import { readFileBytes } from "../lib/filestore";
 import { toThumbnail, cropPercent, normalizeOrientation } from "../lib/crop";
 import { getDetectVisionModel } from "../lib/ai";
@@ -214,7 +215,7 @@ export const pinsRouter = createRouter({
   /** AI: detect objects in the photo, match against inventory, suggest pins */
   detect: procedure
     .input(z.object({ photoId: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const att = await db.query.photos.findFirst({
         where: eq(photos.id, input.photoId),
@@ -228,11 +229,7 @@ export const pinsRouter = createRouter({
         // against the same upright frame the browser displays, or every
         // returned box ends up offset/rotated relative to the real objects
         const bytes = await normalizeOrientation(await readFileBytes(att.storageKey));
-        const allItems = await db
-          .select()
-          .from(items)
-          .where(eq(items.status, "active"))
-          .orderBy(desc(items.updatedAt));
+        const allItems = await promptInventory(db, await photoScope(db, att, ctx.houseId));
 
         const refContent = await buildReferenceContent(db, allItems, MAX_REFERENCE_PHOTOS);
 
@@ -247,7 +244,7 @@ export const pinsRouter = createRouter({
                 ...refContent,
                 {
                   type: "text",
-                  text: `Identify the distinct physical objects worth inventorying in the PHOTO BELOW (devices, tools, containers, appliances, furniture — NOT wall, floor, ceiling, windows, or other background). List up to 15 of the most significant objects. Do not pad the list with duplicates, parts of already-listed objects, or background — fewer accurate objects is better than many vague ones.\n\nFor each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height.\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}The user's full existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}\n\nPHOTO TO ANALYZE:`,
+                  text: `Identify the distinct physical objects worth inventorying in the PHOTO BELOW (devices, tools, containers, appliances, furniture — NOT wall, floor, ceiling, windows, or other background). List up to 15 of the most significant objects. Do not pad the list with duplicates, parts of already-listed objects, or background — fewer accurate objects is better than many vague ones.\n\nFor each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height.\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}The user's existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}\n\nPHOTO TO ANALYZE:`,
                 },
                 { type: "image", image: bytes },
               ],

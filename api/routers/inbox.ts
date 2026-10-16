@@ -19,6 +19,7 @@ import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
 import { setItemLocation } from "../lib/location";
+import { captureScope, promptInventory } from "../lib/aiContext";
 import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom, WHOLE_SCENE_BOX } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
@@ -110,19 +111,19 @@ const triageSchema = z.object({
 
 type CaptureRow = typeof captures.$inferSelect;
 
-async function buildTriageContent(cap: CaptureRow): Promise<
+async function buildTriageContent(cap: CaptureRow, sessionHouseId: number | null): Promise<
   Array<{ type: "text"; text: string } | { type: "image"; image: Uint8Array }>
 > {
   const db = getDb();
   const allAreas = await db.select().from(areas);
-  const allItems = await db.select().from(items).where(eq(items.status, "active"));
+  const allItems = await promptInventory(db, await captureScope(db, cap, sessionHouseId));
 
   const context = [
     "AREAS (slug — name):",
     ...allAreas.map((a) => `- ${a.slug} — ${a.name}${a.description ? `: ${a.description}` : ""}`),
     "",
     "EXISTING ITEMS (id — name):",
-    ...allItems.slice(0, 200).map((i) => `- ${i.id} — ${i.name}`),
+    ...allItems.map((i) => `- ${i.id} — ${i.name}`),
   ].join("\n");
 
   let textPrompt = `You are triaging a capture into a home inventory system.\n\n${context}\n\nCAPTURE (kind: ${cap.kind}):\n${cap.rawText ?? ""}\n${cap.url ? `URL: ${cap.url}` : ""}\n\nList every distinct physical object worth inventorying that's visible - not just the single most prominent one. For each: which area/topic does it belong to? Is it an existing item (give its id) or new? Extract obvious attributes (e.g. for computers: cpu, ram, storage, os, role). When there is a photo, give each object a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height (box null when there is no photo). Also suggest the floor/room this was likely taken in if you can tell (e.g. from an existing matched item's known location, or visible context), otherwise leave them null - don't guess at a location with nothing to go on.`;
@@ -365,7 +366,7 @@ export const inboxRouter = createRouter({
     if (!cap) throw new TRPCError({ code: "NOT_FOUND", message: "capture not found" });
 
     try {
-      const content = await buildTriageContent(cap);
+      const content = await buildTriageContent(cap, ctx.houseId);
       const suggestion = isClaudeCliDevMode()
         ? await runTriageViaClaudeCli(content, ctx.houseId)
         : await runTriage(await getTriageModel(), content, ctx.houseId);
@@ -399,7 +400,7 @@ export const inboxRouter = createRouter({
 
     let content: TriageContent;
     try {
-      content = await buildTriageContent(cap);
+      content = await buildTriageContent(cap, ctx.houseId);
     } catch (err) {
       return { ok: false as const, error: `Failed to build prompt: ${(err as Error).message}` };
     }
@@ -458,7 +459,7 @@ export const inboxRouter = createRouter({
 
   /** Accept a suggestion (possibly edited) — creates/links the item */
   /** AI: detect objects in an inbox photo, match against inventory — suggestions only, nothing persisted */
-  detectObjects: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+  detectObjects: procedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
     if (!cap?.storageKey) {
@@ -469,11 +470,7 @@ export const inboxRouter = createRouter({
       // against the same upright frame the browser displays, or every
       // returned box ends up offset/rotated relative to the real objects
       const bytes = await normalizeOrientation(await readFileBytes(cap.storageKey));
-      const allItems = await db
-        .select()
-        .from(items)
-        .where(eq(items.status, "active"))
-        .orderBy(desc(items.updatedAt));
+      const allItems = await promptInventory(db, await captureScope(db, cap, ctx.houseId));
 
       // reference photos let the model recognize a re-photographed item by
       // sight instead of guessing from name text alone (which misses
@@ -491,7 +488,7 @@ export const inboxRouter = createRouter({
         }
       }
 
-      const detectPrompt = `Identify the distinct physical objects worth inventorying in the PHOTO (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. For each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height. Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\nThe user's full existing inventory, for name-based matching only - set matchedItemId when an object is clearly the same item by name, otherwise null:\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`;
+      const detectPrompt = `Identify the distinct physical objects worth inventorying in the PHOTO (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. For each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height. Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\nThe user's existing inventory, for name-based matching only - set matchedItemId when an object is clearly the same item by name, otherwise null:\n${allItems.map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`;
 
       const object = isClaudeCliDevMode()
         ? await claudeCliObject({

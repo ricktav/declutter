@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, asc, desc, and } from "drizzle-orm";
+import { eq, asc, desc, and, count } from "drizzle-orm";
 import { generateText } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -8,8 +8,9 @@ import { legacyAttachmentsForItem } from "../lib/photos";
 import { getModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
+import { promptInventory } from "../lib/aiContext";
 
-async function buildContext(scope: "global" | "area" | "item", scopeId: number): Promise<string> {
+async function buildContext(scope: "global" | "area" | "item", scopeId: number, houseId: number | null): Promise<string> {
   const db = getDb();
   if (scope === "item") {
     const item = await db.query.items.findFirst({ where: eq(items.id, scopeId) });
@@ -34,7 +35,7 @@ async function buildContext(scope: "global" | "area" | "item", scopeId: number):
     const areaItems = await db
       .select()
       .from(items)
-      .where(eq(items.areaId, area.id));
+      .where(and(eq(items.areaId, area.id), houseId != null ? eq(items.houseId, houseId) : undefined));
     return [
       `CURRENT AREA: ${area.name}${area.description ? ` — ${area.description}` : ""}`,
       `Items (${areaItems.length}):`,
@@ -46,19 +47,19 @@ async function buildContext(scope: "global" | "area" | "item", scopeId: number):
   }
   // global
   const allAreas = await db.select().from(areas);
-  const allItems = await db.select().from(items);
+  const counts = await db
+    .select({ areaId: items.areaId, n: count() })
+    .from(items)
+    .where(and(eq(items.status, "active"), houseId != null ? eq(items.houseId, houseId) : undefined))
+    .groupBy(items.areaId);
+  const countBy = new Map(counts.map((c) => [c.areaId, c.n]));
+  const recent = await promptInventory(db, { houseId, roomId: null }, 30);
   return [
     "INVENTORY OVERVIEW:",
-    ...allAreas.map((a) => {
-      const count = allItems.filter((i) => i.areaId === a.id && i.status === "active").length;
-      return `- ${a.name} (${a.slug}): ${count} items`;
-    }),
+    ...allAreas.map((a) => `- ${a.name} (${a.slug}): ${countBy.get(a.id) ?? 0} items`),
     "",
     "RECENT ITEMS:",
-    ...allItems
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-      .slice(0, 30)
-      .map((i) => `- ${i.name}${i.attributes ? ` ${JSON.stringify(i.attributes)}` : ""}`),
+    ...recent.map((i) => `- ${i.name}${i.attributes ? ` ${JSON.stringify(i.attributes)}` : ""}`),
   ].join("\n");
 }
 
@@ -71,10 +72,10 @@ export const aiRouter = createRouter({
         message: z.string().min(1),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
       try {
-        const context = await buildContext(input.scope, input.scopeId);
+        const context = await buildContext(input.scope, input.scopeId, ctx.houseId);
         const history = await db
           .select()
           .from(chatMessages)
