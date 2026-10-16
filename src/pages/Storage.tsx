@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router";
 import { Eye, EyeOff, HardDrive, ListTodo, Server, Star, X } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
-import { DeviceBlock, ROLE_COLORS, formatBytes, isRecentlyScanned } from "@/components/storage/Blocks";
+import { DeviceBlock, ROLE_COLORS, UnlinkedDisksRow, formatBytes, isRecentlyScanned } from "@/components/storage/Blocks";
 import { cn } from "@/lib/utils";
 import { usePersistedState } from "@/hooks/use-persisted-state";
 
@@ -114,7 +114,7 @@ export default function StoragePage() {
     if (!o || !Number.isInteger(itemParam) || selected != null) return;
     const vols: number[] = [];
     for (const c of o.computers) {
-      const disks = [...c.drives, ...c.attached, ...(c.inferredDisks ?? [])];
+      const disks = [...c.drives, ...c.attached, ...(c.inferredDisks ?? []), ...(c.unlinkedDisks ?? []), ...(c.remoteMounts ?? [])];
       if (c.id === itemParam) vols.push(...disks.flatMap((d) => d.volumes.map((v) => v.id)));
       else {
         for (const d of disks) if (d.id === itemParam && !d.inferred) vols.push(...d.volumes.map((v) => v.id));
@@ -132,7 +132,10 @@ export default function StoragePage() {
 
   const maxBytes = useMemo(() => {
     if (!o) return 0;
-    const all = [...o.computers.flatMap((c) => [...c.drives, ...c.attached, ...(c.inferredDisks ?? [])]), ...o.externals];
+    const all = [
+      ...o.computers.flatMap((c) => [...c.drives, ...c.attached, ...(c.inferredDisks ?? []), ...(c.unlinkedDisks ?? [])]),
+      ...o.externals,
+    ];
     return Math.max(0, ...all.map((d) => d.capacityBytes ?? 0));
   }, [o]);
   const totalUsed = o?.totals.reduce((s, t) => s + t.usedBytes, 0) ?? 0;
@@ -311,7 +314,7 @@ export default function StoragePage() {
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap items-start gap-4">
-                {(c.inferredDisks ?? []).length === 0 && c.drives.length === 0 && c.attached.length === 0 && (
+                {(c.inferredDisks ?? []).length === 0 && c.drives.length === 0 && c.attached.length === 0 && (c.unlinkedDisks ?? []).length === 0 && (c.remoteMounts ?? []).length === 0 && (
                   <p className="text-[12px] text-muted-foreground">No disks measured on this machine.</p>
                 )}
                 {(c.inferredDisks ?? []).map((d) => (
@@ -336,6 +339,18 @@ export default function StoragePage() {
                     linkPending={setDiskLink.isPending}
                   />
                 ))}
+                {(c.unlinkedDisks ?? []).length > 0 && (
+                  <UnlinkedDisksRow
+                    disks={c.unlinkedDisks ?? []}
+                    onLinkDisk={(choice) => setDiskLink.mutate(choice)}
+                    linkPending={setDiskLink.isPending}
+                  />
+                )}
+                {(c.remoteMounts ?? []).length > 0 && (
+                  <p className="basis-full text-[11px] text-muted-foreground">
+                    Network: {(c.remoteMounts ?? []).map((d) => d.name).join(", ")}
+                  </p>
+                )}
               </div>
               {c.attached.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-start gap-4 border-t border-dashed border-border pt-3">

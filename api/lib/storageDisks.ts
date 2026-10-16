@@ -21,7 +21,7 @@ export const SEEDED_DISK_LINKS: Array<{
 /** Calendar age for the "last seen" badge. Never a reason to skip the only sighting. */
 export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
-export type DiskMeasure = "measured" | "no-collector" | "unlinked" | "duplicate";
+export type DiskMeasure = "measured" | "no-collector" | "unlinked" | "duplicate" | "remote";
 
 export type DiskLinkCandidate = { id: number; name: string } | { diskKey: string; name: string };
 
@@ -37,6 +37,8 @@ export type DiskVolume = {
   capacityBytes: number;
   usedBytes: number;
   measuredAt?: Date;
+  fsType?: string | null;
+  uuid?: string | null;
 };
 
 export type DiskThing = {
@@ -49,6 +51,105 @@ export type DiskThing = {
  * Whole-disk identity from a volume's kernel name and optional APFS container.
  * sda2 → sda, nvme0n1p2 → nvme0n1, disk7s1 → disk7, container disk9 → disk9.
  */
+/** Trim, collapse slashes, drop a trailing slash except for root. */
+export function normalizeMountPoint(mp: string): string {
+  const s = mp.trim().replace(/\/{2,}/g, "/");
+  if (s === "" || s === "/") return "/";
+  return s.replace(/\/+$/, "") || "/";
+}
+
+/** Kernel name as stored on a volume (`/dev/disk7s1` → `disk7s1`), slice kept. */
+export function normalizeVolumeDevice(device?: string | null): string | null {
+  if (device == null || device === "") return null;
+  const d = String(device).trim().replace(/^\/dev\//, "").toLowerCase();
+  return d || null;
+}
+
+function volumeMeasuredMs(measuredAt?: Date | string | null): number {
+  if (measuredAt == null) return 0;
+  const t = measuredAt instanceof Date ? measuredAt.getTime() : new Date(measuredAt).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function looksLikeUuidToken(s: string): boolean {
+  const n = s.replace(/[{}-]/g, "");
+  return n.length >= 8 && n.length <= 32 && /^[0-9a-f]+$/i.test(n);
+}
+
+function volumeLeaf(mp: string): string {
+  const m = normalizeMountPoint(mp);
+  if (m === "/") return "/";
+  return (m.split("/").filter(Boolean).pop() ?? m).toLowerCase();
+}
+
+function volumeUuid(v: { uuid?: string | null; mountPoint?: string; label?: string | null }): string | null {
+  const direct = uuidOf(v.uuid);
+  if (direct) return direct;
+  const leaf = volumeLeaf(v.mountPoint ?? "");
+  if (looksLikeUuidToken(leaf)) return uuidOf(leaf);
+  if (v.label && looksLikeUuidToken(v.label.trim())) return uuidOf(v.label.trim());
+  return null;
+}
+
+function sizeCloseBytes(a: number | null | undefined, b: number | null | undefined): boolean {
+  if (a == null || b == null || !(a > 0) || !(b > 0)) return false;
+  return Math.abs(a - b) / Math.max(a, b) <= 0.2;
+}
+
+export type VolumeIdentity = {
+  mountPoint: string;
+  label?: string | null;
+  device?: string | null;
+  uuid?: string | null;
+  capacityBytes?: number;
+};
+
+/** Same filesystem: device+mount, UUID, or label vs path (`NVMe` ↔ `/media/rick/NVMe`). */
+export function sameVolume(a: VolumeIdentity, b: VolumeIdentity): boolean {
+  const mpA = normalizeMountPoint(a.mountPoint);
+  const mpB = normalizeMountPoint(b.mountPoint);
+  if (mpA === mpB) return true;
+  const uuidA = volumeUuid(a);
+  const uuidB = volumeUuid(b);
+  if (uuidA && uuidB && uuidA === uuidB) return true;
+  const devA = normalizeVolumeDevice(a.device);
+  const devB = normalizeVolumeDevice(b.device);
+  if (devA && devB && devA === devB) return true;
+  const labelA = (a.label ?? "").trim().toLowerCase();
+  const labelB = (b.label ?? "").trim().toLowerCase();
+  const leafA = volumeLeaf(mpA);
+  const leafB = volumeLeaf(mpB);
+  const cross =
+    (labelA !== "" && (labelA === leafB || normalizeMountPoint(a.label ?? "") === mpB)) ||
+    (labelB !== "" && (labelB === leafA || normalizeMountPoint(b.label ?? "") === mpA)) ||
+    (leafA !== "/" && leafA === leafB);
+  if (!cross) return false;
+  if (devA && devB && physicalDiskKey(devA, null) === physicalDiskKey(devB, null)) return true;
+  return sizeCloseBytes(a.capacityBytes, b.capacityBytes);
+}
+
+function pickFreshestVolume<V extends { id: number; measuredAt?: Date | string | null }>(group: V[]): V {
+  return group.reduce((a, b) => {
+    const atA = volumeMeasuredMs(a.measuredAt);
+    const atB = volumeMeasuredMs(b.measuredAt);
+    if (atB !== atA) return atB > atA ? b : a;
+    return b.id > a.id ? b : a;
+  });
+}
+
+/** One row per filesystem: latest `measuredAt`, then highest id. */
+export function dedupeVolumesByMountPoint<V extends VolumeIdentity & { id: number; measuredAt?: Date | string | null }>(volumes: V[]): V[] {
+  const groups: V[][] = [];
+  for (const v of volumes) {
+    const hit = groups.find((g) => sameVolume(g[0], v));
+    if (hit) hit.push(v);
+    else groups.push([v]);
+  }
+  const out = groups.map(pickFreshestVolume);
+  out.sort((a, b) => a.mountPoint.localeCompare(b.mountPoint));
+  return out;
+}
+
 export function physicalDiskKey(device?: string | null, container?: string | null): string | null {
   const c = container?.trim().replace(/^\/dev\//, "");
   if (c) return c;
@@ -70,6 +171,30 @@ function attrStr(attrs: Attrs, key: string): string | null {
   const v = attrs?.[key];
   if (v == null || v === "") return null;
   return String(v);
+}
+
+const NETWORK_FS = new Set(["nfs", "nfs4", "cifs", "smb", "smbfs", "fuse.sshfs", "fuse.rclone", "fuse.davfs", "9p", "afs"]);
+
+/** NFS/CIFS/FTP-style mounts are not a local disk of this machine. */
+export function isNetworkVolume(v: { fsType?: string | null; device?: string | null; mountPoint?: string | null; label?: string | null }): boolean {
+  const fs = (v.fsType ?? "").toLowerCase();
+  if (NETWORK_FS.has(fs) || (fs.startsWith("fuse.") && fs !== "fuse.apfs")) return true;
+  const dev = (v.device ?? "").toLowerCase();
+  if (/^(\/\/|smb:|nfs:|ftp:|sftp:)/.test(dev) || /^\/\/|^smb:/.test((v.mountPoint ?? "").toLowerCase())) return true;
+  const name = `${v.label ?? ""} ${v.mountPoint ?? ""}`.toLowerCase();
+  return /network share|backupftp/.test(name);
+}
+
+export function isNetworkDisk(d: {
+  name: string;
+  attributes?: Attrs;
+  volumes?: Array<{ fsType?: string | null; device?: string | null; mountPoint?: string | null; label?: string | null }>;
+}): boolean {
+  if (/network share|backupftp/i.test(d.name)) return true;
+  const mp = attrStr(d.attributes, "mount_point") ?? attrStr(d.attributes, "path");
+  if (mp && isNetworkVolume({ mountPoint: mp, device: attrStr(d.attributes, "device"), fsType: attrStr(d.attributes, "fs_type") })) return true;
+  const vols = d.volumes ?? [];
+  return vols.length > 0 && vols.every(isNetworkVolume);
 }
 
 export function serialOf(v: unknown): string | null {
@@ -242,7 +367,7 @@ export function linkComputerDisks<V extends DiskVolume>(computerVolumes: V[], dr
     const own = driveVolumes.get(d.id) ?? [];
     const key = assigned.get(d.id) ?? null;
     const linked = key ? (groups.get(key) ?? []) : [];
-    const mine = [...own, ...linked];
+    const mine = dedupeVolumesByMountPoint([...own, ...linked]);
     volumesByDrive.set(d.id, mine);
     diskKeyByDrive.set(d.id, key);
     if (mine.length > 0) {
@@ -266,7 +391,7 @@ export function linkComputerDisks<V extends DiskVolume>(computerVolumes: V[], dr
   const inferred = unmatchedKeys.map((key) => ({
     diskKey: key,
     name: groupLabel(key, groups.get(key) ?? []),
-    volumes: groups.get(key) ?? [],
+    volumes: dedupeVolumesByMountPoint(groups.get(key) ?? []),
     candidates: unmatchedDrives.map((d) => ({ id: d.id, name: d.name })),
   }));
 
@@ -329,11 +454,122 @@ export function claimLooseDisks<V extends DiskVolume, D extends DiskThing>(compu
 }
 
 const GENERIC_VOLUME_LABELS = new Set(["/", "/boot", "/boot/efi", "/system/volumes/data", "macintosh hd", "data", "root"]);
+const GENERIC_NAME_TOKENS = new Set([
+  "hdd",
+  "ssd",
+  "nvme",
+  "disk",
+  "usb",
+  "generic",
+  "network",
+  "share",
+  "drive",
+  "storage",
+  "internal",
+  "external",
+  "volume",
+  "media",
+  "blue",
+  "black",
+  "green",
+  "portable",
+  "attached",
+  "system",
+  "data",
+  "root",
+  "boot",
+]);
 
 function distinctiveVolumeLabels(volumes: Array<{ label?: string | null; mountPoint?: string | null }>): string[] {
   return volumes
     .map((v) => (v.label || v.mountPoint || "").trim().toLowerCase())
     .filter((s) => s && !GENERIC_VOLUME_LABELS.has(s));
+}
+
+function distinctiveNameTokens(text: string): string[] {
+  return [
+    ...new Set(
+      text
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 4 && !GENERIC_NAME_TOKENS.has(t) && !/^\d+$/.test(t) && !/^\d+[tgm]b$/.test(t)),
+    ),
+  ];
+}
+
+function volumeLeafTokens(volumes: Array<{ label?: string | null; mountPoint: string }>): string[] {
+  const out = new Set<string>();
+  for (const v of volumes) {
+    const label = (v.label ?? "").trim().toLowerCase();
+    if (label && !GENERIC_VOLUME_LABELS.has(label) && !/^(data|root|efi)$/i.test(label)) out.add(label);
+    const leaf = volumeLeaf(v.mountPoint);
+    if (leaf && leaf !== "/" && !GENERIC_VOLUME_LABELS.has(leaf) && !/^(data|root|efi)$/i.test(leaf)) out.add(leaf);
+  }
+  return [...out];
+}
+
+export type TwinKeySets = { hard: string[]; names: string[] };
+
+/** Serial/UUID/volume-leaf+GB (hard) and name/model tokens+GB (names, union only onto a hard key). */
+export function machineTwinKeys(d: {
+  name: string;
+  capacityBytes?: number | null;
+  serial?: string | null;
+  uuid?: string | null;
+  attributes?: Attrs;
+  volumes: Array<{ label?: string | null; mountPoint: string }>;
+}): TwinKeySets {
+  const hard: string[] = [];
+  const names: string[] = [];
+  const uuid = uuidOf(d.uuid ?? attrStr(d.attributes, "uuid") ?? attrStr(d.attributes, "disk_uuid"));
+  if (uuid) hard.push(`u:${uuid}`);
+  const serial = serialOf(d.serial ?? attrStr(d.attributes, "serial") ?? attrStr(d.attributes, "serial_number"));
+  if (serial) hard.push(`s:${serial}`);
+  const gb = d.capacityBytes != null && d.capacityBytes > 0 ? Math.round(d.capacityBytes / 1e9) : null;
+  if (gb != null) {
+    for (const leaf of volumeLeafTokens(d.volumes)) hard.push(`v:${leaf}:${gb}`);
+    const model = attrStr(d.attributes, "model") ?? "";
+    for (const tok of distinctiveNameTokens(`${d.name} ${model}`)) names.push(`v:${tok}:${gb}`);
+  }
+  return { hard, names };
+}
+
+/** Union-find: share a hard key, or a name token that another member carries as a hard (volume) key. */
+export function clusterByTwinKeys<T>(items: T[], keysOf: (item: T) => TwinKeySets): T[][] {
+  const parent = items.map((_, i) => i);
+  const find = (i: number): number => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  };
+  const union = (a: number, b: number) => {
+    const pa = find(a);
+    const pb = find(b);
+    if (pa !== pb) parent[pa] = pb;
+  };
+  const byHard = new Map<string, number[]>();
+  const nameHits: Array<{ i: number; key: string }> = [];
+  items.forEach((item, i) => {
+    const { hard, names } = keysOf(item);
+    for (const k of hard) byHard.set(k, [...(byHard.get(k) ?? []), i]);
+    for (const k of names) nameHits.push({ i, key: k });
+  });
+  for (const idxs of byHard.values()) {
+    for (let j = 1; j < idxs.length; j++) union(idxs[0], idxs[j]);
+  }
+  for (const hit of nameHits) {
+    const hardIdxs = byHard.get(hit.key);
+    if (!hardIdxs) continue;
+    for (const j of hardIdxs) union(hit.i, j);
+  }
+  const groups = new Map<number, T[]>();
+  items.forEach((item, i) => {
+    const root = find(i);
+    groups.set(root, [...(groups.get(root) ?? []), item]);
+  });
+  return [...groups.values()];
 }
 
 /** Identity used to hide a disk at an old machine when a newer sighting exists elsewhere. */
