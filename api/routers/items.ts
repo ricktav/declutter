@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { defaultAreaId } from "../lib/defaultTopic";
-import { eq, desc, or, and, asc, ne, isNull } from "drizzle-orm";
+import { eq, desc, or, and, asc, ne, isNull, sql } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -881,19 +881,38 @@ export const itemsRouter = createRouter({
   }),
 
   /** lightweight search for pickers / auto-linking. Defaults to the session house. */
+  /** Name search in the database (names starting with the text first), scoped
+   * to the session house. `fields` also matches attribute values (brand,
+   * serial, hostname, ...). */
   search: procedure
-    .input(z.object({ q: z.string(), houseId: z.number().nullable().optional() }))
+    .input(
+      z.object({
+        q: z.string(),
+        houseId: z.number().nullable().optional(),
+        fields: z.boolean().optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+      }),
+    )
     .query(async ({ input, ctx }) => {
       const houseId = input.houseId !== undefined ? input.houseId : ctx.houseId;
-      const db = getDb();
-      const all = await db
-        .select()
+      const q = input.q.trim().toLowerCase();
+      if (!q) return [];
+      const esc = q.replace(/[\\%_]/g, (c) => `\\${c}`);
+      const like = `%${esc}%`;
+      const prefix = `${esc}%`;
+      const nameHit = sql`lower(${items.name}) like ${like}`;
+      const attrHit = sql`json_search(cast(lower(cast(${items.attributes} as char)) as json), 'one', ${like}) is not null`;
+      return getDb()
+        .select({ id: items.id, name: items.name, areaId: items.areaId, roomId: items.roomId })
         .from(items)
-        .where(and(eq(items.status, "active"), houseId != null ? eq(items.houseId, houseId) : undefined));
-      const q = input.q.toLowerCase();
-      return all
-        .filter((i) => i.name.toLowerCase().includes(q))
-        .slice(0, 10)
-        .map((i) => ({ id: i.id, name: i.name, areaId: i.areaId }));
+        .where(
+          and(
+            eq(items.status, "active"),
+            houseId != null ? eq(items.houseId, houseId) : undefined,
+            input.fields ? or(nameHit, attrHit) : nameHit,
+          ),
+        )
+        .orderBy(sql`lower(${items.name}) like ${prefix} desc`, items.name, items.id)
+        .limit(input.limit ?? 10);
     }),
 });
