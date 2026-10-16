@@ -12,7 +12,7 @@ import {
   proxmoxHostWeb,
   type ProxmoxGuest,
   type PveMachineHint,
-} from "../api/lib/servicesProxmox.ts";
+} from "./collectors/services/servicesProxmox.ts";
 
 const argv = process.argv.slice(2);
 const args: Record<string, string | true> = {};

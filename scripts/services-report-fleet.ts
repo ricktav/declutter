@@ -8,7 +8,7 @@
 // Reads APP_TOKEN from .env when the server has one.
 import "dotenv/config";
 import { readFileSync } from "fs";
-import { machineHintFromItem, matchMachine, parseFleetDocumentWithMeta } from "../api/lib/servicesFleet.ts";
+import { machineHintFromItem, matchMachine, parseFleetDocumentWithMeta } from "./collectors/services/servicesFleet.ts";
 import { countProjectsByKind } from "../api/lib/servicesProjects.ts";
 
 const argv = process.argv.slice(2);

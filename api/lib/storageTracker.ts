@@ -31,7 +31,7 @@ import {
   type ReportVolume,
 } from "./storage";
 import { normalizeIdentityValue } from "./identityAttrs";
-import { normalizeIp, normHost } from "./servicesFleet";
+import { normalizeIp, normHost } from "./hostNames";
 
 type Db = ReturnType<typeof getDb>;
 

@@ -19,7 +19,7 @@ import {
   prefixLaunchdLabels,
   descendantPids,
   postgresFromDocker,
-} from "../lib/servicesMac";
+} from "../../scripts/collectors/services/servicesMac";
 
 const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">

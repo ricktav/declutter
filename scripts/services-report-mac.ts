@@ -43,9 +43,9 @@ import {
   type LaunchdRuntime,
   type ListenRow,
   type SqliteFile,
-} from "../api/lib/servicesMac.ts";
+} from "./collectors/services/servicesMac.ts";
 import type { DatabaseRecIn, ServiceRecIn, WebRecIn } from "../api/lib/services.ts";
-import type { DockerContainer } from "../api/lib/servicesDocker.ts";
+import type { DockerContainer } from "./collectors/services/servicesDocker.ts";
 
 const EXEC_MS = 8_000;
 const FIND_BUDGET_MS = 8_000;

@@ -1,6 +1,6 @@
 /** Parse Mini launchd / lsof / Caddy / sqlite / MySQL snapshots for services.report. */
 
-import type { DatabaseRecIn, ServiceRecIn, WebRecIn } from "./services.ts";
+import type { DatabaseRecIn, ServiceRecIn, WebRecIn } from "../../../api/lib/services.ts";
 
 export type LaunchdJob = {
   label: string;

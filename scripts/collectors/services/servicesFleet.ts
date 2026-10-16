@@ -1,4 +1,4 @@
-import { pickReachHost, rewriteLocalHostUrl } from "./serviceUrls.ts";
+import { pickReachHost, rewriteLocalHostUrl } from "../../../api/lib/serviceUrls.ts";
 import {
   dbMergeKey,
   isProjectSourceLabel,
@@ -12,7 +12,10 @@ import {
   projectMergeKey,
   type DatabaseRec,
   type ProjectRec,
-} from "./servicesProjects.ts";
+} from "../../../api/lib/servicesProjects.ts";
+import { normalizeIp, normHost } from "../../../api/lib/hostNames.ts";
+
+export { normalizeIp, normHost };
 
 /** Parse a claudemux (or similar) fleet HTML/JSON snapshot into per-host container lists. */
 
@@ -363,12 +366,6 @@ function hasClass(tag: string, name: string): boolean {
 
 function looksLikeIp(s: string): boolean {
   return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(s.trim());
-}
-
-export function normalizeIp(s: string | null | undefined): string | null {
-  if (s == null) return null;
-  const m = String(s).trim().match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/);
-  return m ? m[1] : null;
 }
 
 function uniqByName(xs: FleetContainer[]): FleetContainer[] {
@@ -1220,15 +1217,6 @@ export function parseFleetDocumentWithMeta(text: string): ParsedFleet {
     };
   }
   return { hosts: parseFleetDocument(text), skippedUnreachable: [], skippedProjectTables: [] };
-}
-
-export function normHost(s: string): string {
-  return s
-    .trim()
-    .toLowerCase()
-    .replace(/\.local\b/g, "")
-    .replace(/\.(lan|home|internal)\b/g, "")
-    .replace(/[^a-z0-9]+/g, "");
 }
 
 function splitAliases(raw: string | null | undefined): string[] {

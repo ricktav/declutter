@@ -11,9 +11,9 @@
 import "dotenv/config";
 import { execFileSync } from "child_process";
 import os from "os";
-import { dockerPathEnv, enrichDockerContainers, parseDockerPs } from "../api/lib/servicesDocker.ts";
-import { machineHintFromItem, matchMachine } from "../api/lib/servicesFleet.ts";
-import { MAC_MINI_HOST, MAC_MINI_IP, MAC_MINI_ITEM_ID, macCollectorEnabled } from "../api/lib/servicesMac.ts";
+import { dockerPathEnv, enrichDockerContainers, parseDockerPs } from "./collectors/services/servicesDocker.ts";
+import { machineHintFromItem, matchMachine } from "./collectors/services/servicesFleet.ts";
+import { MAC_MINI_HOST, MAC_MINI_IP, MAC_MINI_ITEM_ID, macCollectorEnabled } from "./collectors/services/servicesMac.ts";
 import { collectMacLive } from "./services-report-mac.ts";
 
 const argv = process.argv.slice(2);

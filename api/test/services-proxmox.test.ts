@@ -11,7 +11,7 @@ import {
   applyPveGuestConfig,
   guessGuestAccess,
   proxmoxHostWeb,
-} from "../lib/servicesProxmox";
+} from "../../scripts/collectors/services/servicesProxmox";
 
 const pct = `VMID       Status     Lock         Name
 102        running                 puppet

@@ -6,7 +6,7 @@
 //   node --experimental-strip-types scripts/services-report-projects.ts --file ./projects.html --apply
 import "dotenv/config";
 import { readFileSync } from "fs";
-import { machineHintFromItem, matchMachine } from "../api/lib/servicesFleet.ts";
+import { machineHintFromItem, matchMachine } from "./collectors/services/servicesFleet.ts";
 import { countProjectsByKind, parseProjectsDocument } from "../api/lib/servicesProjects.ts";
 
 const argv = process.argv.slice(2);

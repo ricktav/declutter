@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { items, relations, rooms, storageDirs, storageVolumes, type DataRole } from "@db/schema";
 import type { getDb } from "../queries/connection";
-import { normalizeIp, normHost } from "./servicesFleet";
+import { normalizeIp, normHost } from "./hostNames";
 import {
   claimLooseDisks,
   claimMachineDisks,

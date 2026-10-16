@@ -9,7 +9,7 @@ import {
   matchMachine,
   parseFleetDocument,
   parseFleetDocumentWithMeta,
-} from "../lib/servicesFleet";
+} from "../../scripts/collectors/services/servicesFleet";
 import {
   countProjectsByKind,
   detectProjectKind,

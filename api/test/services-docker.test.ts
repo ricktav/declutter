@@ -6,7 +6,7 @@ import {
   parseDockerPs,
   parseDockerSizeField,
   parseDockerSystemDf,
-} from "../lib/servicesDocker";
+} from "../../scripts/collectors/services/servicesDocker";
 
 const tsv = `twin-homebase\tlidarventory:homebase\t0.0.0.0:8001->8000/tcp\tUp 2 hours
 flamboyant_kirch\tlidarventory\t0.0.0.0:8000->8000/tcp\tUp 5 days
