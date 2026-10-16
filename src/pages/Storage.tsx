@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router";
 import { Eye, EyeOff, HardDrive, ListTodo, Server, Star, X } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
-import { DeviceBlock, ROLE_COLORS, formatBytes } from "@/components/storage/Blocks";
+import { DeviceBlock, ROLE_COLORS, formatBytes, isRecentlyScanned } from "@/components/storage/Blocks";
 import { cn } from "@/lib/utils";
 import { usePersistedState } from "@/hooks/use-persisted-state";
 
@@ -378,7 +378,12 @@ export default function StoragePage() {
             <div className="space-y-3">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <div className="text-sm font-semibold">{dirs.data.volume.label ?? dirs.data.volume.mountPoint}</div>
+                  <div className="flex items-center gap-1.5 text-sm font-semibold">
+                    {isRecentlyScanned(dirs.data.volume.measuredAt) && (
+                      <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "#22c55e" }} title="Recently scanned" aria-label="Recently scanned" />
+                    )}
+                    {dirs.data.volume.label ?? dirs.data.volume.mountPoint}
+                  </div>
                   <div className="text-[12px] text-muted-foreground">
                     {dirs.data.volume.itemName} · {dirs.data.volume.mountPoint} · {formatBytes(dirs.data.volume.usedBytes)} of {formatBytes(dirs.data.volume.capacityBytes)} · measured {new Date(dirs.data.volume.measuredAt).toLocaleString()}
                   </div>
