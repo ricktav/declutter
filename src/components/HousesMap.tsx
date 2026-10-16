@@ -74,7 +74,7 @@ export function HousesMap({ onSelectHouse }: { onSelectHouse?: (houseId: number)
       const marker = L.marker([h.lat!, h.lng!], { icon: pinIcon }).addTo(map);
       const escapedName = h.name.replace(/"/g, "&quot;");
       marker.bindPopup(
-        `<b>${h.name}</b>${h.address ? `<br>${h.address}` : ""}<br>${h.itemCount} item${h.itemCount === 1 ? "" : "s"}` +
+        `<b>${h.name}</b>${h.address ? `<br>${h.address}` : ""}<br>${h.itemCount} Thing${h.itemCount === 1 ? "" : "s"}` +
           `<br><button type="button" class="houses-map-switch-btn" aria-label="Switch to ${escapedName}" ` +
           `style="margin-top:4px;font-size:12px;padding:3px 8px;border-radius:6px;border:1px solid #d6d3c9;background:#f4f1ea;cursor:pointer;">Switch to this house</button>`,
       );

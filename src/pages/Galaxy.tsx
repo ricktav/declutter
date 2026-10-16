@@ -56,7 +56,7 @@ function paletteColor(index: number) {
 const roomKey = (it: Item) => (it.room ? `${it.room.id}:${it.houseId ?? ""}:${it.room.name.trim()}` : "none");
 /** "Keuken", or "Keuken · Thuis" when several houses share the view (as Photos labels its room groups). */
 const roomKeyLabel = (key: string, houses: House[], showHouse: boolean) => {
-  if (key === "none") return "No room";
+  if (key === "none") return "No Place";
   const [, houseId] = key.split(":", 2);
   const name = key.slice(key.indexOf(":", key.indexOf(":") + 1) + 1);
   const house = showHouse && houseId ? houses.find((h) => String(h.id) === houseId)?.name : undefined;
@@ -79,10 +79,10 @@ const GROUPINGS: Grouping[] = [
   },
   {
     id: "topic-floor",
-    label: "Topic → Floor",
-    shortLabel: "Topic · Floor",
+    label: "Kind → Floor",
+    shortLabel: "Kind · Floor",
     level1: (it) => String(it.areaId),
-    level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Topic #${key}`,
+    level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Kind #${key}`,
     level1Color: (key, index, areas) => areas.find((a) => String(a.id) === key)?.color ?? paletteColor(index),
     level1Nav: (key, areas) => {
       const a = areas.find((a) => String(a.id) === key);
@@ -97,7 +97,7 @@ const GROUPINGS: Grouping[] = [
   },
   {
     id: "floor-topic",
-    label: "Floor → Topic",
+    label: "Floor → Kind",
     shortLabel: "Floor",
     level1: (it) => it.room?.floor?.trim() || "No floor",
     level1Label: (key) => key,
@@ -109,10 +109,10 @@ const GROUPINGS: Grouping[] = [
   },
   {
     id: "topic-room",
-    label: "Topic → Room",
-    shortLabel: "Topic · Room",
+    label: "Kind → Place",
+    shortLabel: "Kind · Place",
     level1: (it) => String(it.areaId),
-    level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Topic #${key}`,
+    level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Kind #${key}`,
     level1Color: (key, index, areas) => areas.find((a) => String(a.id) === key)?.color ?? paletteColor(index),
     level1Nav: (key, areas) => {
       const a = areas.find((a) => String(a.id) === key);
@@ -127,8 +127,8 @@ const GROUPINGS: Grouping[] = [
   },
   {
     id: "room-topic",
-    label: "Room → Topic",
-    shortLabel: "Room",
+    label: "Place → Kind",
+    shortLabel: "Place",
     level1: roomKey,
     level1Label: (key, _areas, houses, showHouse) => roomKeyLabel(key, houses, showHouse),
     level1Color: (_key, index) => paletteColor(index),
@@ -425,7 +425,7 @@ export default function GalaxyPage() {
       .on("mouseenter", (ev: MouseEvent, d) => {
         select(ev.currentTarget as SVGCircleElement).attr("r", d.r * 2.2).attr("fill-opacity", 1);
         const it = d.item!;
-        setTooltip({ x: ev.clientX, y: ev.clientY, title: it.name, sub: it.room ? it.room.name : "no room" });
+        setTooltip({ x: ev.clientX, y: ev.clientY, title: it.name, sub: it.room ? it.room.name : "no Place" });
       })
       .on("mousemove", (ev: MouseEvent) => {
         setTooltip((t) => (t ? { ...t, x: ev.clientX, y: ev.clientY } : t));
@@ -557,7 +557,7 @@ export default function GalaxyPage() {
           ))}
         </select>
         <div className="ml-auto flex items-center gap-4 font-data text-[12px] text-hb-sage">
-          <span><span className="text-hb-lime font-semibold">{totalItems}</span> items</span>
+          <span><span className="text-hb-lime font-semibold">{totalItems}</span> Things</span>
           <span><span className="text-hb-lime font-semibold">{totalGroups}</span> groups</span>
         </div>
       </div>
@@ -605,7 +605,7 @@ export default function GalaxyPage() {
         )}
 
         <div className="absolute bottom-4 right-4 font-data text-[10px] text-[#6a6e5e]">
-          Click: open item · Hover: details · Drag: nudge · Scroll: zoom
+          Click: open Thing · Hover: details · Drag: nudge · Scroll: zoom
         </div>
       </div>
     </div>

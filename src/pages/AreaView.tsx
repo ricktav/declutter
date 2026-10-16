@@ -93,7 +93,7 @@ function EditAreaDialog({ area }: { area: Area }) {
       </DialogTrigger>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Edit topic</DialogTitle>
+          <DialogTitle>Edit kind</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <input
@@ -204,12 +204,12 @@ function AddItemDialog({ areaId, defs }: { areaId: number; defs: AttributeDef[] 
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" className="h-8 text-[13px]">
-          <Plus className="h-4 w-4 mr-1" /> Add item
+          <Plus className="h-4 w-4 mr-1" /> Add Thing
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>New item</DialogTitle>
+          <DialogTitle>New Thing</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <input
@@ -416,7 +416,7 @@ export default function AreaView() {
   };
 
   if (area.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
-  if (!area.data) return <div className="p-8 text-sm">Topic not found.</div>;
+  if (!area.data) return <div className="p-8 text-sm">Kind not found.</div>;
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
@@ -424,7 +424,7 @@ export default function AreaView() {
         <span className="h-3 w-3 rounded-sm" style={{ background: area.data.color }} />
         <h1 className="text-2xl font-semibold tracking-tight">{area.data.name}</h1>
         <span className="font-data text-sm text-muted-foreground">
-          {sorted.length} item{sorted.length === 1 ? "" : "s"}
+          {sorted.length} Thing{sorted.length === 1 ? "" : "s"}
         </span>
         <div className="ml-auto flex gap-2">
           <Button
@@ -443,10 +443,10 @@ export default function AreaView() {
                 <Trash2 className="h-4 w-4" />
               </Button>
             }
-            title={`Delete topic "${area.data.name}"?`}
-            description={`Permanently deletes this topic and ALL ${itemsList.data?.length ?? 0} item(s) in it — attachments, tasks, relations, everything. This cannot be undone.`}
+            title={`Delete kind "${area.data.name}"?`}
+            description={`Permanently deletes this kind and ALL ${itemsList.data?.length ?? 0} Thing(s) in it — attachments, tasks, relations, everything. This cannot be undone.`}
             confirmText={area.data.name}
-            confirmLabel="Delete topic"
+            confirmLabel="Delete kind"
             pending={removeArea.isPending}
             onConfirm={() => removeArea.mutate({ id: area.data!.id })}
           />
@@ -563,7 +563,7 @@ export default function AreaView() {
             <div className="col-span-full text-center text-muted-foreground py-8">
               {slug === "computers" && systems
                 ? "No systems in this list — turn off Systems to see peripherals."
-                : "No items yet — add one, or capture something via the inbox."}
+                : "No Things yet — add one, or snap something into Sort."}
             </div>
           )}
         </div>
@@ -623,7 +623,7 @@ export default function AreaView() {
                       </button>
                     }
                     title={`Delete "${it.name}"?`}
-                    description="Permanently deletes this item, its attachments, tasks, relations and photo pins."
+                    description="Permanently deletes this Thing, its attachments, tasks, relations and photo pins."
                     confirmLabel="Delete"
                     pending={removeItem.isPending}
                     onConfirm={() => removeItem.mutate({ id: it.id })}
@@ -636,7 +636,7 @@ export default function AreaView() {
                 <td colSpan={columns.length + 5} className="text-center text-muted-foreground py-8">
                   {slug === "computers" && systems
                     ? "No systems in this list — turn off Systems to see peripherals."
-                    : "No items yet — add one, or capture something via the inbox."}
+                    : "No Things yet — add one, or snap something into Sort."}
                 </td>
               </tr>
             )}

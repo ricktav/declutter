@@ -380,7 +380,7 @@ export default function ItemDetail() {
   const patchAttrs = trpc.items.patchAttributes.useMutation({ onSuccess: invalidate });
 
   if (item.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
-  if (!item.data) return <div className="p-8 text-sm">Item not found.</div>;
+  if (!item.data) return <div className="p-8 text-sm">Thing not found.</div>;
   const it = item.data;
   const defs = (it.area?.attributeDefs as AttributeDef[] | null) ?? [];
   const usedAttrKeys = new Set(Object.keys(attrDraft));
@@ -516,9 +516,9 @@ export default function ItemDetail() {
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <div className="text-[12px] text-muted-foreground flex items-center gap-2 min-w-0">
-            <span className="micro-label shrink-0">Topic</span>
+            <span className="micro-label shrink-0">Kind</span>
             <select
-              aria-label="Topic"
+              aria-label="Kind"
               className="h-7 w-52 shrink-0 rounded-md border border-input bg-white px-1.5 text-[12px]"
               value={it.areaId}
               disabled={update.isPending}
@@ -541,7 +541,7 @@ export default function ItemDetail() {
                 Open
               </Link>
             )}
-            <span className="shrink-0">/ item #{it.id}</span>
+            <span className="shrink-0">/ Thing #{it.id}</span>
             {it.status === "archived" && (
               <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                 <Archive className="h-3 w-3" /> Archived
@@ -582,7 +582,7 @@ export default function ItemDetail() {
           )}
         </div>
         <div className="flex gap-1.5 shrink-0">
-          <div className="flex rounded-md border border-input overflow-hidden mr-1" title="Prev/next item in this area (← / →)">
+          <div className="flex rounded-md border border-input overflow-hidden mr-1" title="Prev/next Thing of this kind (← / →)">
             <button
               className="h-8 w-8 flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent border-r border-input"
               disabled={!prevId}
@@ -604,7 +604,7 @@ export default function ItemDetail() {
           </Button>
           <Button size="sm" variant="outline" className="h-8 text-[12px]"
             onClick={openLocPicker}>
-            <MapPin className="h-3.5 w-3.5 mr-1" /> Pick location
+            <MapPin className="h-3.5 w-3.5 mr-1" /> Pick Place
           </Button>
           <Button size="sm" variant="outline" className="h-8 text-[12px]"
             onClick={() => setArchived.mutate({ id: itemId, archived: it.status !== "archived" })}>
@@ -621,9 +621,9 @@ export default function ItemDetail() {
               </Button>
             }
             title={`Delete "${it.name}"?`}
-            description="Permanently deletes this item, its attachments, tasks, relations and photo pins. This cannot be undone."
+            description="Permanently deletes this Thing, its attachments, tasks, relations and photo pins. This cannot be undone."
             confirmText={it.name}
-            confirmLabel="Delete item"
+            confirmLabel="Delete Thing"
             pending={remove.isPending}
             onConfirm={() => remove.mutate({ id: itemId })}
           />
@@ -713,7 +713,7 @@ export default function ItemDetail() {
             </Button>
             <Button size="sm" variant="ghost" className="h-6 text-[11px]"
               onClick={() => setLibraryOpen(true)}
-              title="Crop a photo already in the inbox">
+              title="Crop a photo already in Sort">
               <Images className="h-3 w-3 mr-1" />
               library
             </Button>
@@ -1065,7 +1065,7 @@ export default function ItemDetail() {
                 <div className="flex-1">
                   <ItemPicker
                     excludeId={it.id}
-                    placeholder="link to item…"
+                    placeholder="link to Thing…"
                     onSelect={(sel) =>
                       addRelation.mutate({ fromItemId: it.id, toItemId: sel.id, type: relType })
                     }
@@ -1081,9 +1081,9 @@ export default function ItemDetail() {
           {/* location: house → floor → room (areas are the topic, not the place) */}
           <section className="rounded-lg border border-border bg-white p-3">
             <div className="flex items-center mb-2">
-              <h2 className="micro-label text-muted-foreground">Location</h2>
+              <h2 className="micro-label text-muted-foreground">Place</h2>
               <Button size="sm" variant="ghost" className="h-6 text-[11px] ml-auto" onClick={openLocPicker}>
-                Pick location
+                Pick Place
               </Button>
             </div>
             <div className="text-[13px] space-y-0.5">
@@ -1096,7 +1096,7 @@ export default function ItemDetail() {
               ) : it.house ? (
                 <span className="text-[13px] text-muted-foreground">Unplaced in {it.house.name}</span>
               ) : (
-                <span className="text-[13px] text-muted-foreground">No location</span>
+                <span className="text-[13px] text-muted-foreground">No Place</span>
               )}
             </div>
           </section>
@@ -1204,7 +1204,7 @@ export default function ItemDetail() {
               </div>
               <div className="flex gap-2 mt-3">
                 <input className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
-                  placeholder="add a task for this item…"
+                  placeholder="add a task for this Thing…"
                   autoFocus={addingTask && it.tasks.length === 0}
                   value={newTask}
                   onChange={(e) => setNewTask(e.target.value)}
@@ -1241,7 +1241,7 @@ export default function ItemDetail() {
               </div>
               <div className="flex gap-2 mt-3">
                 <input className="flex-1 rounded border border-input px-2 py-1 text-[13px]"
-                  placeholder="capture an idea about this item…"
+                  placeholder="capture an idea about this Thing…"
                   autoFocus={addingIdea && it.ideas.length === 0}
                   value={newIdea}
                   onChange={(e) => setNewIdea(e.target.value)}
@@ -1279,9 +1279,9 @@ export default function ItemDetail() {
       <Dialog open={locOpen} onOpenChange={setLocOpen}>
         <DialogContent className="sm:max-w-md overflow-visible">
           <DialogHeader>
-            <DialogTitle>Pick location</DialogTitle>
+            <DialogTitle>Pick Place</DialogTitle>
             <DialogDescription>
-              Where this Thing sits. Topic (above the name) stays what it is.
+              Where this Thing sits. Kind (above the name) stays what it is.
             </DialogDescription>
           </DialogHeader>
           <RoomPicker
@@ -1296,7 +1296,7 @@ export default function ItemDetail() {
           />
           <div className="flex items-center justify-between gap-2">
             <p className="text-[11px] text-muted-foreground">
-              {it.room ? `Now: ${it.room.name}` : it.house ? `Unplaced in ${it.house.name}` : "No location yet"}
+              {it.room ? `Now: ${it.room.name}` : it.house ? `Unplaced in ${it.house.name}` : "No Place yet"}
             </p>
             <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => applyLoc(null)}>
               Leave unplaced
@@ -1386,7 +1386,7 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
       utils.pins.listForItem.invalidate();
     },
   });
-  const room = p.roomName ?? (p.roomId != null ? `room #${p.roomId}` : null);
+  const room = p.roomName ?? (p.roomId != null ? `Place #${p.roomId}` : null);
   const canvases = p.roomPhotos.filter((r) => !r.isCutout);
   const shown = canvases.slice(0, PANE_ROOM_PHOTOS_MAX);
   const in3d = p.onPlan && (p.roomHasGeometry || p.roomHasDimensions);
@@ -1411,13 +1411,13 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
                   </Link>
                   {pin.label && <span className="text-muted-foreground text-[11px]">as “{pin.label}”</span>}
                   {pin.camera ? (
-                    <span className="text-[11px] text-violet-700" title="This photo stands on its room's plan as a camera">
+                    <span className="text-[11px] text-violet-700" title="This photo stands on its Place plan as a camera">
                       · on the plan
                     </span>
                   ) : pin.roomId != null && !pin.isCrop ? (
                     <PlaceOnPlanButton
                       to={`/rooms/${pin.roomId}?placePhoto=${pin.photoId}`}
-                      title="Stand this photo on its room's plan, looking where it was taken"
+                      title="Stand this photo on its Place plan, looking where it was taken"
                       className="h-8 w-8"
                     />
                   ) : null}
@@ -1485,8 +1485,8 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
           </div>
         ) : p.roomId == null ? (
           <div className="text-[13px] text-muted-foreground">
-            Give it a room first ·{" "}
-            <button type="button" className={actionLink} onClick={onPickRoom}>Pick a room</button>
+            Give it a Place first ·{" "}
+            <button type="button" className={actionLink} onClick={onPickRoom}>Pick a Place</button>
           </div>
         ) : p.onPlan ? (
           <div className="text-[13px]">

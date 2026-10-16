@@ -396,11 +396,11 @@ export default function SettingsPage() {
       <div className="mt-6 rounded-lg border border-border bg-white p-4 space-y-3">
         <h2 className="text-sm font-semibold">Which provider for which job</h2>
         <p className="text-[12px] text-muted-foreground">
-          Provider A does chat, wiki and Ask AI. Inbox triage and detect objects can use A or B.
+          Provider A does chat, wiki and Ask AI. Sort triage and detect objects can use A or B.
         </p>
         <div className="grid sm:grid-cols-2 gap-3">
           <label className="block text-[12px]">
-            Inbox triage
+            Sort triage
             <select
               className="mt-1 w-full rounded-md border border-input px-2 py-1.5 text-[13px] bg-white"
               value={triageSlot}
@@ -442,7 +442,7 @@ export default function SettingsPage() {
         <h2 className="text-sm font-semibold">Provider B — A/B comparison</h2>
       </div>
       <p className="text-[12px] text-muted-foreground mt-1">
-        Optional second provider. With both configured, every inbox capture gets an{" "}
+        Optional second provider. With both configured, every snap in Sort gets an{" "}
         <b>A/B</b> button that runs the same triage prompt on both models side by side. Provider A keeps doing all
         the real work — B is for comparison only.
       </p>
@@ -586,11 +586,11 @@ export default function SettingsPage() {
       {/* Houses & locations */}
       <div className="mt-8 flex items-center gap-2">
         <Home className="h-4 w-4 text-emerald-700" />
-        <h2 className="text-sm font-semibold">Houses & locations</h2>
+        <h2 className="text-sm font-semibold">Houses & Places</h2>
       </div>
       <p className="text-[12px] text-muted-foreground mt-1">
-        Location context lives on items: <b>house → floor → room</b>. Areas stay the topic (computers, kitchen, …),
-        locations say where the thing physically is.
+        Place context lives on Things: <b>house → floor → Place</b>. Kinds say what a Thing is (computers, kitchen, …),
+        Places say where the Thing physically is.
       </p>
       <div className="mt-3 rounded-lg border border-border bg-white p-4 space-y-3">
         <HousesSection />
@@ -740,9 +740,9 @@ function MoveHouseDialog({
                   <div className="flex items-start gap-1.5 text-[13px] text-amber-900">
                     <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                     <span>
-                      This moves <b>{impact.data.itemCount} item{impact.data.itemCount === 1 ? "" : "s"}</b> and{" "}
+                      This moves <b>{impact.data.itemCount} Thing{impact.data.itemCount === 1 ? "" : "s"}</b> and{" "}
                       <b>{impact.data.photoCount} photo{impact.data.photoCount === 1 ? "" : "s"}</b> from{" "}
-                      <b>{house.name}</b> to <b>{target?.name}</b>. Floor/room stay as-is.
+                      <b>{house.name}</b> to <b>{target?.name}</b>. Floor/Place stay as-is.
                     </span>
                   </div>
                   <label className="flex items-start gap-1.5 text-[12px] text-amber-900 cursor-pointer">
@@ -874,7 +874,7 @@ function HouseRow({ house, allHouses, roomCount }: { house: HouseRowData; allHou
       <div className="flex-1 min-w-0">
         <div className="text-[13px] font-medium">
           {house.name}
-          <span className="ml-2 font-data text-[11px] text-muted-foreground">{house.itemCount} items</span>
+          <span className="ml-2 font-data text-[11px] text-muted-foreground">{house.itemCount} Things</span>
         </div>
         {house.address && <div className="text-[12px] text-muted-foreground">{house.address}</div>}
         {house.lat != null && house.lng != null && (
@@ -904,7 +904,7 @@ function HouseRow({ house, allHouses, roomCount }: { house: HouseRowData; allHou
           </span>
         ))}
         <div className="font-data text-[11px] text-muted-foreground mt-0.5">
-          {`${roomCount} room${roomCount === 1 ? "" : "s"}`}
+          {`${roomCount} Place${roomCount === 1 ? "" : "s"}`}
         </div>
       </div>
       <button
@@ -924,8 +924,8 @@ function HouseRow({ house, allHouses, roomCount }: { house: HouseRowData; allHou
         title={`Delete "${house.name}"?`}
         description={
           house.itemCount > 0
-            ? `${house.itemCount} item${house.itemCount === 1 ? "" : "s"} will be unassigned from any house (not deleted) - move them to another house first if you'd rather keep that link.`
-            : "This house has no items. The house record itself will be removed."
+            ? `${house.itemCount} Thing${house.itemCount === 1 ? "" : "s"} will be unassigned from any house (not deleted) - move them to another house first if you'd rather keep that link.`
+            : "This house has no Things. The house record itself will be removed."
         }
         confirmLabel="Delete house"
         pending={remove.isPending}

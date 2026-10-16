@@ -140,7 +140,7 @@ export default function AllItems() {
   const selectedRows = sorted.filter((i) => selected.has(i.id));
   const batchCount = selectedRows.length;
   const actionIds = rowAction ? [rowAction.id] : selectedRows.map((i) => i.id);
-  const actionNames = rowAction ? rowAction.name : `${batchCount} item${batchCount === 1 ? "" : "s"}`;
+  const actionNames = rowAction ? rowAction.name : `${batchCount} Thing${batchCount === 1 ? "" : "s"}`;
 
   const clearRoomParam = () => {
     const next = new URLSearchParams(searchParams);
@@ -156,7 +156,7 @@ export default function AllItems() {
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
       <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">All items</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">All Things</h1>
         <span className="font-data text-sm text-muted-foreground">
           {sorted.length} of {items.data?.length ?? 0}
         </span>
@@ -167,19 +167,19 @@ export default function AllItems() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <input
             className="w-full rounded-md border border-input bg-white pl-8 pr-3 py-1.5 text-[13px]"
-            placeholder="Search name, room, topic…"
+            placeholder="Search name, Place, kind…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         <label className="text-[12px] text-muted-foreground">
-          Topic
+          Kind
           <select
             className="ml-1.5 rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
             value={areaId ?? ""}
             onChange={(e) => setAreaId(e.target.value ? Number(e.target.value) : null)}
           >
-            <option value="">All topics</option>
+            <option value="">All kinds</option>
             {(areasQuery.data ?? []).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
@@ -189,7 +189,7 @@ export default function AllItems() {
         </label>
         <details className="relative">
           <summary className="cursor-pointer rounded-md border border-input bg-white px-2 py-1.5 text-[12px] list-none">
-            Rooms{roomIds.length ? ` (${roomIds.length})` : ""}
+            Places{roomIds.length ? ` (${roomIds.length})` : ""}
           </summary>
           <div className="absolute z-20 mt-1 w-64 max-h-64 overflow-auto rounded-md border border-border bg-white shadow-lg p-2 space-y-1">
             {(roomsQuery.data ?? []).map((r) => (
@@ -201,7 +201,7 @@ export default function AllItems() {
             ))}
             {roomIds.length > 0 && (
               <button type="button" className="text-[11px] text-primary hover:underline" onClick={clearRoomParam}>
-                Clear rooms
+                Clear Places
               </button>
             )}
           </div>
@@ -223,7 +223,7 @@ export default function AllItems() {
             <FolderInput className="h-3.5 w-3.5 mr-1" /> Move
           </Button>
           <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => { setMoveAreaId(null); setTopicOpen(true); }}>
-            <Tag className="h-3.5 w-3.5 mr-1" /> Topic
+            <Tag className="h-3.5 w-3.5 mr-1" /> Kind
           </Button>
           <ConfirmDelete
             trigger={
@@ -231,9 +231,9 @@ export default function AllItems() {
                 <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
               </Button>
             }
-            title={`Delete ${batchCount} item${batchCount === 1 ? "" : "s"}?`}
-            description={`Permanently deletes ${batchCount} selected item${batchCount === 1 ? "" : "s"}, their attachments, tasks, relations and photo pins. This cannot be undone.`}
-            confirmLabel={`Delete ${batchCount} item${batchCount === 1 ? "" : "s"}`}
+            title={`Delete ${batchCount} Thing${batchCount === 1 ? "" : "s"}?`}
+            description={`Permanently deletes ${batchCount} selected Thing${batchCount === 1 ? "" : "s"}, their attachments, tasks, relations and photo pins. This cannot be undone.`}
+            confirmLabel={`Delete ${batchCount} Thing${batchCount === 1 ? "" : "s"}`}
             pending={removeMany.isPending}
             onConfirm={() => removeMany.mutate({ ids: selectedRows.map((i) => i.id) })}
           />
@@ -266,8 +266,8 @@ export default function AllItems() {
                   </th>
                   <th className="w-12" />
                   <SortableTh label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-                  <SortableTh label="Topic" column="topic" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-                  <SortableTh label="Location" column="location" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                  <SortableTh label="Kind" column="topic" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                  <SortableTh label="Place" column="location" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   <SortableTh label="Updated" column="updated" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   <th className="w-28" />
                 </tr>
@@ -291,7 +291,7 @@ export default function AllItems() {
         )}
         {sorted.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
-            No items match these filters.
+            No Things match these filters.
           </div>
         )}
       </div>
@@ -315,13 +315,13 @@ export default function AllItems() {
       <Dialog open={topicOpen || rowAction?.kind === "topic"} onOpenChange={(o) => { if (!o) { setTopicOpen(false); setRowAction(null); } }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Change topic for {actionNames}</DialogTitle>
+            <DialogTitle>Change kind for {actionNames}</DialogTitle>
           </DialogHeader>
           <AreaPicker value={moveAreaId} onChange={setMoveAreaId} />
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => { setTopicOpen(false); setRowAction(null); }}>Cancel</Button>
             <Button size="sm" disabled={updateMany.isPending || moveAreaId == null} onClick={() => moveAreaId != null && updateMany.mutate({ ids: actionIds, areaId: moveAreaId })}>
-              Change topic
+              Change kind
             </Button>
           </div>
           {updateMany.isError && <p className="text-[12px] text-destructive">{updateMany.error.message}</p>}
@@ -386,7 +386,7 @@ function ItemRowView({
       <td>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
           <button type="button" className="text-[11px] text-primary hover:underline" onClick={onMove}>Move</button>
-          <button type="button" className="text-[11px] text-primary hover:underline" onClick={onTopic}>Topic</button>
+          <button type="button" className="text-[11px] text-primary hover:underline" onClick={onTopic}>Kind</button>
           <ConfirmDelete
             trigger={
               <button type="button" className="text-muted-foreground hover:text-destructive" title={`Delete ${it.name}`}>
@@ -394,7 +394,7 @@ function ItemRowView({
               </button>
             }
             title={`Delete "${it.name}"?`}
-            description="Permanently deletes this item, its attachments, tasks, relations and photo pins."
+            description="Permanently deletes this Thing, its attachments, tasks, relations and photo pins."
             confirmLabel="Delete"
             pending={removePending}
             onConfirm={onDelete}

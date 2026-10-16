@@ -115,7 +115,7 @@ export function RoomPhotoCard({
       {onPlan && (
         <span
           className="absolute top-3 left-3 flex items-center gap-1 rounded bg-white/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm"
-          title="This photo stands on the room's plan as a camera"
+          title="This photo stands on its Place plan as a camera"
         >
           <Camera className="h-3 w-3" /> on the plan
         </span>
@@ -132,7 +132,7 @@ export function RoomPhotoCard({
           to={`/rooms/${photoRoomId}?placePhoto=${photoId}`}
           className="mt-1.5 block truncate text-[12px] text-primary hover:underline"
         >
-          In another room →
+          In another Place →
         </Link>
       )}
       <div className="mt-1.5 flex items-center gap-1">

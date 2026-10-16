@@ -71,24 +71,24 @@ export function MergeRoomsDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Merge rooms?</DialogTitle>
+          <DialogTitle>Merge Places?</DialogTitle>
         </DialogHeader>
         {!ready ? (
-          <p className="text-[13px] text-muted-foreground">Loading rooms…</p>
+          <p className="text-[13px] text-muted-foreground">Loading Places…</p>
         ) : (
           <div className="space-y-4 text-[13px]">
             <p>
-              Merge <b>{from.name}</b> into <b>{to.name}</b>. Items, photos and pins move to{" "}
+              Merge <b>{from.name}</b> into <b>{to.name}</b>. Things, photos and pins move to{" "}
               <b>{to.name}</b>. <b>{from.name}</b> is then deleted. This cannot be undone.
             </p>
             <p className="text-muted-foreground">
               {from.items.length} Thing{from.items.length === 1 ? "" : "s"} in the source · {to.items.length} in the
-              surviving room.
+              surviving Place.
             </p>
 
             {bothPlan && (
               <div>
-                <div className="micro-label text-muted-foreground mb-2">Both rooms have a floorplan — pick which stays</div>
+                <div className="micro-label text-muted-foreground mb-2">Both Places have a floorplan — pick which stays</div>
                 <div className="grid grid-cols-2 gap-3">
                   {sides.map((s) => (
                     <button
@@ -119,7 +119,7 @@ export function MergeRoomsDialog({
 
             {bothGeom && (
               <div>
-                <div className="micro-label text-muted-foreground mb-2">Both rooms have a 3D scan — pick which stays</div>
+                <div className="micro-label text-muted-foreground mb-2">Both Places have a 3D scan — pick which stays</div>
                 <div className="grid grid-cols-2 gap-3">
                   {sides.map((s) => (
                     <label
@@ -171,7 +171,7 @@ export function MergeRoomsDialog({
                   })
                 }
               >
-                {merge.isPending ? "Merging…" : "Merge rooms"}
+                {merge.isPending ? "Merging…" : "Merge Places"}
               </Button>
             </div>
           </div>

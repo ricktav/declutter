@@ -25,7 +25,7 @@ export function PhotoRoomSelect({
 
   return (
     <select
-      aria-label="Assign photo to a room"
+      aria-label="Assign photo to a Place"
       disabled={disabled || rooms.isLoading || list.length === 0}
       className={cn(
         "h-7 w-full rounded-md border border-input bg-white px-1.5 text-[11px] text-foreground",
@@ -39,7 +39,7 @@ export function PhotoRoomSelect({
       }}
     >
       <option value="" disabled>
-        {rooms.isLoading ? "Loading rooms…" : list.length ? "Assign room…" : "No rooms"}
+        {rooms.isLoading ? "Loading Places…" : list.length ? "Assign Place…" : "No Places"}
       </option>
       {list.map((r) => (
         <option key={r.id} value={r.id}>

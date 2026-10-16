@@ -407,7 +407,7 @@ export function RoomPlan2D({
               fill="#d9a13b"
               className="text-[9px]"
             >
-              opening · {o.widthM} m{o.connectsTo != null ? ` → room #${o.connectsTo}` : ""}
+              opening · {o.widthM} m{o.connectsTo != null ? ` → Place #${o.connectsTo}` : ""}
             </text>
           </g>
         );

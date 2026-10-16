@@ -118,8 +118,8 @@ function RunningTimerPill() {
 const PRIMARY_NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/focus", label: "Focus", icon: ScanSearch },
-  { to: "/inbox", label: "Inbox", icon: Inbox },
-  { to: "/items", label: "All Items", icon: Search },
+  { to: "/inbox", label: "Sort", icon: Inbox },
+  { to: "/items", label: "All Things", icon: Search },
   { to: "/photos", label: "Photos", icon: Images },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -311,7 +311,7 @@ export default function Layout() {
       </nav>
 
       <div className="flex-1 overflow-y-auto">
-        <SidebarSectionTitle label="Topics" collapsed={areasCollapsed} onToggle={toggleAreas} />
+        <SidebarSectionTitle label="Kinds" collapsed={areasCollapsed} onToggle={toggleAreas} />
         {!areasCollapsed && (
           <nav className="px-2 space-y-0.5">
             {(areas.data ?? []).map((a) => {
@@ -344,7 +344,7 @@ export default function Layout() {
           </nav>
         )}
 
-        <SidebarSectionTitle label="Locations" collapsed={locationsCollapsed} onToggle={toggleLocations} />
+        <SidebarSectionTitle label="Places" collapsed={locationsCollapsed} onToggle={toggleLocations} />
         {!locationsCollapsed && <SidebarRooms navLinkClass={navLinkClass} onNavigate={() => setMenuOpen(false)} />}
       </div>
 

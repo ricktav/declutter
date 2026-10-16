@@ -303,7 +303,7 @@ function FocusSheetBody({
       <SheetHeader className="px-0 pt-0">
         <SheetTitle className="font-data text-[16px]">{title}</SheetTitle>
         <SheetDescription className="text-[12px]">
-          {existing ? "Thin sheet — full Thing page is one tap away." : "Admit this frame as a Thing. Only the name is required; without a topic it goes to Things."}
+          {existing ? "Thin sheet — full Thing page is one tap away." : "Admit this frame as a Thing. Only the name is required; without a kind it goes to Things. Place is optional."}
         </SheetDescription>
       </SheetHeader>
 
@@ -318,7 +318,7 @@ function FocusSheetBody({
       </label>
 
       <label className="block text-[12px] font-medium">
-        Topic
+        Kind
         <div className="mt-1">
           <AreaPicker value={areaId} onChange={setAreaId} placeholder="Things (optional)" />
         </div>
@@ -337,10 +337,10 @@ function FocusSheetBody({
             <span className="font-medium">This Place</span>
             <span className="block text-[12px] text-muted-foreground">
               {roomId == null
-                ? "Pick a room first."
+                ? "Pick a Place first."
                 : existing?.roomId === roomId
-                  ? "Already in this room."
-                  : "Set the Thing’s room to the one you are looking at."}
+                  ? "Already in this Place."
+                  : "Set the Thing’s Place to the one you are looking at."}
             </span>
           </span>
         </label>
@@ -561,7 +561,7 @@ export default function FocusPage() {
     setConfirmTrash(null);
   }, [roomId, activePhotoId]);
 
-  const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "this room";
+  const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "this Place";
   const unhandledCount =
     frames.filter(frameUnhandled).length + extraItems.filter(isUnhandledItem).length;
 
@@ -571,7 +571,7 @@ export default function FocusPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Focus</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Room first: pick a Place, read numbered frames on a Photo, admit or decide in the thin sheet.
+            Place first: pick one, read numbered frames on a Photo, admit or decide in the thin sheet.
           </p>
         </div>
         {unhandledCount > 0 && (
@@ -597,13 +597,13 @@ export default function FocusPage() {
           </button>
         ))}
         {rooms.data?.length === 0 && (
-          <div className="text-[13px] text-muted-foreground">No rooms in this house yet. Create one in Locations, or switch house.</div>
+          <div className="text-[13px] text-muted-foreground">No Places in this house yet. Create one in Places, or switch house.</div>
         )}
       </div>
 
       {roomId == null ? null : canvases.length === 0 && !roomPhotos.isLoading ? (
         <div className="mt-8 rounded-lg border border-dashed border-border p-6 text-[13px] text-muted-foreground">
-          No photos for {roomName} yet. File a snap in Inbox, or open Photos / Annotate in Advanced.
+          No photos for {roomName} yet. File a snap in Sort, or open Photos / Annotate in Advanced.
         </div>
       ) : (
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.8fr)] gap-4 items-start">
@@ -784,7 +784,7 @@ export default function FocusPage() {
                       <span className="flex-1 min-w-0">
                         <span className="block text-[13px] truncate">{it.name}</span>
                         <span className="block text-[11px] text-muted-foreground">
-                          {it.areaName ?? "no topic"} · {it.decision ?? "no decision"}
+                          {it.areaName ?? "no kind"} · {it.decision ?? "no decision"}
                         </span>
                       </span>
                     </button>
@@ -852,7 +852,7 @@ export default function FocusPage() {
             <AlertDialogDescription>
               {confirmTrash?.kind === "pin"
                 ? `${frameLabel(confirmTrash.pin, confirmTrash.num)} stays in the inventory. This only hides the frame on this photo — the Thing, its photos and files are not deleted.`
-                : `${confirmTrash?.kind === "item" ? confirmTrash.name : "This Thing"} stays in the room. This only hides it from the Focus list.`}
+                : `${confirmTrash?.kind === "item" ? confirmTrash.name : "This Thing"} stays in the Place. This only hides it from the Focus list.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

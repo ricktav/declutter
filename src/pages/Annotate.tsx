@@ -1156,7 +1156,7 @@ export default function AnnotatePage() {
               )}
               {!pendingItem && pendingLabel.trim() && (
                 <div className="space-y-1 text-[12px]">
-                  <span className="text-muted-foreground">create as new item in</span>
+                  <span className="text-muted-foreground">create as new Thing of kind</span>
                   <AreaPicker
                     value={newItemArea === "" ? null : newItemArea}
                     onChange={(id) => setNewItemArea(id)}

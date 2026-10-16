@@ -138,7 +138,7 @@ export function SidebarRooms({
         {setRoomFloor.isError && (
           <div className="px-2.5 py-1 text-[11px] text-red-300">{setRoomFloor.error.message}</div>
         )}
-        {roomData.length === 0 && <div className="px-2.5 py-1 text-[12px] text-hb-sage-dim">No rooms yet</div>}
+        {roomData.length === 0 && <div className="px-2.5 py-1 text-[12px] text-hb-sage-dim">No Places yet</div>}
         {groups.map((g) => {
           const hid = g.rooms[0]?.houseId ?? houseId ?? 0;
           const isDrop = dropOn?.houseId === hid && dropOn.floor === g.floor;
@@ -231,7 +231,7 @@ export function SidebarRooms({
                         data-no-drag
                         draggable={false}
                         className="flex h-8 w-8 shrink-0 items-center justify-center text-hb-sage-dim hover:text-hb-paper-bright"
-                        title="Rename or merge this room"
+                        title="Rename or merge this Place"
                         onClick={() => {
                           setEditingRoom(r);
                           setRenameTo(r.name);
@@ -247,7 +247,7 @@ export function SidebarRooms({
                 })}
               {open && g.rooms.length === 0 && (
                 <div className="mx-1 mb-1 rounded border border-dashed border-hb-charcoal-line px-2 py-1.5 text-[11px] text-hb-sage-dim">
-                  Drop a room here
+                  Drop a Place here
                 </div>
               )}
             </div>
@@ -258,7 +258,7 @@ export function SidebarRooms({
       <Dialog open={!!editingRoom} onOpenChange={(o) => !o && setEditingRoom(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename or merge room</DialogTitle>
+            <DialogTitle>Rename or merge Place</DialogTitle>
           </DialogHeader>
           {editingRoom && (
             <div className="space-y-3">
@@ -286,11 +286,11 @@ export function SidebarRooms({
                     .filter(Boolean)}
                 />
               </label>
-              <div className="text-[12px]">Or merge into another room
+              <div className="text-[12px]">Or merge into another Place
                 <RoomPicker value={mergeInto} onChange={setMergeInto} allowCreate={false} allowNone />
               </div>
               <p className="text-[12px] text-muted-foreground">
-                Pick an existing room name to merge. Floor is free text (begane grond, 1ste verdieping, zolder, …).
+                Pick an existing Place name to merge. Floor is free text (begane grond, 1ste verdieping, zolder, …).
               </p>
               <div className="flex justify-end gap-2">
                 <Button size="sm" variant="ghost" onClick={() => setEditingRoom(null)}>Cancel</Button>

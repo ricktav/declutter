@@ -18,7 +18,7 @@ interface Props {
 
 export function ItemPicker({
   onSelect,
-  placeholder = "Search items…",
+  placeholder = "Search Things…",
   excludeId,
   value,
   onQueryChange,

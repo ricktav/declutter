@@ -75,7 +75,7 @@ function IdeaCard({ idea }: { idea: NonNullable<ReturnType<typeof useIdeas>>[num
 
       <div className="flex items-center gap-2 pt-1 border-t border-border">
         <div className="w-36">
-          <ItemPicker placeholder="+ link item" onSelect={(sel) => linkItem.mutate({ ideaId: idea.id, itemId: sel.id })} />
+          <ItemPicker placeholder="+ link Thing" onSelect={(sel) => linkItem.mutate({ ideaId: idea.id, itemId: sel.id })} />
         </div>
         <span className="font-data text-[10px] text-muted-foreground">{timeAgo(idea.createdAt)}</span>
         <div className="ml-auto flex items-center gap-1">
@@ -125,7 +125,7 @@ export default function IdeasPage() {
     <div className="max-w-6xl mx-auto px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Ideas</h1>
       <p className="text-sm text-muted-foreground mt-1">
-        Collect ideas and questions, organized by topic. When one is ripe, let AI break it into tasks.
+        Collect ideas and questions, organized by kind. When one is ripe, let AI break it into tasks.
       </p>
 
       {/* new idea */}
@@ -147,7 +147,7 @@ export default function IdeasPage() {
           value={areaId}
           onChange={(e) => setAreaId(e.target.value ? Number(e.target.value) : "")}
         >
-          <option value="">no topic</option>
+          <option value="">no kind</option>
           {(areas.data ?? []).map((a) => (
             <option key={a.id} value={a.id}>{a.name}</option>
           ))}

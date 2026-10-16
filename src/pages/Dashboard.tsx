@@ -52,12 +52,12 @@ function AddAreaDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline" className="h-7 text-[12px]">
-          <Plus className="h-3.5 w-3.5 mr-1" /> New topic
+          <Plus className="h-3.5 w-3.5 mr-1" /> New kind
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>New topic</DialogTitle>
+          <DialogTitle>New kind</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <label className="block">
@@ -142,7 +142,7 @@ function AddAreaDialog() {
                 })
               }
             >
-              {create.isPending ? "Creating…" : "Create topic"}
+              {create.isPending ? "Creating…" : "Create kind"}
             </Button>
           </div>
         </div>
@@ -511,7 +511,7 @@ function HouseSection({
           <div className="text-[13px] font-semibold truncate">{current?.name ?? (houseId == null ? "All houses" : "Add a house")}</div>
           {current && (
             <div className="font-data text-[11px] text-muted-foreground truncate">
-              {current.itemCount} item{current.itemCount === 1 ? "" : "s"}
+              {current.itemCount} Thing{current.itemCount === 1 ? "" : "s"}
               {current.address ? ` · ${current.address}` : ""}
             </div>
           )}
@@ -548,12 +548,12 @@ function LocationsSection() {
   return (
     <section>
       <div className="flex items-center h-7 mb-2">
-        <h2 className="micro-label text-muted-foreground">Rooms</h2>
+        <h2 className="micro-label text-muted-foreground">Places</h2>
       </div>
       <div className="rounded-lg border border-border bg-white divide-y divide-border">
         {rooms.data?.length === 0 && (
           <div className="px-4 py-5 text-[13px] text-muted-foreground">
-            No rooms yet — set a room on an item, or confirm one while pinning from the Inbox.
+            No Places yet — set a Place on a Thing, or confirm one while pinning from Sort.
           </div>
         )}
         {top.map((r) => (
@@ -592,8 +592,8 @@ export default function Dashboard() {
   // ideas/tasks are only worth a tile once there's something to act on -
   // an empty "0" card is just noise once the inventory is past its first day
   const stats = [
-    { label: "Items", value: totalItems, icon: Package, to: firstArea ? `/areas/${firstArea.slug}` : "/settings" },
-    { label: "Inbox pending", value: pending, icon: Inbox, to: "/inbox" },
+    { label: "Things", value: totalItems, icon: Package, to: firstArea ? `/areas/${firstArea.slug}` : "/settings" },
+    { label: "To sort", value: pending, icon: Inbox, to: "/inbox" },
     { label: "New ideas", value: newIdeas, icon: Lightbulb, to: "/ideas", hideWhenZero: true },
     { label: "Open tasks", value: openTasks, icon: ListChecks, to: "/tasks", hideWhenZero: true },
   ].filter((s) => !s.hideWhenZero || s.value > 0);
@@ -602,7 +602,7 @@ export default function Dashboard() {
     <div className="max-w-5xl mx-auto px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
       <p className="text-sm text-muted-foreground mt-1">
-        Capture first, structure later — everything flows through the inbox.
+        Snap first, structure later — everything flows through Sort.
       </p>
 
       <div className="mt-5">
@@ -629,13 +629,13 @@ export default function Dashboard() {
       <div className="grid md:grid-cols-2 gap-6 mt-6">
         <section>
           <div className="flex items-center h-7 mb-2">
-            <h2 className="micro-label text-muted-foreground">Topics</h2>
+            <h2 className="micro-label text-muted-foreground">Kinds</h2>
             <div className="ml-auto"><AddAreaDialog /></div>
           </div>
           <div className="rounded-lg border border-border bg-white divide-y divide-border">
             {(areas.data ?? []).length === 0 && (
               <div className="px-4 py-5 text-[13px] text-muted-foreground space-y-1">
-                <p>No topics yet — create one with the button above.</p>
+                <p>No kinds yet — create one with the button above.</p>
                 <p className="text-[12px]">
                   Want a head start? Run <code className="font-data rounded bg-accent px-1">npx tsx db/seed.ts</code> to load the starter set
                   (computers, garage, house, kitchen, garden, work, schedule).
@@ -665,7 +665,7 @@ export default function Dashboard() {
           <h2 className="micro-label text-muted-foreground mb-2">Recent activity</h2>
           <div className="rounded-lg border border-border bg-white divide-y divide-border">
             {(events.data ?? []).length === 0 && (
-              <div className="px-4 py-6 text-[13px] text-muted-foreground">Nothing yet — capture something above.</div>
+              <div className="px-4 py-6 text-[13px] text-muted-foreground">Nothing yet — snap something above.</div>
             )}
             {(events.data ?? []).map((e) => (
               <div key={e.id} className="px-4 py-2 flex items-baseline gap-2">

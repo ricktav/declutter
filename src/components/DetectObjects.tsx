@@ -494,7 +494,7 @@ export function DetectObjectsModal({
                         mode === "new" ? "bg-violet-600 text-white" : "bg-muted"
                       }`}
                     >
-                      new item
+                      new Thing
                     </button>
                   </div>
                 ) : null}
@@ -507,13 +507,13 @@ export function DetectObjectsModal({
                     <span className="ml-1.5 rounded bg-white border border-border px-1 py-0.5 font-data text-[10px]">
                       {sel.matchScore}% match
                     </span>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">cutout joins this item's photo angles</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">cutout joins this Thing's photo angles</div>
                   </div>
                 ) : (
                   <div className="space-y-1.5">
                     <input
                       className="w-full rounded border border-input bg-white px-2 py-1 text-[12px]"
-                      placeholder="new item name"
+                      placeholder="new Thing name"
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
                     />
@@ -547,7 +547,7 @@ export function DetectObjectsModal({
             )}
             {suggestions.length > 0 && suggestions.every((s) => s.state === "filed") && (
               <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
-                All objects filed. Close this window — the snap is in your inbox history.
+                All objects filed. Close this window — the snap is in your Sort history.
               </div>
             )}
           </aside>

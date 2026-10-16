@@ -96,7 +96,7 @@ function nodeStroke(d: GraphNode): { color: string; width: number } {
 const SCOPE_OPTS: { id: ItemScope; label: string }[] = [
   { id: "machines", label: "Machines only" },
   { id: "network", label: "Incl. network" },
-  { id: "all", label: "All Computers items" },
+  { id: "all", label: "All Things in Computers" },
 ];
 
 function runtimeChipLabel(k: string): string {
@@ -797,7 +797,7 @@ export default function SystemsPage() {
               : houseFilter !== "all"
                 ? "No machines in this house. Try All houses — most computers live in another house."
                 : scope === "all"
-                  ? "No Computers items in this house."
+                  ? "No Things in Computers in this house."
                   : scope === "network"
                     ? "No machines or network gear in this house."
                     : "No machines in this house. Peripherals stay out; network gear is under Incl. network."}

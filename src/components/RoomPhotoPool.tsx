@@ -61,7 +61,7 @@ export function RoomPhotoPool({
         <div className="text-[13px] text-muted-foreground">Loading photos…</div>
       ) : !cards.length ? (
         <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
-          No source photos for {title ? <b>{title}</b> : "this room"} yet — the pool fills in as items from this room get detected.
+          No source photos for {title ? <b>{title}</b> : "this Place"} yet — the pool fills in as Things from this Place get detected.
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3">

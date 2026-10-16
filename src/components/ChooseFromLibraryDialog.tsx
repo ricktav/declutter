@@ -102,14 +102,14 @@ export function ChooseFromLibraryDialog({
         {!sourcePhotoId ? (
           <>
             <p className="text-[12px] text-muted-foreground -mt-2">
-              Pick any photo that's already come through the inbox — crop the part that's this item.
+              Pick any photo that's already come through Sort — crop the part that's this Thing.
             </p>
             {captures.isLoading ? (
               <div className="py-16 text-center text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin inline mr-1.5" /> Loading photos…
               </div>
             ) : images.length === 0 ? (
-              <div className="py-16 text-center text-[13px] text-muted-foreground">No photos in the inbox yet.</div>
+              <div className="py-16 text-center text-[13px] text-muted-foreground">No snaps in Sort yet.</div>
             ) : (
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {images.map((c) => (

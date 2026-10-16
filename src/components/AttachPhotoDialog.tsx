@@ -125,7 +125,7 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
     <>
       <DialogHeader>
         <DialogTitle>Attach to Thing</DialogTitle>
-        <DialogDescription>The photo becomes one of the Thing's photos. Its own room stays as it is.</DialogDescription>
+        <DialogDescription>The photo becomes one of the Thing's photos. Its own Place stays as it is.</DialogDescription>
       </DialogHeader>
       <div className="min-h-[15rem]">
         <ItemPicker

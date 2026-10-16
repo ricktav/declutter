@@ -354,7 +354,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
         {hasDefaultLocation && (
           <button
             className="text-muted-foreground hover:text-foreground"
-            title={`Change location (currently ${roomName})`}
+            title={`Change Place (currently ${roomName})`}
             onClick={(e) => {
               e.stopPropagation();
               setOpen(true);
@@ -370,7 +370,7 @@ function PinPendingButton({ captureId }: { captureId: number }) {
             <DialogTitle>Where was this taken?</DialogTitle>
           </DialogHeader>
           <p className="text-[12px] text-muted-foreground -mt-2">
-            Confirms the location before pinning - a new item created there starts out placed.
+            Confirms the Place before pinning - a new Thing created there starts out placed.
           </p>
           <RoomPicker value={roomId} onChange={setRoomId} houseId={houseId ?? undefined} />
           <div className="flex justify-end gap-2 mt-1">
@@ -599,7 +599,7 @@ function TriageCard({
             className="mt-1 h-4 w-4 shrink-0"
             checked={!!selected}
             onChange={onToggle}
-            aria-label={`Select capture ${capture.id}`}
+            aria-label={`Select snap ${capture.id}`}
           />
         )}
         <KindIcon className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
@@ -627,7 +627,7 @@ function TriageCard({
                   allowNone={false}
                 />
                 <div className="text-[11px] text-muted-foreground">
-                  Pick the room this scan belongs to, or type a new name
+                  Pick the Place this scan belongs to, or type a new name
                 </div>
                 <Button
                   size="sm"
@@ -759,7 +759,7 @@ function TriageCard({
       {hasSuggestion && (
         <div className="mt-3 rounded-md border border-violet-200 bg-violet-50/60 p-3">
           <div className="micro-label text-violet-700 mb-2">
-            AI suggestion · {rows.length} item{rows.length === 1 ? "" : "s"} spotted
+            AI suggestion · {rows.length} Thing{rows.length === 1 ? "" : "s"} spotted
           </div>
           {s.note && <p className="text-[12px] text-violet-900 mb-2">{s.note}</p>}
 
@@ -778,7 +778,7 @@ function TriageCard({
           </div>
 
           <label className="block mt-2">
-            <span className="micro-label text-muted-foreground">Location (applies to every new item above)</span>
+            <span className="micro-label text-muted-foreground">Place (applies to every new Thing above)</span>
             <div className="mt-0.5">
               <HouseRoomFields
                 houseId={fileHouseId}
@@ -817,7 +817,7 @@ function TriageCard({
               {acceptMany.isPending
                 ? "Filing…"
                 : newCount > 0
-                  ? `File ${newCount} new item${newCount === 1 ? "" : "s"}`
+                  ? `File ${newCount} new Thing${newCount === 1 ? "" : "s"}`
                   : "Confirm"}
             </Button>
           </div>
@@ -859,7 +859,7 @@ function CompareModal({
                   <span className="micro-label text-muted-foreground">{side.label}</span>
                   {side.suggestion && (
                     <span className="ml-auto font-data text-[10px] text-muted-foreground">
-                      {side.suggestion.items.length} item{side.suggestion.items.length === 1 ? "" : "s"}
+                      {side.suggestion.items.length} Thing{side.suggestion.items.length === 1 ? "" : "s"}
                     </span>
                   )}
                 </div>
@@ -874,7 +874,7 @@ function CompareModal({
                     {side.suggestion.note && <div className="text-[12px] text-muted-foreground">{side.suggestion.note}</div>}
                     {side.suggestion.roomId == null && side.suggestion.room && (
                       <div className="font-data text-[11px] text-muted-foreground">
-                        unknown room "{side.suggestion.room}"
+                        unknown Place "{side.suggestion.room}"
                       </div>
                     )}
                     <div className="space-y-1">
@@ -935,7 +935,7 @@ function DismissedCard({
         className="mt-1 h-4 w-4 shrink-0"
         checked={selected}
         onChange={onToggle}
-        aria-label={`Select capture ${capture.id}`}
+        aria-label={`Select snap ${capture.id}`}
       />
       <KindIcon className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
       <div className="min-w-0 flex-1">
@@ -1059,8 +1059,8 @@ export default function InboxPage() {
       refresh();
       setPlaceNote(
         res.roomId != null
-          ? `Place set on ${res.count} item${res.count === 1 ? "" : "s"}.`
-          : `House set on ${res.count} item${res.count === 1 ? "" : "s"}.`,
+          ? `Place set on ${res.count} snap${res.count === 1 ? "" : "s"}.`
+          : `House set on ${res.count} snap${res.count === 1 ? "" : "s"}.`,
       );
     },
   });
@@ -1069,7 +1069,7 @@ export default function InboxPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8 pb-24">
-      <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Sort</h1>
       <p className="text-sm text-muted-foreground mt-1">
         Drop anything here. AI triage proposes where it belongs — you confirm, it files.
       </p>
@@ -1098,10 +1098,10 @@ export default function InboxPage() {
         {houseId != null && (
           <label
             className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
-            title="Also show captures with no house or Place yet"
+            title="Also show snaps with no house or Place yet"
           >
             <input type="checkbox" checked={unknownRooms} onChange={(e) => setUnknownRooms(e.target.checked)} />
-            Unknown rooms
+            Unknown Places
           </label>
         )}
         <button
@@ -1114,7 +1114,7 @@ export default function InboxPage() {
               ? "border-primary bg-primary text-primary-foreground"
               : "border-border bg-white text-muted-foreground hover:text-foreground",
           )}
-          title="Captures you dismissed with X"
+          title="Snaps you dismissed with X"
         >
           <EyeOff className="mr-1 inline h-3 w-3" />
           Hidden
@@ -1217,8 +1217,8 @@ export default function InboxPage() {
         {pending.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
             {unknownRooms || houseId == null
-              ? "Inbox zero. Nice."
-              : "Nothing in this house. Turn on Unknown rooms or All houses to see unplaced captures."}
+              ? "Nothing to sort. Nice."
+              : "Nothing in this house. Turn on Unknown Places or All houses to see unplaced snaps."}
           </div>
         )}
         {pending.map((c) => (

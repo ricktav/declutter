@@ -298,7 +298,7 @@ export default function RoomPlanPage() {
         : placePhotoRow.cropBox != null
           ? "That photo is a cutout of a Thing, not a viewpoint: it does not stand on the plan."
           : placePhotoRow.roomId == null
-            ? "That photo has no room yet, so it was not placed here. Assign a room below."
+            ? "That photo has no Place yet, so it was not placed here. Assign a Place below."
             : placePhotoRow.roomId !== id
               ? `That photo is not in ${room.data.name}, so it was not placed here.`
               : null; // unsized: the size notice above the plan says it
@@ -497,7 +497,7 @@ export default function RoomPlanPage() {
           <Loader2 className="h-4 w-4 animate-spin" /> Loading…
         </div>
       ) : !room.data ? (
-        <div className="mt-6 text-sm text-muted-foreground">Room not found.</div>
+        <div className="mt-6 text-sm text-muted-foreground">Place not found.</div>
       ) : (
         <>
           <h1 className="text-2xl font-semibold tracking-tight mt-2 break-words">{room.data.name}</h1>
@@ -536,7 +536,7 @@ export default function RoomPlanPage() {
                     size="sm"
                     variant={pinMode ? "default" : "outline"}
                     className="h-8 text-[12px]"
-                    title={pinMode ? "Pinning…" : "Pin new item"}
+                    title={pinMode ? "Pinning…" : "Pin new Thing"}
                     onClick={() => {
                       cancelPlace();
                       cancelCameraPlace();
@@ -549,7 +549,7 @@ export default function RoomPlanPage() {
                     }}
                   >
                     <MapPin className="h-3.5 w-3.5 sm:mr-1" />
-                    <span className="hidden sm:inline">{pinMode ? "Pinning…" : "Pin new item"}</span>
+                    <span className="hidden sm:inline">{pinMode ? "Pinning…" : "Pin new Thing"}</span>
                   </Button>
                   {view === "2d" && (
                     <Button
@@ -605,11 +605,11 @@ export default function RoomPlanPage() {
                     title={`Delete "${room.data.name}"?`}
                     description={
                       room.data.parentRoomId != null
-                        ? "Its placed items move back to the parent floor plan, re-positioned in that plan's frame. The parent's own geometry is untouched."
-                        : "This is the only floor plan for this space - there's no parent to fall back on. Its items will be unlinked from any room geometry (not deleted, just un-placed). This cannot be undone."
+                        ? "Its placed Things move back to the parent floor plan, re-positioned in that plan's frame. The parent's own geometry is untouched."
+                        : "This is the only floor plan for this space - there's no parent to fall back on. Its Things will be unlinked from any room geometry (not deleted, just un-placed). This cannot be undone."
                     }
                     confirmText={room.data.parentRoomId == null ? room.data.name : undefined}
-                    confirmLabel="Delete room"
+                    confirmLabel="Delete Place"
                     pending={removeRoom.isPending}
                     onConfirm={() => removeRoom.mutate({ id })}
                   />
@@ -621,7 +621,7 @@ export default function RoomPlanPage() {
                 </p>
               )}
               {pinMode && (
-                <p className="mb-1.5 text-[11px] text-amber-700">Click anywhere on the floor to pin a new item there.</p>
+                <p className="mb-1.5 text-[11px] text-amber-700">Click anywhere on the floor to pin a new Thing there.</p>
               )}
               {placing && (
                 <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-[12px] text-sky-900">
@@ -748,7 +748,7 @@ export default function RoomPlanPage() {
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {view === "2d"
                   ? "Drag to move · drag the blue circle to rotate (shift = free angle) · drag the corner square to resize. A photo's dot moves it, the handle at its view's tip aims it (shift = wider or narrower). The ⟲/⟳ buttons above only rotate the view, not the data."
-                  : "Drag to orbit · scroll to zoom · click an item to select it, a photo's cone to open it."}
+                  : "Drag to orbit · scroll to zoom · click a Thing to select it, a photo's cone to open it."}
               </p>
               {room.data.items.some((it) => !it.pos && placeable(it)) && (
                 <div className="mt-3">
@@ -925,14 +925,14 @@ export default function RoomPlanPage() {
             <aside className="mt-4 w-full max-w-md rounded-lg border border-border bg-white p-4">
               {pendingPin ? (
                 <>
-                  <p className="font-medium text-[14px]">Name this item</p>
+                  <p className="font-medium text-[14px]">Name this Thing</p>
                   <p className="text-[12px] text-muted-foreground mt-1">
                     at {pendingPin.xM.toFixed(2)}, {pendingPin.yM.toFixed(2)} m
                   </p>
 
                   <input
                     type="text"
-                    placeholder="Item name"
+                    placeholder="Thing name"
                     className="mt-3 w-full h-8 rounded-md border border-border bg-white px-2 text-[13px]"
                     value={pinName}
                     onChange={(e) => setPinName(e.target.value)}
@@ -945,7 +945,7 @@ export default function RoomPlanPage() {
                     onChange={(e) => setPinAreaId(e.target.value ? Number(e.target.value) : null)}
                   >
                     <option value="" disabled>
-                      Pick a topic…
+                      Pick a kind…
                     </option>
                     {areasList.data?.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -962,7 +962,7 @@ export default function RoomPlanPage() {
                       onClick={confirmPin}
                     >
                       {pinning ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
-                      Create item
+                      Create Thing
                     </Button>
                     <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => setPendingPin(null)}>
                       Cancel
@@ -971,14 +971,14 @@ export default function RoomPlanPage() {
                 </>
               ) : pendingCut ? (
                 <>
-                  <p className="font-medium text-[14px]">Name this room</p>
+                  <p className="font-medium text-[14px]">Name this Place</p>
                   <p className="text-[12px] text-muted-foreground mt-1">
                     {pendingCut.wM.toFixed(2)}×{pendingCut.dM.toFixed(2)} m
                   </p>
 
                   <input
                     type="text"
-                    placeholder="Room name"
+                    placeholder="Place name"
                     className="mt-3 w-full h-8 rounded-md border border-border bg-white px-2 text-[13px]"
                     value={cutName}
                     onChange={(e) => setCutName(e.target.value)}
@@ -992,7 +992,7 @@ export default function RoomPlanPage() {
                       onClick={() => cutFromRoom.mutate({ sourceRoomId: id, name: cutName.trim(), bounds: pendingCut })}
                     >
                       {cutFromRoom.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
-                      Create room
+                      Create Place
                     </Button>
                     <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => setPendingCut(null)}>
                       Cancel
@@ -1034,8 +1034,8 @@ export default function RoomPlanPage() {
                       : placing
                       ? `Click the plan where ${placing.name} stands.`
                       : pinMode
-                      ? "Click the plan to pin a new item there."
-                      : "Select an item on the plan to review it."}
+                      ? "Click the plan to pin a new Thing there."
+                      : "Select a Thing on the plan to review it."}
                 </p>
               ) : (
                 <>
@@ -1128,7 +1128,7 @@ export default function RoomPlanPage() {
                       {attaching ? (
                         <>
                           <ItemPicker
-                            placeholder="Search an item to put inside…"
+                            placeholder="Search a Thing to put inside…"
                             excludeId={selectedItem.id}
                             onSelect={(item) => putInside(item.id)}
                             autoFocus
@@ -1148,7 +1148,7 @@ export default function RoomPlanPage() {
                         </>
                       ) : (
                         <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => setAttaching(true)}>
-                          <Plus className="h-3.5 w-3.5 mr-1" /> Put item inside…
+                          <Plus className="h-3.5 w-3.5 mr-1" /> Put Thing inside…
                         </Button>
                       )}
                     </div>

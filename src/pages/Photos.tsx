@@ -135,7 +135,7 @@ function PhotoTile({
       {photo.camera && (
         <span
           className="mr-1 inline-flex items-center gap-0.5 rounded bg-violet-50 px-1.5 text-[10px] font-medium text-violet-700"
-          title="This photo stands on its room's plan as a camera"
+          title="This photo stands on its Place plan as a camera"
         >
           <Camera className="h-2.5 w-2.5" /> on the plan
         </span>
@@ -221,7 +221,7 @@ function PhotoTile({
               (pickRoom ? (
                 <select
                   autoFocus
-                  aria-label="Room to place the photo in"
+                  aria-label="Place to put the photo in"
                   className="basis-full rounded border border-border bg-white px-1 py-1 text-[11px]"
                   disabled={ensureForPlace.isPending}
                   defaultValue=""
@@ -232,7 +232,7 @@ function PhotoTile({
                   onBlur={() => !ensureForPlace.isPending && setPickRoom(false)}
                 >
                   <option value="" disabled>
-                    {ensureForPlace.isPending ? "Opening the plan…" : "Which room?"}
+                    {ensureForPlace.isPending ? "Opening the plan…" : "Which Place?"}
                   </option>
                   {rooms.map((r) => (
                     <option key={r.id} value={r.id}>
@@ -246,8 +246,8 @@ function PhotoTile({
                   pending={ensureForPlace.isPending}
                   title={
                     photo.source === "capture"
-                      ? "Choose its room, then stand this photo on the room's plan"
-                      : "Stand this photo on its room's plan, looking where it was taken"
+                      ? "Choose its Place, then stand this photo on the Place plan"
+                      : "Stand this photo on its Place plan, looking where it was taken"
                   }
                   onClick={() =>
                     photo.source === "capture"
@@ -284,16 +284,16 @@ function PhotoTile({
             <button
               type="button"
               className="basis-full flex items-center justify-center gap-1 rounded border border-border bg-white px-1 py-1 text-[11px] text-muted-foreground hover:text-destructive hover:border-destructive/50"
-              title={photo.source === "capture" ? "Delete this inbox photo" : "Delete this Photo"}
+              title={photo.source === "capture" ? "Delete this snap" : "Delete this Photo"}
               disabled={removePending}
             >
               <Trash2 className="h-3 w-3" /> Delete
             </button>
           }
-          title={photo.source === "capture" ? "Delete this inbox photo?" : "Delete this Photo?"}
+          title={photo.source === "capture" ? "Delete this snap?" : "Delete this Photo?"}
           description={
             photo.source === "capture"
-              ? "It leaves Inbox and Photos. The file is deleted if nothing else uses it."
+              ? "It leaves Sort and Photos. The file is deleted if nothing else uses it."
               : photo.itemName
                 ? `Removes this Photo from ${photo.itemName} and from Photos. Pins on it go too. The file is deleted if nothing else uses it.`
                 : "Removes this Photo from Photos. Pins on it go too. The file is deleted if nothing else uses it."
@@ -452,7 +452,7 @@ export default function PhotosPage() {
     roomFilter != null
       ? (roomOptions.find((r) => r.id === roomFilter)?.name ??
           (photos.data ?? []).find((p) => p.roomId === roomFilter)?.roomName ??
-          `Room #${roomFilter}`)
+          `Place #${roomFilter}`)
       : null;
 
   const groups = useMemo(() => {
@@ -464,9 +464,9 @@ export default function PhotosPage() {
     const manyHouses = (houses.data?.length ?? 0) > 1;
     // group by room id, not name: two houses can each have a "Keuken"
     const groupOf = (p: (typeof filtered)[number]): { key: string; label: string } => {
-      if (sortBy === "area") return { key: `area:${p.areaName ?? ""}`, label: p.areaName ?? "(no topic)" };
-      if (p.roomId == null) return { key: "room:none", label: "(no room)" };
-      const name = p.roomName ?? `Room #${p.roomId}`;
+      if (sortBy === "area") return { key: `area:${p.areaName ?? ""}`, label: p.areaName ?? "(no kind)" };
+      if (p.roomId == null) return { key: "room:none", label: "(no Place)" };
+      const name = p.roomName ?? `Place #${p.roomId}`;
       const house = p.houseId != null ? houseName.get(p.houseId) : undefined;
       return { key: `room:${p.roomId}`, label: manyHouses && house ? `${name} · ${house}` : name };
     };
@@ -488,7 +488,7 @@ export default function PhotosPage() {
         </span>
       </div>
       <p className="text-sm text-muted-foreground mt-1">
-        Photos with a Place in {houseId != null ? "this house" : "any house"}. Inbox still holds captures with no house yet.
+        Photos with a Place in {houseId != null ? "this house" : "any house"}. Sort still holds snaps with no house yet.
       </p>
 
       <div className="flex flex-wrap items-center gap-3 mt-5">
@@ -496,7 +496,7 @@ export default function PhotosPage() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <input
             className="w-full rounded-md border border-input bg-white pl-8 pr-3 py-1.5 text-[13px]"
-            placeholder="Search item, room, floor, topic…"
+            placeholder="Search Thing, Place, floor, kind…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -518,13 +518,13 @@ export default function PhotosPage() {
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-          Topic
+          Kind
           <select
             className="rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
             value={areaFilter ?? ""}
             onChange={(e) => patchParams({ area: e.target.value ? Number(e.target.value) : null })}
           >
-            <option value="">All topics</option>
+            <option value="">All kinds</option>
             {(areas.data ?? []).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
@@ -539,26 +539,26 @@ export default function PhotosPage() {
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as SortBy)}
           >
-            <option value="location">Room</option>
-            <option value="area">Topic</option>
+            <option value="location">Place</option>
+            <option value="area">Kind</option>
             <option value="recent">Recently added</option>
           </select>
         </div>
         <label
           className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
-          title="Toggle off to hide every photo pinned to an item, showing only house/room photos and unprocessed inbox captures"
+          title="Toggle off to hide every photo pinned to a Thing, showing only house/Place photos and unprocessed snaps"
         >
           <input
             type="checkbox"
             checked={showObjects}
             onChange={(e) => setShowObjects(e.target.checked)}
           />
-          Items
+          Things
           {notPlaced && <span className="text-[11px] italic">(showing unplaced Things)</span>}
         </label>
         <label
           className="flex items-center gap-1.5 text-[12px] text-muted-foreground cursor-pointer select-none"
-          title="Toggle off to hide framed cutouts — the cropped Thing photos. Location photos (a room, no crop box) stay."
+          title="Toggle off to hide framed cutouts — the cropped Thing photos. Place photos (a Place, no crop box) stay."
         >
           <input
             type="checkbox"
@@ -577,7 +577,7 @@ export default function PhotosPage() {
               ? "border-primary bg-primary text-primary-foreground"
               : "border-border bg-white text-muted-foreground hover:text-foreground"
           )}
-          title="Inbox captures and photos that have no Place yet"
+          title="Snaps and photos that have no Place yet"
         >
           No Place
         </button>
@@ -591,7 +591,7 @@ export default function PhotosPage() {
               ? "border-primary bg-primary text-primary-foreground"
               : "border-border bg-white text-muted-foreground hover:text-foreground"
           )}
-          title="Only Things not yet pinned in a photo or not yet placed on their room's plan"
+          title="Only Things not yet pinned in a photo or not yet placed on their Place plan"
         >
           Not placed
         </button>
@@ -628,7 +628,7 @@ export default function PhotosPage() {
         {filtered.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-muted-foreground">
             {inHouse.length === 0
-              ? "No photos in this house — unplaced captures stay in Inbox."
+              ? "No photos in this house — unplaced snaps stay in Sort."
               : notPlaced && itemIds.length > 0 && summary.isError
                 ? `Could not check placement: ${summary.error.message}`
                 : notPlaced && itemIds.length > 0 && !(summary.isSuccess && !summary.isPlaceholderData)
@@ -638,13 +638,13 @@ export default function PhotosPage() {
                   : notPlaced && !q
                     ? "Every Thing with a photo is pinned and on its plan."
                     : noPlace && !q
-                      ? "No inbox captures or photos without a Place."
+                      ? "No snaps or photos without a Place."
                       : !q && roomFilter != null
                         ? `No photos of ${roomFilterName} here.`
                         : !q && areaFilter != null
-                          ? "No photos in that topic."
+                          ? "No photos of that kind."
                           : !q && !showCutouts
-                            ? "No location photos match the other filters."
+                            ? "No Place photos match the other filters."
                             : `No photos match "${q}".`}
           </div>
         )}

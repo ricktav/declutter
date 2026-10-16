@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 export function AreaPicker({
   value,
   onChange,
-  placeholder = "pick a topic or type a new one…",
+  placeholder = "pick a kind or type a new one…",
 }: {
   value: number | null;
   onChange: (id: number) => void;
@@ -124,7 +124,7 @@ export function AreaPicker({
             </button>
           ))}
           {matches.length === 0 && !q && (
-            <div className="px-2.5 py-1.5 text-[12px] text-muted-foreground">No topics yet.</div>
+            <div className="px-2.5 py-1.5 text-[12px] text-muted-foreground">No kinds yet.</div>
           )}
           {showCreateRow && (
             <button
@@ -138,7 +138,7 @@ export function AreaPicker({
               disabled={createArea.isPending}
             >
               <Plus className="h-3.5 w-3.5" />
-              {createArea.isPending ? "Creating…" : `Create topic “${text.trim()}” (Enter)`}
+              {createArea.isPending ? "Creating…" : `Create kind “${text.trim()}” (Enter)`}
             </button>
           )}
         </div>

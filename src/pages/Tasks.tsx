@@ -120,7 +120,7 @@ export default function TasksPage() {
     <div className="max-w-6xl mx-auto px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
       <p className="text-sm text-muted-foreground mt-1">
-        Tasks come from ideas or items. Timers keep a record of where the time went.
+        Tasks come from ideas or Things. Timers keep a record of where the time went.
       </p>
 
       {running.data && (

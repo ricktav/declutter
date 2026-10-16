@@ -60,7 +60,7 @@ export function RecropDialog({
           </div>
         ) : !source.data?.available ? (
           <div className="py-16 text-center text-[13px] text-muted-foreground">
-            This cutout has no linked source photo — it was likely uploaded directly rather than cropped from a capture, so it can't be re-cropped.
+            This cutout has no linked source photo — it was likely uploaded directly rather than cropped from a snap, so it can't be re-cropped.
           </div>
         ) : (
           <div className="flex flex-col gap-3 items-center">
