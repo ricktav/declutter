@@ -71,6 +71,9 @@ export default function SettingsPage() {
     }
   }, [current.data]);
 
+  const setAutoTriage = trpc.settings.setAutoTriage.useMutation({
+    onSuccess: () => utils.settings.get.invalidate(),
+  });
   const save = trpc.settings.update.useMutation({
     onSuccess: () => utils.settings.get.invalidate(),
   });
@@ -364,6 +367,27 @@ export default function SettingsPage() {
           {current.data.xaiEnv?.llmApiKeyMasked ? ` (${current.data.xaiEnv.llmApiKeyMasked})` : ""}.
         </p>
       )}
+
+      <div className="mt-6 rounded-lg border border-border bg-white p-4">
+        <label className="flex items-start gap-2 text-[13px] cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={current.data?.settings.autoTriage ?? false}
+            disabled={!current.data || setAutoTriage.isPending}
+            onChange={(e) => setAutoTriage.mutate({ on: e.target.checked })}
+          />
+          <span>
+            <span className="font-medium">Triage new photos automatically</span>
+            <span className="block text-[12px] text-muted-foreground">
+              A new photo snap is sent to the triage provider in the background, so its Sort card arrives filled in.
+              {setAutoTriage.data && setAutoTriage.data.autoTriage && !setAutoTriage.data.ready && (
+                <span className="block text-amber-700">No triage provider is configured yet, so nothing will run until one is.</span>
+              )}
+            </span>
+          </span>
+        </label>
+      </div>
 
       <div className="mt-6 rounded-lg border border-border bg-white p-4 space-y-3">
         <h2 className="text-sm font-semibold">Which provider for which job</h2>

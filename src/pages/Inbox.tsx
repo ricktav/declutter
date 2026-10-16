@@ -59,6 +59,8 @@ type InboxCapture = Capture & {
   houseId: number | null;
   houseName: string | null;
   hasCamera: boolean;
+  triageState: "queued" | "running" | "failed" | "done" | null;
+  triageError: string | null;
 };
 
 function placeTargetOf(c: InboxCapture): PlaceTarget {
@@ -520,6 +522,13 @@ function TriageCard({
   const areas = trpc.areas.list.useQuery();
 
   const [rows, setRows] = useState<TriageRow[]>(() => (s ? buildTriageRows(s, areas.data) : []));
+  // a background triage can land after the card mounted: fill the rows once
+  const [rowsFrom, setRowsFrom] = useState(s);
+  if (s !== rowsFrom) {
+    setRowsFrom(s);
+    if (hasSuggestion && rows.length === 0) setRows(buildTriageRows(s, areas.data));
+  }
+  const looking = capture.triageState === "queued" || capture.triageState === "running";
   const { houseId } = useHouse();
   const lastRoomId = useLastRoomId();
   // a suggested room id is only usable if it is one of the session house's rooms
@@ -695,18 +704,19 @@ function TriageCard({
               size="sm"
               variant="outline"
               className="h-7 text-[12px]"
-              disabled={triage.isPending}
+              disabled={triage.isPending || looking}
+              title={looking ? "Triage is running in the background" : undefined}
               onClick={() => {
                 setAiError(null);
                 triage.mutate({ id: capture.id });
               }}
             >
-              {triage.isPending ? (
+              {triage.isPending || looking ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
               ) : (
                 <Sparkles className="h-3.5 w-3.5 mr-1" />
               )}
-              AI triage
+              {looking ? "Looking…" : "AI triage"}
             </Button>
           )}
           <Button
@@ -724,6 +734,12 @@ function TriageCard({
         </div>
       </div>
 
+      {!aiError && capture.triageState === "failed" && !hasSuggestion && (
+        <div className="mt-3 flex gap-2 items-start rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          Background triage failed{capture.triageError ? `: ${capture.triageError.replace(/[.\s]*$/, "")}.` : "."} Try AI triage again.
+        </div>
+      )}
       {aiError && (
         <div className="mt-3 flex gap-2 items-start rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -966,6 +982,9 @@ export default function InboxPage() {
     houseId,
     includeUnknown: unknownRooms || houseId == null,
     view: hidden ? "dismissed" : "open",
+  }, {
+    refetchInterval: (q) =>
+      q.state.data?.some((c) => c.triageState === "queued" || c.triageState === "running") ? 3000 : false,
   });
   const rooms = trpc.rooms.list.useQuery({ houseId });
   const [placeTarget, setPlaceTarget] = useState<PlaceTarget | null>(null);
