@@ -9,3 +9,4 @@ dist/
 uploads/
 settings.json
 .certs/
+backups/

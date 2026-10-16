@@ -16,6 +16,16 @@ function ensureDir() {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
+export async function uploadsWritable(): Promise<boolean> {
+  try {
+    ensureDir();
+    await fs.promises.access(UPLOAD_DIR, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function sanitizeName(name: string): string {
   const base = name.replace(/[/\\]/g, "_").replace(/\.\./g, "_");
   return base.length > 120 ? base.slice(-120) : base;

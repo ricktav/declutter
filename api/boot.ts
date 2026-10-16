@@ -8,7 +8,8 @@ import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./router";
 import { createContext } from "./context";
 import { env } from "./lib/env";
-import { isAuthorized } from "./lib/auth";
+import { isAuthorized, productionAuthProblem } from "./lib/auth";
+import { health } from "./lib/health";
 import { putFile, servePathForKey } from "./lib/filestore";
 import { sniffMime, isInlineMime, mimeFromExtension, UnsupportedFileType } from "./lib/sniff";
 
@@ -16,7 +17,12 @@ const app = new Hono<{ Bindings: HttpBindings }>();
 
 app.use(bodyLimit({ maxSize: 50 * 1024 * 1024 }));
 
-// Everything under /api and /uploads needs the app token (when configured).
+app.get("/api/health", async (c) => {
+  const h = await health();
+  return c.json(h, h.ok ? 200 : 503);
+});
+
+// Everything else under /api and /uploads needs the app token (when configured).
 app.use("/api/*", async (c, next) => {
   if (!isAuthorized(c.req.raw)) return c.json({ error: "Unauthorized" }, 401);
   await next();
@@ -109,6 +115,15 @@ app.get("/uploads/:name", async (c) => {
 export default app;
 
 if (env.isProduction) {
+  const authProblem = productionAuthProblem(process.env);
+  if (authProblem) {
+    console.error(`[boot] refusing to start.\n${authProblem}`);
+    process.exit(1);
+  }
+  if (!process.env.APP_TOKEN?.trim()) {
+    console.warn("[boot] ALLOW_OPEN_ACCESS=1: the API and uploads are open to anyone who can reach this port.");
+  }
+
   const { serve } = await import("@hono/node-server");
   const { serveStaticFiles } = await import("./lib/vite");
   serveStaticFiles(app);
