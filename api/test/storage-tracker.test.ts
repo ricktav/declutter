@@ -57,6 +57,81 @@ describe("parseTrackerSources", () => {
     expect(parseTrackerSize(244e9)).toBe(244e9);
     expect(parseTrackerSize(32)).toBe(32e9);
   });
+
+  it("classifies a live dockermac payload (size_bytes, subtype, disk_model) as sda model-match and sdb create", () => {
+    const live = {
+      sources: [
+        {
+          type: "file",
+          name: "dockermac:sda",
+          subtype: "disk",
+          disk_model: "Samsung SSD 850",
+          path_or_url: "/dev/sda",
+          size_bytes: 250000000000,
+          usage_pct: 70,
+          metadata: { mountpoints: ["/", "/boot/efi"] },
+        },
+        {
+          type: "file",
+          name: "dockermac:sdb",
+          subtype: "external-drive",
+          disk_model: "Portable",
+          path_or_url: "/dev/sdb",
+          size_bytes: 4000000000000,
+          usage_pct: 79,
+          metadata: { mountpoints: ["/mnt/external"] },
+        },
+        {
+          type: "file",
+          name: "dockermac:/",
+          path_or_url: "/",
+          device: "/dev/sda2",
+          size_bytes: 244000000000,
+          used_bytes: 170000000000,
+          usage_pct: 70,
+          disk: "dockermac:sda",
+        },
+        {
+          type: "file",
+          name: "dockermac:/mnt/external",
+          path_or_url: "/mnt/external",
+          device: "/dev/sdb1",
+          size_bytes: 3940000000000,
+          used_bytes: 3110000000000,
+          disk: "dockermac:sdb",
+        },
+      ],
+    };
+    const parsed = parseTrackerSources(live);
+    expect(parsed.skipped).toBe(0);
+    expect(parsed.disks.map((d) => [d.diskKey, d.model, d.sizeBytes])).toEqual([
+      ["sda", "Samsung SSD 850", 250e9],
+      ["sdb", "Portable", 4e12],
+    ]);
+    expect(parsed.volumes.map((v) => [v.mountPoint, v.capacityBytes, v.usedBytes, v.diskKey])).toEqual([
+      ["/", 244e9, 170e9, "sda"],
+      ["/mnt/external", 3.94e12, 3.11e12, "sdb"],
+    ]);
+    const inventory: InventoryItem[] = [
+      { id: 201, name: "dockermac-1", areaId: 1, houseId: 1, roomId: null, parentId: null, attributes: { role: "desktop", hostname: "dockermac-1" } },
+      {
+        id: 226,
+        name: "Samsung SSD 850 232GB",
+        areaId: 1,
+        houseId: 1,
+        roomId: null,
+        parentId: 201,
+        attributes: { role: "storage", model: "Samsung SSD 850", storage_gb: 232 },
+      },
+    ];
+    const plan = planTrackerImport(parsed, inventory, [], DEFAULT_TRACKER_HOST_MAP, true);
+    const host = plan.hosts.find((h) => h.host === "dockermac")!;
+    expect(host.status).toBe("matched");
+    expect(host.itemId).toBe(201);
+    expect(host.disks.find((d) => d.diskKey === "sda")).toMatchObject({ match: "model-size", itemId: 226 });
+    expect(host.disks.find((d) => d.diskKey === "sdb")).toMatchObject({ match: "create", itemId: null, name: "Portable" });
+    expect(host.volumes.map((v) => v.mountPoint).sort()).toEqual(["/", "/mnt/external"]);
+  });
 });
 
 describe("planTrackerImport host map", () => {
