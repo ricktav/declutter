@@ -47,10 +47,6 @@ function frameLabel(p: Pin, num: number) {
   return p.itemName || p.label || `Frame ${num}`;
 }
 
-function isUnhandledItem(it: { decision: ItemDecision | null; verificationStatus: string; status: string }) {
-  return it.status === "active" && it.verificationStatus !== "rejected" && it.decision == null;
-}
-
 type Sel = { kind: "pin"; pinId: number } | { kind: "item"; itemId: number };
 
 /** A stored photo at its own aspect ratio so percent frames land on the picture. */
@@ -226,6 +222,7 @@ function FocusSheetBody({
     utils.pins.listForPhoto.invalidate();
     utils.items.listAll.invalidate();
     utils.items.get.invalidate();
+    utils.items.queue.invalidate();
     utils.photos.roomPhotos.invalidate();
   };
 
@@ -458,6 +455,12 @@ export default function FocusPage() {
   }, [pinsQ.data]);
 
   const itemsById = useMemo(() => new Map((houseItems.data ?? []).map((it) => [it.id, it])), [houseItems.data]);
+  const queue = trpc.items.queue.useQuery();
+  const needsMe = useMemo(
+    () => (queue.data ? new Set([...queue.data.toCheck, ...queue.data.toDecide]) : null),
+    [queue.data],
+  );
+  const isUnhandledItem = (it: { id: number }) => needsMe?.has(it.id) ?? true;
 
   const selectedPin = sel?.kind === "pin" ? (frames.find((f) => f.pin.id === sel.pinId)?.pin ?? null) : null;
   const selectedNum = sel?.kind === "pin" ? (frames.find((f) => f.pin.id === sel.pinId)?.num ?? null) : null;
