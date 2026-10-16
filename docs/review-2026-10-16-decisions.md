@@ -20,12 +20,14 @@ Rick's decisions on `docs/review-2026-10-16.html`, given 2026-10-16. 36 accepted
 | B4 (data half) | Systems and Storage in the sidebar only when the house has machines / drives (`settings.views`); stacked on #34 | [#39](https://github.com/ricktav/declutter/pull/39) |
 | C1 | `items.queue` (to sort / check / place / decide, lab role and backup), Focus uses it | [#40](https://github.com/ricktav/declutter/pull/40) |
 | G1 | Background triage of new photo snaps (`autoTriage` setting, `triageState` on `inbox.list`, failures visible); stacked on #28 | [#41](https://github.com/ricktav/declutter/pull/41) |
+| C2 | `items.search` in MySQL with a limit, prefix first, optional attribute-value match (`fields`) | [#42](https://github.com/ricktav/declutter/pull/42) |
+| F3 | Product words in the Workbench copy: Thing, Place, Kind, Sort, snap (code names unchanged) | [#43](https://github.com/ricktav/declutter/pull/43) |
 
 Before #27 is deployed: check that production's `.env` has `APP_TOKEN`, or the next boot stops with an explanation.
 
 After merging: #31 needs the two URLs entered under Settings → Links; #41 does nothing until "Triage new photos automatically" is switched on.
 
-Merge order that avoids conflicts: #35 first (dev server), then #26, #28 → #41, #34 → #39, and the rest in any order. #37, #38 and the coming F3 copy pass touch the same Workbench files at different lines.
+Merge order that avoids conflicts: #35 first (dev server), then #26, #28 → #41, #34 → #39, and the rest in any order. #37, #38 and #43 touch the same Workbench files at neighbouring lines (text-only conflicts).
 
 ## F1: does deriving cutouts slow down catalog views?
 
@@ -58,3 +60,7 @@ Step 3, needs the Flow owner or another client first:
 - D5 retire `attachments.*`: the Computer Lab adapter (`/Volumes/T7/computer-lab`) still falls back to `attachments.listAllImages`; switch it first, then remove the aliases and update AGENTS.md §2.
 - F2 foreign keys: orphan report first (`scripts/db-orphans.mjs`, read-only), then a migration on `declutter_test`, the full suite, a backup, then live. AGENTS.md §3 treats this as yours to apply.
 - C2, C3, C7, E4, E5: independent; any session.
+
+## Status after the second session (2026-10-16)
+
+Step 1 is done (all in draft PRs above); B4's module-switch half waits on D1. From step 2, C1, C2 and G1 are done. Still open, in order: B2 Today (needs #40), B6 thin sheet, B5 Thing page sections, D1 module switches, C4 one detect and cutout (keeps `claude -p`), E3 file splits, E6 preferences, A1 first run, A4 one-command setup. B2, B6, B5 and E3 rework the files that #37, #38 and #43 touch, so they are easier after those merge.
