@@ -71,7 +71,7 @@ function SidebarSectionTitle({
   return (
     <button
       onClick={onToggle}
-      className="w-full flex items-center gap-1 px-4 mt-6 mb-1.5 text-[#b4b8a5] hover:text-[#e0e0d0]"
+      className="w-full flex items-center gap-1 px-4 mt-6 mb-1.5 text-hb-sage hover:text-hb-paper"
     >
       {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
       <span className="micro-label">{label}</span>
@@ -98,15 +98,15 @@ function RunningTimerPill() {
   if (!running.data) return null;
   const elapsed = Math.max(0, Math.floor((Date.now() - new Date(running.data.startedAt).getTime()) / 1000));
   return (
-    <div className="flex items-center gap-2 rounded-md bg-[#d2ff00]/10 border border-[#d2ff00]/30 px-2.5 py-1.5">
-      <Timer className="h-3.5 w-3.5 text-[#b2c73a]" />
+    <div className="flex items-center gap-2 rounded-md bg-hb-lime/10 border border-hb-lime/30 px-2.5 py-1.5">
+      <Timer className="h-3.5 w-3.5 text-hb-lime-dim" />
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] truncate text-[#e0e0d0]">{running.data.taskTitle}</div>
-        <div className="font-data text-[13px] text-[#d2ff00]">{formatClock(elapsed)}</div>
+        <div className="text-[11px] truncate text-hb-paper">{running.data.taskTitle}</div>
+        <div className="font-data text-[13px] text-hb-lime">{formatClock(elapsed)}</div>
       </div>
       <button
         onClick={() => stop.mutate({ taskId: running.data!.taskId })}
-        className="text-[#b2c73a] hover:text-[#d2ff00]"
+        className="text-hb-lime-dim hover:text-hb-lime"
         title="Stop timer"
       >
         <Square className="h-3.5 w-3.5" />
@@ -154,7 +154,7 @@ function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
   return (
     <div
       className={cn(
-        "grid grid-cols-3 rounded-md bg-[#32361f] p-0.5 text-[11px] font-semibold",
+        "grid grid-cols-3 rounded-md bg-hb-charcoal-hover p-0.5 text-[11px] font-semibold",
         compact && "min-w-[12rem]",
       )}
       role="group"
@@ -169,7 +169,7 @@ function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
           aria-pressed={depth === d}
           className={cn(
             "rounded px-1.5 py-1",
-            depth === d ? "bg-[#d2ff00] text-[#282c20]" : "text-[#b4b8a5] hover:text-[#f4f4ed]",
+            depth === d ? "bg-hb-lime text-hb-charcoal" : "text-hb-sage hover:text-hb-paper-bright",
           )}
         >
           {DEPTH_LABEL[d].label}
@@ -220,20 +220,20 @@ export default function Layout() {
     cn(
       "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors",
       isActive
-        ? "bg-[#3a3f2e] text-[#f4f4ed]"
-        : "text-[#b4b8a5] hover:bg-[#32361f] hover:text-[#e0e0d0]",
+        ? "bg-hb-charcoal-2 text-hb-paper-bright"
+        : "text-hb-sage hover:bg-hb-charcoal-hover hover:text-hb-paper",
     );
 
   const sidebar = (
     <>
       <div className="px-4 pt-5 pb-4 flex items-start">
         <div>
-          <div className="font-data text-[15px] font-semibold tracking-tight text-[#f4f4ed]">
+          <div className="font-data text-[15px] font-semibold tracking-tight text-hb-paper-bright">
             ⌂ HomeBase
           </div>
-          <div className="micro-label text-[#b4b8a5] mt-0.5">inventory os</div>
+          <div className="micro-label text-hb-sage mt-0.5">inventory os</div>
         </div>
-        <button className="md:hidden ml-auto text-[#b4b8a5] p-1" onClick={() => setMenuOpen(false)}>
+        <button className="md:hidden ml-auto text-hb-sage p-1" onClick={() => setMenuOpen(false)}>
           <X className="h-5 w-5" />
         </button>
       </div>
@@ -245,7 +245,7 @@ export default function Layout() {
 
       <nav className="px-2 space-y-0.5">
         {favIds.length > 0 && (
-          <div className="space-y-0.5 pb-1 mb-1 border-b border-[#3a3f2e]">
+          <div className="space-y-0.5 pb-1 mb-1 border-b border-hb-charcoal-2">
             {favIds.map((id) => {
               const a = (areas.data ?? []).find((x) => x.id === id);
               if (!a) return null;
@@ -263,7 +263,7 @@ export default function Layout() {
                   <button
                     type="button"
                     title="Remove shortcut"
-                    className="shrink-0 rounded p-1 mr-1 text-[#b4b8a5] hover:bg-[#32361f] hover:text-[#f4f4ed]"
+                    className="shrink-0 rounded p-1 mr-1 text-hb-sage hover:bg-hb-charcoal-hover hover:text-hb-paper-bright"
                     onClick={() => toggleFav(a.id)}
                   >
                     <X className="h-3 w-3" />
@@ -279,7 +279,7 @@ export default function Layout() {
             <n.icon className="h-4 w-4" />
             <span className="flex-1">{n.label}</span>
             {n.to === "/inbox" && pendingCount > 0 && (
-              <span className="font-data text-[11px] bg-[#d2ff00] text-[#282c20] rounded-full px-1.5 py-px">
+              <span className="font-data text-[11px] bg-hb-lime text-hb-charcoal rounded-full px-1.5 py-px">
                 {pendingCount}
               </span>
             )}
@@ -332,7 +332,7 @@ export default function Layout() {
                     title={isFaved(a.id) ? "Remove shortcut" : "Pin under Home"}
                     className={cn(
                       "shrink-0 rounded p-1 mr-1",
-                      isFaved(a.id) ? "text-[#d2ff00]" : "text-[#b4b8a5] hover:bg-[#32361f] hover:text-[#f4f4ed]",
+                      isFaved(a.id) ? "text-hb-lime" : "text-hb-sage hover:bg-hb-charcoal-hover hover:text-hb-paper-bright",
                     )}
                     onClick={() => toggleFav(a.id)}
                   >
@@ -352,7 +352,7 @@ export default function Layout() {
         <RunningTimerPill />
         <button
           onClick={() => { setMenuOpen(false); openAsk("global", 0, "Whole inventory"); }}
-          className="w-full flex items-center justify-center gap-2 rounded-md bg-[#d2ff00] text-[#282c20] text-[13px] font-semibold px-3 py-2 hover:bg-[#e2ff4d] transition-colors"
+          className="w-full flex items-center justify-center gap-2 rounded-md bg-hb-lime text-hb-charcoal text-[13px] font-semibold px-3 py-2 hover:bg-hb-lime-hover transition-colors"
         >
           <Sparkles className="h-4 w-4" /> Ask AI
         </button>
@@ -363,7 +363,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
       {/* desktop sidebar */}
-      <aside className="hidden md:flex w-[240px] shrink-0 flex-col overflow-x-hidden bg-[#282c20] text-[#e0e0d0]">
+      <aside className="hidden md:flex w-[240px] shrink-0 flex-col overflow-x-hidden bg-hb-charcoal text-hb-paper">
         {sidebar}
       </aside>
 
@@ -371,7 +371,7 @@ export default function Layout() {
       {menuOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMenuOpen(false)} />
-          <aside className="absolute left-0 top-0 bottom-0 w-[min(260px,85vw)] flex flex-col overflow-x-hidden bg-[#282c20] text-[#e0e0d0]">
+          <aside className="absolute left-0 top-0 bottom-0 w-[min(260px,85vw)] flex flex-col overflow-x-hidden bg-hb-charcoal text-hb-paper">
             {sidebar}
           </aside>
         </div>
@@ -380,11 +380,11 @@ export default function Layout() {
       {/* ---- main ---- */}
       <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         {/* mobile top bar */}
-        <div className="md:hidden sticky top-0 z-30 flex items-center gap-2 bg-[#282c20] text-[#e0e0d0] px-3 py-2">
+        <div className="md:hidden sticky top-0 z-30 flex items-center gap-2 bg-hb-charcoal text-hb-paper px-3 py-2">
           <button onClick={() => setMenuOpen(true)} className="p-1">
             <Menu className="h-5 w-5" />
           </button>
-          <span className="font-data text-[13px] font-semibold text-[#f4f4ed]">⌂ HomeBase</span>
+          <span className="font-data text-[13px] font-semibold text-hb-paper-bright">⌂ HomeBase</span>
           <div className="ml-auto">
             <WorkbenchModeToggle compact />
           </div>

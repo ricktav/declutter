@@ -529,7 +529,7 @@ export default function GalaxyPage() {
   const totalGroups = built?.l1Nodes.length ?? 0;
 
   return (
-    <div className="-m-6 h-[calc(100vh-0px)] flex flex-col bg-[#14160f] text-[#f4f4ed] overflow-hidden">
+    <div className="-m-6 h-[calc(100vh-0px)] flex flex-col bg-hb-ink text-hb-paper-bright overflow-hidden">
       <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10 shrink-0">
         <div className="font-data text-[15px] font-semibold tracking-tight">🌌 Inventory Galaxy</div>
         <div className="flex items-center gap-1 ml-2">
@@ -539,7 +539,7 @@ export default function GalaxyPage() {
               title={g.label}
               onClick={() => setGroupingId(g.id)}
               className={`px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors ${
-                g.id === groupingId ? "bg-[#d2ff00] text-[#14160f]" : "bg-white/5 text-[#b4b8a5] hover:bg-white/10"
+                g.id === groupingId ? "bg-hb-lime text-hb-ink" : "bg-white/5 text-hb-sage hover:bg-white/10"
               }`}
             >
               {g.shortLabel}
@@ -547,7 +547,7 @@ export default function GalaxyPage() {
           ))}
         </div>
         <select
-          className="rounded-full bg-white/5 border border-white/10 px-3 py-1.5 text-[12px] text-[#e0e0d0]"
+          className="rounded-full bg-white/5 border border-white/10 px-3 py-1.5 text-[12px] text-hb-paper"
           value={houseFilter}
           onChange={(e) => setHouseFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
         >
@@ -556,9 +556,9 @@ export default function GalaxyPage() {
             <option key={h.id} value={h.id}>{h.name}</option>
           ))}
         </select>
-        <div className="ml-auto flex items-center gap-4 font-data text-[12px] text-[#b4b8a5]">
-          <span><span className="text-[#d2ff00] font-semibold">{totalItems}</span> items</span>
-          <span><span className="text-[#d2ff00] font-semibold">{totalGroups}</span> groups</span>
+        <div className="ml-auto flex items-center gap-4 font-data text-[12px] text-hb-sage">
+          <span><span className="text-hb-lime font-semibold">{totalItems}</span> items</span>
+          <span><span className="text-hb-lime font-semibold">{totalGroups}</span> groups</span>
         </div>
       </div>
 
@@ -568,7 +568,7 @@ export default function GalaxyPage() {
         </svg>
 
         {!ready && (
-          <div className="absolute inset-0 flex items-center justify-center text-[#b4b8a5] text-sm">
+          <div className="absolute inset-0 flex items-center justify-center text-hb-sage text-sm">
             Loading inventory…
           </div>
         )}
@@ -579,13 +579,13 @@ export default function GalaxyPage() {
             style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}
           >
             <div className="font-medium">{tooltip.title}</div>
-            <div className="text-[#b4b8a5] text-[11px]">{tooltip.sub}</div>
+            <div className="text-hb-sage text-[11px]">{tooltip.sub}</div>
           </div>
         )}
 
         {built && (
           <div className="absolute bottom-4 left-4 rounded-lg bg-[#0b0d08]/90 border border-white/10 px-3 py-2.5 max-w-[220px]">
-            <div className="micro-label text-[#b4b8a5] mb-1.5">{grouping.shortLabel}</div>
+            <div className="micro-label text-hb-sage mb-1.5">{grouping.shortLabel}</div>
             <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
               {built.l1List.map((g1) => (
                 <div key={g1.key} className="flex items-center gap-1.5 text-[11px]">
@@ -595,7 +595,7 @@ export default function GalaxyPage() {
                     <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: g1.color }} />
                   )}
                   <span className="flex-1 truncate">{g1.label}</span>
-                  <span className="text-[#b4b8a5] font-data">
+                  <span className="text-hb-sage font-data">
                     {[...g1.l2.values()].reduce((s, x) => s + x.items.length, 0)}
                   </span>
                 </div>

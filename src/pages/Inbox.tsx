@@ -254,12 +254,12 @@ function MobileCameraButton() {
       <button
         onClick={() => photoRef.current?.click()}
         disabled={create.isPending}
-        className="w-full rounded-xl bg-[#282c20] text-[#f4f4ed] py-5 flex items-center justify-center gap-2 active:bg-[#3a3f2e] transition-colors"
+        className="w-full rounded-xl bg-hb-charcoal text-hb-paper-bright py-5 flex items-center justify-center gap-2 active:bg-hb-charcoal-2 transition-colors"
       >
         {create.isPending ? (
-          <Loader2 className="h-5 w-5 animate-spin text-[#d2ff00]" />
+          <Loader2 className="h-5 w-5 animate-spin text-hb-lime" />
         ) : (
-          <Camera className="h-5 w-5 text-[#d2ff00]" />
+          <Camera className="h-5 w-5 text-hb-lime" />
         )}
         <span className="text-[14px] font-semibold">Take photo</span>
       </button>

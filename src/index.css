@@ -97,6 +97,28 @@
     --border: 110 8% 80%;
     --input: 110 8% 76%;
     --ring: 128 21% 30%;
+
+    /* Brand palette as RGB channels, so Tailwind's /<alpha> modifiers work.
+       Sidebar, Galaxy and the dark panels use these through the hb-* colours. */
+    --hb-lime: 210 255 0;
+    --hb-lime-hover: 226 255 77;
+    --hb-lime-dim: 178 199 58;
+    --hb-charcoal: 40 44 32;
+    --hb-charcoal-2: 58 63 46;
+    --hb-charcoal-hover: 50 54 31;
+    --hb-charcoal-line: 74 79 58;
+    --hb-ink: 20 22 15;
+    --hb-sage: 180 184 165;
+    --hb-sage-dim: 138 142 122;
+    --hb-paper: 224 224 208;
+    --hb-paper-bright: 244 244 237;
+    --hb-moss: 60 93 65;
+
+    --decision-keep: 47 122 69;
+    --decision-sell: 158 106 8;
+    --decision-donate: 45 104 155;
+    --decision-toss: 173 67 43;
+    --decision-later: 110 117 99;
   }
 
   body {

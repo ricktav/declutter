@@ -124,7 +124,7 @@ function FramedRoomPhoto({
         {children}
         {pending && pending.wPct > 0 && (
           <div
-            className="absolute border-2 border-dashed border-[#d2ff00] bg-[#d2ff00]/10 pointer-events-none"
+            className="absolute border-2 border-dashed border-hb-lime bg-hb-lime/10 pointer-events-none"
             style={{
               left: `${pending.xPct - pending.wPct / 2}%`,
               top: `${pending.yPct - pending.hPct / 2}%`,
@@ -575,7 +575,7 @@ export default function FocusPage() {
           </p>
         </div>
         {unhandledCount > 0 && (
-          <div className="font-data text-[12px] rounded-full bg-[#d2ff00] text-[#282c20] px-2.5 py-1 shrink-0">
+          <div className="font-data text-[12px] rounded-full bg-hb-lime text-hb-charcoal px-2.5 py-1 shrink-0">
             {unhandledCount} unhandled
           </div>
         )}
@@ -743,7 +743,7 @@ export default function FocusPage() {
                       onClick={() => setSel({ kind: "pin", pinId: f.pin.id })}
                       className="min-w-0 flex-1 text-left px-3 py-2 flex items-center gap-2"
                     >
-                      <span className="font-data h-6 w-6 rounded-full bg-[#282c20] text-white text-[11px] flex items-center justify-center shrink-0">
+                      <span className="font-data h-6 w-6 rounded-full bg-hb-charcoal text-white text-[11px] flex items-center justify-center shrink-0">
                         {f.num}
                       </span>
                       <span className="flex-1 min-w-0">

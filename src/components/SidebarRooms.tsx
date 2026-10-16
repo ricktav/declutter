@@ -129,7 +129,7 @@ export function SidebarRooms({
   const floorChanged = !!editingRoom && (floorTo.trim() || null) !== (editingRoom.floor ?? null);
 
   if (roomsQuery.isLoading) {
-    return <div className="px-2.5 py-1 text-[12px] text-[#8a8e7a]">Loading…</div>;
+    return <div className="px-2.5 py-1 text-[12px] text-hb-sage-dim">Loading…</div>;
   }
 
   return (
@@ -138,7 +138,7 @@ export function SidebarRooms({
         {setRoomFloor.isError && (
           <div className="px-2.5 py-1 text-[11px] text-red-300">{setRoomFloor.error.message}</div>
         )}
-        {roomData.length === 0 && <div className="px-2.5 py-1 text-[12px] text-[#8a8e7a]">No rooms yet</div>}
+        {roomData.length === 0 && <div className="px-2.5 py-1 text-[12px] text-hb-sage-dim">No rooms yet</div>}
         {groups.map((g) => {
           const hid = g.rooms[0]?.houseId ?? houseId ?? 0;
           const isDrop = dropOn?.houseId === hid && dropOn.floor === g.floor;
@@ -150,11 +150,11 @@ export function SidebarRooms({
               onDragOver={(e) => onDragOverGroup(e, hid, g.floor)}
               onDragLeave={(e) => onDragLeaveGroup(e, hid, g.floor)}
               onDrop={(e) => onDropGroup(e, hid, g.floor)}
-              className={cn("rounded-md pb-0.5", isDrop && "bg-[#d2ff00]/10 ring-1 ring-inset ring-[#d2ff00]/70")}
+              className={cn("rounded-md pb-0.5", isDrop && "bg-hb-lime/10 ring-1 ring-inset ring-hb-lime/70")}
             >
               <button
                 type="button"
-                className="w-full flex items-center gap-1 px-2.5 pt-1 micro-label text-[#8a8e7a] hover:text-[#c4c8b4]"
+                className="w-full flex items-center gap-1 px-2.5 pt-1 micro-label text-hb-sage-dim hover:text-[#c4c8b4]"
                 onClick={() => setOpenFloors((o) => ({ ...o, [g.floor]: !open }))}
               >
                 {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -196,7 +196,7 @@ export function SidebarRooms({
                         }}
                         className={(a) => cn(navLinkClass(a), "min-w-0 flex-1 gap-1.5 px-2 py-1.5 cursor-grab active:cursor-grabbing")}
                       >
-                        <MapPin className="h-3.5 w-3.5 text-[#b4b8a5] shrink-0" />
+                        <MapPin className="h-3.5 w-3.5 text-hb-sage shrink-0" />
                         <span className="min-w-0 flex-1 truncate">{r.name}</span>
                         <span className="font-data shrink-0 text-[11px] opacity-60">{r.itemCount}</span>
                       </NavLink>
@@ -209,7 +209,7 @@ export function SidebarRooms({
                           else onNavigate?.();
                         }}
                         title={hasPlan(r) ? "Floorplan" : "No floorplan"}
-                        className={cn("flex h-8 w-8 shrink-0 items-center justify-center", hasPlan(r) ? "text-[#e0e0d0]" : "text-[#8a8e7a]/40 pointer-events-none")}
+                        className={cn("flex h-8 w-8 shrink-0 items-center justify-center", hasPlan(r) ? "text-hb-paper" : "text-hb-sage-dim/40 pointer-events-none")}
                       >
                         <Square className="h-3.5 w-3.5" />
                       </NavLink>
@@ -222,7 +222,7 @@ export function SidebarRooms({
                           else onNavigate?.();
                         }}
                         title={r.hasGeometry ? "3D model" : "No 3D model"}
-                        className={cn("flex h-8 w-8 shrink-0 items-center justify-center", r.hasGeometry ? "text-[#e0e0d0]" : "text-[#8a8e7a]/40 pointer-events-none")}
+                        className={cn("flex h-8 w-8 shrink-0 items-center justify-center", r.hasGeometry ? "text-hb-paper" : "text-hb-sage-dim/40 pointer-events-none")}
                       >
                         <Box className="h-3.5 w-3.5" />
                       </NavLink>
@@ -230,7 +230,7 @@ export function SidebarRooms({
                         type="button"
                         data-no-drag
                         draggable={false}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center text-[#8a8e7a] hover:text-[#f4f4ed]"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center text-hb-sage-dim hover:text-hb-paper-bright"
                         title="Rename or merge this room"
                         onClick={() => {
                           setEditingRoom(r);
@@ -246,7 +246,7 @@ export function SidebarRooms({
                   );
                 })}
               {open && g.rooms.length === 0 && (
-                <div className="mx-1 mb-1 rounded border border-dashed border-[#4a4f3a] px-2 py-1.5 text-[11px] text-[#8a8e7a]">
+                <div className="mx-1 mb-1 rounded border border-dashed border-hb-charcoal-line px-2 py-1.5 text-[11px] text-hb-sage-dim">
                   Drop a room here
                 </div>
               )}

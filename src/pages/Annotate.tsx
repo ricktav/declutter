@@ -953,8 +953,8 @@ export default function AnnotatePage() {
                           : p.itemId && p.itemAreaColor
                             ? "border-white/70 text-white"
                             : p.itemId
-                              ? "border-[#2d4a22] bg-[#d2ff00] text-[#282c20]"
-                              : "border-white bg-[#282c20] text-white"
+                              ? "border-[#2d4a22] bg-hb-lime text-hb-charcoal"
+                              : "border-white bg-hb-charcoal text-white"
                     }`}
                     style={
                       !p.flagged && p.status !== "suggested" && p.itemId && p.itemAreaColor
