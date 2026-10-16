@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { areas, houses, items, storageDirs, storageVolumes } from "@db/schema";
+import { areas, houses, items, relations, storageDirs, storageVolumes } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
-import { physicalDiskKey } from "../lib/storageDisks";
+import { clusterByTwinKeys, machineTwinKeys, physicalDiskKey, sameVolume } from "../lib/storageDisks";
 
 beforeEach(resetTestDb);
 
@@ -307,7 +307,8 @@ describe("storage disk linking", () => {
     await c.storage.report({ itemId: pc, source: "test", volumes: [{ mountPoint: "/", device: "sda2", capacityBytes: 256 * GB, usedBytes: 80 * GB }] });
     const before = (await c.storage.overview({})).computers.find((x) => x.id === pc)!;
     expect(before.inferredDisks.map((d) => d.diskKey)).toEqual(["sda"]);
-    expect(before.drives.map((d) => d.measure).sort()).toEqual(["unlinked", "unlinked"]);
+    expect(before.unlinkedDisks?.map((d) => d.measure).sort()).toEqual(["unlinked", "unlinked"]);
+    expect(before.drives.map((d) => d.measure).sort()).toEqual([]);
     expect(await c.storage.setDiskLink({ itemId: ssd, diskKey: "sda" })).toEqual({ id: ssd, diskKey: "sda" });
     const after = (await c.storage.overview({})).computers.find((x) => x.id === pc)!;
     expect(after.drives.find((d) => d.id === ssd)?.volumes.map((v) => v.mountPoint)).toEqual(["/"]);
@@ -663,5 +664,203 @@ describe("NAS machine card", () => {
       ["md2", ["/volume1"]],
     ]);
     expect(o.externals.map((d) => d.id)).not.toContain(nas);
+  });
+});
+
+describe("volume identity", () => {
+  it("treats label vs path and UUID vs / as the same volume", () => {
+    expect(sameVolume({ mountPoint: "/media/rick/NVMe", capacityBytes: 1e12 }, { mountPoint: "NVMe", label: "NVMe", capacityBytes: 1e12 })).toBe(true);
+    expect(
+      sameVolume(
+        { mountPoint: "/", device: "/dev/sda2", capacityBytes: 236e9 },
+        { mountPoint: "F28675F98ABCDEF0", device: "sda2", capacityBytes: 236e9 },
+      ),
+    ).toBe(true);
+    expect(sameVolume({ mountPoint: "/mnt/backup", device: "/dev/sdb2" }, { mountPoint: "/mnt/backup", device: "sdb2" })).toBe(true);
+    expect(sameVolume({ mountPoint: "/", device: "sda2" }, { mountPoint: "/mnt/backup", device: "sdb2" })).toBe(false);
+    expect(
+      sameVolume(
+        { mountPoint: "/Volumes/T7", label: "T7", capacityBytes: 1000 * 1024 ** 3 },
+        { mountPoint: "/Volumes/TM-T7", label: "TM-T7", capacityBytes: 1000 * 1024 ** 3 },
+      ),
+    ).toBe(false);
+  });
+
+  it("clusters an enclosure Thing with the inner drive via volume leaf + size, not a smaller Elements", () => {
+    const enclosure = {
+      name: "Elements 25A3 11TB",
+      capacityBytes: 12000e9,
+      volumes: [] as Array<{ label?: string | null; mountPoint: string }>,
+    };
+    const inner = {
+      name: "WDC WD120EDAZ-11F3RA0",
+      capacityBytes: 12000e9,
+      serial: "WD-WX12",
+      volumes: [{ label: "Elements", mountPoint: "/media/rick/Elements" }],
+    };
+    const stale = {
+      name: "Elements 1042",
+      capacityBytes: 1000e9,
+      volumes: [{ label: "Extern", mountPoint: "/media/rick/Extern" }],
+    };
+    const inferred = {
+      name: "sde1",
+      capacityBytes: 12000e9,
+      volumes: [{ label: "Elements", mountPoint: "/media/rick/Elements" }],
+    };
+    const groups = clusterByTwinKeys([enclosure, inner, stale, inferred], (d) => machineTwinKeys(d));
+    const twelve = groups.find((g) => g.includes(inner))!;
+    expect(twelve).toEqual(expect.arrayContaining([enclosure, inner, inferred]));
+    expect(twelve).not.toContain(stale);
+    expect(groups.find((g) => g.includes(stale))).toEqual([stale]);
+  });
+});
+
+describe("machine volume upsert and overview dedupe", () => {
+  const DEC = 1e9;
+
+  it("upserts Mini/computer /mnt/backup onto the existing disk-Thing row and shows physical disk size", async () => {
+    const { areaId, houseId, pc } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: disk }] = await db
+      .insert(items)
+      .values({
+        areaId,
+        houseId,
+        name: "ST9500420ASG",
+        parentId: pc,
+        attributes: { role: "storage", model: "ST9500420ASG", serial: "5VJCQK0M", storage_gb: 500, size_bytes: 500107862016 },
+      })
+      .$returningId();
+    const old = new Date("2026-10-15T12:00:00Z");
+    const fresh = new Date("2026-10-16T12:00:00Z");
+    await db.insert(storageVolumes).values({
+      itemId: disk,
+      mountPoint: "/mnt/backup",
+      device: "/dev/sdb2",
+      capacityBytes: 490.8 * DEC,
+      usedBytes: 358.5 * DEC,
+      source: "legacy",
+      measuredAt: old,
+    });
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: pc,
+      source: "data-tracker",
+      volumes: [
+        {
+          mountPoint: "/mnt/backup",
+          label: "backup",
+          device: "/dev/sdb2",
+          capacityBytes: 490.8 * DEC,
+          usedBytes: 358.5 * DEC,
+          measuredAt: fresh,
+        },
+      ],
+    });
+    const rows = await db.select().from(storageVolumes);
+    const backups = rows.filter((r) => r.mountPoint === "/mnt/backup");
+    expect(backups).toHaveLength(1);
+    expect(backups[0].itemId).toBe(pc);
+    expect(backups[0].measuredAt.getTime()).toBe(fresh.getTime());
+    const o = await c.storage.overview({});
+    const mini = o.computers.find((x) => x.id === pc)!;
+    const shown = [...mini.drives, ...mini.inferredDisks].find((d) => d.volumes.some((v) => v.mountPoint === "/mnt/backup"))!;
+    expect(shown.volumes).toHaveLength(1);
+    expect(shown.capacityBytes).toBe(500107862016);
+    expect(shown.usedBytes).toBe(358.5 * DEC);
+  });
+
+  it("does not let an older tracker report overwrite a fresher measurement of /", async () => {
+    const { houseId, pc } = await seedDevices();
+    const c = callerFor(houseId);
+    const fresh = new Date("2026-10-16T08:00:00Z");
+    const old = new Date("2026-10-04T08:00:00Z");
+    await c.storage.report({
+      itemId: pc,
+      source: "local-script",
+      volumes: [{ mountPoint: "/", device: "disk3s1", capacityBytes: 500 * DEC, usedBytes: 200 * DEC, measuredAt: fresh }],
+    });
+    await c.storage.report({
+      itemId: pc,
+      source: "data-tracker",
+      volumes: [{ mountPoint: "/", device: "/dev/sda2", capacityBytes: 500 * DEC, usedBytes: 10 * DEC, measuredAt: old }],
+    });
+    const row = (await getTestDb().select().from(storageVolumes)).find((v) => v.mountPoint === "/")!;
+    expect(row.usedBytes).toBe(200 * DEC);
+    expect(row.measuredAt.getTime()).toBe(fresh.getTime());
+    expect(row.source).toBe("local-script");
+  });
+
+  it("dedupes OptiPlex path-vs-label and UUID segments, collapses enclosure vs inner drive, hides network shares, and lists unlinked disks", async () => {
+    const { areaId, houseId } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: opti }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "OptiPlex 990", attributes: { role: "desktop", hostname: "optiplex-990" } })
+      .$returningId();
+    const addDisk = async (name: string, attrs: Record<string, string | number>, parent?: number | null) => {
+      const [{ id }] = await db.insert(items).values({ areaId, houseId, name, parentId: parent === undefined ? opti : parent, attributes: { role: "storage", ...attrs } }).$returningId();
+      return id;
+    };
+    const kingston = await addDisk("Kingston SV300S37A240G", { model: "SV300S37A240G", storage_gb: 236 });
+    const toshiba = await addDisk("Toshiba DT01ACA100", { model: "DT01ACA100", storage_gb: 2000 });
+    const sn570 = await addDisk("WD Blue SN570 1TB", { model: "SN570", storage_gb: 1000 });
+    const elements = await addDisk("Elements 25A3 11TB", { model: "Elements 25A3", storage_gb: 12000 });
+    const wdc = await addDisk("WDC WD120EDAZ-11F3RA0", { model: "WD120EDAZ-11F3RA0", serial: "WD-WX12", storage_gb: 12000 }, null);
+    const elementsSmall = await addDisk("Elements 1042", { model: "Elements 1042", storage_gb: 1000 }, null);
+    await addDisk("Generic USB 606GB", { storage_gb: 606 });
+    await addDisk("Network Share BackupFTP", { storage_gb: 3600 });
+    await db.insert(relations).values([
+      { fromItemId: wdc, toItemId: opti, type: "attached-to", origin: "user", status: "confirmed" },
+      { fromItemId: elementsSmall, toItemId: opti, type: "attached-to", origin: "user", status: "confirmed" },
+    ]);
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: opti,
+      source: "test",
+      volumes: [
+        { mountPoint: "/", device: "sda2", capacityBytes: 236 * DEC, usedBytes: 113 * DEC },
+        { mountPoint: "/media/rick/NVMe", label: "NVMe", device: "nvme0n1p1", capacityBytes: 1000 * DEC, usedBytes: 560 * DEC },
+        { mountPoint: "/media/rick/Elements", label: "Elements", device: "sde1", capacityBytes: 12000 * DEC, usedBytes: 3840 * DEC },
+        { mountPoint: "/mnt/toshiba", device: "sdb1", capacityBytes: 2000 * DEC, usedBytes: 60 * DEC },
+      ],
+    });
+    await db.insert(storageVolumes).values([
+      { itemId: kingston, mountPoint: "F28675F98ABCDEF0", device: "sda2", capacityBytes: 236 * DEC, usedBytes: 113 * DEC, source: "legacy", measuredAt: new Date("2026-10-01") },
+      { itemId: sn570, mountPoint: "NVMe", label: "NVMe", device: "nvme0n1p1", capacityBytes: 1000 * DEC, usedBytes: 560 * DEC, source: "legacy", measuredAt: new Date("2026-10-01") },
+      { itemId: toshiba, mountPoint: "/mnt/toshiba", device: "/dev/sdb1", capacityBytes: 2000 * DEC, usedBytes: 60 * DEC, source: "legacy", measuredAt: new Date("2026-10-01") },
+      { itemId: wdc, mountPoint: "/media/rick/Elements", label: "Elements", device: "sde1", capacityBytes: 12000 * DEC, usedBytes: 3840 * DEC, source: "legacy", measuredAt: new Date("2026-10-01") },
+      { itemId: elementsSmall, mountPoint: "/media/rick/Extern", label: "Extern", device: "sdf1", capacityBytes: 1000 * DEC, usedBytes: 370 * DEC, source: "legacy", measuredAt: new Date("2026-10-09") },
+    ]);
+    const o = await c.storage.overview({});
+    const box = o.computers.find((x) => x.id === opti)!;
+    const kingstonDisk = [...box.drives, ...box.attached].find((d) => d.id === kingston)!;
+    expect(kingstonDisk.volumes).toHaveLength(1);
+    expect(kingstonDisk.capacityBytes).toBe(236 * DEC);
+    const nvmeDisk = [...box.drives, ...box.attached].find((d) => d.id === sn570)!;
+    expect(nvmeDisk.volumes).toHaveLength(1);
+    expect(nvmeDisk.capacityBytes).toBe(1000 * DEC);
+    expect(nvmeDisk.volumes[0].mountPoint === "/media/rick/NVMe" || nvmeDisk.volumes[0].label === "NVMe").toBe(true);
+    const toshibaDisk = [...box.drives, ...box.attached].find((d) => d.id === toshiba)!;
+    expect(toshibaDisk.volumes).toHaveLength(1);
+    const twelveTb = [...box.drives, ...box.attached, ...box.inferredDisks].filter((d) => Math.round((d.capacityBytes ?? 0) / DEC) === 12000);
+    expect(twelveTb).toHaveLength(1);
+    expect(twelveTb[0].volumes).toHaveLength(1);
+    expect(twelveTb[0].id).not.toBe(elementsSmall);
+    const staleElements = box.attached.find((d) => d.id === elementsSmall);
+    expect(staleElements).toBeTruthy();
+    expect(Math.round((staleElements!.capacityBytes ?? 0) / DEC)).toBe(1000);
+    expect(box.remoteMounts?.some((d) => /backupftp/i.test(d.name))).toBe(true);
+    expect(box.unlinkedDisks?.some((d) => /generic usb/i.test(d.name))).toBe(true);
+    const plan = await c.storage.dedupeVolumes({ dry: true });
+    expect(plan.dry).toBe(true);
+    expect(plan.droppedVolumes).toBe(0);
+    expect(plan.volumes.length).toBeGreaterThan(0);
+    expect(plan.diskMerges.some((m) => m.drop.some((d) => d.id === wdc) || m.keep.id === wdc)).toBe(true);
+    const applied = await c.storage.dedupeVolumes({ dry: false });
+    expect(applied.droppedVolumes).toBeGreaterThan(0);
+    const again = await c.storage.dedupeVolumes({ dry: false });
+    expect(again.droppedVolumes).toBe(0);
   });
 });

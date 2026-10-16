@@ -3,19 +3,35 @@ import { items, relations, rooms, storageDirs, storageVolumes, type DataRole } f
 import type { getDb } from "../queries/connection";
 import {
   claimLooseDisks,
+  dedupeVolumesByMountPoint,
+  clusterByTwinKeys,
   diskSightingKey,
   formatLastSeen,
+  isNetworkDisk,
+  isNetworkVolume,
   linkComputerDisks,
+  machineTwinKeys,
   newestMeasuredAt,
+  normalizeMountPoint,
   physicalDiskKey,
+  sameVolume,
   STALE_AFTER_MS,
   type DiskLinkCandidate,
   type DiskMeasure,
 } from "./storageDisks";
 
-export { STORAGE_DISK_KEY, physicalDiskKey, STALE_AFTER_MS, formatLastSeen, type DiskMeasure } from "./storageDisks";
+export {
+  STORAGE_DISK_KEY,
+  physicalDiskKey,
+  STALE_AFTER_MS,
+  formatLastSeen,
+  normalizeMountPoint,
+  dedupeVolumesByMountPoint,
+  type DiskMeasure,
+} from "./storageDisks";
 
 type Db = ReturnType<typeof getDb>;
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 export const DATA_ROLES = ["unique", "test", "backup", "archive", "system", "media", "scratch"] as const satisfies readonly DataRole[];
 
@@ -80,12 +96,101 @@ export function deviceUsed(volumes: VolumeLike[]): number {
   return volumes.reduce((s, v) => s + v.usedBytes, 0);
 }
 
+type StoredVolume = typeof storageVolumes.$inferSelect;
+
+function volumeMs(at: Date | string | null | undefined): number {
+  if (at == null) return 0;
+  const t = at instanceof Date ? at.getTime() : new Date(at).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function reportFields(v: ReportVolume, mountPoint: string, measuredAt: Date, source: string) {
+  return {
+    mountPoint,
+    label: v.label ?? null,
+    fsType: v.fsType ?? null,
+    device: v.device ?? null,
+    container: v.container ?? null,
+    capacityBytes: v.capacityBytes,
+    usedBytes: v.usedBytes,
+    source,
+    measuredAt,
+  };
+}
+
 /**
- * Upsert the reported volumes of one device (keyed by itemId + mountPoint),
- * replace their directory lists when the report carries them, and keep the
- * device's lab keys (storage_gb, storage_free_gb) equal to the sum of all its
- * known volumes. Volumes absent from this report keep their last measurement
- * and their data role; a data role is never touched by a report.
+ * Computer this device belongs to, plus every child / attached disk on it.
+ * A report upserts against this set so Mini + disk #243 cannot both hold `/Volumes/T7`.
+ */
+async function machineScope(
+  tx: Tx,
+  item: { id: number; parentId: number | null; attributes: Record<string, string | number> | null },
+): Promise<{ computerId: number; memberIds: number[]; isComputer: boolean }> {
+  const isComputer = isStorageComputer(item);
+  let computerId = item.id;
+  if (!isComputer) {
+    if (item.parentId != null) {
+      const parent = await tx.query.items.findFirst({ where: eq(items.id, item.parentId) });
+      if (parent && isStorageComputer(parent)) computerId = parent.id;
+    } else {
+      const rels = await tx
+        .select({ toItemId: relations.toItemId })
+        .from(relations)
+        .where(and(eq(relations.fromItemId, item.id), eq(relations.type, "attached-to"), eq(relations.status, "confirmed")));
+      for (const r of rels) {
+        const host = await tx.query.items.findFirst({ where: eq(items.id, r.toItemId) });
+        if (host && isStorageComputer(host)) {
+          computerId = host.id;
+          break;
+        }
+      }
+    }
+  }
+  const children = await tx
+    .select({ id: items.id })
+    .from(items)
+    .where(and(eq(items.parentId, computerId), eq(items.status, "active")));
+  const attached = await tx
+    .select({ fromItemId: relations.fromItemId })
+    .from(relations)
+    .where(and(eq(relations.toItemId, computerId), eq(relations.type, "attached-to"), eq(relations.status, "confirmed")));
+  const memberIds = [...new Set([computerId, item.id, ...children.map((c) => c.id), ...attached.map((a) => a.fromItemId)])];
+  return { computerId, memberIds, isComputer };
+}
+
+function matchingMachineVolumes(rows: StoredVolume[], v: ReportVolume): StoredVolume[] {
+  return rows.filter((r) => sameVolume(r, v));
+}
+
+function freshestVolume(group: StoredVolume[]): StoredVolume {
+  return group.reduce((a, b) => (volumeMs(b.measuredAt) !== volumeMs(a.measuredAt) ? (volumeMs(b.measuredAt) > volumeMs(a.measuredAt) ? b : a) : b.id > a.id ? b : a));
+}
+
+async function copyRoleAndDirsThenDrop(tx: Tx, keep: StoredVolume, extras: StoredVolume[]) {
+  if (extras.length === 0) return;
+  if (keep.dataRole == null) {
+    const donor = extras.find((e) => e.dataRole != null);
+    if (donor) await tx.update(storageVolumes).set({ dataRole: donor.dataRole }).where(eq(storageVolumes.id, keep.id));
+  }
+  const keepDirs = await tx.select({ id: storageDirs.id }).from(storageDirs).where(eq(storageDirs.volumeId, keep.id));
+  if (keepDirs.length === 0) {
+    const donor = extras[0];
+    const from = await tx.select({ id: storageDirs.id }).from(storageDirs).where(eq(storageDirs.volumeId, donor.id));
+    if (from.length > 0) await tx.update(storageDirs).set({ volumeId: keep.id }).where(eq(storageDirs.volumeId, donor.id));
+  }
+  for (const extra of extras) {
+    await tx.delete(storageDirs).where(eq(storageDirs.volumeId, extra.id));
+    await tx.delete(storageVolumes).where(eq(storageVolumes.id, extra.id));
+  }
+}
+
+/**
+ * Upsert the reported volumes of one device. Key is the machine (computer +
+ * its disks) plus mountPoint, with a unique-device fallback, not only
+ * (itemId, mountPoint): a Mini local report updates a leftover T7 row on the
+ * disk Thing instead of inserting a second. A newer measurement is never
+ * overwritten by an older one. Volumes absent from this report keep their
+ * last measurement and their data role; a data role is never touched by a report.
  */
 export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes: number; dirs: number }> {
   const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
@@ -103,71 +208,81 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
     reportedCapacity.set(v.container, v.capacityBytes);
   }
   const now = new Date();
-  const measuredAtOf = (v: ReportVolume): Date => {
-    if (v.measuredAt == null || v.measuredAt === "") return now;
+  const explicitMeasuredAt = (v: ReportVolume): Date | null => {
+    if (v.measuredAt == null || v.measuredAt === "") return null;
     const at = v.measuredAt instanceof Date ? v.measuredAt : new Date(v.measuredAt);
-    if (!Number.isFinite(at.getTime()) || at.getTime() <= 0) return now;
-    return at.getTime() > now.getTime() ? now : at;
+    if (!Number.isFinite(at.getTime()) || at.getTime() <= 0) return null;
+    return at;
   };
   let dirCount = 0;
   await db.transaction(async (tx) => {
-    // read the item again inside the transaction so the attribute merge sees the same row it writes
     const current = await tx.query.items.findFirst({ where: eq(items.id, input.itemId) });
     if (!current) throw new StorageReportError("Item not found.");
+    const scope = await machineScope(tx, current);
+    const affected = new Set<number>([input.itemId]);
+    let machineVols = scope.memberIds.length
+      ? await tx.select().from(storageVolumes).where(inArray(storageVolumes.itemId, scope.memberIds))
+      : [];
+
     for (const v of input.volumes) {
-      const measuredAt = measuredAtOf(v);
-      await tx
-        .insert(storageVolumes)
-        .values({
-          itemId: input.itemId,
-          mountPoint: v.mountPoint,
-          label: v.label ?? null,
-          fsType: v.fsType ?? null,
-          device: v.device ?? null,
-          container: v.container ?? null,
-          capacityBytes: v.capacityBytes,
-          usedBytes: v.usedBytes,
-          source: input.source,
-          measuredAt,
-        })
-        .onDuplicateKeyUpdate({
-          set: {
-            label: v.label ?? null,
-            fsType: v.fsType ?? null,
-            device: v.device ?? null,
-            container: v.container ?? null,
-            capacityBytes: v.capacityBytes,
-            usedBytes: v.usedBytes,
-            source: input.source,
-            measuredAt,
-          },
-        });
-      if (v.dirs) {
-        const row = await tx.query.storageVolumes.findFirst({
-          where: and(eq(storageVolumes.itemId, input.itemId), eq(storageVolumes.mountPoint, v.mountPoint)),
-        });
-        if (!row) throw new StorageReportError(`${v.mountPoint}: volume row missing after upsert.`);
-        await tx.delete(storageDirs).where(eq(storageDirs.volumeId, row.id));
+      const explicitAt = explicitMeasuredAt(v);
+      const measuredAt = explicitAt ? (explicitAt.getTime() > now.getTime() ? now : explicitAt) : now;
+      const mountPoint = normalizeMountPoint(v.mountPoint);
+      const fields = reportFields(v, mountPoint, measuredAt, input.source);
+      const group = matchingMachineVolumes(machineVols, { ...v, mountPoint });
+      const newest = group.length ? freshestVolume(group) : null;
+      // Live collectors omit measuredAt (= now). Only skip when the payload
+      // sent an older timestamp, so Mini local `/` is not clobbered by a
+      // tracker-era date, while sequential reports in the same second still write.
+      const incomingNewer = explicitAt == null || !newest || volumeMs(measuredAt) >= volumeMs(newest.measuredAt);
+      const onReporter = group.find((r) => r.itemId === input.itemId && normalizeMountPoint(r.mountPoint) === mountPoint);
+      let keep: StoredVolume;
+      if (!incomingNewer && newest) {
+        keep = newest;
+      } else if (scope.isComputer && onReporter) {
+        await tx.update(storageVolumes).set(fields).where(eq(storageVolumes.id, onReporter.id));
+        keep = { ...onReporter, ...fields };
+      } else if (scope.isComputer) {
+        const [{ id }] = await tx.insert(storageVolumes).values({ itemId: input.itemId, ...fields }).$returningId();
+        keep = { id, itemId: input.itemId, dataRole: null, createdAt: now, ...fields };
+      } else if (onReporter) {
+        await tx.update(storageVolumes).set(fields).where(eq(storageVolumes.id, onReporter.id));
+        keep = { ...onReporter, ...fields };
+      } else if (newest) {
+        await tx.update(storageVolumes).set(fields).where(eq(storageVolumes.id, newest.id));
+        keep = { ...newest, ...fields };
+      } else {
+        const [{ id }] = await tx.insert(storageVolumes).values({ itemId: input.itemId, ...fields }).$returningId();
+        keep = { id, itemId: input.itemId, dataRole: null, createdAt: now, ...fields };
+      }
+      const extraRows = machineVols.filter((r) => r.id !== keep.id && sameVolume(r, { ...v, mountPoint }));
+      for (const extra of extraRows) affected.add(extra.itemId);
+      await copyRoleAndDirsThenDrop(tx, keep, extraRows);
+      if (incomingNewer && v.dirs) {
+        await tx.delete(storageDirs).where(eq(storageDirs.volumeId, keep.id));
         if (v.dirs.length > 0) {
-          await tx.insert(storageDirs).values(v.dirs.map((d) => ({ volumeId: row.id, path: d.path, bytes: d.bytes, measuredAt: now })));
+          await tx.insert(storageDirs).values(v.dirs.map((d) => ({ volumeId: keep.id, path: d.path, bytes: d.bytes, measuredAt: now })));
           dirCount += v.dirs.length;
         }
       }
+      affected.add(keep.itemId);
+      machineVols = scope.memberIds.length
+        ? await tx.select().from(storageVolumes).where(inArray(storageVolumes.itemId, scope.memberIds))
+        : [];
     }
     if (reportedCapacity.size > 0) {
-      // the stored volumes of a container (this report's and earlier ones) must fit in its capacity
-      const stored = await tx.select().from(storageVolumes).where(eq(storageVolumes.itemId, input.itemId));
       for (const [container, capacity] of reportedCapacity) {
-        const used = deviceUsed(stored.filter((r) => r.container === container));
+        const used = deviceUsed(machineVols.filter((r) => r.container === container));
         if (used > capacity) throw new StorageReportError(`container ${container}: volumes use ${used} bytes, above its capacity (${capacity}).`);
       }
     }
-    await syncDeviceTotals(tx, input.itemId, current.attributes);
+    for (const id of affected) {
+      const row = id === input.itemId ? current : await tx.query.items.findFirst({ where: eq(items.id, id) });
+      if (row) await syncDeviceTotals(tx, id, row.attributes);
+    }
   });
   return { volumes: input.volumes.length, dirs: dirCount };
 }
-
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 /**
  * Keep the whole-device lab keys (storage_gb, storage_free_gb) in step with the
@@ -178,8 +293,22 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 async function syncDeviceTotals(tx: Tx, itemId: number, attributes: Record<string, string | number> | null) {
   const all = await tx.select().from(storageVolumes).where(eq(storageVolumes.itemId, itemId));
   if (all.length === 0) return;
-  const capacity = deviceCapacity(all);
   const used = deviceUsed(all);
+  const existingGb = num(attributes?.storage_gb);
+  // Disk Things keep a hand-entered / tracker physical size; computers still follow volume totals.
+  if (isDiskThing({ attributes }) && existingGb != null) {
+    await tx
+      .update(items)
+      .set({
+        attributes: {
+          ...(attributes ?? {}),
+          storage_free_gb: Math.round((existingGb * 1e9 - used) / 1e9),
+        },
+      })
+      .where(eq(items.id, itemId));
+    return;
+  }
+  const capacity = deviceCapacity(all);
   await tx
     .update(items)
     .set({
@@ -218,6 +347,173 @@ export async function removeVolume(db: Db, volumeId: number): Promise<{ itemId: 
     if (item) await syncDeviceTotals(tx, row.itemId, item.attributes);
     return { itemId: row.itemId, mountPoint: row.mountPoint };
   });
+}
+
+export type VolumeDedupeHit = {
+  id: number;
+  itemId: number;
+  itemName: string;
+  mountPoint: string;
+  measuredAt: Date | null;
+  source: string;
+};
+
+export type DiskMergeOffer = {
+  machineId: number;
+  machineName: string;
+  keep: { id: number; name: string };
+  drop: Array<{ id: number; name: string }>;
+  reason: string;
+};
+
+function twinKeysForItem(
+  item: { name: string; attributes: Record<string, string | number> | null },
+  vols: Array<{ label: string | null; mountPoint: string; capacityBytes: number }>,
+) {
+  return machineTwinKeys({
+    name: item.name,
+    capacityBytes: num(item.attributes?.size_bytes) ?? (num(item.attributes?.storage_gb) != null ? num(item.attributes?.storage_gb)! * 1e9 : null),
+    serial: item.attributes?.serial != null ? String(item.attributes.serial) : null,
+    uuid: item.attributes?.uuid != null ? String(item.attributes.uuid) : null,
+    attributes: item.attributes,
+    volumes: vols,
+  });
+}
+
+/** Duplicate volume rows on a machine, and enclosure/inner-drive Thing twins to merge (not auto-delete). */
+export async function planStorageDedupes(db: Db): Promise<{
+  volumes: Array<{ machineId: number; machineName: string; keep: VolumeDedupeHit; drop: VolumeDedupeHit[] }>;
+  diskMerges: DiskMergeOffer[];
+}> {
+  const deviceRows = await db
+    .select({ id: items.id, name: items.name, parentId: items.parentId, attributes: items.attributes, status: items.status })
+    .from(items)
+    .where(eq(items.status, "active"));
+  const devices = deviceRows.filter((r) => isStorageDevice(r));
+  const computers = devices.filter((d) => isStorageComputer(d));
+  const computerIds = new Set(computers.map((c) => c.id));
+  const attached =
+    computerIds.size === 0
+      ? []
+      : await db
+          .select({ fromItemId: relations.fromItemId, toItemId: relations.toItemId })
+          .from(relations)
+          .where(and(eq(relations.type, "attached-to"), eq(relations.status, "confirmed"), inArray(relations.toItemId, [...computerIds])));
+  const hostOf = new Map<number, number>();
+  for (const r of attached) hostOf.set(r.fromItemId, r.toItemId);
+  const machineOf = (itemId: number): number => {
+    const item = devices.find((d) => d.id === itemId);
+    if (!item) return itemId;
+    if (computerIds.has(item.id)) return item.id;
+    if (item.parentId != null && computerIds.has(item.parentId)) return item.parentId;
+    return hostOf.get(item.id) ?? item.id;
+  };
+  const vols = await db.select().from(storageVolumes);
+  const nameOf = (id: number) => devices.find((d) => d.id === id)?.name ?? computers.find((c) => c.id === id)?.name ?? `#${id}`;
+  const byMachine = new Map<number, StoredVolume[]>();
+  for (const v of vols) {
+    const mid = machineOf(v.itemId);
+    byMachine.set(mid, [...(byMachine.get(mid) ?? []), v]);
+  }
+  const volumeGroups: Array<{ machineId: number; machineName: string; keep: VolumeDedupeHit; drop: VolumeDedupeHit[] }> = [];
+  for (const [machineId, rows] of byMachine) {
+    const clusters: StoredVolume[][] = [];
+    for (const row of rows) {
+      const hit = clusters.find((g) => sameVolume(g[0], row));
+      if (hit) hit.push(row);
+      else clusters.push([row]);
+    }
+    for (const cluster of clusters) {
+      if (cluster.length < 2) continue;
+      const keepRow = freshestVolume(cluster);
+      const asHit = (r: StoredVolume): VolumeDedupeHit => ({
+        id: r.id,
+        itemId: r.itemId,
+        itemName: nameOf(r.itemId),
+        mountPoint: r.mountPoint,
+        measuredAt: r.measuredAt,
+        source: r.source,
+      });
+      volumeGroups.push({
+        machineId,
+        machineName: nameOf(machineId),
+        keep: asHit(keepRow),
+        drop: cluster.filter((r) => r.id !== keepRow.id).map(asHit),
+      });
+    }
+  }
+  const diskMerges: DiskMergeOffer[] = [];
+  const volsByItem = new Map<number, StoredVolume[]>();
+  for (const v of vols) volsByItem.set(v.itemId, [...(volsByItem.get(v.itemId) ?? []), v]);
+  for (const c of computers) {
+    const members = devices.filter((d) => isDiskThing(d) && (d.parentId === c.id || hostOf.get(d.id) === c.id));
+    const groups = clusterByTwinKeys(members, (d) => twinKeysForItem(d, volsByItem.get(d.id) ?? []));
+    for (const g of groups) {
+      if (g.length < 2) continue;
+      const score = (x: (typeof g)[number]) =>
+        (x.attributes?.serial != null && String(x.attributes.serial) !== "" ? 2 : 0) + ((volsByItem.get(x.id) ?? []).length > 0 ? 1 : 0);
+      const keep = g.reduce((a, b) => {
+        const d = score(b) - score(a);
+        if (d !== 0) return d > 0 ? b : a;
+        return a.id <= b.id ? a : b;
+      });
+      const keys = twinKeysForItem(keep, volsByItem.get(keep.id) ?? []);
+      diskMerges.push({
+        machineId: c.id,
+        machineName: c.name,
+        keep: { id: keep.id, name: keep.name },
+        drop: g.filter((d) => d.id !== keep.id).map((d) => ({ id: d.id, name: d.name })),
+        reason: [...keys.hard, ...keys.names][0] ?? "size+volume",
+      });
+    }
+  }
+  return { volumes: volumeGroups, diskMerges };
+}
+
+export async function applyStorageDedupes(
+  db: Db,
+  input: { dry?: boolean; mergeDisks?: boolean } = {},
+): Promise<{
+  dry: boolean;
+  droppedVolumes: number;
+  mergedDisks: number;
+  volumes: Awaited<ReturnType<typeof planStorageDedupes>>["volumes"];
+  diskMerges: DiskMergeOffer[];
+}> {
+  const plan = await planStorageDedupes(db);
+  const dry = input.dry !== false;
+  if (dry) return { dry: true, droppedVolumes: 0, mergedDisks: 0, volumes: plan.volumes, diskMerges: plan.diskMerges };
+  let droppedVolumes = 0;
+  for (const g of plan.volumes) {
+    const keep = await db.query.storageVolumes.findFirst({ where: eq(storageVolumes.id, g.keep.id) });
+    if (!keep) continue;
+    const extras: StoredVolume[] = [];
+    for (const d of g.drop) {
+      const row = await db.query.storageVolumes.findFirst({ where: eq(storageVolumes.id, d.id) });
+      if (row) extras.push(row);
+    }
+    await db.transaction(async (tx) => {
+      await copyRoleAndDirsThenDrop(tx, keep, extras);
+      const item = await tx.query.items.findFirst({ where: eq(items.id, keep.itemId) });
+      if (item) await syncDeviceTotals(tx, keep.itemId, item.attributes);
+      for (const extra of extras) {
+        const it = await tx.query.items.findFirst({ where: eq(items.id, extra.itemId) });
+        if (it) await syncDeviceTotals(tx, extra.itemId, it.attributes);
+      }
+    });
+    droppedVolumes += extras.length;
+  }
+  let mergedDisks = 0;
+  if (input.mergeDisks) {
+    for (const m of plan.diskMerges) {
+      for (const d of m.drop) {
+        await db.update(items).set({ parentId: null }).where(eq(items.id, d.id));
+        await db.delete(relations).where(and(eq(relations.fromItemId, d.id), eq(relations.type, "attached-to")));
+        mergedDisks++;
+      }
+    }
+  }
+  return { dry: false, droppedVolumes, mergedDisks, volumes: plan.volumes, diskMerges: plan.diskMerges };
 }
 
 /**
@@ -373,12 +669,21 @@ type DeviceExtra = {
 };
 
 /** One device with its volumes; without volumes the block comes from the lab keys (GB → bytes, decimal). */
+function physicalDiskBytes(attrs: Record<string, string | number> | null | undefined, volumes: VolumeLike[]): number | null {
+  const sizeBytes = num(attrs?.size_bytes);
+  if (sizeBytes != null && sizeBytes > 0) return sizeBytes;
+  const gb = num(attrs?.storage_gb);
+  if (gb != null && gb > 0) return gb * 1e9;
+  return volumes.length ? deviceCapacity(volumes) : null;
+}
+
 function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForItems>>, roomName: string | null, links: DeviceLinks, extra?: DeviceExtra) {
-  const mine = extra?.volumes ?? volumes.filter((v) => v.itemId === row.id);
+  const raw = extra?.volumes ?? volumes.filter((v) => v.itemId === row.id);
+  const mine = dedupeVolumesByMountPoint(raw);
   const measured = mine.length > 0;
   const gb = num(row.attributes?.storage_gb);
   const freeGb = num(row.attributes?.storage_free_gb);
-  const capacityBytes = measured ? deviceCapacity(mine) : gb != null ? gb * 1e9 : null;
+  const capacityBytes = physicalDiskBytes(row.attributes, mine) ?? (gb != null ? gb * 1e9 : null);
   const usedBytes = measured ? deviceUsed(mine) : gb != null && freeGb != null ? Math.max(0, Math.min(gb, gb - freeGb)) * 1e9 : null;
   const freeBytes = capacityBytes != null && usedBytes != null ? capacityBytes - usedBytes : null;
   const capOf = containerCapacities(mine);
@@ -508,15 +813,21 @@ export async function overviewFor(db: Db, houseId: number | null) {
     const diskThings = [...childRows, ...attRows, ...extras];
     const ownOnDrives = new Map(diskThings.map((d) => [d.id, volumes.filter((v) => v.itemId === d.id)] as const));
     const linked = linkComputerDisks(computerVols, diskThings, ownOnDrives);
-    const asDisk = (d: (typeof childRows)[number]) =>
-      deviceOf(d, volumes, d.roomName, links, {
+    const asDisk = (d: (typeof childRows)[number]) => {
+      const built = deviceOf(d, volumes, d.roomName, links, {
         volumes: linked.volumesByDrive.get(d.id) ?? [],
         diskKey: linked.diskKeyByDrive.get(d.id) ?? null,
         measure: linked.measureByDrive.get(d.id),
         linkCandidates: linked.candidatesByDrive.get(d.id),
       });
-    const inferredDisks = linked.inferred.map((g) =>
-      deviceOf(
+      if (isNetworkDisk({ name: d.name, attributes: d.attributes, volumes: built.volumes })) {
+        return { ...built, measure: "remote" as const };
+      }
+      return built;
+    };
+    const inferredDisks = linked.inferred.map((g) => {
+      const remote = g.volumes.every(isNetworkVolume) || isNetworkDisk({ name: g.name, volumes: g.volumes });
+      return deviceOf(
         { id: c.id, name: g.name, parentId: c.id, roomId: c.roomId, attributes: { role: "disk" } },
         volumes,
         c.roomName,
@@ -525,20 +836,30 @@ export async function overviewFor(db: Db, houseId: number | null) {
           volumes: g.volumes,
           diskKey: g.diskKey,
           inferred: true,
-          measure: "measured",
+          measure: remote ? "remote" : "measured",
           linkCandidates: g.candidates,
         },
-      ),
-    );
+      );
+    });
     const computer = deviceOf(c, volumes, c.roomName, links, { volumes: [] });
+    const stacked = collapseSameMachineTwins({
+      id: c.id,
+      drives: childRows.map((d) => asDisk(d)),
+      attached: [...attRows, ...extras].map((d) => asDisk(d)),
+      inferredDisks,
+      volumes: [],
+    });
+    const split = splitMachineDisks(stacked);
     return {
       ...computer,
       ...storageViewFlags(c.attributes),
       ...machineIdentity(c.attributes),
-      volumes: inferredDisks.flatMap((d) => d.volumes),
-      drives: childRows.map((d) => asDisk(d)),
-      attached: [...attRows, ...extras].map((d) => asDisk(d)),
-      inferredDisks,
+      volumes: split.inferredDisks.flatMap((d) => d.volumes),
+      drives: split.drives,
+      attached: split.attached,
+      inferredDisks: split.inferredDisks,
+      unlinkedDisks: split.unlinkedDisks,
+      remoteMounts: split.remoteMounts,
     };
   });
   const hiddenMoved = hideMovedDisks(computersOut);
@@ -562,7 +883,89 @@ type OverviewMachine = {
   attached: OverviewDisk[];
   inferredDisks: OverviewDisk[];
   volumes: OverviewDisk["volumes"];
+  unlinkedDisks?: OverviewDisk[];
+  remoteMounts?: OverviewDisk[];
 };
+
+function preferTwin(a: OverviewDisk, b: OverviewDisk): OverviewDisk {
+  const score = (d: OverviewDisk) => (d.inferred ? 0 : 4) + (d.serial ? 2 : 0) + (d.volumes.length > 0 ? 1 : 0);
+  const d = score(b) - score(a);
+  if (d !== 0) return d > 0 ? b : a;
+  return a.id <= b.id ? a : b;
+}
+
+function collapseSameMachineTwins<T extends OverviewMachine>(c: T): T {
+  type Loc = { kind: "drives" | "attached" | "inferredDisks"; index: number };
+  const locs: Array<Loc & { disk: OverviewDisk }> = [];
+  for (const kind of ["drives", "attached", "inferredDisks"] as const) {
+    (c[kind] ?? []).forEach((disk, index) => locs.push({ kind, index, disk }));
+  }
+  const groups = clusterByTwinKeys(locs, (loc) =>
+    machineTwinKeys({
+      name: loc.disk.name,
+      capacityBytes: loc.disk.capacityBytes,
+      serial: loc.disk.serial,
+      uuid: loc.disk.uuid,
+      attributes: undefined,
+      volumes: loc.disk.volumes,
+    }),
+  );
+  const drop = new Set<string>();
+  const keepVols = new Map<string, OverviewDisk["volumes"]>();
+  for (const members of groups) {
+    if (members.length < 2) continue;
+    const keep = members.reduce((a, b) => (preferTwin(a.disk, b.disk) === b.disk ? b : a));
+    let vols = [...keep.disk.volumes];
+    for (const m of members) {
+      if (m === keep) continue;
+      drop.add(`${m.kind}:${m.index}`);
+      vols = dedupeVolumesByMountPoint([...vols, ...m.disk.volumes]);
+    }
+    keepVols.set(`${keep.kind}:${keep.index}`, vols);
+  }
+  const rewrite = (kind: "drives" | "attached" | "inferredDisks") =>
+    (c[kind] ?? [])
+      .map((d, i) => {
+        const vols = keepVols.get(`${kind}:${i}`);
+        return vols
+          ? {
+              ...d,
+              volumes: vols,
+              usedBytes: deviceUsed(vols),
+              freeBytes: d.capacityBytes != null ? d.capacityBytes - deviceUsed(vols) : d.freeBytes,
+              measured: vols.length > 0,
+              measure: vols.length > 0 ? ("measured" as const) : d.measure,
+            }
+          : d;
+      })
+      .filter((_, i) => !drop.has(`${kind}:${i}`));
+  const inferredDisks = rewrite("inferredDisks");
+  return { ...c, drives: rewrite("drives"), attached: rewrite("attached"), inferredDisks, volumes: inferredDisks.flatMap((d) => d.volumes) };
+}
+
+function splitMachineDisks<T extends OverviewMachine>(c: T): T & { unlinkedDisks: OverviewDisk[]; remoteMounts: OverviewDisk[] } {
+  const remoteMounts: OverviewDisk[] = [];
+  const unlinkedDisks: OverviewDisk[] = [];
+  const take = (list: OverviewDisk[]) => {
+    const rest: OverviewDisk[] = [];
+    for (const d of list) {
+      if (d.measure === "remote" || isNetworkDisk({ name: d.name, volumes: d.volumes })) remoteMounts.push({ ...d, measure: "remote" });
+      else if (d.measure === "unlinked" && d.volumes.length === 0) unlinkedDisks.push(d);
+      else rest.push(d);
+    }
+    return rest;
+  };
+  const inferredDisks = take(c.inferredDisks ?? []);
+  return {
+    ...c,
+    drives: take(c.drives),
+    attached: take(c.attached),
+    inferredDisks,
+    unlinkedDisks,
+    remoteMounts,
+    volumes: inferredDisks.flatMap((d) => d.volumes),
+  };
+}
 
 function hideMovedDisks<T extends OverviewMachine>(computers: T[]): T[] {
   type Hit = { computerId: number; kind: "drives" | "attached" | "inferredDisks"; index: number; key: string; at: number };

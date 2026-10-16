@@ -13,6 +13,7 @@ import {
   STORAGE_STARRED_KEY,
   StorageReportError,
   applyReport,
+  applyStorageDedupes,
   applyStorageViewFlag,
   isStorageComputer,
   isStorageDevice,
@@ -235,6 +236,17 @@ export const storageRouter = createRouter({
         if (e instanceof StorageReportError) throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
         throw e;
       }
+    }),
+
+  /**
+   * Drop duplicate volume rows on a machine (freshest kept). Dry unless `dry` is false.
+   * Disk Thing twins (enclosure vs inner drive) are listed as merge offers; `mergeDisks`
+   * unparents the extras without deleting them.
+   */
+  dedupeVolumes: procedure
+    .input(z.object({ dry: z.boolean().optional(), mergeDisks: z.boolean().optional() }))
+    .mutation(async ({ input }) => {
+      return applyStorageDedupes(getDb(), { dry: input.dry, mergeDisks: input.mergeDisks });
     }),
 
   dirs: procedure.input(z.object({ volumeId: z.number().int() })).query(async ({ input }) => {

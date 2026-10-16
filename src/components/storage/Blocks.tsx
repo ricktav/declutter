@@ -70,7 +70,7 @@ export type VolumeLike = {
   measuredAt: Date | string;
 };
 
-export type DiskMeasure = "measured" | "no-collector" | "unlinked" | "duplicate";
+export type DiskMeasure = "measured" | "no-collector" | "unlinked" | "duplicate" | "remote";
 
 export type DiskLinkCandidate = { id: number; name: string } | { diskKey: string; name: string };
 
@@ -100,7 +100,7 @@ type Segment = { kind: "volume"; volume: VolumeLike; widthPct: number } | { kind
  * container's free rest. Containers split the block by capacity, so one
  * container drawn alone fills the block with its volumes plus free.
  */
-function segmentsOf(volumes: VolumeLike[]): Segment[] {
+function segmentsOf(volumes: VolumeLike[], diskCapacity?: number | null): Segment[] {
   const groups = new Map<string, { capacity: number; volumes: VolumeLike[] }>();
   for (const v of volumes) {
     const key = v.container ?? `vol:${v.id}`;
@@ -109,7 +109,8 @@ function segmentsOf(volumes: VolumeLike[]): Segment[] {
     g.volumes.push(v);
     groups.set(key, g);
   }
-  const total = [...groups.values()].reduce((s, g) => s + g.capacity, 0);
+  const groupedTotal = [...groups.values()].reduce((s, g) => s + g.capacity, 0);
+  const total = diskCapacity != null && diskCapacity > 0 ? Math.max(diskCapacity, groupedTotal) : groupedTotal;
   const out: Segment[] = [];
   for (const [key, g] of groups) {
     const part = total > 0 ? g.capacity / total : 0;
@@ -122,6 +123,9 @@ function segmentsOf(volumes: VolumeLike[]): Segment[] {
     const freeShare = Math.max(0, 1 - share);
     if (freeShare > 0) out.push({ kind: "free", key, bytes: freeShare * g.capacity, widthPct: freeShare * part * 100 });
   }
+  if (total > groupedTotal) {
+    out.push({ kind: "free", key: "disk", bytes: total - groupedTotal, widthPct: ((total - groupedTotal) / total) * 100 });
+  }
   return out;
 }
 
@@ -130,6 +134,7 @@ function measureCaption(device: DeviceLike): string {
   if (m === "no-collector") return "no collector";
   if (m === "unlinked") return "volumes on this machine aren't linked to this disk";
   if (m === "duplicate") return "duplicate of another disk on this machine";
+  if (m === "remote") return "network mount";
   if (device.usedBytes != null && device.capacityBytes) return `${Math.round((device.usedBytes / device.capacityBytes) * 100)}% used`;
   return "no use data";
 }
@@ -191,7 +196,7 @@ export function DeviceBlock({
         {unmeasured ? (
           <div className="h-full bg-muted-foreground/30" style={{ width: cap > 0 && device.usedBytes != null ? `${(device.usedBytes / cap) * 100}%` : "0%" }} />
         ) : (
-          segmentsOf(device.volumes).map((seg) =>
+          segmentsOf(device.volumes, device.capacityBytes).map((seg) =>
             seg.kind === "free" ? (
               <div key={`free:${seg.key}`} className="h-full bg-muted" style={{ width: `${seg.widthPct}%` }} title={`free · ${formatBytes(seg.bytes)}`} />
             ) : (
@@ -244,6 +249,52 @@ export function DeviceBlock({
           </select>
         </label>
       )}
+    </div>
+  );
+}
+
+/** Inventory disks on this machine with no linked volumes: names + link picker, not full-width empty bars. */
+export function UnlinkedDisksRow({
+  disks,
+  onLinkDisk,
+  linkPending = false,
+}: {
+  disks: DeviceLike[];
+  onLinkDisk?: (choice: { itemId: number; diskKey: string }) => void;
+  linkPending?: boolean;
+}) {
+  if (disks.length === 0) return null;
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-1 rounded-md border border-dashed border-border px-2 py-1.5">
+      <div className="text-[11px] text-muted-foreground">Unlinked disks</div>
+      <ul className="flex flex-wrap gap-x-4 gap-y-1">
+        {disks.map((d) => (
+          <li key={d.id} className="flex min-w-0 items-center gap-1.5 text-[12px]">
+            <span className="truncate font-medium">{d.name}</span>
+            <span className="shrink-0 text-[11px] text-muted-foreground">{formatBytes(d.capacityBytes)}</span>
+            {onLinkDisk && (d.linkCandidates ?? []).length > 0 && (
+              <select
+                className="max-w-[10rem] rounded border border-border bg-white px-1 py-0.5 text-[11px] disabled:opacity-50"
+                disabled={linkPending}
+                defaultValue=""
+                aria-label={`Link ${d.name} to measured volumes`}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v.startsWith("k:")) onLinkDisk({ itemId: d.id, diskKey: v.slice(2) });
+                  e.target.value = "";
+                }}
+              >
+                <option value="">device…</option>
+                {(d.linkCandidates ?? []).map((c) => (
+                  <option key={candidateKey(c)} value={candidateKey(c)}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

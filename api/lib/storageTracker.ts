@@ -732,6 +732,25 @@ function matchDiskToThings(disk: TrackerDisk, local: InventoryItem[], all: Inven
     );
     if (hit) return hit;
   }
+  if (disk.sizeBytes) {
+    const leaves = disk.mountpoints
+      .map((m) => {
+        const n = m.replace(/\/+$/, "");
+        return (n.split("/").filter(Boolean).pop() ?? n).toLowerCase();
+      })
+      .filter((s) => s && s !== "/");
+    if (leaves.length) {
+      const hit = pick(
+        all.filter((t) => {
+          if (!sizeCloseBytes(thingSizeBytes(t), disk.sizeBytes)) return false;
+          const name = t.name.toLowerCase();
+          return leaves.some((leaf) => name.includes(leaf));
+        }),
+        "model-size",
+      );
+      if (hit) return hit;
+    }
+  }
   return blankDiskMatch(disk, "create", { candidates: local.map((t) => ({ id: t.id, name: t.name })) });
 }
 
