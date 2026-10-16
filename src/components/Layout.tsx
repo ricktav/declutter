@@ -16,14 +16,6 @@ import {
   Sparkles,
   Timer,
   Square,
-  Laptop,
-  Wrench,
-  Home,
-  ChefHat,
-  Leaf,
-  Briefcase,
-  Calendar,
-  Box,
   Menu,
   X,
   Settings,
@@ -38,23 +30,12 @@ import {
   Zap,
   HardDrive,
   Star,
-  type LucideIcon,
 } from "lucide-react";
 import { formatClock } from "@/lib/format";
+import { areaIcon } from "@/lib/areaStyle";
 import { cn } from "@/lib/utils";
 import { useTopicFavs } from "@/lib/topicFavs";
 import { useLinks } from "@/hooks/use-links";
-
-const AREA_ICONS: Record<string, LucideIcon> = {
-  laptop: Laptop,
-  wrench: Wrench,
-  home: Home,
-  "chef-hat": ChefHat,
-  leaf: Leaf,
-  briefcase: Briefcase,
-  calendar: Calendar,
-  box: Box,
-};
 
 function useCollapsed(key: string, initial = false) {
   const [collapsed, setCollapsed] = useState(() => {
@@ -268,7 +249,7 @@ export default function Layout() {
             {favIds.map((id) => {
               const a = (areas.data ?? []).find((x) => x.id === id);
               if (!a) return null;
-              const Icon = AREA_ICONS[a.icon] ?? Box;
+              const Icon = areaIcon(a.icon);
               return (
                 <div key={`fav-${a.id}`} className="flex items-center">
                   <NavLink
@@ -334,7 +315,7 @@ export default function Layout() {
         {!areasCollapsed && (
           <nav className="px-2 space-y-0.5">
             {(areas.data ?? []).map((a) => {
-              const Icon = AREA_ICONS[a.icon] ?? Box;
+              const Icon = areaIcon(a.icon);
               return (
                 <div key={a.id} className="flex items-center">
                   <NavLink

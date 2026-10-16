@@ -17,30 +17,10 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { aerialThumbUrl, fetchParcelInfo, kadastraleKaartUrl, reverseGeocode, type AddressSuggestion, type ParcelInfo } from "@/lib/pdok";
 import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Plus } from "lucide-react";
 import {
-  Laptop,
-  Wrench,
   Home,
-  ChefHat,
-  Leaf,
-  Briefcase,
-  Calendar,
-  Box,
-  type LucideIcon,
 } from "lucide-react";
+import { AREA_ICONS, AREA_COLORS } from "@/lib/areaStyle";
 import { cn } from "@/lib/utils";
-
-const AREA_ICONS: { key: string; label: string; icon: LucideIcon }[] = [
-  { key: "laptop", label: "Computers", icon: Laptop },
-  { key: "wrench", label: "Tools", icon: Wrench },
-  { key: "home", label: "House", icon: Home },
-  { key: "chef-hat", label: "Kitchen", icon: ChefHat },
-  { key: "leaf", label: "Garden", icon: Leaf },
-  { key: "briefcase", label: "Work", icon: Briefcase },
-  { key: "calendar", label: "Schedule", icon: Calendar },
-  { key: "box", label: "General", icon: Box },
-];
-
-const AREA_COLORS = ["#5b8c5a", "#282c20", "#6366f1", "#0891b2", "#d97706", "#dc2626", "#7c3aed"];
 
 function slugify(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");

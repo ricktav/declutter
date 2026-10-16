@@ -6,29 +6,12 @@ import { zoom, zoomIdentity, type ZoomBehavior } from "d3-zoom";
 import "d3-transition";
 import { drag } from "d3-drag";
 import {
-  Laptop,
-  Wrench,
   Home as HomeIcon,
-  ChefHat,
-  Leaf,
-  Briefcase,
-  Calendar,
-  Box,
   type LucideIcon,
 } from "lucide-react";
+import { areaIcon } from "@/lib/areaStyle";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
-
-const AREA_ICONS: Record<string, LucideIcon> = {
-  laptop: Laptop,
-  wrench: Wrench,
-  home: HomeIcon,
-  "chef-hat": ChefHat,
-  leaf: Leaf,
-  briefcase: Briefcase,
-  calendar: Calendar,
-  box: Box,
-};
 
 // a stable categorical palette for groupings that don't already carry their
 // own color (house, floor, room) - areas use their own `color` field instead
@@ -107,7 +90,7 @@ const GROUPINGS: Grouping[] = [
     },
     level1Icon: (key, areas) => {
       const a = areas.find((a) => String(a.id) === key);
-      return a ? (AREA_ICONS[a.icon] ?? Box) : null;
+      return a ? areaIcon(a.icon) : null;
     },
     level2: (it) => it.room?.floor?.trim() || "No floor",
     level2Label: (key) => key,
@@ -137,7 +120,7 @@ const GROUPINGS: Grouping[] = [
     },
     level1Icon: (key, areas) => {
       const a = areas.find((a) => String(a.id) === key);
-      return a ? (AREA_ICONS[a.icon] ?? Box) : null;
+      return a ? areaIcon(a.icon) : null;
     },
     level2: roomKey,
     level2Label: roomKeyLabel,

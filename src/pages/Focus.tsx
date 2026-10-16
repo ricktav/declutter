@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
+import { StoredImage } from "@/components/Thumb";
 import { AreaPicker } from "@/components/AreaPicker";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +14,7 @@ import {
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useLastRoomId } from "@/hooks/use-last-room";
 import { setLastRoomId } from "@/lib/lastRoom";
+import { DECISIONS } from "@/lib/decisions";
 import { cn } from "@/lib/utils";
 import type { ItemDecision } from "@db/schema";
 import type { inferRouterOutputs } from "@trpc/server";
@@ -32,14 +34,6 @@ import {
 type Pin = inferRouterOutputs<AppRouter>["pins"]["listForPhoto"][number];
 type RoomPhoto = inferRouterOutputs<AppRouter>["photos"]["roomPhotos"][number];
 type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
-
-const DECISIONS: { key: ItemDecision; label: string; color: string }[] = [
-  { key: "keep", label: "Keep", color: "#2F7A45" },
-  { key: "sell", label: "Sell", color: "#9E6A08" },
-  { key: "donate", label: "Donate", color: "#2D689B" },
-  { key: "toss", label: "Toss", color: "#AD432B" },
-  { key: "later", label: "Later", color: "#6E7563" },
-];
 
 function boxOf(p: { xPct: number; yPct: number; wPct?: number | null; hPct?: number | null }): CropBox {
   return { xPct: p.xPct, yPct: p.yPct, wPct: p.wPct && p.wPct > 0 ? p.wPct : 12, hPct: p.hPct && p.hPct > 0 ? p.hPct : 12 };
@@ -630,7 +624,7 @@ export default function FocusPage() {
                     )}
                     title={p.title ?? `Photo ${p.photoId}`}
                   >
-                    <ThumbPreview storageKey={p.storageKey} />
+                    <StoredImage storageKey={p.storageKey} className="h-full w-full object-cover" fallback={<div className="h-full w-full bg-muted" />} />
                   </button>
                 ))}
               </div>
@@ -895,10 +889,4 @@ export default function FocusPage() {
       )}
     </div>
   );
-}
-
-function ThumbPreview({ storageKey }: { storageKey: string }) {
-  const url = trpc.photos.url.useQuery({ key: storageKey });
-  if (!url.data?.url) return <div className="h-full w-full bg-muted" />;
-  return <img src={url.data.url} alt="" className="h-full w-full object-cover" />;
 }

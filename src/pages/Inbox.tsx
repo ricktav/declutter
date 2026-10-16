@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
+import { StoredImage } from "@/components/Thumb";
 import { CaptureBar } from "@/components/CaptureBar";
 import { uploadFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
@@ -297,18 +298,6 @@ function ZoomableGeojson({ storageKey }: { storageKey: string }) {
         </div>
       </ZoomOverlay>
     </div>
-  );
-}
-
-function CaptureImage({ storageKey }: { storageKey: string }) {
-  const url = trpc.photos.url.useQuery({ key: storageKey });
-  if (!url.data?.url) return null;
-  return (
-    <img
-      src={url.data.url}
-      alt=""
-      className="h-56 w-56 object-cover rounded-lg border border-border"
-    />
   );
 }
 
@@ -660,7 +649,7 @@ function TriageCard({
                 className="cursor-zoom-in"
                 onClick={() => onZoom(capture.storageKey!, capture.id, true)}
               >
-                <CaptureImage storageKey={capture.storageKey} />
+                <StoredImage storageKey={capture.storageKey} className="h-56 w-56 object-cover rounded-lg border border-border" />
               </button>
               <div className="flex flex-col gap-1.5 pt-1">
                 <Button
