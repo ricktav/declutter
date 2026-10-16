@@ -7,11 +7,14 @@ import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 import {
   DEFAULT_TRACKER_HOST_MAP,
+  diskModelMatches,
+  homebaseDiskSightings,
   parseTrackerSize,
   parseTrackerSources,
   planTrackerImport,
   type InventoryItem,
 } from "../lib/storageTracker";
+import type { DiskVolume } from "../lib/storageDisks";
 
 beforeEach(resetTestDb);
 
@@ -288,6 +291,63 @@ describe("storage.importSources", () => {
     const machine = o.computers.find((x) => x.name === "dockermac-1")!;
     expect(machine.drives.find((d) => d.id === ssd)?.diskKey).toBe("sdb");
   });
+
+  it("dry-run importSources marks iMac PSSD T7 moved onto Mini #243 from local volumes, never creates", async () => {
+    const db = getTestDb();
+    const [{ id: areaId }] = await db.insert(areas).values({ slug: "computers", name: "Computers" }).$returningId();
+    const [{ id: houseId }] = await db.insert(houses).values({ name: "Thuis" }).$returningId();
+    const [{ id: mini }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "Mac mini M4", attributes: { role: "desktop", hostname: "macmini-m4" } })
+      .$returningId();
+    await db.insert(items).values({ areaId, houseId, name: "rick-iMac5k", attributes: { role: "desktop", hostname: "rick-imac5k" } });
+    const [{ id: t7 }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "Samsung T7 2TB", attributes: { role: "storage", model: "Samsung T7", storage_gb: 2000 } })
+      .$returningId();
+    await db.insert(relations).values({ fromItemId: t7, toItemId: mini, type: "attached-to", origin: "user", status: "confirmed" });
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: mini,
+      source: "local-script",
+      volumes: [
+        { mountPoint: "/Volumes/T7", label: "T7", device: "disk7s1", container: "disk7", capacityBytes: 2000398934016, usedBytes: 1.2e12 },
+        { mountPoint: "/Volumes/TM-T7", label: "TM-T7", device: "disk7s2", container: "disk7", capacityBytes: 2000398934016, usedBytes: 0.4e12 },
+      ],
+    });
+    const old = Date.parse("2026-08-01T12:00:00Z");
+    const plan = await c.storage.importSources({
+      sources: [
+        {
+          type: "file",
+          name: "rick-iMac5k:sdb",
+          subtype: "external-drive",
+          disk_model: "PSSD T7",
+          size_bytes: 2000398934016,
+          last_seen: old,
+          hostname: "rick-iMac5k",
+          metadata: { serial: "S7MGNS0XC09255Y", mountpoints: ["/Volumes/T7"] },
+        },
+        {
+          type: "file",
+          name: "rick-iMac5k:/Volumes/T7",
+          path_or_url: "/Volumes/T7",
+          device: "/dev/sdb1",
+          size_bytes: 2000398934016,
+          used_bytes: 1e12,
+          disk: "rick-iMac5k:sdb",
+          last_seen: old,
+        },
+      ],
+      dry: true,
+    });
+    const host = plan.hosts.find((h) => h.host === "rick-iMac5k")!;
+    expect(host.disks[0]).toMatchObject({ match: "moved", itemId: t7, diskKey: "sdb" });
+    expect(host.volumes).toEqual([]);
+    expect(plan.applied.created).toBe(0);
+    const storageThings = (await db.select().from(items)).filter((i) => i.attributes?.role === "storage");
+    expect(storageThings.map((i) => i.id)).toEqual([t7]);
+  });
 });
 
 describe("planTrackerImport identity and stale/moved", () => {
@@ -461,5 +521,121 @@ describe("planTrackerImport identity and stale/moved", () => {
     expect(imac.volumes).toEqual([]);
     expect(mini.disks[0]).toMatchObject({ match: "reattach", itemId: 90, serial: "T7MOVED" });
     expect(mini.volumes.map((v) => v.mountPoint)).toEqual(["/Volumes/T7"]);
+  });
+
+  it("matches PSSD T7 to Samsung T7 2TB by product token, not a full-string include", () => {
+    const t7 = { name: "Samsung T7 2TB", attributes: { role: "storage", model: "Samsung T7", storage_gb: 2000 } };
+    expect(diskModelMatches("PSSD T7", t7)).toBe(true);
+    expect(diskModelMatches("PSSD T7", { name: "Seagate Portable 4TB", attributes: { role: "storage", serial: "NAA50DFF", storage_gb: 4000 } })).toBe(false);
+  });
+
+  it("does not create rick-iMac5k/sdb PSSD T7 when Mini local collector already has Samsung T7 2TB #243", () => {
+    const old = Date.parse("2026-08-01T12:00:00Z");
+    const fresh = Date.parse("2026-10-14T12:00:00Z");
+    const parsed = parseTrackerSources({
+      sources: [
+        disk({
+          name: "rick-iMac5k:sdb",
+          disk_model: "PSSD T7",
+          size_bytes: 2000398934016,
+          last_seen: old,
+          hostname: "rick-iMac5k",
+          metadata: { serial: "S7MGNS0XC09255Y", mountpoints: ["/Volumes/T7"] },
+        }),
+        vol({
+          name: "rick-iMac5k:/Volumes/T7",
+          path_or_url: "/Volumes/T7",
+          device: "/dev/sdb1",
+          size_bytes: 2000398934016,
+          used_bytes: 1e12,
+          disk: "rick-iMac5k:sdb",
+          last_seen: old,
+        }),
+      ],
+    });
+    const inventory: InventoryItem[] = [
+      { id: 51, name: "Mac mini M4", areaId: 1, houseId: 1, roomId: null, parentId: null, attributes: { role: "desktop", hostname: "macmini-m4" } },
+      { id: 80, name: "rick-iMac5k", areaId: 1, houseId: 1, roomId: null, parentId: null, attributes: { role: "desktop", hostname: "rick-imac5k" } },
+      {
+        id: 243,
+        name: "Samsung T7 2TB",
+        areaId: 1,
+        houseId: 1,
+        roomId: null,
+        parentId: null,
+        attributes: { role: "storage", model: "Samsung T7", storage_gb: 2000 },
+      },
+    ];
+    const attached = [{ fromItemId: 243, toItemId: 51 }];
+    const volumes: DiskVolume[] = [
+      {
+        id: 1,
+        itemId: 51,
+        mountPoint: "/Volumes/T7",
+        label: "T7",
+        device: "disk7s1",
+        container: "disk7",
+        capacityBytes: 2000398934016,
+        usedBytes: 1.2e12,
+        measuredAt: new Date(fresh),
+      },
+      {
+        id: 2,
+        itemId: 51,
+        mountPoint: "/Volumes/TM-T7",
+        label: "TM-T7",
+        device: "disk7s2",
+        container: "disk7",
+        capacityBytes: 2000398934016,
+        usedBytes: 0.4e12,
+        measuredAt: new Date(fresh),
+      },
+    ];
+    const sightings = homebaseDiskSightings(inventory, attached, volumes);
+    expect(sightings.find((s) => s.diskItemId === 243)).toMatchObject({ computerId: 51, lastSeen: fresh, diskKey: "disk7" });
+    const plan = planTrackerImport(parsed, inventory, attached, {}, true, sightings);
+    const imac = plan.hosts.find((h) => h.host === "rick-iMac5k")!;
+    expect(imac.disks[0]).toMatchObject({
+      match: "moved",
+      diskKey: "sdb",
+      itemId: 243,
+      itemName: "Samsung T7 2TB",
+      serial: "S7MGNS0XC09255Y",
+    });
+    expect(imac.disks[0].match).not.toBe("create");
+    expect(imac.disks[0].movedTo).toMatchObject({ itemId: 51, itemName: "Mac mini M4" });
+    expect(imac.volumes).toEqual([]);
+  });
+
+  it("still reattaches dockermac sdb onto existing Seagate Portable 4TB #195 by serial", () => {
+    const parsed = parseTrackerSources(fixture);
+    const inventory: InventoryItem[] = [
+      { id: 201, name: "dockermac-1", areaId: 1, houseId: 1, roomId: null, parentId: null, attributes: { role: "desktop", hostname: "dockermac-1" } },
+      {
+        id: 226,
+        name: "Samsung SSD 850 232GB",
+        areaId: 1,
+        houseId: 1,
+        roomId: null,
+        parentId: 201,
+        attributes: { role: "storage", serial: "S21PNXBG996622H", storage_gb: 232 },
+      },
+      { id: 301, name: "dockermac-2", areaId: 1, houseId: 1, roomId: null, parentId: null, attributes: { role: "desktop", hostname: "dockermac-2" } },
+      { id: 227, name: "Crucial MX500", areaId: 1, houseId: 1, roomId: null, parentId: 301, attributes: { role: "storage", model: "Crucial MX500", storage_gb: 500 } },
+      { id: 40, name: "plugwisepi", areaId: 1, houseId: 1, roomId: null, parentId: null, attributes: { role: "sbc", hostname: "plugwisepi" } },
+      {
+        id: 195,
+        name: "Seagate Portable 4TB",
+        areaId: 1,
+        houseId: 1,
+        roomId: null,
+        parentId: null,
+        attributes: { role: "storage", serial: "NAA50DFF", storage_gb: 4000 },
+      },
+    ];
+    const plan = planTrackerImport(parsed, inventory, [], DEFAULT_TRACKER_HOST_MAP, true, []);
+    const dm = plan.hosts.find((h) => h.host === "dockermac")!;
+    expect(dm.disks.find((d) => d.diskKey === "sdb")).toMatchObject({ match: "reattach", itemId: 195, serial: "NAA50DFF" });
+    expect(dm.volumes.map((v) => v.mountPoint)).toContain("/mnt/external");
   });
 });

@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { trpc } from "@/providers/trpc";
-import { formatBytes } from "@/components/storage/Blocks";
+import { formatBytes, isRecentlyScanned } from "@/components/storage/Blocks";
 
 const STORAGE_ROLES = new Set(["laptop", "desktop", "server", "sbc", "nas", "storage"]);
 
@@ -8,9 +8,9 @@ const STORAGE_ROLES = new Set(["laptop", "desktop", "server", "sbc", "nas", "sto
 export function StorageSection({ itemId, role }: { itemId: number; role?: string }) {
   const overview = trpc.storage.overview.useQuery({ houseId: null });
   const o = overview.data;
-  const rows: { deviceName: string; id: number; label: string; used: number; cap: number; dataRole: string | null }[] = [];
+  const rows: { deviceName: string; id: number; label: string; used: number; cap: number; dataRole: string | null; recent: boolean }[] = [];
   if (o) {
-    const take = (deviceName: string, volumes: { id: number; mountPoint: string; label: string | null; usedBytes: number; capacityBytes: number; dataRole: string | null }[]) => {
+    const take = (deviceName: string, volumes: { id: number; mountPoint: string; label: string | null; usedBytes: number; capacityBytes: number; dataRole: string | null; measuredAt?: Date | string }[]) => {
       for (const v of volumes) {
         rows.push({
           deviceName,
@@ -19,6 +19,7 @@ export function StorageSection({ itemId, role }: { itemId: number; role?: string
           used: v.usedBytes,
           cap: v.capacityBytes,
           dataRole: v.dataRole,
+          recent: isRecentlyScanned(v.measuredAt),
         });
       }
     };
@@ -51,6 +52,7 @@ export function StorageSection({ itemId, role }: { itemId: number; role?: string
         {rows.map((v) => (
           <li key={v.id}>
             <Link to={`/storage?volume=${v.id}`} className="flex items-baseline gap-2 text-[13px] text-primary hover:underline">
+              {v.recent && <span className="inline-block h-1.5 w-1.5 shrink-0 self-center rounded-full" style={{ background: "#22c55e" }} title="Recently scanned" aria-label="Recently scanned" />}
               <span className="truncate">{v.label}</span>
               {v.deviceName && <span className="text-[11px] text-muted-foreground no-underline">{v.deviceName}</span>}
               <span className="ml-auto shrink-0 font-data text-[11px] text-muted-foreground">

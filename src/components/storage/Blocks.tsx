@@ -25,10 +25,34 @@ export const ROLE_COLORS: Record<string, string> = {
 };
 
 const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+const RECENT_SCAN_COLOR = "#22c55e";
+
+function measuredAtMs(measuredAt: Date | string | null | undefined): number | null {
+  if (measuredAt == null) return null;
+  const t = new Date(measuredAt).getTime();
+  return Number.isFinite(t) ? t : null;
+}
 
 function isStale(measuredAt: Date | string): boolean {
-  const t = new Date(measuredAt).getTime();
-  return Number.isFinite(t) && Date.now() - t > STALE_MS;
+  const t = measuredAtMs(measuredAt);
+  return t != null && Date.now() - t > STALE_MS;
+}
+
+/** Scanned within the stale window: the collector has seen this volume recently. */
+export function isRecentlyScanned(measuredAt: Date | string | null | undefined): boolean {
+  const t = measuredAtMs(measuredAt);
+  return t != null && Date.now() - t <= STALE_MS;
+}
+
+function ScanDot({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full ring-1 ring-white/80", className)}
+      style={{ background: RECENT_SCAN_COLOR }}
+      title="Recently scanned"
+      aria-hidden
+    />
+  );
 }
 
 export type VolumeLike = {
@@ -178,8 +202,9 @@ export function DeviceBlock({
                 onClick={() => onSelectVolume(seg.volume.id)}
                 className={cn("relative h-full shrink-0 border-r border-white/70 text-left outline-none", selectedVolumeId === seg.volume.id && "ring-2 ring-inset ring-black", isStale(seg.volume.measuredAt) && "opacity-60")}
                 style={{ width: `${seg.widthPct}%`, minWidth: 4, background: seg.volume.dataRole ? ROLE_COLORS[seg.volume.dataRole] : "#9ca3af" }}
-                title={`${seg.volume.label ?? seg.volume.mountPoint} · ${formatBytes(seg.volume.usedBytes)} used of ${formatBytes(seg.volume.capacityBytes)}${seg.volume.container ? ` (shared by container ${seg.volume.container})` : ""}${seg.volume.dataRole ? ` · ${seg.volume.dataRole}` : " · no data role"}${isStale(seg.volume.measuredAt) ? " · stale" : ""}`}
+                title={`${seg.volume.label ?? seg.volume.mountPoint} · ${formatBytes(seg.volume.usedBytes)} used of ${formatBytes(seg.volume.capacityBytes)}${seg.volume.container ? ` (shared by container ${seg.volume.container})` : ""}${seg.volume.dataRole ? ` · ${seg.volume.dataRole}` : " · no data role"}${isStale(seg.volume.measuredAt) ? " · stale" : isRecentlyScanned(seg.volume.measuredAt) ? " · recently scanned" : ""}`}
               >
+                {isRecentlyScanned(seg.volume.measuredAt) && <ScanDot className="absolute right-0.5 top-0.5" />}
                 <span className="absolute inset-x-1 bottom-0.5 truncate text-[10px] leading-none text-white">{seg.volume.label ?? seg.volume.mountPoint}</span>
               </button>
             ),
