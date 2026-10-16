@@ -12,6 +12,8 @@ function settingsPath(): string {
 }
 
 export type AiSlot = "a" | "b";
+export const UI_DEPTHS = ["quick", "standard", "detail"] as const;
+export type UiDepth = (typeof UI_DEPTHS)[number];
 
 export interface AppSettings {
   llmBaseUrl?: string;
@@ -32,6 +34,8 @@ export interface AppSettings {
   meterkastUrl?: string;
   /** Parcel map viewer; the address is appended as ?q=. */
   parcelViewerUrl?: string;
+  /** How much of the Workbench shows: quick, standard or detail. Unset: see settings.ui. */
+  uiDepth?: UiDepth;
 }
 
 export function loadSettings(): AppSettings {

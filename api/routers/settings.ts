@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { createRouter, procedure } from "../middleware";
-import { loadSettings, saveSettings } from "../lib/settings";
+import { sql } from "drizzle-orm";
+import { items } from "@db/schema";
+import { getDb } from "../queries/connection";
+import { loadSettings, saveSettings, UI_DEPTHS } from "../lib/settings";
 import { getProviderSource } from "../lib/ai";
 import { logEvent } from "../lib/events";
 import { autoTriageReady } from "../lib/jobs";
@@ -143,6 +146,19 @@ export const settingsRouter = createRouter({
       await logEvent({ entityType: "settings", action: "updated", summary: "External links updated" });
       return { ok: true };
     }),
+
+  /** Workbench depth. Unset: quick for an empty inventory (a new install), detail when Things exist (nothing hides for an existing user). */
+  ui: procedure.query(async () => {
+    const s = loadSettings();
+    if (s.uiDepth) return { depth: s.uiDepth, chosen: true };
+    const [{ n }] = await getDb().select({ n: sql<number>`count(*)` }).from(items);
+    return { depth: Number(n) > 0 ? ("detail" as const) : ("quick" as const), chosen: false };
+  }),
+
+  setDepth: procedure.input(z.object({ depth: z.enum(UI_DEPTHS) })).mutation(({ input }) => {
+    saveSettings({ uiDepth: input.depth });
+    return { depth: input.depth };
+  }),
 
   /** list models the configured key can actually use */
   testConnection: procedure

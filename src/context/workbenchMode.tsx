@@ -1,30 +1,17 @@
-import { createContext, useContext, type ReactNode } from "react";
-import { usePersistedState } from "@/hooks/use-persisted-state";
+import type { ReactNode } from "react";
+import { DepthProvider, useDepth } from "@/context/depth";
 
 export type WorkbenchMode = "simple" | "advanced";
 
-type WorkbenchModeState = {
-  mode: WorkbenchMode;
-  setMode: (mode: WorkbenchMode) => void;
-};
-
-const Ctx = createContext<WorkbenchModeState | null>(null);
-
-function asMode(v: unknown): WorkbenchMode {
-  return v === "simple" ? "simple" : "advanced";
-}
-
-/** One Workbench, two depths: Simple is room-first Focus; Advanced is the full OS. */
+/** Older two-state view of the depth: Quick is "simple", Standard and Detail are "advanced". */
 export function WorkbenchModeProvider({ children }: { children: ReactNode }) {
-  const [raw, setRaw] = usePersistedState<WorkbenchMode>("workbenchMode", "advanced");
-  const mode = asMode(raw);
-  const setMode = (next: WorkbenchMode) => setRaw(asMode(next));
-  return <Ctx.Provider value={{ mode, setMode }}>{children}</Ctx.Provider>;
+  return <DepthProvider>{children}</DepthProvider>;
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useWorkbenchMode() {
-  const ctx = useContext(Ctx);
-  if (!ctx) throw new Error("useWorkbenchMode must be used within WorkbenchModeProvider");
-  return ctx;
+  const { depth, setDepth } = useDepth();
+  const mode: WorkbenchMode = depth === "quick" ? "simple" : "advanced";
+  const setMode = (next: WorkbenchMode) => setDepth(next === "simple" ? "quick" : "detail");
+  return { mode, setMode };
 }

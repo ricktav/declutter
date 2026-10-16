@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { useWorkbenchMode, type WorkbenchMode } from "@/context/workbenchMode";
+import { useWorkbenchMode } from "@/context/workbenchMode";
+import { DEPTHS, useDepth, type Depth } from "@/context/depth";
 import { trpc } from "@/providers/trpc";
 import { useAsk } from "@/context/ask";
 import { HouseSwitcher } from "@/components/HouseSwitcher";
@@ -153,33 +154,41 @@ const VIEWS_NAV = [
 const SIMPLE_NAV = new Set(["/focus", "/inbox", "/items", "/photos", "/settings"]);
 const HEAVY_PATHS = new Set(["/galaxy", "/systems", "/storage", "/ideas", "/tasks", "/wiki", "/activity"]);
 
+const DEPTH_LABEL: Record<Depth, { label: string; title: string }> = {
+  quick: { label: "Quick", title: "Snap, sort and decide: Focus, Inbox, Things, Photos" },
+  standard: { label: "Standard", title: "Everyday pages, without the extra views" },
+  detail: { label: "Detail", title: "Everything, including views and lenses" },
+};
+
 function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
-  const { mode, setMode } = useWorkbenchMode();
+  const { depth, setDepth } = useDepth();
   const navigate = useNavigate();
-  const pick = (next: WorkbenchMode) => {
-    setMode(next);
-    if (next === "simple") navigate("/focus");
+  const pick = (next: Depth) => {
+    setDepth(next);
+    if (next === "quick") navigate("/focus");
   };
   return (
     <div
       className={cn(
-        "grid grid-cols-2 rounded-md bg-[#32361f] p-0.5 text-[11px] font-semibold",
-        compact && "min-w-[9.5rem]",
+        "grid grid-cols-3 rounded-md bg-[#32361f] p-0.5 text-[11px] font-semibold",
+        compact && "min-w-[12rem]",
       )}
       role="group"
-      aria-label="Workbench mode"
+      aria-label="Workbench depth"
     >
-      {(["simple", "advanced"] as const).map((m) => (
+      {DEPTHS.map((d) => (
         <button
-          key={m}
+          key={d}
           type="button"
-          onClick={() => pick(m)}
+          onClick={() => pick(d)}
+          title={DEPTH_LABEL[d].title}
+          aria-pressed={depth === d}
           className={cn(
-            "rounded px-2 py-1 capitalize",
-            mode === m ? "bg-[#d2ff00] text-[#282c20]" : "text-[#b4b8a5] hover:text-[#f4f4ed]",
+            "rounded px-1.5 py-1",
+            depth === d ? "bg-[#d2ff00] text-[#282c20]" : "text-[#b4b8a5] hover:text-[#f4f4ed]",
           )}
         >
-          {m === "simple" ? "Simple" : "Advanced"}
+          {DEPTH_LABEL[d].label}
         </button>
       ))}
     </div>
@@ -189,6 +198,7 @@ function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
 export default function Layout() {
   const { mode } = useWorkbenchMode();
   const { meterkastUrl } = useLinks();
+  const { shows } = useDepth();
   const location = useLocation();
   const areas = trpc.areas.list.useQuery();
   const { favIds, toggle: toggleFav, isFaved } = useTopicFavs();
@@ -293,7 +303,7 @@ export default function Layout() {
         <SidebarSectionTitle label="Views" collapsed={viewsCollapsed} onToggle={toggleViews} />
         {!viewsCollapsed && (
           <div className="space-y-0.5">
-            {mode !== "simple" && viewsNav.map((n) => (
+            {shows("detail") && viewsNav.map((n) => (
               <NavLink key={n.to} to={n.to} className={navLinkClass} onClick={() => setMenuOpen(false)}>
                 <n.icon className="h-4 w-4" />
                 <span className="flex-1">{n.label}</span>
@@ -304,7 +314,7 @@ export default function Layout() {
               <span className="flex-1">Flow</span>
               <span className="text-[11px] opacity-60">↗</span>
             </a>
-            {mode !== "simple" && meterkastUrl && (
+            {shows("detail") && meterkastUrl && (
               <a href={meterkastUrl} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
                 <Zap className="h-4 w-4" />
                 <span className="flex-1">Meterkast</span>
