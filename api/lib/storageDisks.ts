@@ -100,11 +100,24 @@ export type VolumeIdentity = {
   mountPoint: string;
   label?: string | null;
   device?: string | null;
+  container?: string | null;
   uuid?: string | null;
   capacityBytes?: number;
 };
 
-/** Same filesystem: device+mount, UUID, or label vs path (`NVMe` ↔ `/media/rick/NVMe`). */
+/** Mount used as a second name for a filesystem, not a distinct POSIX path. */
+export function isAliasMount(mp: string): boolean {
+  const n = normalizeMountPoint(mp);
+  if (looksLikeUuidToken(n) || looksLikeUuidToken(volumeLeaf(n))) return true;
+  return n !== "/" && !n.includes("/");
+}
+
+/**
+ * Same filesystem: equal mount, shared UUID, or label vs path
+ * (`NVMe` ↔ `/media/rick/NVMe`). Same kernel device alone is not enough —
+ * APFS `/` and `/System/Volumes/Data` share disk3s5. A UUID-looking mount on
+ * the same slice is the tracker path-as-UUID case (Kingston `/` + F28675…).
+ */
 export function sameVolume(a: VolumeIdentity, b: VolumeIdentity): boolean {
   const mpA = normalizeMountPoint(a.mountPoint);
   const mpB = normalizeMountPoint(b.mountPoint);
@@ -114,7 +127,14 @@ export function sameVolume(a: VolumeIdentity, b: VolumeIdentity): boolean {
   if (uuidA && uuidB && uuidA === uuidB) return true;
   const devA = normalizeVolumeDevice(a.device);
   const devB = normalizeVolumeDevice(b.device);
-  if (devA && devB && devA === devB) return true;
+  // One side is a UUID-looking mount (tracker path-as-UUID). Same slice is the
+  // same filesystem; disagreeing slices (sda1 vs sda2) are two partitions.
+  // Missing device still matches when size is close (Kingston `/` + F28675…).
+  if ((uuidA || uuidB) && !(uuidA && uuidB && uuidA !== uuidB)) {
+    if (devA && devB && devA !== devB) return false;
+    if (devA && devB) return true;
+    if (sizeCloseBytes(a.capacityBytes, b.capacityBytes)) return true;
+  }
   const labelA = (a.label ?? "").trim().toLowerCase();
   const labelB = (b.label ?? "").trim().toLowerCase();
   const leafA = volumeLeaf(mpA);
@@ -126,6 +146,34 @@ export function sameVolume(a: VolumeIdentity, b: VolumeIdentity): boolean {
   if (!cross) return false;
   if (devA && devB && physicalDiskKey(devA, null) === physicalDiskKey(devB, null)) return true;
   return sizeCloseBytes(a.capacityBytes, b.capacityBytes);
+}
+
+/** Two rows in a dedupe group are safe to collapse: same path, or one is a UUID/label alias. */
+export function volumeDedupeIsSafe(keep: VolumeIdentity, drop: VolumeIdentity): boolean {
+  if (normalizeMountPoint(keep.mountPoint) === normalizeMountPoint(drop.mountPoint)) return true;
+  if (!sameVolume(keep, drop)) return false;
+  return isAliasMount(keep.mountPoint) || isAliasMount(drop.mountPoint);
+}
+
+const APFS_DATA_MOUNT = "/System/Volumes/Data";
+
+/** macOS firmlink: Data is the same APFS volume as `/`. Show `/` only. */
+export function hideApfsRootTwin<V extends VolumeIdentity>(volumes: V[]): V[] {
+  const rootKeys = new Set<string>();
+  let anyRoot = false;
+  for (const v of volumes) {
+    if (normalizeMountPoint(v.mountPoint) !== "/") continue;
+    anyRoot = true;
+    const key = physicalDiskKey(v.device, v.container);
+    if (key) rootKeys.add(key);
+  }
+  if (!anyRoot) return volumes;
+  return volumes.filter((v) => {
+    if (normalizeMountPoint(v.mountPoint) !== APFS_DATA_MOUNT) return true;
+    const key = physicalDiskKey(v.device, v.container);
+    if (key) return !rootKeys.has(key);
+    return false;
+  });
 }
 
 function pickFreshestVolume<V extends { id: number; measuredAt?: Date | string | null }>(group: V[]): V {
@@ -145,7 +193,7 @@ export function dedupeVolumesByMountPoint<V extends VolumeIdentity & { id: numbe
     if (hit) hit.push(v);
     else groups.push([v]);
   }
-  const out = groups.map(pickFreshestVolume);
+  const out = hideApfsRootTwin(groups.map(pickFreshestVolume));
   out.sort((a, b) => a.mountPoint.localeCompare(b.mountPoint));
   return out;
 }
@@ -448,6 +496,41 @@ export function claimLooseDisks<V extends DiskVolume, D extends DiskThing>(compu
           break;
         }
       }
+    }
+  }
+  return claimed;
+}
+
+/**
+ * Import-created disk Things (no parent / attached-to) that belong on this
+ * computer: `storage.disk` pin, or unique size + volume leaf in the Thing name.
+ */
+export function claimMachineDisks<V extends DiskVolume, D extends DiskThing>(computerVolumes: V[], loose: D[]): D[] {
+  if (loose.length === 0 || computerVolumes.length === 0) return [];
+  const groups = groupVolumesByDisk(computerVolumes);
+  const claimed: D[] = [];
+  const taken = new Set<string>();
+  for (const d of loose) {
+    const decl = declaredDisk(d.attributes);
+    if (decl && groups.has(decl) && !taken.has(decl)) {
+      claimed.push(d);
+      taken.add(decl);
+    }
+  }
+  for (const d of loose) {
+    if (claimed.some((c) => c.id === d.id)) continue;
+    const gb = num(d.attributes?.storage_gb);
+    const name = d.name.toLowerCase();
+    const hits: string[] = [];
+    for (const [key, vols] of groups) {
+      if (taken.has(key)) continue;
+      if (!sizeClose(gb, groupCapacity(vols))) continue;
+      const leaves = vols.flatMap((v) => [v.label, volumeLeaf(v.mountPoint)].filter((s): s is string => !!s && s !== "/")).map((s) => s.toLowerCase());
+      if (leaves.some((leaf) => leaf.length >= 4 && name.includes(leaf))) hits.push(key);
+    }
+    if (hits.length === 1) {
+      claimed.push(d);
+      taken.add(hits[0]);
     }
   }
   return claimed;

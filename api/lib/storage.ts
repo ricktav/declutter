@@ -3,8 +3,9 @@ import { items, relations, rooms, storageDirs, storageVolumes, type DataRole } f
 import type { getDb } from "../queries/connection";
 import {
   claimLooseDisks,
-  dedupeVolumesByMountPoint,
+  claimMachineDisks,
   clusterByTwinKeys,
+  dedupeVolumesByMountPoint,
   diskSightingKey,
   formatLastSeen,
   isNetworkDisk,
@@ -16,6 +17,7 @@ import {
   physicalDiskKey,
   sameVolume,
   STALE_AFTER_MS,
+  volumeDedupeIsSafe,
   type DiskLinkCandidate,
   type DiskMeasure,
 } from "./storageDisks";
@@ -354,8 +356,17 @@ export type VolumeDedupeHit = {
   itemId: number;
   itemName: string;
   mountPoint: string;
+  device?: string | null;
   measuredAt: Date | null;
   source: string;
+};
+
+export type VolumeDedupeGroup = {
+  machineId: number;
+  machineName: string;
+  keep: VolumeDedupeHit;
+  drop: VolumeDedupeHit[];
+  ambiguous: boolean;
 };
 
 export type DiskMergeOffer = {
@@ -382,11 +393,11 @@ function twinKeysForItem(
 
 /** Duplicate volume rows on a machine, and enclosure/inner-drive Thing twins to merge (not auto-delete). */
 export async function planStorageDedupes(db: Db): Promise<{
-  volumes: Array<{ machineId: number; machineName: string; keep: VolumeDedupeHit; drop: VolumeDedupeHit[] }>;
+  volumes: VolumeDedupeGroup[];
   diskMerges: DiskMergeOffer[];
 }> {
   const deviceRows = await db
-    .select({ id: items.id, name: items.name, parentId: items.parentId, attributes: items.attributes, status: items.status })
+    .select({ id: items.id, name: items.name, parentId: items.parentId, houseId: items.houseId, attributes: items.attributes, status: items.status })
     .from(items)
     .where(eq(items.status, "active"));
   const devices = deviceRows.filter((r) => isStorageDevice(r));
@@ -401,6 +412,12 @@ export async function planStorageDedupes(db: Db): Promise<{
           .where(and(eq(relations.type, "attached-to"), eq(relations.status, "confirmed"), inArray(relations.toItemId, [...computerIds])));
   const hostOf = new Map<number, number>();
   for (const r of attached) hostOf.set(r.fromItemId, r.toItemId);
+  const ownedDiskIds = new Set<number>();
+  for (const d of devices) {
+    if (!isDiskThing(d)) continue;
+    if (d.parentId != null && computerIds.has(d.parentId)) ownedDiskIds.add(d.id);
+    if (hostOf.has(d.id)) ownedDiskIds.add(d.id);
+  }
   const machineOf = (itemId: number): number => {
     const item = devices.find((d) => d.id === itemId);
     if (!item) return itemId;
@@ -415,7 +432,7 @@ export async function planStorageDedupes(db: Db): Promise<{
     const mid = machineOf(v.itemId);
     byMachine.set(mid, [...(byMachine.get(mid) ?? []), v]);
   }
-  const volumeGroups: Array<{ machineId: number; machineName: string; keep: VolumeDedupeHit; drop: VolumeDedupeHit[] }> = [];
+  const volumeGroups: VolumeDedupeGroup[] = [];
   for (const [machineId, rows] of byMachine) {
     const clusters: StoredVolume[][] = [];
     for (const row of rows) {
@@ -431,33 +448,62 @@ export async function planStorageDedupes(db: Db): Promise<{
         itemId: r.itemId,
         itemName: nameOf(r.itemId),
         mountPoint: r.mountPoint,
+        device: r.device,
         measuredAt: r.measuredAt,
         source: r.source,
       });
+      const drop = cluster.filter((r) => r.id !== keepRow.id);
       volumeGroups.push({
         machineId,
         machineName: nameOf(machineId),
         keep: asHit(keepRow),
-        drop: cluster.filter((r) => r.id !== keepRow.id).map(asHit),
+        drop: drop.map(asHit),
+        ambiguous: drop.some((r) => !volumeDedupeIsSafe(keepRow, r)),
       });
     }
   }
   const diskMerges: DiskMergeOffer[] = [];
   const volsByItem = new Map<number, StoredVolume[]>();
   for (const v of vols) volsByItem.set(v.itemId, [...(volsByItem.get(v.itemId) ?? []), v]);
+  const claimedLoose = new Set<number>();
   for (const c of computers) {
-    const members = devices.filter((d) => isDiskThing(d) && (d.parentId === c.id || hostOf.get(d.id) === c.id));
-    const groups = clusterByTwinKeys(members, (d) => twinKeysForItem(d, volsByItem.get(d.id) ?? []));
+    const computerVols = volsByItem.get(c.id) ?? [];
+    const children = devices.filter((d) => isDiskThing(d) && d.parentId === c.id);
+    const att = devices.filter((d) => isDiskThing(d) && hostOf.get(d.id) === c.id);
+    const loose = devices.filter(
+      (d) =>
+        isDiskThing(d) &&
+        !ownedDiskIds.has(d.id) &&
+        !claimedLoose.has(d.id) &&
+        (c.houseId == null || d.houseId == null || d.houseId === c.houseId),
+    );
+    const extras = [
+      ...claimLooseDisks(computerVols, loose),
+      ...claimMachineDisks(
+        computerVols,
+        loose.filter((d) => !claimedLoose.has(d.id)),
+      ),
+    ];
+    const seen = new Set<number>();
+    const members = [...children, ...att, ...extras].filter((d) => {
+      if (seen.has(d.id)) return false;
+      seen.add(d.id);
+      return true;
+    });
+    for (const d of extras) claimedLoose.add(d.id);
+    const ownOnDrives = new Map(members.map((d) => [d.id, volsByItem.get(d.id) ?? []] as const));
+    const linked = linkComputerDisks(computerVols, members, ownOnDrives);
+    const groups = clusterByTwinKeys(members, (d) => twinKeysForItem(d, linked.volumesByDrive.get(d.id) ?? ownOnDrives.get(d.id) ?? []));
     for (const g of groups) {
       if (g.length < 2) continue;
       const score = (x: (typeof g)[number]) =>
-        (x.attributes?.serial != null && String(x.attributes.serial) !== "" ? 2 : 0) + ((volsByItem.get(x.id) ?? []).length > 0 ? 1 : 0);
+        (x.attributes?.serial != null && String(x.attributes.serial) !== "" ? 2 : 0) + ((linked.volumesByDrive.get(x.id) ?? volsByItem.get(x.id) ?? []).length > 0 ? 1 : 0);
       const keep = g.reduce((a, b) => {
         const d = score(b) - score(a);
         if (d !== 0) return d > 0 ? b : a;
         return a.id <= b.id ? a : b;
       });
-      const keys = twinKeysForItem(keep, volsByItem.get(keep.id) ?? []);
+      const keys = twinKeysForItem(keep, linked.volumesByDrive.get(keep.id) ?? volsByItem.get(keep.id) ?? []);
       diskMerges.push({
         machineId: c.id,
         machineName: c.name,
@@ -476,15 +522,29 @@ export async function applyStorageDedupes(
 ): Promise<{
   dry: boolean;
   droppedVolumes: number;
+  skippedVolumes: number;
   mergedDisks: number;
-  volumes: Awaited<ReturnType<typeof planStorageDedupes>>["volumes"];
+  volumes: VolumeDedupeGroup[];
+  skipped: VolumeDedupeGroup[];
   diskMerges: DiskMergeOffer[];
 }> {
   const plan = await planStorageDedupes(db);
+  const skipped = plan.volumes.filter((g) => g.ambiguous);
   const dry = input.dry !== false;
-  if (dry) return { dry: true, droppedVolumes: 0, mergedDisks: 0, volumes: plan.volumes, diskMerges: plan.diskMerges };
+  if (dry) {
+    return {
+      dry: true,
+      droppedVolumes: 0,
+      skippedVolumes: skipped.length,
+      mergedDisks: 0,
+      volumes: plan.volumes,
+      skipped,
+      diskMerges: plan.diskMerges,
+    };
+  }
   let droppedVolumes = 0;
   for (const g of plan.volumes) {
+    if (g.ambiguous) continue;
     const keep = await db.query.storageVolumes.findFirst({ where: eq(storageVolumes.id, g.keep.id) });
     if (!keep) continue;
     const extras: StoredVolume[] = [];
@@ -492,28 +552,37 @@ export async function applyStorageDedupes(
       const row = await db.query.storageVolumes.findFirst({ where: eq(storageVolumes.id, d.id) });
       if (row) extras.push(row);
     }
-    await db.transaction(async (tx) => {
-      await copyRoleAndDirsThenDrop(tx, keep, extras);
-      const item = await tx.query.items.findFirst({ where: eq(items.id, keep.itemId) });
-      if (item) await syncDeviceTotals(tx, keep.itemId, item.attributes);
-      for (const extra of extras) {
-        const it = await tx.query.items.findFirst({ where: eq(items.id, extra.itemId) });
-        if (it) await syncDeviceTotals(tx, extra.itemId, it.attributes);
-      }
-    });
-    droppedVolumes += extras.length;
+    if (extras.length === 0) continue;
+    try {
+      await db.transaction(async (tx) => {
+        await copyRoleAndDirsThenDrop(tx, keep, extras);
+        const item = await tx.query.items.findFirst({ where: eq(items.id, keep.itemId) });
+        if (item) await syncDeviceTotals(tx, keep.itemId, item.attributes);
+        for (const extra of extras) {
+          const it = await tx.query.items.findFirst({ where: eq(items.id, extra.itemId) });
+          if (it) await syncDeviceTotals(tx, extra.itemId, it.attributes);
+        }
+      });
+      droppedVolumes += extras.length;
+    } catch {
+      skipped.push(g);
+    }
   }
   let mergedDisks = 0;
   if (input.mergeDisks) {
     for (const m of plan.diskMerges) {
-      for (const d of m.drop) {
-        await db.update(items).set({ parentId: null }).where(eq(items.id, d.id));
-        await db.delete(relations).where(and(eq(relations.fromItemId, d.id), eq(relations.type, "attached-to")));
-        mergedDisks++;
+      try {
+        for (const d of m.drop) {
+          await db.update(items).set({ parentId: null }).where(eq(items.id, d.id));
+          await db.delete(relations).where(and(eq(relations.fromItemId, d.id), eq(relations.type, "attached-to")));
+          mergedDisks++;
+        }
+      } catch {
+        /* keep going: one twin must not block the rest */
       }
     }
   }
-  return { dry: false, droppedVolumes, mergedDisks, volumes: plan.volumes, diskMerges: plan.diskMerges };
+  return { dry: false, droppedVolumes, skippedVolumes: skipped.length, mergedDisks, volumes: plan.volumes, skipped, diskMerges: plan.diskMerges };
 }
 
 /**
@@ -805,10 +874,14 @@ export async function overviewFor(db: Db, houseId: number | null) {
     const childRows = internal.filter((d) => d.parentId === c.id);
     const attRows = attached.filter((d) => hostOf(d.id) === c.id);
     const computerVols = volumes.filter((v) => v.itemId === c.id);
-    const extras = claimLooseDisks(
-      computerVols,
-      unattached.filter((d) => isDiskThing(d) && !claimedLoose.has(d.id)),
-    );
+    const looseDisks = unattached.filter((d) => isDiskThing(d) && !claimedLoose.has(d.id));
+    const extras = [
+      ...claimLooseDisks(computerVols, looseDisks),
+      ...claimMachineDisks(
+        computerVols,
+        looseDisks.filter((d) => !claimedLoose.has(d.id)),
+      ),
+    ].filter((d, i, arr) => arr.findIndex((x) => x.id === d.id) === i);
     for (const d of extras) claimedLoose.add(d.id);
     const diskThings = [...childRows, ...attRows, ...extras];
     const ownOnDrives = new Map(diskThings.map((d) => [d.id, volumes.filter((v) => v.itemId === d.id)] as const));
