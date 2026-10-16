@@ -10,7 +10,16 @@ import { and, eq, inArray } from "drizzle-orm";
 import { items, relations } from "@db/schema";
 import type { getDb } from "../queries/connection";
 import { logEvent } from "./events";
-import { STORAGE_DISK_KEY, physicalDiskKey, serialOf as serialNorm, uuidOf } from "./storageDisks";
+import {
+  STORAGE_DISK_KEY,
+  claimLooseDisks,
+  linkComputerDisks,
+  newestMeasuredAt,
+  physicalDiskKey,
+  serialOf as serialNorm,
+  uuidOf,
+  type DiskVolume,
+} from "./storageDisks";
 import {
   applyReport,
   isDiskThing,
@@ -18,6 +27,7 @@ import {
   isStorageDevice,
   machineIdentity,
   removeVolumesByDiskKeys,
+  volumesForItems,
   type ReportVolume,
 } from "./storage";
 import { normalizeIdentityValue } from "./identityAttrs";
@@ -422,9 +432,9 @@ function num(v: string | number | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function sizeClose(storageGb: number | null, bytes: number | null): boolean {
-  if (storageGb == null || bytes == null || !(bytes > 0)) return false;
-  return Math.abs(storageGb * 1e9 - bytes) / bytes <= 0.2;
+function sizeCloseBytes(a: number | null, b: number | null): boolean {
+  if (a == null || b == null || !(a > 0) || !(b > 0)) return false;
+  return Math.abs(a - b) / Math.max(a, b) <= 0.2;
 }
 
 function normModel(s: string | null): string | null {
@@ -435,6 +445,62 @@ function normModel(s: string | null): string | null {
 
 function thingModel(d: { name: string; attributes: Attrs }): string {
   return [attrStr(d.attributes, "model"), attrStr(d.attributes, "brand"), d.name].filter(Boolean).join(" ");
+}
+
+/** Brand / form-factor words that must not be the only reason two disks match. */
+const GENERIC_MODEL_TOKEN = new Set([
+  "ssd",
+  "hdd",
+  "nvme",
+  "pssd",
+  "portable",
+  "external",
+  "disk",
+  "drive",
+  "usb",
+  "tb",
+  "gb",
+  "samsung",
+  "seagate",
+  "wd",
+  "western",
+  "digital",
+  "toshiba",
+  "crucial",
+  "kingston",
+  "sandisk",
+  "ugreen",
+  "apple",
+  "intel",
+]);
+
+function modelTokens(s: string): string[] {
+  return s
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 2 && !GENERIC_MODEL_TOKEN.has(t) && !/^\d+$/.test(t) && !/^\d+t?b$/.test(t));
+}
+
+/** PSSD T7 ↔ Samsung T7 2TB: shared product token (t7) plus size, not a full-string include. */
+export function diskModelMatches(trackerModel: string | null, thing: { name: string; attributes: Attrs }): boolean {
+  const hay = thingModel(thing);
+  const want = normModel(trackerModel);
+  const got = normModel(hay);
+  if (want && got && (got.includes(want) || want.includes(got))) return true;
+  const a = modelTokens(trackerModel ?? "");
+  const b = modelTokens(hay);
+  if (a.length === 0 || b.length === 0) return false;
+  return a.some((t) => b.includes(t));
+}
+
+function thingSizeBytes(t: InventoryItem): number | null {
+  const gb = num(t.attributes?.storage_gb);
+  if (gb != null) return gb * 1e9;
+  const m = t.name.match(/(\d+(?:\.\d+)?)\s*t(?:era)?b/i);
+  if (m) return Number(m[1]) * 1e12;
+  const g = t.name.match(/(\d+(?:\.\d+)?)\s*g(?:iga)?b/i);
+  if (g) return Number(g[1]) * 1e9;
+  return null;
 }
 
 function lookupHostMap(host: string, hostMap: TrackerHostMap): { skip: true } | { skip: false; mapped: string | number } {
@@ -659,14 +725,9 @@ function matchDiskToThings(disk: TrackerDisk, local: InventoryItem[], all: Inven
     );
     if (hit) return hit;
   }
-  const want = normModel(disk.model);
-  if (want && disk.sizeBytes) {
+  if (disk.model && disk.sizeBytes) {
     const hit = pick(
-      all.filter((t) => {
-        const hay = normModel(thingModel(t));
-        if (!hay || !hay.includes(want)) return false;
-        return sizeClose(num(t.attributes?.storage_gb), disk.sizeBytes);
-      }),
+      all.filter((t) => diskModelMatches(disk.model, t) && sizeCloseBytes(thingSizeBytes(t), disk.sizeBytes)),
       "model-size",
     );
     if (hit) return hit;
@@ -715,12 +776,100 @@ function diskIsMoved(disk: TrackerDisk, winning: Map<string, { host: string; las
   return w;
 }
 
+/** Where HomeBase last saw a disk Thing: parent / attached-to / local-collector volumes, not Data Tracker rows. */
+export type HomebaseDiskSighting = {
+  diskItemId: number;
+  computerId: number;
+  computerName: string;
+  hostname: string | null;
+  lastSeen: number | null;
+  diskKey: string | null;
+};
+
+function uniqueInventory(xs: InventoryItem[]): InventoryItem[] {
+  const seen = new Set<number>();
+  return xs.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
+}
+
+/**
+ * Newest HomeBase sighting of each disk Thing: volumes already on a computer
+ * (Mini local collector) grouped onto child / attached / claimed drives.
+ */
+export function homebaseDiskSightings(
+  inventory: InventoryItem[],
+  attached: Array<{ fromItemId: number; toItemId: number }>,
+  volumes: DiskVolume[],
+): HomebaseDiskSighting[] {
+  const hosts = inventory.filter(isHostThing);
+  const disks = inventory.filter((d) => isDiskThing({ attributes: d.attributes }));
+  const hostIds = new Set(hosts.map((h) => h.id));
+  const attachedTo = new Map<number, number>();
+  for (const r of attached) attachedTo.set(r.fromItemId, r.toItemId);
+  const claimedLoose = new Set<number>();
+  const out: HomebaseDiskSighting[] = [];
+  for (const c of hosts) {
+    const childRows = disks.filter((d) => d.parentId === c.id);
+    const attRows = disks.filter((d) => attachedTo.get(d.id) === c.id);
+    const computerVols = volumes.filter((v) => v.itemId === c.id);
+    const unattached = disks.filter(
+      (d) => !hostIds.has(d.id) && d.parentId == null && attachedTo.get(d.id) == null && !claimedLoose.has(d.id),
+    );
+    const extras = claimLooseDisks(computerVols, unattached);
+    for (const d of extras) claimedLoose.add(d.id);
+    const diskThings = uniqueInventory([...childRows, ...attRows, ...extras]);
+    const ownOnDrives = new Map(diskThings.map((d) => [d.id, volumes.filter((v) => v.itemId === d.id)]));
+    const linked = linkComputerDisks(computerVols, diskThings, ownOnDrives);
+    const hostname = machineIdentity(c.attributes).hostname;
+    for (const d of diskThings) {
+      const vols = linked.volumesByDrive.get(d.id) ?? [];
+      out.push({
+        diskItemId: d.id,
+        computerId: c.id,
+        computerName: c.name,
+        hostname,
+        lastSeen: newestMeasuredAt(vols),
+        diskKey: linked.diskKeyByDrive.get(d.id) ?? null,
+      });
+    }
+  }
+  const best = new Map<number, HomebaseDiskSighting>();
+  for (const s of out) {
+    const prev = best.get(s.diskItemId);
+    if (!prev || (s.lastSeen ?? 0) > (prev.lastSeen ?? 0)) best.set(s.diskItemId, s);
+  }
+  return [...best.values()];
+}
+
+function maybeMovedFromHomebase(
+  disk: TrackerDisk,
+  match: Omit<TrackerDiskMatch, "internal">,
+  thisComputerId: number,
+  sightings: HomebaseDiskSighting[],
+): Omit<TrackerDiskMatch, "internal"> {
+  if (match.itemId == null || match.match === "moved" || match.match === "ambiguous") return match;
+  const hb = sightings.find((s) => s.diskItemId === match.itemId);
+  if (!hb || hb.computerId === thisComputerId) return match;
+  const trackerSeen = disk.lastSeen ?? 0;
+  const homeSeen = hb.lastSeen ?? 0;
+  if (homeSeen <= trackerSeen) return match;
+  return blankDiskMatch(disk, "moved", {
+    itemId: match.itemId,
+    itemName: match.itemName,
+    movedTo: {
+      host: hb.hostname ?? hb.computerName,
+      itemId: hb.computerId,
+      itemName: hb.computerName,
+    },
+  });
+}
+
 /**
  * Match DT hosts to computer/NAS Things and DT disks to drive Things.
  * Does not write. A disk is `moved` when the same UUID/serial (else model+size)
- * was seen more recently on another host: those volumes stay off this machine.
- * A sole old sighting still imports, marked stale. `create` means apply will
- * insert a disk Thing; until then overview infers it from the volume's `device`.
+ * was seen more recently on another host — including HomeBase `storage_volumes`
+ * from the local collector, not only Data Tracker rows. Those volumes stay off
+ * this machine. Never create when an existing disk Thing already matches.
+ * A sole old sighting still imports, marked stale.
  */
 export function planTrackerImport(
   parsed: ParsedTrackerSources,
@@ -728,6 +877,7 @@ export function planTrackerImport(
   attached: Array<{ fromItemId: number; toItemId: number }>,
   hostMap: TrackerHostMap = DEFAULT_TRACKER_HOST_MAP,
   dry = true,
+  sightings: HomebaseDiskSighting[] = [],
 ): TrackerImportPlan {
   const hosts = inventory.filter(isHostThing);
   const disks = inventory.filter((d) => isDiskThing({ attributes: d.attributes }));
@@ -788,7 +938,11 @@ export function planTrackerImport(
           internal,
         };
       }
-      const m = matchDiskToThings(d, things, disks);
+      const m = maybeMovedFromHomebase(d, matchDiskToThings(d, things, disks), item.id, sightings);
+      if (m.match === "moved") {
+        movedDiskKeys.push(d.diskKey);
+        return { ...m, internal };
+      }
       if (m.match === "create" && vols.length === 0) return { ...m, match: "inferred" as const, internal };
       liveVols.push(...vols);
       return { ...m, internal };
@@ -869,8 +1023,9 @@ export type TrackerImportResult = TrackerImportPlan & {
  * Dry-run (default) returns the plan. Apply writes storage.report per computer
  * (no dirs: local collector keeps those), sets `storage.disk` when absent,
  * reattaches a portable seen on a new host, deletes leftover volumes of a disk
- * that moved away, and creates a disk Thing when DT has a disk with volumes
- * and no match.
+ * that moved away, and creates a disk Thing only when no existing disk matches
+ * by serial/uuid or model+size (HomeBase local-collector volumes count as a
+ * newer sighting, so a Mini T7 is `moved` on the iMac, not created).
  */
 export async function applyTrackerImport(
   db: Db,
@@ -900,7 +1055,15 @@ export async function applyTrackerImport(
           .select({ fromItemId: relations.fromItemId, toItemId: relations.toItemId, id: relations.id })
           .from(relations)
           .where(and(eq(relations.type, "attached-to"), eq(relations.status, "confirmed"), inArray(relations.toItemId, computerIds)));
-  const plan = planTrackerImport(parsed, inventory, attached, input.hostMap ?? DEFAULT_TRACKER_HOST_MAP, dry);
+  const volumes =
+    inventory.length === 0
+      ? []
+      : await volumesForItems(
+          db,
+          inventory.map((i) => i.id),
+        );
+  const sightings = homebaseDiskSightings(inventory, attached, volumes);
+  const plan = planTrackerImport(parsed, inventory, attached, input.hostMap ?? DEFAULT_TRACKER_HOST_MAP, dry, sightings);
   const applied = { reports: 0, volumes: 0, diskLinks: 0, created: 0 };
   if (dry) return { ...plan, applied };
 
