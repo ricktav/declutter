@@ -425,6 +425,81 @@ describe("storage.dirs", () => {
   });
 });
 
+describe("storage.reportDirs", () => {
+  it("replaces folders on an existing volume without touching capacity or use", async () => {
+    const { houseId, pc } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: pc,
+      source: "local-script",
+      volumes: [{ mountPoint: "/", capacityBytes: 10 * GB, usedBytes: 4 * GB, dirs: [{ path: "/old", bytes: GB }] }],
+    });
+    const before = (await getTestDb().select().from(storageVolumes))[0];
+    const out = await c.storage.reportDirs({
+      itemId: pc,
+      source: "file-inventory",
+      volumes: [
+        {
+          mountPoint: "/",
+          dirs: [
+            { path: "/Users", bytes: 3 * GB },
+            { path: "/Users", bytes: 2 * GB },
+            { path: "/Applications", bytes: GB },
+          ],
+        },
+        { mountPoint: "/Volumes/ghost", dirs: [{ path: "/Volumes/ghost/x", bytes: GB }] },
+      ],
+    });
+    expect(out).toMatchObject({ itemId: pc, itemName: "mac-mini", volumes: 1, dirs: 2, skipped: [{ mountPoint: "/Volumes/ghost", reason: "no matching volume" }] });
+    const after = (await getTestDb().select().from(storageVolumes))[0];
+    expect([after.capacityBytes, after.usedBytes, after.source, after.measuredAt.getTime()]).toEqual([
+      before.capacityBytes,
+      before.usedBytes,
+      "local-script",
+      before.measuredAt.getTime(),
+    ]);
+    const listed = await c.storage.dirs({ volumeId: after.id });
+    expect(listed.dirs.map((d) => [d.path, d.bytes])).toEqual([
+      ["/Users", 3 * GB],
+      ["/Applications", GB],
+    ]);
+  });
+
+  it("finds the machine by hostname and clears dirs with an empty list", async () => {
+    const { houseId, pc } = await seedDevices();
+    const db = getTestDb();
+    await db.update(items).set({ attributes: { role: "desktop", hostname: "macmini-m4" } }).where(eq(items.id, pc));
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: pc,
+      source: "test",
+      volumes: [{ mountPoint: "/", capacityBytes: GB, usedBytes: 1, dirs: [{ path: "/Users", bytes: 1 }] }],
+    });
+    const cleared = await c.storage.reportDirs({
+      host: "macmini-m4.local",
+      source: "file-inventory",
+      volumes: [{ mountPoint: "/", dirs: [] }],
+    });
+    expect(cleared).toMatchObject({ itemId: pc, volumes: 1, dirs: 0, skipped: [] });
+    const v = (await db.select().from(storageVolumes))[0];
+    expect((await c.storage.dirs({ volumeId: v.id })).dirs).toEqual([]);
+  });
+
+  it("refuses furniture, a missing host, and a report with neither itemId nor host", async () => {
+    const { houseId, chair } = await seedDevices();
+    const c = callerFor(houseId);
+    await expect(
+      c.storage.reportDirs({ itemId: chair, source: "file-inventory", volumes: [{ mountPoint: "/", dirs: [] }] }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      c.storage.reportDirs({ host: "no-such-box", source: "file-inventory", volumes: [{ mountPoint: "/", dirs: [] }] }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      c.storage.reportDirs({ source: "file-inventory", volumes: [{ mountPoint: "/", dirs: [] }] } as never),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
+
 describe("archived devices", () => {
   it("drop out of the totals and refuse new reports", async () => {
     const { houseId, ssd, nas } = await seedDevices();

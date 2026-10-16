@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { items, relations, rooms, storageDirs, storageVolumes, type DataRole } from "@db/schema";
 import type { getDb } from "../queries/connection";
+import { normalizeIp, normHost } from "./servicesFleet";
 import {
   claimLooseDisks,
   claimMachineDisks,
@@ -284,6 +285,105 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
     }
   });
   return { volumes: input.volumes.length, dirs: dirCount };
+}
+
+export type DirsReportVolume = {
+  mountPoint: string;
+  label?: string | null;
+  device?: string | null;
+  dirs: Array<{ path: string; bytes: number }>;
+};
+
+export type DirsReportInput = {
+  itemId?: number;
+  /** Hostname, IP or `machine.id` — never the display name. Ignored when itemId is set. */
+  host?: string;
+  source: string;
+  volumes: DirsReportVolume[];
+};
+
+export type DirsReportResult = {
+  itemId: number;
+  itemName: string;
+  volumes: number;
+  dirs: number;
+  skipped: Array<{ mountPoint: string; reason: string }>;
+};
+
+function uniqueDirRows(dirs: Array<{ path: string; bytes: number }>): Array<{ path: string; bytes: number }> {
+  const byPath = new Map<string, number>();
+  for (const d of dirs) {
+    const path = d.path.trim().slice(0, 512);
+    if (!path || !Number.isFinite(d.bytes) || d.bytes < 0) continue;
+    const prev = byPath.get(path);
+    if (prev == null || d.bytes > prev) byPath.set(path, d.bytes);
+  }
+  return [...byPath.entries()]
+    .map(([path, bytes]) => ({ path, bytes }))
+    .sort((a, b) => b.bytes - a.bytes)
+    .slice(0, 100);
+}
+
+function hostMatchesItem(item: { attributes: Record<string, string | number> | null }, host: string): boolean {
+  const wantHost = normHost(host);
+  const wantIp = normalizeIp(host);
+  if (!wantHost && !wantIp) return false;
+  for (const raw of machineIdentity(item.attributes).identityOptions) {
+    if (wantIp && normalizeIp(raw) === wantIp) return true;
+    if (wantHost && normHost(raw) === wantHost) return true;
+  }
+  return false;
+}
+
+/**
+ * Biggest-folder ingest for a file inventory: replace `storage_dirs` on
+ * volumes that already exist. Never creates a volume, never writes capacity,
+ * use, data role or the volume's measuredAt (those stay with df collectors).
+ */
+export async function applyDirsReport(db: Db, input: DirsReportInput): Promise<DirsReportResult> {
+  let item =
+    input.itemId != null ? await db.query.items.findFirst({ where: eq(items.id, input.itemId) }) : null;
+  if (item == null && input.host) {
+    const active = await db.select().from(items).where(eq(items.status, "active"));
+    const hits = active.filter((r) => isStorageDevice(r) && hostMatchesItem(r, input.host!));
+    const computers = hits.filter(isStorageComputer);
+    const pick = computers.length > 0 ? computers : hits;
+    if (pick.length > 1) throw new StorageReportError(`Host ${input.host} matches more than one machine.`);
+    item = pick[0] ?? null;
+  }
+  if (!item) throw new StorageReportError(input.host ? `No machine for host ${input.host}.` : "Item not found.");
+  if (!isStorageDevice(item)) throw new StorageReportError("Not a computer, drive or NAS: give the report a storage device.");
+  if (item.status === "archived") throw new StorageReportError("Item is archived: a report needs an active device.");
+
+  const skipped: Array<{ mountPoint: string; reason: string }> = [];
+  let updated = 0;
+  let dirCount = 0;
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    const current = await tx.query.items.findFirst({ where: eq(items.id, item.id) });
+    if (!current) throw new StorageReportError("Item not found.");
+    const scope = await machineScope(tx, current);
+    const machineVols = scope.memberIds.length
+      ? await tx.select().from(storageVolumes).where(inArray(storageVolumes.itemId, scope.memberIds))
+      : [];
+    for (const v of input.volumes) {
+      const mountPoint = normalizeMountPoint(v.mountPoint);
+      const group = matchingMachineVolumes(machineVols, { ...v, mountPoint, capacityBytes: 0, usedBytes: 0 });
+      if (group.length === 0) {
+        skipped.push({ mountPoint, reason: "no matching volume" });
+        continue;
+      }
+      const keep = freshestVolume(group);
+      const rows = uniqueDirRows(v.dirs);
+      await tx.delete(storageDirs).where(eq(storageDirs.volumeId, keep.id));
+      if (rows.length > 0) {
+        await tx.insert(storageDirs).values(rows.map((d) => ({ volumeId: keep.id, path: d.path, bytes: d.bytes, measuredAt: now })));
+        dirCount += rows.length;
+      }
+      updated++;
+    }
+  });
+  return { itemId: item.id, itemName: item.name, volumes: updated, dirs: dirCount, skipped };
 }
 
 /**

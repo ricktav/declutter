@@ -12,6 +12,7 @@ import {
   STORAGE_HIDDEN_KEY,
   STORAGE_STARRED_KEY,
   StorageReportError,
+  applyDirsReport,
   applyReport,
   applyStorageDedupes,
   applyStorageViewFlag,
@@ -41,6 +42,7 @@ const reportVolume = z.object({
  * Measured storage: volumes with capacity and use per device, their biggest
  * directories, and a data role per volume that rolls up to totals. Reports
  * come from collectors (scripts/storage-report-local.mjs, the Data Tracker).
+ * Folder-only ingest: storage.reportDirs (contracts/storage-dirs-report.md).
  */
 export const storageRouter = createRouter({
   report: procedure
@@ -56,6 +58,53 @@ export const storageRouter = createRouter({
           summary: `${input.source} reported ${result.volumes} volume(s)`,
           payload: { source: input.source, volumes: input.volumes.map((v) => v.mountPoint) },
         });
+        return result;
+      } catch (e) {
+        if (e instanceof StorageReportError) throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+        throw e;
+      }
+    }),
+
+  /**
+   * Biggest folders only. Matches existing volumes of that machine; does not
+   * create volumes or change capacity, use or data role. Unmatched mounts are
+   * listed in `skipped`. Identify the machine with `itemId` or `host`
+   * (hostname / IP / machine.id, never the display name).
+   */
+  reportDirs: procedure
+    .input(
+      z
+        .object({
+          itemId: z.number().int().optional(),
+          host: z.string().min(1).max(128).optional(),
+          source: z.string().min(1).max(32),
+          volumes: z
+            .array(
+              z.object({
+                mountPoint: z.string().min(1).max(255),
+                label: z.string().max(128).nullable().optional(),
+                device: z.string().max(128).nullable().optional(),
+                dirs: z.array(z.object({ path: z.string().min(1).max(512), bytes: z.number().int().nonnegative() })).max(100),
+              }),
+            )
+            .min(1)
+            .max(64),
+        })
+        .refine((v) => v.itemId != null || (v.host != null && v.host !== ""), { message: "itemId or host is required." }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      try {
+        const result = await applyDirsReport(db, input);
+        if (result.volumes > 0) {
+          await logEvent({
+            entityType: "item",
+            entityId: result.itemId,
+            action: "storage.dirs",
+            summary: `${input.source} reported ${result.dirs} directories on ${result.volumes} volume(s)`,
+            payload: { source: input.source, volumes: input.volumes.map((v) => v.mountPoint), skipped: result.skipped },
+          });
+        }
         return result;
       } catch (e) {
         if (e instanceof StorageReportError) throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
