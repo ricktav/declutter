@@ -21,7 +21,6 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "2.0.78",
     "@hono/node-server": "^1.14.3",
-    "@huggingface/transformers": "^4.3.0",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-slot": "^1.2.4",
@@ -59,6 +58,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@hono/vite-dev-server": "^0.19.0",
+    "@huggingface/transformers": "^4.3.0",
     "@types/d3-drag": "^3.0.7",
     "@types/d3-force": "^3.0.10",
     "@types/d3-selection": "^3.0.12",
