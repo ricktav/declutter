@@ -46,6 +46,10 @@ export type VolumeLike = {
   measuredAt: Date | string;
 };
 
+export type DiskMeasure = "measured" | "no-collector" | "unlinked" | "duplicate";
+
+export type DiskLinkCandidate = { id: number; name: string } | { diskKey: string; name: string };
+
 export type DeviceLike = {
   id: number;
   name: string;
@@ -54,6 +58,10 @@ export type DeviceLike = {
   capacityBytes: number | null;
   usedBytes: number | null;
   measured: boolean;
+  measure?: DiskMeasure;
+  diskKey?: string | null;
+  inferred?: boolean;
+  linkCandidates?: DiskLinkCandidate[];
   parentId?: number | null;
   backsUp?: Array<{ relationId: number; itemId: number; name: string }>;
   volumes: VolumeLike[];
@@ -91,7 +99,20 @@ function segmentsOf(volumes: VolumeLike[]): Segment[] {
   return out;
 }
 
-/** Block width follows capacity on a shared scale; volumes are segments by their use, the light rest is free. */
+function measureCaption(device: DeviceLike): string {
+  const m = device.measure ?? (device.measured ? "measured" : "no-collector");
+  if (m === "no-collector") return "no collector";
+  if (m === "unlinked") return "volumes on this machine aren't linked to this disk";
+  if (m === "duplicate") return "duplicate of another disk on this machine";
+  if (device.usedBytes != null && device.capacityBytes) return `${Math.round((device.usedBytes / device.capacityBytes) * 100)}% used`;
+  return "no use data";
+}
+
+function candidateKey(c: DiskLinkCandidate): string {
+  return "diskKey" in c ? `k:${c.diskKey}` : `i:${c.id}`;
+}
+
+/** Block width follows capacity on a shared scale; the label is not capped by the bar. */
 export function DeviceBlock({
   device,
   maxBytes,
@@ -99,6 +120,8 @@ export function DeviceBlock({
   onSelectVolume,
   showParent = false,
   tag,
+  onLinkDisk,
+  linkPending = false,
 }: {
   device: DeviceLike;
   maxBytes: number;
@@ -108,21 +131,26 @@ export function DeviceBlock({
   showParent?: boolean;
   /** A small tag after the name, e.g. "attached". */
   tag?: string;
+  onLinkDisk?: (choice: { itemId: number; diskKey: string }) => void;
+  linkPending?: boolean;
 }) {
   const cap = device.capacityBytes ?? 0;
-  const widthPct = maxBytes > 0 ? Math.max(8, (cap / maxBytes) * 100) : 100;
+  const widthPct = maxBytes > 0 ? Math.max(12, (cap / maxBytes) * 100) : 100;
   const unmeasured = !device.measured;
   const backsUp = device.backsUp ?? [];
+  const candidates = device.linkCandidates ?? [];
+  const typeLabel = device.driveType ?? (device.inferred ? "disk" : null);
   return (
-    <div className="flex flex-col gap-1" style={{ width: `${widthPct}%`, minWidth: 96 }}>
-      <div className="flex items-baseline justify-between gap-2 text-[12px]">
-        <span className="truncate font-medium">
+    <div className="flex min-w-[16rem] max-w-full flex-col gap-1" style={{ flex: `1 1 ${widthPct}%` }}>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12px]">
+        <span className="min-w-0 font-medium break-words">
           {device.name}
           {tag && <span className="ml-1.5 rounded border border-border px-1 py-px text-[10px] font-normal uppercase tracking-wide text-muted-foreground">{tag}</span>}
+          {device.inferred && <span className="ml-1.5 rounded border border-dashed border-border px-1 py-px text-[10px] font-normal uppercase tracking-wide text-muted-foreground">inferred</span>}
           {showParent && device.parentId != null && <span className="ml-1 font-normal text-muted-foreground">in #{device.parentId}</span>}
         </span>
-        <span className="shrink-0 text-muted-foreground">
-          {device.driveType ? `${device.driveType} · ` : ""}
+        <span className="shrink-0 whitespace-nowrap text-muted-foreground">
+          {typeLabel ? `${typeLabel} · ` : ""}
           {formatBytes(device.capacityBytes)}
         </span>
       </div>
@@ -136,8 +164,8 @@ export function DeviceBlock({
         </div>
       )}
       <div
-        className={cn("flex h-12 w-full overflow-hidden rounded-md border", unmeasured ? "border-dashed border-border bg-[repeating-linear-gradient(135deg,#f3f4f6_0_6px,#ffffff_6px_12px)]" : "border-border bg-muted")}
-        title={unmeasured ? "No measurement yet: block from storage_gb / storage_free_gb" : undefined}
+        className={cn("flex h-12 w-full min-w-0 overflow-hidden rounded-md border", unmeasured ? "border-dashed border-border bg-[repeating-linear-gradient(135deg,#f3f4f6_0_6px,#ffffff_6px_12px)]" : "border-border bg-muted")}
+        title={unmeasured ? measureCaption(device) : undefined}
       >
         {unmeasured ? (
           <div className="h-full bg-muted-foreground/30" style={{ width: cap > 0 && device.usedBytes != null ? `${(device.usedBytes / cap) * 100}%` : "0%" }} />
@@ -161,10 +189,32 @@ export function DeviceBlock({
           )
         )}
       </div>
-      <div className="text-[11px] text-muted-foreground">
-        {device.usedBytes != null && device.capacityBytes ? `${Math.round((device.usedBytes / device.capacityBytes) * 100)}% used` : "no use data"}
-        {unmeasured && " · unmeasured"}
-      </div>
+      <div className="text-[11px] text-muted-foreground">{measureCaption(device)}</div>
+      {onLinkDisk && candidates.length > 0 && (
+        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="shrink-0">{device.inferred ? "This is" : "Mounted as"}</span>
+          <select
+            className="min-w-0 flex-1 rounded border border-border bg-white px-1.5 py-0.5 text-[11px] disabled:opacity-50"
+            disabled={linkPending}
+            defaultValue=""
+            aria-label={device.inferred ? "Link inferred disk to inventory" : "Link disk to measured volumes"}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) return;
+              if (device.inferred && v.startsWith("i:")) onLinkDisk({ itemId: Number(v.slice(2)), diskKey: device.diskKey ?? "unknown" });
+              else if (!device.inferred && v.startsWith("k:")) onLinkDisk({ itemId: device.id, diskKey: v.slice(2) });
+              e.target.value = "";
+            }}
+          >
+            <option value="">{device.inferred ? "inventory disk…" : "device…"}</option>
+            {candidates.map((c) => (
+              <option key={candidateKey(c)} value={candidateKey(c)}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
     </div>
   );
 }

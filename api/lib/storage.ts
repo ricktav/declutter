@@ -1,6 +1,9 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { items, relations, rooms, storageDirs, storageVolumes, type DataRole } from "@db/schema";
 import type { getDb } from "../queries/connection";
+import { linkComputerDisks, type DiskLinkCandidate, type DiskMeasure } from "./storageDisks";
+
+export { STORAGE_DISK_KEY, physicalDiskKey, type DiskMeasure } from "./storageDisks";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -256,6 +259,10 @@ export function isStorageComputer(item: { attributes: Record<string, string | nu
   return COMPUTER_ROLES.has(String(item.attributes?.role ?? ""));
 }
 
+export function isDiskThing(item: { attributes: Record<string, string | number> | null }): boolean {
+  return String(item.attributes?.role ?? "") === "storage";
+}
+
 export function storageViewFlags(attrs: Record<string, string | number> | null | undefined): { starred: boolean; hidden: boolean } {
   return {
     starred: attrs?.[STORAGE_STARRED_KEY] === STORAGE_FLAG_YES,
@@ -290,9 +297,17 @@ type DeviceLinks = {
   backsUp: (id: number) => Array<{ relationId: number; itemId: number; name: string }>;
 };
 
+type DeviceExtra = {
+  volumes?: Awaited<ReturnType<typeof volumesForItems>>;
+  diskKey?: string | null;
+  inferred?: boolean;
+  measure?: DiskMeasure;
+  linkCandidates?: DiskLinkCandidate[];
+};
+
 /** One device with its volumes; without volumes the block comes from the lab keys (GB → bytes, decimal). */
-function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForItems>>, roomName: string | null, links: DeviceLinks) {
-  const mine = volumes.filter((v) => v.itemId === row.id);
+function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForItems>>, roomName: string | null, links: DeviceLinks, extra?: DeviceExtra) {
+  const mine = extra?.volumes ?? volumes.filter((v) => v.itemId === row.id);
   const measured = mine.length > 0;
   const gb = num(row.attributes?.storage_gb);
   const freeGb = num(row.attributes?.storage_free_gb);
@@ -300,6 +315,7 @@ function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForI
   const usedBytes = measured ? deviceUsed(mine) : gb != null && freeGb != null ? Math.max(0, Math.min(gb, gb - freeGb)) * 1e9 : null;
   const freeBytes = capacityBytes != null && usedBytes != null ? capacityBytes - usedBytes : null;
   const capOf = containerCapacities(mine);
+  const measure: DiskMeasure = extra?.measure ?? (measured ? "measured" : "no-collector");
   return {
     id: row.id,
     name: row.name,
@@ -311,6 +327,10 @@ function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForI
     usedBytes,
     freeBytes,
     measured,
+    measure,
+    diskKey: extra?.diskKey ?? null,
+    inferred: extra?.inferred ?? false,
+    linkCandidates: extra?.linkCandidates ?? [],
     attachedRelationId: links.attachedRelationId(row.id),
     backsUp: links.backsUp(row.id),
     volumes: mine.map((v) => ({
@@ -404,12 +424,48 @@ export async function overviewFor(db: Db, houseId: number | null) {
   const { capacityBytes, freeBytes } = await capacityTotals(db);
   return {
     computers: computers
-      .map((c) => ({
-        ...deviceOf(c, volumes, c.roomName, links),
-        ...storageViewFlags(c.attributes),
-        drives: internal.filter((d) => d.parentId === c.id).map((d) => deviceOf(d, volumes, d.roomName, links)),
-        attached: attached.filter((d) => hostOf(d.id) === c.id).map((d) => deviceOf(d, volumes, d.roomName, links)),
-      }))
+      .map((c) => {
+        const childRows = internal.filter((d) => d.parentId === c.id);
+        const attRows = attached.filter((d) => hostOf(d.id) === c.id);
+        const diskThings = [...childRows, ...attRows];
+        const ownOnDrives = new Map(diskThings.map((d) => [d.id, volumes.filter((v) => v.itemId === d.id)] as const));
+        const linked = linkComputerDisks(
+          volumes.filter((v) => v.itemId === c.id),
+          diskThings,
+          ownOnDrives,
+        );
+        const asDisk = (d: (typeof childRows)[number]) =>
+          deviceOf(d, volumes, d.roomName, links, {
+            volumes: linked.volumesByDrive.get(d.id) ?? [],
+            diskKey: linked.diskKeyByDrive.get(d.id) ?? null,
+            measure: linked.measureByDrive.get(d.id),
+            linkCandidates: linked.candidatesByDrive.get(d.id),
+          });
+        const inferredDisks = linked.inferred.map((g) =>
+          deviceOf(
+            { id: c.id, name: g.name, parentId: c.id, roomId: c.roomId, attributes: { role: "disk" } },
+            volumes,
+            c.roomName,
+            links,
+            {
+              volumes: g.volumes,
+              diskKey: g.diskKey,
+              inferred: true,
+              measure: "measured",
+              linkCandidates: g.candidates,
+            },
+          ),
+        );
+        const computer = deviceOf(c, volumes, c.roomName, links, { volumes: [] });
+        return {
+          ...computer,
+          ...storageViewFlags(c.attributes),
+          volumes: inferredDisks.flatMap((d) => d.volumes),
+          drives: childRows.map((d) => asDisk(d)),
+          attached: attRows.map((d) => asDisk(d)),
+          inferredDisks,
+        };
+      })
       .sort((a, b) => Number(b.starred) - Number(a.starred) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
     externals: externals.map((d) => deviceOf(d, volumes, d.roomName, links)),
     totals,
