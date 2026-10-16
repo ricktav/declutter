@@ -65,6 +65,8 @@ export type DeviceLike = {
   parentId?: number | null;
   backsUp?: Array<{ relationId: number; itemId: number; name: string }>;
   volumes: VolumeLike[];
+  stale?: boolean;
+  lastSeenLabel?: string | null;
 };
 
 type Segment = { kind: "volume"; volume: VolumeLike; widthPct: number } | { kind: "free"; key: string; bytes: number; widthPct: number };
@@ -140,13 +142,17 @@ export function DeviceBlock({
   const backsUp = device.backsUp ?? [];
   const candidates = device.linkCandidates ?? [];
   const typeLabel = device.driveType ?? (device.inferred ? "disk" : null);
+  const stale = device.stale === true;
   return (
-    <div className="flex min-w-[16rem] max-w-full flex-col gap-1" style={{ flex: `1 1 ${widthPct}%` }}>
+    <div className={cn("flex min-w-[16rem] max-w-full flex-col gap-1", stale && "opacity-60")} style={{ flex: `1 1 ${widthPct}%` }}>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12px]">
         <span className="min-w-0 font-medium break-words">
           {device.name}
           {tag && <span className="ml-1.5 rounded border border-border px-1 py-px text-[10px] font-normal uppercase tracking-wide text-muted-foreground">{tag}</span>}
           {device.inferred && <span className="ml-1.5 rounded border border-dashed border-border px-1 py-px text-[10px] font-normal uppercase tracking-wide text-muted-foreground">inferred</span>}
+          {stale && device.lastSeenLabel && (
+            <span className="ml-1.5 rounded border border-border px-1 py-px text-[10px] font-normal text-muted-foreground">{device.lastSeenLabel}</span>
+          )}
           {showParent && device.parentId != null && <span className="ml-1 font-normal text-muted-foreground">in #{device.parentId}</span>}
         </span>
         <span className="shrink-0 whitespace-nowrap text-muted-foreground">
@@ -154,15 +160,6 @@ export function DeviceBlock({
           {formatBytes(device.capacityBytes)}
         </span>
       </div>
-      {backsUp.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {backsUp.map((b) => (
-            <span key={b.relationId} className="rounded-full px-1.5 py-px text-[10px] text-white" style={{ background: ROLE_COLORS.backup }}>
-              backs up {b.name}
-            </span>
-          ))}
-        </div>
-      )}
       <div
         className={cn("flex h-12 w-full min-w-0 overflow-hidden rounded-md border", unmeasured ? "border-dashed border-border bg-[repeating-linear-gradient(135deg,#f3f4f6_0_6px,#ffffff_6px_12px)]" : "border-border bg-muted")}
         title={unmeasured ? measureCaption(device) : undefined}
@@ -189,7 +186,14 @@ export function DeviceBlock({
           )
         )}
       </div>
-      <div className="text-[11px] text-muted-foreground">{measureCaption(device)}</div>
+      <div className="flex min-h-[1.25rem] flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+        <span>{measureCaption(device)}</span>
+        {backsUp.map((b) => (
+          <span key={b.relationId} className="rounded-full px-1.5 py-px text-[10px] text-white" style={{ background: ROLE_COLORS.backup }}>
+            backs up {b.name}
+          </span>
+        ))}
+      </div>
       {onLinkDisk && candidates.length > 0 && (
         <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <span className="shrink-0">{device.inferred ? "This is" : "Mounted as"}</span>

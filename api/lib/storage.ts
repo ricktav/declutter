@@ -1,9 +1,19 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { items, relations, rooms, storageDirs, storageVolumes, type DataRole } from "@db/schema";
 import type { getDb } from "../queries/connection";
-import { linkComputerDisks, type DiskLinkCandidate, type DiskMeasure } from "./storageDisks";
+import {
+  claimLooseDisks,
+  diskSightingKey,
+  formatLastSeen,
+  linkComputerDisks,
+  newestMeasuredAt,
+  physicalDiskKey,
+  STALE_AFTER_MS,
+  type DiskLinkCandidate,
+  type DiskMeasure,
+} from "./storageDisks";
 
-export { STORAGE_DISK_KEY, physicalDiskKey, type DiskMeasure } from "./storageDisks";
+export { STORAGE_DISK_KEY, physicalDiskKey, STALE_AFTER_MS, formatLastSeen, type DiskMeasure } from "./storageDisks";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -27,6 +37,8 @@ export type ReportVolume = {
   capacityBytes: number;
   usedBytes: number;
   dirs?: Array<{ path: string; bytes: number }>;
+  /** Tracker last-seen; omitted = now. Stale-only sightings keep their old time so the overview can badge them. */
+  measuredAt?: Date | string | number | null;
 };
 
 export type ReportInput = { itemId: number; source: string; volumes: ReportVolume[] };
@@ -91,12 +103,19 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
     reportedCapacity.set(v.container, v.capacityBytes);
   }
   const now = new Date();
+  const measuredAtOf = (v: ReportVolume): Date => {
+    if (v.measuredAt == null || v.measuredAt === "") return now;
+    const at = v.measuredAt instanceof Date ? v.measuredAt : new Date(v.measuredAt);
+    if (!Number.isFinite(at.getTime()) || at.getTime() <= 0) return now;
+    return at.getTime() > now.getTime() ? now : at;
+  };
   let dirCount = 0;
   await db.transaction(async (tx) => {
     // read the item again inside the transaction so the attribute merge sees the same row it writes
     const current = await tx.query.items.findFirst({ where: eq(items.id, input.itemId) });
     if (!current) throw new StorageReportError("Item not found.");
     for (const v of input.volumes) {
+      const measuredAt = measuredAtOf(v);
       await tx
         .insert(storageVolumes)
         .values({
@@ -109,7 +128,7 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
           capacityBytes: v.capacityBytes,
           usedBytes: v.usedBytes,
           source: input.source,
-          measuredAt: now,
+          measuredAt,
         })
         .onDuplicateKeyUpdate({
           set: {
@@ -120,7 +139,7 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
             capacityBytes: v.capacityBytes,
             usedBytes: v.usedBytes,
             source: input.source,
-            measuredAt: now,
+            measuredAt,
           },
         });
       if (v.dirs) {
@@ -171,6 +190,21 @@ async function syncDeviceTotals(tx: Tx, itemId: number, attributes: Record<strin
       },
     })
     .where(eq(items.id, itemId));
+}
+
+/** Delete volumes on a computer whose kernel disk name is in `diskKeys` (a disk that moved away). */
+export async function removeVolumesByDiskKeys(db: Db, itemId: number, diskKeys: string[]): Promise<number> {
+  const want = new Set(diskKeys.map((k) => k.toLowerCase()).filter(Boolean));
+  if (want.size === 0) return 0;
+  const vols = await db.select().from(storageVolumes).where(eq(storageVolumes.itemId, itemId));
+  let n = 0;
+  for (const v of vols) {
+    const key = physicalDiskKey(v.device, v.container);
+    if (!key || !want.has(key)) continue;
+    const removed = await removeVolume(db, v.id);
+    if (removed) n++;
+  }
+  return n;
 }
 
 /** Delete one volume with its directories and bring the device's lab keys in step. Null when the id is unknown. */
@@ -248,12 +282,42 @@ export async function volumesForItems(db: Db, itemIds: number[]) {
   return vols.map((v) => ({ ...v, dirCount: dirCount.get(v.id) ?? 0 }));
 }
 
-const COMPUTER_ROLES = new Set(["laptop", "desktop", "server", "sbc"]);
+/** Machines that get a Storage card: computers and NAS boxes. */
+const COMPUTER_ROLES = new Set(["laptop", "desktop", "server", "sbc", "nas"]);
 
 /** Workflow keys on a computer: Storage pins starred machines first and hides the rest until "Show hidden". */
 export const STORAGE_STARRED_KEY = "storage.starred";
 export const STORAGE_HIDDEN_KEY = "storage.hidden";
+/** Preferred tracker hostname / IP / MAC this computer is known by. */
+export const MACHINE_ID_KEY = "machine.id";
 const STORAGE_FLAG_YES = "yes";
+
+function splitIdentityList(raw: string | number | null | undefined): string[] {
+  if (raw == null || raw === "") return [];
+  return String(raw)
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Hostname, IP, MAC and aliases a computer can be matched by — never the display name. */
+export function machineIdentity(attrs: Record<string, string | number> | null | undefined): {
+  machineId: string | null;
+  hostname: string | null;
+  ip: string | null;
+  mac: string | null;
+  aliases: string | null;
+  identityOptions: string[];
+} {
+  const machineId = attrs?.[MACHINE_ID_KEY] != null && attrs[MACHINE_ID_KEY] !== "" ? String(attrs[MACHINE_ID_KEY]) : null;
+  const hostname = attrs?.hostname != null && attrs.hostname !== "" ? String(attrs.hostname) : attrs?.host != null && attrs.host !== "" ? String(attrs.host) : null;
+  const ip = attrs?.ip != null && attrs.ip !== "" ? String(attrs.ip) : attrs?.ip_address != null && attrs.ip_address !== "" ? String(attrs.ip_address) : null;
+  const mac = attrs?.mac != null && attrs.mac !== "" ? String(attrs.mac) : attrs?.mac_address != null && attrs.mac_address !== "" ? String(attrs.mac_address) : null;
+  const aliasParts = [...splitIdentityList(attrs?.aliases), ...splitIdentityList(attrs?.host_alias)];
+  const aliases = aliasParts.length ? aliasParts.join(", ") : null;
+  const identityOptions = [...new Set([machineId, hostname, ip, mac, ...aliasParts].filter((x): x is string => x != null && x !== ""))];
+  return { machineId, hostname, ip, mac, aliases, identityOptions };
+}
 
 export function isStorageComputer(item: { attributes: Record<string, string | number> | null }): boolean {
   return COMPUTER_ROLES.has(String(item.attributes?.role ?? ""));
@@ -300,9 +364,12 @@ type DeviceLinks = {
 type DeviceExtra = {
   volumes?: Awaited<ReturnType<typeof volumesForItems>>;
   diskKey?: string | null;
-  inferred?: boolean;
-  measure?: DiskMeasure;
-  linkCandidates?: DiskLinkCandidate[];
+    inferred?: boolean;
+    measure?: DiskMeasure;
+    linkCandidates?: DiskLinkCandidate[];
+    lastSeenAt?: Date | null;
+    stale?: boolean;
+    lastSeenLabel?: string | null;
 };
 
 /** One device with its volumes; without volumes the block comes from the lab keys (GB → bytes, decimal). */
@@ -316,6 +383,9 @@ function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForI
   const freeBytes = capacityBytes != null && usedBytes != null ? capacityBytes - usedBytes : null;
   const capOf = containerCapacities(mine);
   const measure: DiskMeasure = extra?.measure ?? (measured ? "measured" : "no-collector");
+  const lastSeenMs = newestMeasuredAt(mine);
+  const stale = lastSeenMs != null && Date.now() - lastSeenMs > STALE_AFTER_MS;
+  const lastSeenAt = lastSeenMs != null ? new Date(lastSeenMs) : extra?.lastSeenAt ?? null;
   return {
     id: row.id,
     name: row.name,
@@ -331,6 +401,11 @@ function deviceOf(row: DeviceRow, volumes: Awaited<ReturnType<typeof volumesForI
     diskKey: extra?.diskKey ?? null,
     inferred: extra?.inferred ?? false,
     linkCandidates: extra?.linkCandidates ?? [],
+    lastSeenAt,
+    stale,
+    lastSeenLabel: stale && lastSeenAt ? formatLastSeen(lastSeenAt) : null,
+    serial: row.attributes?.serial != null && row.attributes.serial !== "" ? String(row.attributes.serial) : row.attributes?.serial_number != null && row.attributes.serial_number !== "" ? String(row.attributes.serial_number) : null,
+    uuid: row.attributes?.uuid != null && row.attributes.uuid !== "" ? String(row.attributes.uuid) : row.attributes?.disk_uuid != null && row.attributes.disk_uuid !== "" ? String(row.attributes.disk_uuid) : null,
     attachedRelationId: links.attachedRelationId(row.id),
     backsUp: links.backsUp(row.id),
     volumes: mine.map((v) => ({
@@ -419,58 +494,103 @@ export async function overviewFor(db: Db, houseId: number | null) {
   const { hostOf, links } = await deviceLinks(db, devices.map((d) => d.id), computerIds);
   // an attached-to drive hangs under its computer only when that computer is shown; else it stays external
   const attached = loose.filter((d) => hostOf(d.id) != null);
-  const externals = loose.filter((d) => hostOf(d.id) == null);
+  const unattached = loose.filter((d) => hostOf(d.id) == null);
+  const claimedLoose = new Set<number>();
+  const computersOut = computers.map((c) => {
+    const childRows = internal.filter((d) => d.parentId === c.id);
+    const attRows = attached.filter((d) => hostOf(d.id) === c.id);
+    const computerVols = volumes.filter((v) => v.itemId === c.id);
+    const extras = claimLooseDisks(
+      computerVols,
+      unattached.filter((d) => isDiskThing(d) && !claimedLoose.has(d.id)),
+    );
+    for (const d of extras) claimedLoose.add(d.id);
+    const diskThings = [...childRows, ...attRows, ...extras];
+    const ownOnDrives = new Map(diskThings.map((d) => [d.id, volumes.filter((v) => v.itemId === d.id)] as const));
+    const linked = linkComputerDisks(computerVols, diskThings, ownOnDrives);
+    const asDisk = (d: (typeof childRows)[number]) =>
+      deviceOf(d, volumes, d.roomName, links, {
+        volumes: linked.volumesByDrive.get(d.id) ?? [],
+        diskKey: linked.diskKeyByDrive.get(d.id) ?? null,
+        measure: linked.measureByDrive.get(d.id),
+        linkCandidates: linked.candidatesByDrive.get(d.id),
+      });
+    const inferredDisks = linked.inferred.map((g) =>
+      deviceOf(
+        { id: c.id, name: g.name, parentId: c.id, roomId: c.roomId, attributes: { role: "disk" } },
+        volumes,
+        c.roomName,
+        links,
+        {
+          volumes: g.volumes,
+          diskKey: g.diskKey,
+          inferred: true,
+          measure: "measured",
+          linkCandidates: g.candidates,
+        },
+      ),
+    );
+    const computer = deviceOf(c, volumes, c.roomName, links, { volumes: [] });
+    return {
+      ...computer,
+      ...storageViewFlags(c.attributes),
+      ...machineIdentity(c.attributes),
+      volumes: inferredDisks.flatMap((d) => d.volumes),
+      drives: childRows.map((d) => asDisk(d)),
+      attached: [...attRows, ...extras].map((d) => asDisk(d)),
+      inferredDisks,
+    };
+  });
+  const hiddenMoved = hideMovedDisks(computersOut);
+  const externals = unattached.filter((d) => !claimedLoose.has(d.id)).map((d) => deviceOf(d, volumes, d.roomName, links));
   const totals = await roleTotals(db);
   const { capacityBytes, freeBytes } = await capacityTotals(db);
   return {
-    computers: computers
-      .map((c) => {
-        const childRows = internal.filter((d) => d.parentId === c.id);
-        const attRows = attached.filter((d) => hostOf(d.id) === c.id);
-        const diskThings = [...childRows, ...attRows];
-        const ownOnDrives = new Map(diskThings.map((d) => [d.id, volumes.filter((v) => v.itemId === d.id)] as const));
-        const linked = linkComputerDisks(
-          volumes.filter((v) => v.itemId === c.id),
-          diskThings,
-          ownOnDrives,
-        );
-        const asDisk = (d: (typeof childRows)[number]) =>
-          deviceOf(d, volumes, d.roomName, links, {
-            volumes: linked.volumesByDrive.get(d.id) ?? [],
-            diskKey: linked.diskKeyByDrive.get(d.id) ?? null,
-            measure: linked.measureByDrive.get(d.id),
-            linkCandidates: linked.candidatesByDrive.get(d.id),
-          });
-        const inferredDisks = linked.inferred.map((g) =>
-          deviceOf(
-            { id: c.id, name: g.name, parentId: c.id, roomId: c.roomId, attributes: { role: "disk" } },
-            volumes,
-            c.roomName,
-            links,
-            {
-              volumes: g.volumes,
-              diskKey: g.diskKey,
-              inferred: true,
-              measure: "measured",
-              linkCandidates: g.candidates,
-            },
-          ),
-        );
-        const computer = deviceOf(c, volumes, c.roomName, links, { volumes: [] });
-        return {
-          ...computer,
-          ...storageViewFlags(c.attributes),
-          volumes: inferredDisks.flatMap((d) => d.volumes),
-          drives: childRows.map((d) => asDisk(d)),
-          attached: attRows.map((d) => asDisk(d)),
-          inferredDisks,
-        };
-      })
-      .sort((a, b) => Number(b.starred) - Number(a.starred) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
-    externals: externals.map((d) => deviceOf(d, volumes, d.roomName, links)),
+    computers: hiddenMoved.sort((a, b) => Number(b.starred) - Number(a.starred) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
+    externals,
     totals,
     capacityBytes,
     freeBytes,
     unassignedVolumes: totals.find((t) => t.dataRole === null)?.volumes ?? 0,
   };
+}
+
+type OverviewDisk = ReturnType<typeof deviceOf>;
+type OverviewMachine = {
+  id: number;
+  drives: OverviewDisk[];
+  attached: OverviewDisk[];
+  inferredDisks: OverviewDisk[];
+  volumes: OverviewDisk["volumes"];
+};
+
+function hideMovedDisks<T extends OverviewMachine>(computers: T[]): T[] {
+  type Hit = { computerId: number; kind: "drives" | "attached" | "inferredDisks"; index: number; key: string; at: number };
+  const hits: Hit[] = [];
+  for (const c of computers) {
+    for (const kind of ["drives", "attached", "inferredDisks"] as const) {
+      (c[kind] ?? []).forEach((d, index) => {
+        const key = diskSightingKey(d);
+        const at = newestMeasuredAt(d.volumes) ?? 0;
+        if (key) hits.push({ computerId: c.id, kind, index, key, at });
+      });
+    }
+  }
+  const best = new Map<string, { at: number; computerId: number }>();
+  for (const h of hits) {
+    const prev = best.get(h.key);
+    if (!prev || h.at > prev.at) best.set(h.key, { at: h.at, computerId: h.computerId });
+  }
+  const hide = new Set(
+    hits.filter((h) => {
+      const w = best.get(h.key)!;
+      return w.computerId !== h.computerId && w.at > h.at;
+    }).map((h) => `${h.computerId}:${h.kind}:${h.index}`),
+  );
+  const keep = (c: T, kind: "drives" | "attached" | "inferredDisks") =>
+    (c[kind] ?? []).filter((_, i) => !hide.has(`${c.id}:${kind}:${i}`));
+  return computers.map((c) => {
+    const inferredDisks = keep(c, "inferredDisks");
+    return { ...c, drives: keep(c, "drives"), attached: keep(c, "attached"), inferredDisks, volumes: inferredDisks.flatMap((d) => d.volumes) };
+  });
 }

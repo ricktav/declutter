@@ -6,6 +6,21 @@
 
 export const STORAGE_DISK_KEY = "storage.disk";
 
+/**
+ * Known kernel disk → inventory disk when the collector has no serial on the
+ * volume row. Mini USB NVMe (disk9, SNVS1000GB, ~1TB) is Thing "Ugreen NVME 1TB".
+ */
+export const SEEDED_DISK_LINKS: Array<{
+  diskKey: string;
+  serial?: string;
+  nameIncludes?: string;
+  modelIncludes?: string;
+  sizeBytes?: number;
+}> = [{ diskKey: "disk9", serial: "SNVS1000GB", nameIncludes: "ugreen", modelIncludes: "ugreen", sizeBytes: 1e12 }];
+
+/** Calendar age for the "last seen" badge. Never a reason to skip the only sighting. */
+export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
 export type DiskMeasure = "measured" | "no-collector" | "unlinked" | "duplicate";
 
 export type DiskLinkCandidate = { id: number; name: string } | { diskKey: string; name: string };
@@ -55,6 +70,29 @@ function attrStr(attrs: Attrs, key: string): string | null {
   const v = attrs?.[key];
   if (v == null || v === "") return null;
   return String(v);
+}
+
+export function serialOf(v: unknown): string | null {
+  if (v == null || v === "") return null;
+  const n = String(v).trim().replace(/\s+/g, "");
+  if (!n) return null;
+  if (/^(unknown|none|n\/?a|null|-|0)$/i.test(n)) return null;
+  return n.toUpperCase();
+}
+
+export function uuidOf(v: unknown): string | null {
+  if (v == null || v === "") return null;
+  const n = String(v).trim().replace(/[{}]/g, "").toLowerCase();
+  if (!n || /^(unknown|none|n\/?a|null|-|0)$/i.test(n)) return null;
+  const hex = n.replace(/-/g, "");
+  if (hex.length < 8 || !/^[0-9a-f-]+$/i.test(n)) return null;
+  return n;
+}
+
+function normModel(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const n = s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return n || null;
 }
 
 function num(v: string | number | undefined): number | null {
@@ -168,7 +206,13 @@ export function linkComputerDisks<V extends DiskVolume>(computerVolumes: V[], dr
       }
     }
   }
+  const seeded: Array<{ driveId: number; key: string }> = [];
+  for (const d of drives) {
+    const key = seededDiskKey(d, groups);
+    if (key) seeded.push({ driveId: d.id, key });
+  }
   claimFirst(explicit, assigned, taken);
+  claimFirst(seeded, assigned, taken);
   claimUnique(byMount, assigned, taken);
   claimUnique(byDevice, assigned, taken);
 
@@ -227,4 +271,116 @@ export function linkComputerDisks<V extends DiskVolume>(computerVolumes: V[], dr
   }));
 
   return { volumesByDrive, measureByDrive, diskKeyByDrive, candidatesByDrive, inferred };
+}
+
+function seedMatchesThing(disk: DiskThing, seed: (typeof SEEDED_DISK_LINKS)[number], vols: DiskVolume[]): boolean {
+  const serial = serialOf(attrStr(disk.attributes, "serial") ?? attrStr(disk.attributes, "serial_number"));
+  if (seed.serial && serial && serialOf(seed.serial) === serial) return true;
+  const name = disk.name.toLowerCase();
+  const model = (attrStr(disk.attributes, "model") ?? "").toLowerCase();
+  const textOk =
+    (seed.nameIncludes != null && name.includes(seed.nameIncludes)) ||
+    (seed.modelIncludes != null && (model.includes(seed.modelIncludes) || name.includes(seed.modelIncludes)));
+  if (!textOk) return false;
+  const cap = vols.length ? groupCapacity(vols) : seed.sizeBytes ?? 0;
+  const gb = num(disk.attributes?.storage_gb);
+  if (gb != null && sizeClose(gb, cap)) return true;
+  if (seed.sizeBytes && sizeClose(seed.sizeBytes / 1e9, cap)) return true;
+  return false;
+}
+
+function seededDiskKey<V extends DiskVolume>(disk: DiskThing, groups: Map<string, V[]>): string | null {
+  for (const seed of SEEDED_DISK_LINKS) {
+    const vols = groups.get(seed.diskKey);
+    if (!vols || vols.length === 0) continue;
+    if (seedMatchesThing(disk, seed, vols)) return seed.diskKey;
+  }
+  return null;
+}
+
+/**
+ * Loose (unattached) disk Things that belong on this computer: a seeded pin
+ * (Mini disk9 → Ugreen NVME) or a unique serial/model+size against its volume groups.
+ */
+export function claimLooseDisks<V extends DiskVolume, D extends DiskThing>(computerVolumes: V[], loose: D[]): D[] {
+  if (loose.length === 0 || computerVolumes.length === 0) return [];
+  const groups = groupVolumesByDisk(computerVolumes);
+  const claimed: D[] = [];
+  const taken = new Set<string>();
+  for (const d of loose) {
+    const seedKey = seededDiskKey(d, groups);
+    if (seedKey && !taken.has(seedKey)) {
+      claimed.push(d);
+      taken.add(seedKey);
+      continue;
+    }
+    const serial = serialOf(attrStr(d.attributes, "serial") ?? attrStr(d.attributes, "serial_number"));
+    if (serial) {
+      for (const seed of SEEDED_DISK_LINKS) {
+        if (seed.serial && serialOf(seed.serial) === serial && groups.has(seed.diskKey) && !taken.has(seed.diskKey)) {
+          claimed.push(d);
+          taken.add(seed.diskKey);
+          break;
+        }
+      }
+    }
+  }
+  return claimed;
+}
+
+const GENERIC_VOLUME_LABELS = new Set(["/", "/boot", "/boot/efi", "/system/volumes/data", "macintosh hd", "data", "root"]);
+
+function distinctiveVolumeLabels(volumes: Array<{ label?: string | null; mountPoint?: string | null }>): string[] {
+  return volumes
+    .map((v) => (v.label || v.mountPoint || "").trim().toLowerCase())
+    .filter((s) => s && !GENERIC_VOLUME_LABELS.has(s));
+}
+
+/** Identity used to hide a disk at an old machine when a newer sighting exists elsewhere. */
+export function diskSightingKey(d: {
+  name: string;
+  inferred?: boolean;
+  parentId?: number | null;
+  capacityBytes?: number | null;
+  serial?: string | null;
+  uuid?: string | null;
+  attributes?: Attrs;
+  volumes: Array<{ label?: string | null; mountPoint?: string; capacityBytes: number }>;
+}): string | null {
+  const uuid = uuidOf(d.uuid ?? attrStr(d.attributes, "uuid") ?? attrStr(d.attributes, "disk_uuid"));
+  if (uuid) return `u:${uuid}`;
+  const serial = serialOf(d.serial ?? attrStr(d.attributes, "serial") ?? attrStr(d.attributes, "serial_number"));
+  if (serial) return `s:${serial}`;
+  const portable = d.inferred || d.parentId == null;
+  if (!portable) return null;
+  const labels = distinctiveVolumeLabels(d.volumes).sort();
+  const cap = d.capacityBytes ?? (d.volumes.length ? groupCapacity(d.volumes as DiskVolume[]) : 0);
+  const gb = cap > 0 ? Math.round(cap / 1e9) : null;
+  if (labels.length > 0 && gb != null) return `v:${labels.join(",")}:${gb}`;
+  const model = normModel(attrStr(d.attributes, "model") ?? d.name);
+  if (model && gb != null && !/^(disk\d+|[hsv]d[a-z]+|nvme\d+n\d+|mmcblk\d+|md\d+|unknown)$/i.test(d.name)) {
+    return `m:${model}:${gb}`;
+  }
+  return null;
+}
+
+export function newestMeasuredAt(volumes: Array<{ measuredAt?: Date | string | null }>): number | null {
+  let best: number | null = null;
+  for (const v of volumes) {
+    if (v.measuredAt == null) continue;
+    const t = v.measuredAt instanceof Date ? v.measuredAt.getTime() : new Date(v.measuredAt).getTime();
+    if (!Number.isFinite(t)) continue;
+    if (best == null || t > best) best = t;
+  }
+  return best;
+}
+
+/** "last seen 12 Sep" (year only when it isn't this one). */
+export function formatLastSeen(at: Date | string | number, now = new Date()): string {
+  const d = at instanceof Date ? at : new Date(at);
+  if (!Number.isFinite(d.getTime())) return "last seen unknown";
+  const day = d.getDate();
+  const mon = d.toLocaleString("en-GB", { month: "short" });
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return sameYear ? `last seen ${day} ${mon}` : `last seen ${day} ${mon} ${d.getFullYear()}`;
 }

@@ -126,16 +126,17 @@ describe("storage.overview", () => {
     const c = callerFor(houseId);
     await c.storage.report({ itemId: ssd, source: "test", volumes: [{ mountPoint: "/", capacityBytes: 1000 * GB, usedBytes: 600 * GB }] });
     const o = await c.storage.overview({});
-    expect(o.computers.map((x) => x.name)).toEqual(["mac-mini"]);
-    const mini = o.computers[0];
+    expect(o.computers.map((x) => x.name)).toEqual(["mac-mini", "synology-nas"]);
+    const mini = o.computers.find((x) => x.id === pc)!;
     expect(mini.drives.map((d) => [d.name, d.measured, d.usedBytes])).toEqual([["Internal SSD", true, 600 * GB]]);
     expect(mini.drives[0].volumes.map((v) => v.mountPoint)).toEqual(["/"]);
     // the computer itself has no volumes: block from its attributes, unmeasured
     expect([mini.measured, mini.capacityBytes, mini.usedBytes]).toEqual([false, 1000e9, 600e9]);
-    const ext = o.externals.find((d) => d.id === nas)!;
-    expect([ext.kind, ext.measured, ext.capacityBytes, ext.usedBytes]).toEqual(["nas", false, 3933e9, (3933 - 426) * 1e9]);
+    const nasBox = o.computers.find((d) => d.id === nas)!;
+    expect([nasBox.kind, nasBox.measured, nasBox.capacityBytes, nasBox.usedBytes]).toEqual(["nas", false, 3933e9, (3933 - 426) * 1e9]);
     expect(o.externals.map((d) => d.id)).not.toContain(pc);
     expect(o.externals.map((d) => d.id)).not.toContain(ssd);
+    expect(o.externals.map((d) => d.id)).not.toContain(nas);
   });
 
   it("totals sum every volume once and count the unassigned ones", async () => {
@@ -170,7 +171,7 @@ describe("storage.overview", () => {
     const areaId = (await db.query.areas.findFirst())!.id;
     await db.insert(items).values({ areaId, houseId: h2, name: "pi-zomer", attributes: { role: "sbc" } });
     expect((await callerFor(h2).storage.overview({})).computers.map((c) => c.name)).toEqual(["pi-zomer"]);
-    expect((await callerFor(h2).storage.overview({ houseId: null })).computers.map((c) => c.name).sort()).toEqual(["mac-mini", "pi-zomer"]);
+    expect((await callerFor(h2).storage.overview({ houseId: null })).computers.map((c) => c.name).sort()).toEqual(["mac-mini", "pi-zomer", "synology-nas"]);
     expect((await callerFor(null).storage.overview({})).computers.map((c) => c.id)).toContain(pc);
   });
 });
@@ -194,6 +195,7 @@ describe("storage.setFlags", () => {
     expect(before.computers.map((x) => [x.name, x.starred, x.hidden])).toEqual([
       ["alpha-pi", false, false],
       ["mac-mini", false, false],
+      ["synology-nas", false, false],
       ["zeta-box", false, false],
     ]);
 
@@ -205,6 +207,7 @@ describe("storage.setFlags", () => {
       ["zeta-box", true, false],
       ["alpha-pi", false, false],
       ["mac-mini", false, true],
+      ["synology-nas", false, false],
     ]);
     const mini = o.computers.find((x) => x.id === pc)!;
     expect(mini.volumes.map((v) => v.mountPoint)).toEqual(["/"]);
@@ -219,18 +222,19 @@ describe("storage.setFlags", () => {
 
     expect(await c.storage.setFlags({ itemId: zeta, starred: false })).toEqual({ id: zeta, starred: false, hidden: false });
     expect(await c.storage.setFlags({ itemId: pc, hidden: false })).toEqual({ id: pc, starred: false, hidden: false });
-    expect((await c.storage.overview({})).computers.map((x) => x.name)).toEqual(["alpha-pi", "mac-mini", "zeta-box"]);
+    expect((await c.storage.overview({})).computers.map((x) => x.name)).toEqual(["alpha-pi", "mac-mini", "synology-nas", "zeta-box"]);
     expect((await db.query.items.findFirst({ where: eq(items.id, pc) }))?.attributes?.["storage.hidden"]).toBeUndefined();
   });
 
-  it("refuses a NAS, furniture, or a missing item, and needs a flag", async () => {
+  it("stars a NAS like a computer, and refuses furniture, a missing item, or no flag", async () => {
     const { houseId, nas, chair } = await seedDevices();
     const c = callerFor(houseId);
-    await expect(c.storage.setFlags({ itemId: nas, hidden: true })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(await c.storage.setFlags({ itemId: nas, hidden: true })).toEqual({ id: nas, starred: false, hidden: true });
+    expect((await c.storage.overview({})).computers.find((x) => x.id === nas)?.hidden).toBe(true);
     await expect(c.storage.setFlags({ itemId: chair, starred: true })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await expect(c.storage.setFlags({ itemId: 999999, starred: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(c.storage.setFlags({ itemId: chair })).rejects.toThrow();
-    expect((await getTestDb().query.items.findFirst({ where: eq(items.id, nas) }))?.attributes?.["storage.hidden"]).toBeUndefined();
+    expect((await getTestDb().query.items.findFirst({ where: eq(items.id, nas) }))?.attributes?.["storage.hidden"]).toBe("yes");
   });
 });
 
@@ -317,6 +321,84 @@ describe("storage disk linking", () => {
     expect(mini.drives.map((d) => [d.id, d.measure, d.measured])).toEqual([[ssd, "no-collector", false]]);
     expect(mini.inferredDisks).toEqual([]);
   });
+
+  it("maps Mini disk9 volumes onto an unattached Ugreen NVME by serial and hangs it under the machine", async () => {
+    const { areaId, houseId, pc } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: ugreen }] = await db
+      .insert(items)
+      .values({
+        areaId,
+        houseId,
+        name: "Ugreen NVME 1TB",
+        attributes: { role: "storage", serial: "SNVS1000GB", model: "SNVS1000GB", storage_gb: 1000 },
+      })
+      .$returningId();
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: pc,
+      source: "local-script",
+      volumes: [
+        { mountPoint: "/Volumes/ExtNVMe", label: "ExtNVMe", device: "disk9s1", container: "disk9", capacityBytes: 1000 * GB, usedBytes: 400 * GB },
+        { mountPoint: "/Volumes/NVMe", label: "NVMe", device: "disk9s2", container: "disk9", capacityBytes: 1000 * GB, usedBytes: 200 * GB },
+        { mountPoint: "/Volumes/Reservekopieën van Rick's Mac mini 4", label: "Reservekopieën van Rick's Mac mini 4", device: "disk9s3", container: "disk9", capacityBytes: 1000 * GB, usedBytes: 100 * GB },
+      ],
+    });
+    const o = await c.storage.overview({});
+    const mini = o.computers.find((x) => x.id === pc)!;
+    const disk = mini.attached.find((d) => d.id === ugreen);
+    expect(disk).toMatchObject({ diskKey: "disk9", measured: true, measure: "measured" });
+    expect(disk?.volumes.map((v) => v.mountPoint).sort()).toEqual([
+      "/Volumes/ExtNVMe",
+      "/Volumes/NVMe",
+      "/Volumes/Reservekopieën van Rick's Mac mini 4",
+    ]);
+    expect(o.externals.map((d) => d.id)).not.toContain(ugreen);
+    expect(mini.inferredDisks.map((d) => d.diskKey)).not.toContain("disk9");
+  });
+
+  it("hides a disk at the old machine when a newer sighting of the same serial exists elsewhere", async () => {
+    const { areaId, houseId, pc } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: imac }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "rick-iMac5k", attributes: { role: "desktop", hostname: "rick-imac5k" } })
+      .$returningId();
+    const [{ id: t7 }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "PSSD T7", parentId: imac, attributes: { role: "storage", serial: "T7SERIAL", storage_gb: 4000 } })
+      .$returningId();
+    const c = callerFor(houseId);
+    const old = new Date("2026-08-01T12:00:00Z");
+    const fresh = new Date("2026-10-15T12:00:00Z");
+    await c.storage.report({
+      itemId: imac,
+      source: "test",
+      volumes: [{ mountPoint: "/Volumes/T7", label: "T7", device: "disk7s1", container: "disk7", capacityBytes: 4000 * GB, usedBytes: 2000 * GB, measuredAt: old }],
+    });
+    await c.storage.report({
+      itemId: pc,
+      source: "test",
+      volumes: [{ mountPoint: "/Volumes/T7", label: "T7", device: "disk7s1", container: "disk7", capacityBytes: 4000 * GB, usedBytes: 2100 * GB, measuredAt: fresh }],
+    });
+    await db.update(items).set({ attributes: { role: "storage", serial: "T7SERIAL", storage_gb: 4000, "storage.disk": "disk7" } }).where(eq(items.id, t7));
+    const [{ id: t7mini }] = await db
+      .insert(items)
+      .values({
+        areaId,
+        houseId,
+        name: "PSSD T7 mini",
+        parentId: pc,
+        attributes: { role: "storage", serial: "T7SERIAL", storage_gb: 4000, "storage.disk": "disk7" },
+      })
+      .$returningId();
+    const o = await c.storage.overview({});
+    const mini = o.computers.find((x) => x.id === pc)!;
+    const oldMac = o.computers.find((x) => x.id === imac)!;
+    expect(mini.drives.find((d) => d.id === t7mini)?.volumes.map((v) => v.mountPoint)).toEqual(["/Volumes/T7"]);
+    expect(oldMac.drives.find((d) => d.id === t7)?.volumes.length ?? 0).toBe(0);
+    expect(oldMac.drives.map((d) => d.id)).not.toContain(t7);
+  });
 });
 
 describe("storage.dirs", () => {
@@ -398,6 +480,10 @@ describe("storage.removeVolume", () => {
 describe("containers", () => {
   const T7 = (used: number, container: string | null = "disk5") => ({ mountPoint: "/Volumes/T7", label: "T7", container, capacityBytes: 1000 * GB, usedBytes: used });
   const TM = (used: number, container: string | null = "disk5") => ({ mountPoint: "/Volumes/TM-T7", label: "TM-T7", container, capacityBytes: 1000 * GB, usedBytes: used });
+  const nasDisk = (o: Awaited<ReturnType<ReturnType<typeof callerFor>["storage"]["overview"]>>, nasId: number) => {
+    const box = o.computers.find((x) => x.id === nasId)!;
+    return box.inferredDisks[0] ?? box.drives[0];
+  };
 
   async function deviceKeys(id: number) {
     const item = await getTestDb().query.items.findFirst({ where: eq(items.id, id) });
@@ -410,7 +496,7 @@ describe("containers", () => {
     await c.storage.report({ itemId: nas, source: "test", volumes: [T7(300 * GB), TM(200 * GB)] });
     expect(await deviceKeys(nas)).toEqual([Math.round((1000 * GB) / 1e9), Math.round((500 * GB) / 1e9)]);
     const o = await c.storage.overview({});
-    const d = o.externals.find((x) => x.id === nas)!;
+    const d = nasDisk(o, nas);
     expect([d.capacityBytes, d.usedBytes, d.freeBytes]).toEqual([1000 * GB, 500 * GB, 500 * GB]);
     expect(d.volumes.map((v) => [v.label, v.container, v.shareOfContainer])).toEqual([
       ["T7", "disk5", 0.3],
@@ -426,7 +512,7 @@ describe("containers", () => {
     await c.storage.report({ itemId: nas, source: "test", volumes: [TM(200 * GB)] });
     expect(await deviceKeys(nas)).toEqual([Math.round((1000 * GB) / 1e9), Math.round((500 * GB) / 1e9)]);
     const o = await c.storage.overview({});
-    const d = o.externals.find((x) => x.id === nas)!;
+    const d = nasDisk(o, nas);
     expect([d.capacityBytes, d.usedBytes, d.freeBytes]).toEqual([1000 * GB, 500 * GB, 500 * GB]);
     expect([o.capacityBytes, o.freeBytes]).toEqual([1000 * GB, 500 * GB]);
     // the second report must still fit the container with the first one's volume
@@ -455,7 +541,7 @@ describe("containers", () => {
     const tm = (await getTestDb().select().from(storageVolumes).where(eq(storageVolumes.itemId, nas))).find((v) => v.label === "TM-T7")!;
     await c.storage.removeVolume({ volumeId: tm.id });
     expect(await deviceKeys(nas)).toEqual([Math.round((1000 * GB) / 1e9), Math.round((700 * GB) / 1e9)]);
-    const d = (await c.storage.overview({})).externals.find((x) => x.id === nas)!;
+    const d = nasDisk(await c.storage.overview({}), nas);
     expect([d.capacityBytes, d.usedBytes, d.freeBytes]).toEqual([1000 * GB, 300 * GB, 700 * GB]);
   });
 
@@ -488,25 +574,35 @@ describe("containers", () => {
 
 describe("attached-to and backs-up in the overview", () => {
   it("hangs an attached drive under its computer and takes it out of externals", async () => {
-    const { houseId, pc, nas } = await seedDevices();
+    const { areaId, houseId, pc } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: usb }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "USB disk", attributes: { role: "storage" } })
+      .$returningId();
     const c = callerFor(houseId);
-    const { id: relId } = await c.items.addRelation({ fromItemId: nas, toItemId: pc, type: "attached-to" });
+    const { id: relId } = await c.items.addRelation({ fromItemId: usb, toItemId: pc, type: "attached-to" });
     const o = await c.storage.overview({});
     const mac = o.computers.find((x) => x.id === pc)!;
-    expect(mac.attached.map((d) => [d.id, d.attachedRelationId])).toEqual([[nas, relId]]);
+    expect(mac.attached.map((d) => [d.id, d.attachedRelationId])).toEqual([[usb, relId]]);
     expect(mac.drives.map((d) => d.attachedRelationId)).toEqual([null]);
-    expect(o.externals.map((d) => d.id)).not.toContain(nas);
+    expect(o.externals.map((d) => d.id)).not.toContain(usb);
   });
 
   it("keeps the drive external when its computer is archived", async () => {
-    const { houseId, pc, nas } = await seedDevices();
+    const { areaId, houseId, pc } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: usb }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "USB disk", attributes: { role: "storage" } })
+      .$returningId();
     const c = callerFor(houseId);
-    const { id: relId } = await c.items.addRelation({ fromItemId: nas, toItemId: pc, type: "attached-to" });
-    await getTestDb().update(items).set({ status: "archived" }).where(eq(items.id, pc));
+    const { id: relId } = await c.items.addRelation({ fromItemId: usb, toItemId: pc, type: "attached-to" });
+    await db.update(items).set({ status: "archived" }).where(eq(items.id, pc));
     const o = await c.storage.overview({});
     expect(o.computers.map((x) => x.id)).not.toContain(pc);
     expect(o.computers.every((x) => x.attached.length === 0)).toBe(true);
-    const d = o.externals.find((x) => x.id === nas);
+    const d = o.externals.find((x) => x.id === usb);
     expect(d?.attachedRelationId).toBe(relId);
   });
 
@@ -518,11 +614,54 @@ describe("attached-to and backs-up in the overview", () => {
     const r1 = await c.items.addRelation({ fromItemId: nas, toItemId: pc, type: "backs-up" });
     const r2 = await c.items.addRelation({ fromItemId: nas, toItemId: phone, type: "backs-up" });
     const o = await c.storage.overview({});
-    const d = o.externals.find((x) => x.id === nas)!;
+    const d = o.computers.find((x) => x.id === nas)!;
     expect(d.backsUp).toEqual([
       { relationId: r1.id, itemId: pc, name: "mac-mini" },
       { relationId: r2.id, itemId: phone, name: "iPhone" },
     ]);
     expect(o.computers.find((x) => x.id === pc)!.backsUp).toEqual([]);
+  });
+});
+
+describe("storage.setIdentity", () => {
+  it("pins machine.id from a hostname already on the computer", async () => {
+    const { houseId, pc } = await seedDevices();
+    const db = getTestDb();
+    await db.update(items).set({ attributes: { role: "desktop", hostname: "macmini-m4", ip: "10.50.0.102" } }).where(eq(items.id, pc));
+    const c = callerFor(houseId);
+    expect(await c.storage.setIdentity({ itemId: pc, machineId: "macmini-m4" })).toEqual({ id: pc, machineId: "macmini-m4" });
+    const o = await c.storage.overview({});
+    expect(o.computers.find((x) => x.id === pc)?.machineId).toBe("macmini-m4");
+    expect(await c.storage.setIdentity({ itemId: pc, machineId: null })).toEqual({ id: pc, machineId: null });
+  });
+
+  it("refuses a value that is not a hostname, IP, MAC or alias on the machine", async () => {
+    const { houseId, pc, chair } = await seedDevices();
+    const c = callerFor(houseId);
+    await expect(c.storage.setIdentity({ itemId: pc, machineId: "rick-iMac21-3" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(c.storage.setIdentity({ itemId: chair, machineId: "x" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
+
+describe("NAS machine card", () => {
+  it("shows NAS volumes as disks on the NAS card, not as an unattached external", async () => {
+    const { houseId, nas } = await seedDevices();
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: nas,
+      source: "data-tracker",
+      volumes: [
+        { mountPoint: "/", device: "md0", capacityBytes: 8 * GB, usedBytes: 2 * GB },
+        { mountPoint: "/volume1", device: "md2", capacityBytes: 3000 * GB, usedBytes: 2000 * GB },
+      ],
+    });
+    const o = await c.storage.overview({});
+    const box = o.computers.find((x) => x.id === nas)!;
+    expect(box.kind).toBe("nas");
+    expect(box.inferredDisks.map((d) => [d.diskKey, d.volumes.map((v) => v.mountPoint)])).toEqual([
+      ["md0", ["/"]],
+      ["md2", ["/volume1"]],
+    ]);
+    expect(o.externals.map((d) => d.id)).not.toContain(nas);
   });
 });

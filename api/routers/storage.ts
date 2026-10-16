@@ -7,6 +7,7 @@ import { items, storageDirs, storageVolumes } from "@db/schema";
 import { logEvent } from "../lib/events";
 import {
   DATA_ROLES,
+  MACHINE_ID_KEY,
   STORAGE_DISK_KEY,
   STORAGE_HIDDEN_KEY,
   STORAGE_STARRED_KEY,
@@ -15,6 +16,7 @@ import {
   applyStorageViewFlag,
   isStorageComputer,
   isStorageDevice,
+  machineIdentity,
   overviewFor,
   physicalDiskKey,
   removeVolume,
@@ -31,6 +33,7 @@ const reportVolume = z.object({
   capacityBytes: z.number().int().nonnegative(),
   usedBytes: z.number().int().nonnegative(),
   dirs: z.array(z.object({ path: z.string().min(1).max(512), bytes: z.number().int().nonnegative() })).max(100).optional(),
+  measuredAt: z.union([z.string(), z.number(), z.date()]).optional(),
 });
 
 /**
@@ -97,9 +100,9 @@ export const storageRouter = createRouter({
     }),
 
   /**
-   * Star or hide a computer on the Storage page. View-only: the Thing and its
-   * volumes stay. `starred` / `hidden` write the `storage.starred` /
-   * `storage.hidden` attributes (`yes` or removed).
+   * Star or hide a machine (computer or NAS) on the Storage page. View-only:
+   * the Thing and its volumes stay. `starred` / `hidden` write the
+   * `storage.starred` / `storage.hidden` attributes (`yes` or removed).
    */
   setFlags: procedure
     .input(
@@ -115,7 +118,7 @@ export const storageRouter = createRouter({
       const db = getDb();
       const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
       if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
-      if (!isStorageComputer(item)) throw new TRPCError({ code: "BAD_REQUEST", message: "Not a computer." });
+      if (!isStorageComputer(item)) throw new TRPCError({ code: "BAD_REQUEST", message: "Not a machine." });
       const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
       const changed: string[] = [];
       if (input.starred !== undefined && applyStorageViewFlag(next, STORAGE_STARRED_KEY, input.starred)) {
@@ -137,6 +140,43 @@ export const storageRouter = createRouter({
         });
       }
       return { id: item.id, ...storageViewFlags(next) };
+    }),
+
+  /**
+   * Preferred tracker hostname / IP / MAC for this machine (`machine.id`).
+   * Null clears it. Must be one of the Thing's hostname, IP, MAC or aliases.
+   */
+  setIdentity: procedure
+    .input(z.object({ itemId: z.number().int(), machineId: z.string().min(1).max(128).nullable() }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
+      if (!isStorageComputer(item)) throw new TRPCError({ code: "BAD_REQUEST", message: "Not a machine." });
+      const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
+      const ident = machineIdentity(next);
+      if (input.machineId == null || input.machineId === "") {
+        if (!(MACHINE_ID_KEY in next)) return { id: item.id, machineId: null as string | null };
+        delete next[MACHINE_ID_KEY];
+      } else {
+        const allowed = new Set(ident.identityOptions.map((s) => s.toLowerCase()));
+        if (!allowed.has(input.machineId.toLowerCase()) && ident.machineId?.toLowerCase() !== input.machineId.toLowerCase()) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a hostname, IP, MAC or alias already on this machine." });
+        }
+        if (next[MACHINE_ID_KEY] === input.machineId) return { id: item.id, machineId: input.machineId };
+        next[MACHINE_ID_KEY] = input.machineId;
+      }
+      await db
+        .update(items)
+        .set({ attributes: Object.keys(next).length > 0 ? next : null })
+        .where(eq(items.id, input.itemId));
+      await logEvent({
+        entityType: "item",
+        entityId: item.id,
+        action: "storage.identity",
+        summary: `${item.name}: ${MACHINE_ID_KEY} ${input.machineId == null ? "removed" : `= ${input.machineId}`}`,
+      });
+      return { id: item.id, machineId: input.machineId };
     }),
 
   /**
