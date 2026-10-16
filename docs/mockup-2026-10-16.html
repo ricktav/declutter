@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HomeBase — alternative shell mockup (2026-10-16)</title>
+<style>
+/* ---- page chrome (outside the device) ---- */
+:root {
+  --bg: #f6f6f1; --fg: #23261c; --muted: #5f6452; --line: #d5d9cd; --card: #fff; --code: #eceee5;
+  /* HomeBase palette, as used today */
+  --moss: #3c5d41; --lime: #d2ff00; --charcoal: #282c20; --charcoal-2: #3a3f2e; --sage: #b4b8a5; --honeydew: #f1f7f1;
+  --keep: #2F7A45; --sell: #9E6A08; --donate: #2D689B; --toss: #AD432B; --later: #6E7563;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+.page { max-width: 1320px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 24px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 16px; }
+.controls { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; padding: 12px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 18px; }
+.controls label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; margin-right: 6px; }
+.seg { display: inline-flex; background: var(--code); border-radius: 8px; padding: 2px; }
+.seg button { border: 0; background: transparent; padding: 5px 12px; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; color: var(--fg); }
+.seg button[aria-pressed="true"] { background: var(--charcoal); color: #f4f4ed; }
+.legend { font-size: 13px; color: var(--muted); }
+.legend b { color: var(--fg); }
+.stage { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+.notes-panel { flex: 1 1 300px; min-width: 280px; max-width: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 14px; }
+.notes-panel h2 { font-size: 15px; margin: 0 0 8px; }
+.notes-panel ol { padding-left: 18px; margin: 0; }
+.notes-panel li { margin: 6px 0; }
+.notes-panel li b { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--lime); color: var(--charcoal); padding: 0 5px; border-radius: 4px; }
+code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+
+/* ---- device frame ---- */
+.device { position: relative; background: #111; border-radius: 28px; padding: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.25); flex: 0 0 auto; }
+.device.phone { width: 400px; }
+.device.desktop { width: min(900px, 100%); border-radius: 14px; padding: 8px; }
+.screen { position: relative; background: var(--honeydew); border-radius: 20px; overflow: hidden; height: 800px; display: flex; flex-direction: column; }
+.device.desktop .screen { border-radius: 8px; height: 640px; flex-direction: row; }
+
+/* ---- annotations (numbered badges) ---- */
+.app[data-notes="off"] .n { display: none; }
+.n { position: absolute; z-index: 20; width: 18px; height: 18px; border-radius: 50%; background: var(--lime); color: var(--charcoal); font: 700 11px/18px ui-monospace, Menlo, monospace; text-align: center; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
+
+/* ---- depth: Quick < Standard < Detail ---- */
+.app.depth-quick [data-depth="standard"], .app.depth-quick [data-depth="detail"], .app.depth-standard [data-depth="detail"] { display: none !important; }
+.app.depth-quick [data-depth-max="quick"] { display: initial; }
+.app:not(.depth-quick) [data-depth-max="quick"] { display: none !important; }
+
+/* ---- app shell ---- */
+.app { display: flex; flex-direction: column; height: 100%; width: 100%; font-size: 13px; }
+.desktop .app { flex-direction: row; }
+.topbar { position: relative; display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--charcoal); color: #f4f4ed; }
+.desktop .topbar { position: absolute; left: 180px; right: 0; top: 0; z-index: 5; }
+.brand { font: 600 14px ui-monospace, Menlo, monospace; white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 4px 10px; background: var(--charcoal-2); color: #f4f4ed; font-size: 12px; white-space: nowrap; max-width: 46%; overflow: hidden; text-overflow: ellipsis; }
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); }
+.topbar .search { flex: 1; min-width: 80px; background: var(--charcoal-2); border-radius: 8px; padding: 5px 10px; color: var(--sage); font-size: 12px; }
+.depth-chip { margin-left: auto; font: 600 10px ui-monospace, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--sage); border: 1px solid var(--charcoal-2); border-radius: 6px; padding: 3px 6px; }
+
+.rail { display: none; }
+.desktop .rail { display: flex; flex-direction: column; width: 180px; background: var(--charcoal); color: var(--sage); padding: 12px 8px; gap: 2px; flex-shrink: 0; }
+.desktop .rail .brand { color: #f4f4ed; padding: 4px 8px 12px; }
+.rail a, .tabs a { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; color: var(--sage); text-decoration: none; cursor: pointer; }
+.rail a.on { background: var(--charcoal-2); color: #f4f4ed; }
+.rail .group { margin-top: 14px; padding: 0 10px 4px; font: 600 10px ui-monospace, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; color: #8a8f7c; }
+.rail .badge { margin-left: auto; background: var(--lime); color: var(--charcoal); border-radius: 999px; padding: 0 6px; font: 600 11px ui-monospace, Menlo, monospace; }
+.rail .spacer { flex: 1; }
+.rail .ask { margin: 6px 4px 0; background: var(--lime); color: var(--charcoal); font-weight: 600; text-align: center; border-radius: 8px; padding: 8px; }
+
+.main { flex: 1; overflow-y: auto; padding: 14px 14px 90px; }
+.desktop .main { padding: 60px 24px 24px; }
+.main::-webkit-scrollbar { width: 0; }
+
+.tabs { position: absolute; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr); background: #fff; border-top: 1px solid var(--line); }
+.desktop .tabs { display: none; }
+.tabs a { flex-direction: column; gap: 2px; padding: 8px 0 10px; font: 600 10px ui-monospace, Menlo, monospace; color: var(--muted); border-radius: 0; position: relative; }
+.tabs a.on { background: var(--lime); color: var(--charcoal); }
+.tabs a .ic { font-size: 18px; line-height: 1; }
+.tabs a .cnt { position: absolute; top: 4px; right: 18%; background: var(--toss); color: #fff; border-radius: 999px; font-size: 9px; padding: 0 5px; line-height: 14px; }
+
+h2.t { font-size: 20px; font-weight: 600; margin: 0 0 2px; letter-spacing: -.01em; }
+p.lead { margin: 0 0 12px; color: var(--muted); }
+.card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 10px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.grow { flex: 1; min-width: 0; }
+.muted { color: var(--muted); }
+.mono { font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+.micro { font: 600 10px ui-monospace, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 10px; padding: 9px 12px; font: 600 13px ui-monospace, Menlo, monospace; border: 1px solid var(--line); background: #fff; color: var(--fg); cursor: default; }
+.btn.primary { background: var(--charcoal); color: #f4f4ed; border-color: var(--charcoal); }
+.btn.lime { background: var(--lime); color: var(--charcoal); border-color: var(--lime); }
+.btn.ghost { border-color: transparent; color: var(--muted); }
+.btn.sm { padding: 5px 9px; font-size: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 3px 9px; font-size: 12px; border: 1px solid var(--line); background: #fff; white-space: nowrap; }
+.chip.on { background: var(--moss); color: #fff; border-color: var(--moss); }
+.chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.photo { background: linear-gradient(135deg, #cfd8c3, #9fb59a 55%, #6f8a6a); border-radius: 10px; position: relative; overflow: hidden; }
+.photo.sq { aspect-ratio: 1; }
+.photo.wide { aspect-ratio: 4/3; }
+.frame { position: absolute; border: 2px dashed var(--lime); border-radius: 3px; }
+.frame.solid { border-style: solid; border-color: var(--moss); }
+.frame .num { position: absolute; left: -1px; top: -1px; background: var(--lime); color: var(--charcoal); font: 700 10px/16px ui-monospace, Menlo, monospace; padding: 0 5px; border-radius: 0 0 5px 0; }
+.frame.solid .num { background: var(--moss); color: #fff; }
+.frame .lbl { position: absolute; bottom: 100%; left: 0; background: var(--moss); color: #fff; font-size: 10px; padding: 0 4px; border-radius: 3px 3px 0 0; white-space: nowrap; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.desktop .cols { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, .8fr); gap: 16px; align-items: start; }
+.stat { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px; position: relative; }
+.stat .v { font: 600 28px/1 ui-monospace, Menlo, monospace; margin: 4px 0 2px; }
+.stat.hot { border-color: var(--lime); background: linear-gradient(0deg, rgba(210,255,0,.18), #fff); }
+.dec { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.dec .btn { border-width: 2px; background: #fff; }
+.dec .keep { color: var(--keep); border-color: var(--keep); grid-column: span 2; }
+.dec .sell { color: var(--sell); border-color: var(--sell); }
+.dec .donate { color: var(--donate); border-color: var(--donate); }
+.dec .toss { color: var(--toss); border-color: var(--toss); }
+.dec .later { color: var(--later); border-color: var(--later); }
+.input { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: #fff; color: var(--fg); font-size: 13px; }
+.input.ghost { border-color: transparent; padding-left: 2px; font-weight: 600; font-size: 15px; }
+.kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; font-size: 13px; }
+.kv .k { color: var(--muted); }
+.sec { border-top: 1px solid var(--line); padding: 10px 0 2px; margin-top: 10px; }
+.sec .hd { display: flex; align-items: center; gap: 6px; }
+.sec .hd .micro { flex: 1; }
+.sec .hd .chev { color: var(--muted); font-size: 11px; }
+.add { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.add .chip { border-style: dashed; color: var(--muted); }
+.toggle { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); }
+.toggle:first-child { border-top: 0; }
+.sw { width: 34px; height: 20px; border-radius: 999px; background: var(--line); position: relative; }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+.sw.on { background: var(--moss); }
+.sw.on::after { left: 16px; }
+.ring { width: 72px; height: 72px; border-radius: 50%; background: conic-gradient(var(--moss) 0 61%, var(--line) 61% 100%); display: grid; place-items: center; }
+.ring span { background: #fff; width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; font: 600 13px ui-monospace, Menlo, monospace; }
+.undo { text-align: center; color: var(--muted); font-size: 12px; text-decoration: underline; margin-top: 6px; }
+.band { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; border-radius: 12px; padding: 8px 12px; background: rgba(210,255,0,.25); border: 1px solid rgba(40,44,32,.15); font-size: 12px; margin-bottom: 10px; }
+.band b { font-family: ui-monospace, Menlo, monospace; }
+.screenpane { display: none; }
+.screenpane.on { display: block; }
+.desktop .screenpane.on { display: block; }
+.hint { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.list .item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.list .item:first-child { border-top: 0; }
+.thumb { width: 44px; height: 44px; border-radius: 8px; flex-shrink: 0; }
+.dbadge { font: 600 10px ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: .06em; border-radius: 4px; padding: 1px 5px; }
+.dbadge.keep { background: rgba(47,122,69,.14); color: var(--keep); }
+.dbadge.sell { background: rgba(158,106,8,.14); color: var(--sell); }
+.dbadge.none { background: var(--code); color: var(--muted); }
+.cam { width: 120px; height: 120px; border-radius: 50%; border: 6px solid var(--moss); background: #fff; display: grid; place-items: center; margin: 6px auto; }
+.cam span { width: 86px; height: 86px; border-radius: 50%; background: var(--moss); display: grid; place-items: center; color: #fff; font-size: 30px; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; border-radius: 18px 18px 0 0; box-shadow: 0 -10px 40px rgba(0,0,0,.18); padding: 12px 14px 20px; z-index: 10; max-height: 70%; overflow-y: auto; }
+.desktop .sheet { position: static; box-shadow: none; border: 1px solid var(--line); border-radius: 14px; max-height: none; }
+.handle { width: 36px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto 10px; }
+.desktop .handle { display: none; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>HomeBase — alternative shell (mockup)</h1>
+  <p class="sub">One app, three depths. Static mockup; buttons do not call the API. Companion to <code>docs/review-2026-10-16.html</code> (proposals B1–B7).</p>
+
+  <div class="controls">
+    <div><label>Depth</label>
+      <span class="seg" id="depthSeg">
+        <button data-depth="quick" aria-pressed="true">Quick</button>
+        <button data-depth="standard" aria-pressed="false">Standard</button>
+        <button data-depth="detail" aria-pressed="false">Detail</button>
+      </span>
+    </div>
+    <div><label>Device</label>
+      <span class="seg" id="deviceSeg">
+        <button data-device="phone" aria-pressed="true">Phone</button>
+        <button data-device="desktop" aria-pressed="false">Desktop</button>
+      </span>
+    </div>
+    <div><label>Screen</label>
+      <span class="seg" id="screenSeg">
+        <button data-screen="today" aria-pressed="true">Today</button>
+        <button data-screen="snap" aria-pressed="false">Snap</button>
+        <button data-screen="sort" aria-pressed="false">Sort</button>
+        <button data-screen="thing" aria-pressed="false">Thing</button>
+        <button data-screen="places" aria-pressed="false">Places</button>
+        <button data-screen="more" aria-pressed="false">More</button>
+      </span>
+    </div>
+    <div><label>Notes</label>
+      <span class="seg" id="notesSeg">
+        <button data-notes="on" aria-pressed="true">Show</button>
+        <button data-notes="off" aria-pressed="false">Hide</button>
+      </span>
+    </div>
+    <div class="legend"><b>Quick</b> = the five words only (Thing, Place, Photo, Decision, Lens). <b>Standard</b> adds kinds, attributes and documents. <b>Detail</b> adds lenses, plans, views. The same screens; nothing moves.</div>
+  </div>
+
+  <div class="stage">
+    <div class="device phone" id="device">
+      <div class="screen">
+        <div class="app depth-quick" id="app" data-notes="on">
+
+          <!-- desktop rail -->
+          <nav class="rail">
+            <div class="brand">⌂ HomeBase</div>
+            <a class="on" data-go="today">◎ Today</a>
+            <a data-go="snap">◉ Snap</a>
+            <a data-go="sort">☰ Sort <span class="badge">12</span></a>
+            <a data-go="thing">▣ Things</a>
+            <a data-go="places">⌂ Places</a>
+            <div class="group" data-depth="standard">Decide</div>
+            <a data-depth="standard" data-go="today">⚖ Act <span class="badge">7</span></a>
+            <div class="group" data-depth="detail">Lenses</div>
+            <a data-depth="detail" data-go="more">▤ Computer lab</a>
+            <a data-depth="detail" data-go="more">⚡ Energy</a>
+            <div class="group" data-depth="detail">Views</div>
+            <a data-depth="detail" data-go="more">✶ Galaxy · Systems · Storage</a>
+            <a data-depth="detail" data-go="more">≡ Wiki · Activity · Ideas · Tasks</a>
+            <div class="spacer"></div>
+            <a data-go="more">⚙ Settings</a>
+            <div class="ask" data-depth="standard">✦ Ask AI</div>
+          </nav>
+
+          <!-- top bar -->
+          <header class="topbar">
+            <span class="brand" data-depth-max="quick">⌂</span>
+            <span class="pill"><span class="dot"></span> Thuis</span>
+            <span class="pill">📍 Keuken · ground</span>
+            <span class="search" data-depth="standard">Search a Thing, Place or kind…</span>
+            <span class="depth-chip" id="depthChip">quick</span>
+            <span class="n" style="left: 92px; top: -4px;">1</span>
+          </header>
+
+          <main class="main">
+
+            <!-- ============ TODAY ============ -->
+            <section class="screenpane on" data-pane="today">
+              <h2 class="t">Today</h2>
+              <p class="lead">What needs you, in this house. Nothing else.</p>
+              <div class="grid2" style="position:relative">
+                <span class="n" style="left:-6px; top:-6px;">2</span>
+                <div class="stat hot"><div class="micro">To sort</div><div class="v">12</div><div class="muted">photos &amp; notes</div></div>
+                <div class="stat"><div class="micro">To decide</div><div class="v">7</div><div class="muted">keep · sell · …</div></div>
+                <div class="stat" data-depth="standard"><div class="micro">No Place yet</div><div class="v">3</div><div class="muted">Things without a room</div></div>
+                <div class="stat" data-depth="standard"><div class="micro">To check</div><div class="v">2</div><div class="muted">detected by a scan</div></div>
+              </div>
+              <div class="row" style="margin:12px 0 14px; position:relative">
+                <span class="n" style="left:-6px; top:-6px;">3</span>
+                <a class="btn lime grow" data-go="snap">◉ Snap</a>
+                <a class="btn primary grow" data-go="sort">Sort 12</a>
+                <a class="btn grow" data-depth="standard" data-go="today">Decide 7</a>
+              </div>
+              <div class="micro" style="margin-bottom:6px">Recent snaps</div>
+              <div class="grid4" style="margin-bottom:12px">
+                <div class="photo sq"></div><div class="photo sq" style="filter:hue-rotate(20deg)"></div><div class="photo sq" style="filter:hue-rotate(-30deg)"></div><div class="photo sq" style="filter:saturate(.5)"></div>
+              </div>
+              <div data-depth="detail" style="position:relative">
+                <span class="n" style="left:-6px; top:-6px;">4</span>
+                <div class="band"><b>Computer lab</b> <span>26 things</span> <span>23/25 backed up</span> <span style="color:var(--toss); text-decoration:underline">2 without a role</span></div>
+                <div class="band" style="background:rgba(60,93,65,.12)"><b>Energy</b> <span>Sep: 412 kWh in · 188 out</span> <span>self-use 44%</span></div>
+              </div>
+              <div class="card" data-depth="standard">
+                <div class="micro">Progress in Keuken</div>
+                <div class="row" style="margin-top:8px"><div class="ring"><span>61%</span></div><div class="grow"><div>18 of 29 Things decided</div><div class="muted">Sell list 4 · Donate box 2 · Toss run 1</div></div></div>
+              </div>
+            </section>
+
+            <!-- ============ SNAP ============ -->
+            <section class="screenpane" data-pane="snap">
+              <h2 class="t">Snap</h2>
+              <p class="lead">Put it in. Questions come later.</p>
+              <div class="chip on" style="position:relative">📍 Snaps go to <b>&nbsp;Keuken</b> · change <span class="n" style="right:-10px; top:-10px; left:auto;">5</span></div>
+              <div class="cam"><span>◉</span></div>
+              <div class="hint" style="justify-content:center">One photo per Thing, or one of a shelf.</div>
+              <div class="row" style="margin:12px 0"><div class="input grow muted">Or type a note or a link</div><span class="btn primary">➤</span></div>
+              <div class="row" style="background:var(--charcoal); color:#f4f4ed; border-radius:14px; padding:10px 14px"><span class="grow"><b style="color:var(--lime)" class="mono">+3 saved</b> · <b class="mono">12</b> waiting</span><span class="btn lime sm">Sort now</span></div>
+              <div data-depth="standard" class="card" style="margin-top:10px; position:relative">
+                <span class="n" style="left:-6px; top:-6px;">6</span>
+                <div class="micro">Also accepts</div>
+                <div class="muted" style="margin-top:4px">A floor scan (.geojson / RoomPlan), a PDF, a voice note. Telegram and the iOS app land here too.</div>
+              </div>
+            </section>
+
+            <!-- ============ SORT ============ -->
+            <section class="screenpane" data-pane="sort">
+              <div class="cols">
+              <div>
+              <div class="chips" style="margin-bottom:8px; position:relative">
+                <span class="n" style="left:-6px; top:-8px;">7</span>
+                <span class="chip on">All <b class="mono">12</b></span><span class="chip">Photos <b class="mono">9</b></span><span class="chip" data-depth="standard">Check <b class="mono">2</b></span><span class="chip" data-depth="standard">Place <b class="mono">1</b></span><span class="chip" data-depth="detail">Lab <b class="mono">2</b></span>
+              </div>
+              <div class="card">
+                <div class="row"><span class="grow" style="font:700 16px ui-monospace, Menlo, monospace">What is it?</span><span class="muted" style="text-decoration:underline">skip</span></div>
+                <div class="photo wide" style="margin:8px 0; position:relative">
+                  <div class="frame" style="left:12%; top:18%; width:30%; height:36%"><span class="num">1</span></div>
+                  <div class="frame" style="left:50%; top:30%; width:22%; height:28%"><span class="num">2</span></div>
+                  <div class="frame solid" style="left:70%; top:62%; width:22%; height:26%"><span class="num">3</span><span class="lbl">Waterkoker</span></div>
+                  <span class="n" style="right:8px; top:8px; left:auto;">8</span>
+                </div>
+                <div class="muted" style="font-size:12px; margin-bottom:6px">A kitchen counter with small appliances. Already in the inventory: Waterkoker (3).</div>
+                <div class="card" style="border-color:var(--moss); padding:8px; margin-bottom:6px">
+                  <div class="row"><input type="checkbox" checked disabled><span class="chip" style="background:var(--lime); border-color:var(--lime)" ><b class="mono">1</b></span><div class="grow"><div class="input ghost">Theepot</div><div class="row" data-depth="standard"><span class="chip">Kitchen ▾</span><span class="chip" data-depth="detail">brand: Bodum</span></div></div></div>
+                </div>
+                <div class="card" style="border-color:var(--moss); padding:8px; margin-bottom:6px">
+                  <div class="row"><input type="checkbox" checked disabled><span class="chip" style="background:var(--lime); border-color:var(--lime)"><b class="mono">2</b></span><div class="grow"><div class="input ghost">Broodrooster</div><div class="row" data-depth="standard"><span class="chip">Kitchen ▾</span></div></div></div>
+                </div>
+                <div class="row" style="margin:6px 0"><div class="input grow muted">Add another thing</div><span class="btn sm">+</span></div>
+                <div class="row" style="background:var(--code); border-radius:10px; padding:8px 10px; margin-bottom:8px"><span>📍</span><span class="grow">Keuken · ground</span><span class="muted" style="text-decoration:underline">change</span></div>
+                <div class="row"><span class="btn primary grow">File 2 things</span><span class="btn">✕ Not a thing</span></div>
+                <div class="hint" style="margin-top:8px; position:relative" data-depth="standard"><span class="n" style="left:-6px; top:-6px;">9</span>✦ Looked at by AI 40 s after the snap. Tap a frame to toggle its row.</div>
+              </div>
+              <div class="muted mono" style="text-align:center">12 left in this list</div>
+              </div>
+              <div data-depth="standard" class="card" style="margin-top:0">
+                <div class="micro">Pick a Photo</div>
+                <div class="grid4" style="margin-top:6px"><div class="photo sq" style="outline:2px solid var(--moss)"></div><div class="photo sq" style="filter:hue-rotate(20deg)"></div><div class="photo sq" style="filter:hue-rotate(-30deg)"></div><div class="photo sq" style="filter:saturate(.5)"></div></div>
+                <div class="hint" style="margin-top:8px">Skipped cards go to the back of the line.</div>
+              </div>
+              </div>
+            </section>
+
+            <!-- ============ THING ============ -->
+            <section class="screenpane" data-pane="thing">
+              <div class="cols">
+              <div>
+              <div class="row" style="margin-bottom:8px"><span class="muted">‹ Things</span><span class="grow"></span><span class="chip" data-depth="standard">✎ Edit</span></div>
+              <div class="card" style="position:relative">
+                <span class="n" style="left:-6px; top:-6px;">10</span>
+                <div class="row">
+                  <div class="photo thumb" style="width:72px; height:72px"></div>
+                  <div class="grow">
+                    <div style="font-size:18px; font-weight:600; line-height:1.15">Theepot</div>
+                    <div class="muted">Kitchen · 📍 Keuken · ground</div>
+                    <div class="row" style="margin-top:6px; gap:6px"><span class="dbadge keep">keep</span><span class="chip" data-depth="standard">2 photos</span><span class="chip" data-depth="detail">on the plan</span></div>
+                  </div>
+                </div>
+                <div class="dec" style="margin-top:10px"><span class="btn keep">Keep</span><span class="btn sell">Sell</span><span class="btn donate">Donate</span><span class="btn toss">Toss</span><span class="btn later">Later</span></div>
+                <div class="sec" data-depth="standard">
+                  <div class="hd"><span class="micro">Note</span><span class="chev">▾</span></div>
+                  <div>Bodum glass pot, lid chipped. Came with the French press set.</div>
+                </div>
+                <div class="sec" data-depth="standard" style="position:relative">
+                  <span class="n" style="left:-6px; top:4px;">11</span>
+                  <div class="hd"><span class="micro">Details</span><span class="chev">▾</span></div>
+                  <div class="kv"><span class="k">brand</span><span>Bodum</span><span class="k">bought</span><span>2019-05</span></div>
+                </div>
+                <div class="sec" data-depth="standard">
+                  <div class="hd"><span class="micro">Photos</span><span class="muted">2</span><span class="chev">▾</span></div>
+                  <div class="grid4" style="margin-top:6px"><div class="photo sq"></div><div class="photo sq" style="filter:hue-rotate(30deg)"></div></div>
+                </div>
+                <div class="sec" data-depth="detail">
+                  <div class="hd"><span class="micro">Seen in</span><span class="muted">1 room photo</span><span class="chev">▸</span></div>
+                </div>
+                <div class="sec" data-depth="detail">
+                  <div class="hd"><span class="micro">Relations</span><span class="muted">1</span><span class="chev">▸</span></div>
+                </div>
+                <div class="sec" data-depth="detail">
+                  <div class="hd"><span class="micro">History</span><span class="muted">6</span><span class="chev">▸</span></div>
+                </div>
+                <div class="add" data-depth="standard" style="position:relative">
+                  <span class="n" style="left:-6px; top:-6px;">12</span>
+                  <span class="chip">+ detail</span><span class="chip">+ photo</span><span class="chip">+ document</span><span class="chip" data-depth="detail">+ relation</span><span class="chip" data-depth="detail">+ task</span><span class="chip" data-depth="detail">+ on the plan</span><span class="chip" data-depth="detail">+ sub-object</span>
+                </div>
+              </div>
+              <div class="card" data-depth="detail" style="position:relative">
+                <span class="n" style="left:-6px; top:-6px;">13</span>
+                <div class="row"><span class="micro grow">Lens · Computer lab</span><span class="muted">only for a device</span></div>
+                <div class="muted" style="margin-top:4px">A Thing with a device role shows role, brand, model, serial, backup and storage volumes here. A teapot shows nothing.</div>
+              </div>
+              </div>
+              <div data-depth="standard" class="card">
+                <div class="micro">Place</div>
+                <div class="photo wide" style="margin-top:6px; position:relative"><div class="frame solid" style="left:40%; top:30%; width:26%; height:40%"><span class="num">1</span><span class="lbl">Theepot</span></div></div>
+                <div class="hint" style="margin-top:6px">Keuken · the frame on the room photo. <span data-depth="detail">Plan: 2D/3D one tap away.</span></div>
+              </div>
+              </div>
+            </section>
+
+            <!-- ============ PLACES ============ -->
+            <section class="screenpane" data-pane="places">
+              <h2 class="t">Places</h2>
+              <p class="lead">Room first. Frames on the room photo are the Things.</p>
+              <div class="chips" style="margin-bottom:10px"><span class="chip on">Keuken <b class="mono">29</b></span><span class="chip">Woonkamer <b class="mono">41</b></span><span class="chip">Zolder <b class="mono">88</b></span><span class="chip">Schuur <b class="mono">12</b></span><span class="chip" style="border-style:dashed">+ room</span></div>
+              <div class="cols">
+              <div>
+              <div class="photo wide" style="position:relative">
+                <span class="n" style="right:8px; top:8px; left:auto;">14</span>
+                <div class="frame solid" style="left:10%; top:20%; width:22%; height:30%"><span class="num">1</span></div>
+                <div class="frame solid" style="left:38%; top:34%; width:20%; height:26%"><span class="num">2</span></div>
+                <div class="frame" style="left:64%; top:22%; width:26%; height:40%"><span class="num">3</span></div>
+                <div class="frame" style="left:70%; top:68%; width:18%; height:22%"><span class="num">4</span></div>
+              </div>
+              <div class="row" style="margin:8px 0"><span class="hint grow">Draw a box to add a frame.</span><span class="btn sm" data-depth="standard">✦ Find frames</span><span class="btn sm" data-depth="detail">Plan ▸</span></div>
+              </div>
+              <div class="card list">
+                <div class="row" style="margin-bottom:4px"><span class="chip on">Unhandled <b class="mono">2</b></span><span class="chip">All <b class="mono">4</b></span></div>
+                <div class="item"><span class="chip" style="background:var(--lime); border-color:var(--lime)"><b class="mono">3</b></span><div class="grow"><div>Frame 3</div><div class="muted" style="font-size:12px">needs a name or a decision</div></div></div>
+                <div class="item"><span class="chip" style="background:var(--lime); border-color:var(--lime)"><b class="mono">4</b></span><div class="grow"><div>Frame 4</div><div class="muted" style="font-size:12px">needs a name or a decision</div></div></div>
+                <div class="item" data-depth="standard"><span class="chip"><b class="mono">1</b></span><div class="grow"><div>Theepot</div><div class="muted" style="font-size:12px">keep</div></div></div>
+                <div class="item" data-depth="standard"><span class="chip"><b class="mono">2</b></span><div class="grow"><div>Waterkoker</div><div class="muted" style="font-size:12px">sell · €15</div></div></div>
+              </div>
+              </div>
+              <!-- thin sheet -->
+              <div class="sheet" style="position:relative; margin-top:10px">
+                <span class="n" style="left:-6px; top:-6px;">15</span>
+                <div class="handle"></div>
+                <div class="row"><span style="font:600 15px ui-monospace, Menlo, monospace" class="grow">Frame 3</span><span class="muted">✕</span></div>
+                <div class="input ghost" style="margin-top:4px">Frame 3</div>
+                <div class="row" style="margin-top:6px" data-depth="standard"><span class="chip">Kitchen ▾</span><span class="chip on">📍 this Place</span></div>
+                <div class="dec" style="margin-top:8px"><span class="btn keep">Keep</span><span class="btn sell">Sell</span><span class="btn donate">Donate</span><span class="btn toss">Toss</span><span class="btn later">Later</span></div>
+                <div class="row" style="margin-top:8px"><span class="btn primary">✓ Admit</span><span class="btn ghost">Hide</span><span class="grow"></span><span class="muted" data-depth="standard">Full Thing →</span></div>
+              </div>
+            </section>
+
+            <!-- ============ MORE / SETTINGS ============ -->
+            <section class="screenpane" data-pane="more">
+              <h2 class="t">More</h2>
+              <p class="lead">Depth, lenses and views are switches, not separate apps.</p>
+              <div class="card" style="position:relative">
+                <span class="n" style="left:-6px; top:-6px;">16</span>
+                <div class="micro">Depth</div>
+                <div class="row" style="margin-top:6px"><span class="chip" id="moreQuick">Quick</span><span class="chip" id="moreStd">Standard</span><span class="chip" id="moreDet">Detail</span></div>
+                <div class="hint" style="margin-top:6px">Per device, remembered. Flow, the iOS app and the Workbench read the same setting names.</div>
+              </div>
+              <div class="card">
+                <div class="micro">Lenses</div>
+                <div class="toggle"><div><div>Computer lab</div><div class="muted" style="font-size:12px">roles, backups, storage volumes, services</div></div><span class="sw on"></span></div>
+                <div class="toggle"><div><div>Energy</div><div class="muted" style="font-size:12px">meters, tariffs, monthly kWh</div></div><span class="sw on"></span></div>
+                <div class="toggle"><div><div>Spatial</div><div class="muted" style="font-size:12px">room plans 2D/3D, scans, snap to wall, cameras</div></div><span class="sw"></span></div>
+              </div>
+              <div class="card">
+                <div class="micro">Views</div>
+                <div class="toggle"><div>Galaxy</div><span class="sw"></span></div>
+                <div class="toggle"><div>Systems</div><span class="sw on"></span></div>
+                <div class="toggle"><div>Storage</div><span class="sw on"></span></div>
+                <div class="toggle"><div>Ideas · Tasks · Wiki</div><span class="sw"></span></div>
+                <div class="toggle"><div>Activity</div><span class="sw on"></span></div>
+              </div>
+              <div class="card">
+                <div class="micro">AI</div>
+                <div class="toggle"><div><div>Look at new snaps automatically</div><div class="muted" style="font-size:12px">pre-fills the Sort card; off = tap "Ask AI"</div></div><span class="sw on"></span></div>
+                <div class="toggle" data-depth="detail"><div><div>Provider A/B compare</div><div class="muted" style="font-size:12px">adds the A/B button to Sort cards</div></div><span class="sw"></span></div>
+                <div class="toggle"><div>Provider</div><span class="muted">xAI Grok · configured</span></div>
+              </div>
+              <div class="card"><div class="micro">Houses &amp; links</div><div class="toggle"><div>Thuis · Kantoor · Schuur</div><span class="muted">edit</span></div><div class="toggle" data-depth="detail"><div>External links (Meterkast, fleet page)</div><span class="muted">edit</span></div></div>
+            </section>
+
+          </main>
+
+          <!-- phone tabs -->
+          <nav class="tabs">
+            <a class="on" data-go="today"><span class="ic">◎</span>Today</a>
+            <a data-go="snap"><span class="ic">◉</span>Snap</a>
+            <a data-go="sort"><span class="ic">☰</span>Sort<span class="cnt">12</span></a>
+            <a data-go="thing"><span class="ic">▣</span>Things</a>
+            <a data-go="places"><span class="ic">⌂</span>Places</a>
+          </nav>
+        </div>
+      </div>
+    </div>
+
+    <aside class="notes-panel">
+      <h2>What the numbers mean</h2>
+      <ol>
+        <li><b>1</b> One top bar on every client: house, where-you-are Place, search (Standard+), and the depth chip. Replaces the Simple/Advanced toggle, the Flow header and the Workbench sidebar header.</li>
+        <li><b>2</b> <em>Today</em> replaces the Dashboard. Its four counters come from one server procedure (<code>items.queue</code>, proposal C1) so Flow, iOS and the Workbench never disagree on "what needs me".</li>
+        <li><b>3</b> Three verbs, biggest first. Act is a Standard-depth verb: at Quick depth the decision is taken on the Thing or in the Place sheet.</li>
+        <li><b>4</b> Lens bands appear only at Detail depth and only for a house that has lens data.</li>
+        <li><b>5</b> Snap keeps the Flow design. The Place default is stored server-side on the capture (C3) instead of in <code>localStorage</code>, so a snap from the phone is already placed on the desktop.</li>
+        <li><b>6</b> Scans, PDFs and voice are explained but not promoted; they share the same drop.</li>
+        <li><b>7</b> Sort filters are the Flow ones; Check/Place show at Standard, Lab at Detail.</li>
+        <li><b>8</b> The numbered frames are the existing Sort-frame convention (lime dashed = new, moss solid = matched).</li>
+        <li><b>9</b> Triage runs in the background after a snap (G1) when the switch in More is on, so the card is pre-filled by the time you open it. At Quick depth a row is a name only; Standard shows the kind; Detail shows attributes inline.</li>
+        <li><b>10</b> The Thing header is fixed: photo, name, kind · Place, decision badge, the five decision buttons. This is the whole Thing page at Quick depth.</li>
+        <li><b>11</b> Every other section is a disclosure: hidden when empty, collapsed by default, remembered per device. The 1548-line <code>ItemDetail</code> becomes a list of small section components.</li>
+        <li><b>12</b> "Add" chips are how the detailed process starts: one tap opens the section with its editor. Nothing is a separate page.</li>
+        <li><b>13</b> A lens block is a plug-in section: shown at Detail depth and only when the Thing's attributes make it relevant (a device role, a meter kind).</li>
+        <li><b>14</b> Places is the existing Focus page, promoted to a first-class tab. "Find frames" is Standard; the 2D/3D plan is Detail.</li>
+        <li><b>15</b> The thin sheet stays: name, (kind, Place at Standard), decision, Admit. Topic is no longer required to admit (A2): it defaults to the house's default kind.</li>
+        <li><b>16</b> Depth, lenses, views and AI switches live in one place and are stored on the server (<code>settings</code>) so all four clients agree.</li>
+      </ol>
+    </aside>
+  </div>
+</div>
+
+<script>
+(() => {
+  const app = document.getElementById('app');
+  const device = document.getElementById('device');
+  const chip = document.getElementById('depthChip');
+  const seg = (id, attr, fn) => {
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      for (const x of el.querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b));
+      fn(b.dataset[attr]);
+    });
+  };
+  const setDepth = (d) => {
+    app.classList.remove('depth-quick', 'depth-standard', 'depth-detail');
+    app.classList.add('depth-' + d);
+    chip.textContent = d;
+    for (const [id, k] of [['moreQuick','quick'],['moreStd','standard'],['moreDet','detail']]) document.getElementById(id).classList.toggle('on', k === d);
+    for (const x of document.querySelectorAll('#depthSeg button')) x.setAttribute('aria-pressed', String(x.dataset.depth === d));
+  };
+  const setScreen = (s) => {
+    for (const p of app.querySelectorAll('.screenpane')) p.classList.toggle('on', p.dataset.pane === s);
+    for (const a of app.querySelectorAll('[data-go]')) a.classList.toggle('on', a.dataset.go === s && a.closest('nav'));
+    for (const x of document.querySelectorAll('#screenSeg button')) x.setAttribute('aria-pressed', String(x.dataset.screen === s));
+    app.querySelector('.main').scrollTop = 0;
+  };
+  seg('depthSeg', 'depth', setDepth);
+  seg('deviceSeg', 'device', (d) => { device.classList.remove('phone', 'desktop'); device.classList.add(d); });
+  seg('screenSeg', 'screen', setScreen);
+  seg('notesSeg', 'notes', (n) => app.dataset.notes = n);
+  app.addEventListener('click', (e) => { const a = e.target.closest('[data-go]'); if (a) setScreen(a.dataset.go); });
+  for (const [id, k] of [['moreQuick','quick'],['moreStd','standard'],['moreDet','detail']]) document.getElementById(id).addEventListener('click', () => setDepth(k));
+  setDepth('quick');
+})();
+</script>
+</body>
+</html>

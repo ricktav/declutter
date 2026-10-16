@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HomeBase review, 2026-10-16 — minimal start, detailed when needed</title>
+<style>
+:root { --bg: #f6f6f1; --fg: #23261c; --muted: #5f6452; --line: #d5d9cd; --card: #ffffff; --accent: #3c5d41; --code: #eceee5; --lime: #d2ff00; --charcoal: #282c20; --ok: #2F7A45; --no: #AD432B; --talk: #9E6A08; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #1b1d16; --fg: #e8eadf; --muted: #a9ae9a; --line: #3a3f2e; --card: #23261c; --accent: #b8d98a; --code: #2c3024; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 960px; margin: 0 auto; padding: 32px 16px 96px; }
+h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; }
+h2 { font-size: 20px; margin: 40px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+h3 { font-size: 16px; margin: 24px 0 8px; }
+p, li { color: var(--fg); }
+a { color: var(--accent); }
+code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; overflow-wrap: anywhere; }
+table { display: block; overflow-x: auto; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+th { background: var(--card); }
+blockquote { margin: 12px 0; padding: 4px 14px; border-left: 3px solid var(--accent); color: var(--muted); }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 14px 0; }
+.kpi div { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.kpi b { display: block; font: 600 22px/1.1 ui-monospace, Menlo, monospace; margin-bottom: 2px; }
+.kpi span { font-size: 12px; color: var(--muted); }
+
+/* toolbar */
+.bar { position: sticky; top: 0; z-index: 10; background: var(--bg); border-bottom: 1px solid var(--line); padding: 8px 0; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 13px; }
+.bar .counts { display: flex; gap: 10px; }
+.bar .counts span { padding: 2px 8px; border-radius: 999px; background: var(--code); font-family: ui-monospace, Menlo, monospace; }
+.bar .counts .ok { color: var(--ok); } .bar .counts .no { color: var(--no); } .bar .counts .talk { color: var(--talk); }
+.bar button, .bar select { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+.bar button.primary { background: var(--charcoal); color: #f4f4ed; border-color: var(--charcoal); }
+.bar .grow { flex: 1; }
+
+/* proposal cards */
+.item { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 12px 0; }
+.item.hidden { display: none; }
+.item[data-decision="accept"] { border-left: 4px solid var(--ok); }
+.item[data-decision="reject"] { border-left: 4px solid var(--no); opacity: .75; }
+.item[data-decision="discuss"] { border-left: 4px solid var(--talk); }
+.item .hd { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.item .id { font: 700 12px ui-monospace, Menlo, monospace; background: var(--lime); color: var(--charcoal); padding: 1px 6px; border-radius: 4px; }
+.item .title { font-weight: 600; font-size: 16px; flex: 1; }
+.tag { font: 600 10px/1 ui-monospace, Menlo, monospace; letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; color: var(--muted); white-space: nowrap; }
+.tag.s { color: var(--ok); border-color: var(--ok); } .tag.m { color: var(--talk); border-color: var(--talk); } .tag.l { color: var(--no); border-color: var(--no); }
+.tag.flow { background: rgba(210,255,0,.3); color: var(--charcoal); border-color: transparent; }
+.item .body { margin-top: 8px; font-size: 14.5px; }
+.item .body p { margin: 6px 0; }
+.item .body .lbl { font: 600 10px/1 ui-monospace, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: block; margin-top: 10px; }
+.decide { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px; }
+.decide label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; padding: 3px 8px; border-radius: 6px; border: 1px solid transparent; }
+.decide label:has(input:checked) { border-color: var(--line); background: var(--code); }
+.decide input[type="radio"] { accent-color: var(--accent); margin: 0; }
+.decide .note { flex: 1 1 240px; font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); min-width: 200px; }
+.phase { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin: 10px 0; }
+.phase h3 { margin: 0 0 6px; }
+#exportOut { width: 100%; min-height: 220px; font: 12.5px/1.45 ui-monospace, Menlo, monospace; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--fg); }
+.ok-text { color: var(--ok); } .no-text { color: var(--no); }
+details summary { cursor: pointer; color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<h1>HomeBase review — a minimal start, detail when you need it</h1>
+<p class="muted">2026-10-16 · reviewed at <code>main</code> fbb0719 · a proposal, not a change. Nothing in the app was modified. The companion mockup is <a href="mockup-2026-10-16.html">docs/mockup-2026-10-16.html</a>.</p>
+
+<blockquote>
+<p><b>How to use this page.</b> Every proposal has <b>Accept</b>, <b>Reject</b> and <b>Discuss</b> and a note. Choices are saved in this browser as you click. When you are done, press <b>Export decisions</b> at the bottom (or in the bar) and paste the result into a chat or an issue; that text is enough for a session to start on exactly what you accepted. <b>Reset</b> clears everything.</p>
+</blockquote>
+
+<div class="bar" id="bar">
+  <div class="counts"><span class="ok" id="cAccept">0 accepted</span><span class="no" id="cReject">0 rejected</span><span class="talk" id="cDiscuss">0 discuss</span><span id="cOpen">0 open</span></div>
+  <div class="grow"></div>
+  <select id="filter"><option value="all">Show all</option><option value="open">Open only</option><option value="accept">Accepted</option><option value="reject">Rejected</option><option value="discuss">Discuss</option></select>
+  <button id="btnExportTop">Export decisions</button>
+  <button id="btnReset">Reset</button>
+</div>
+
+<h2>1. What HomeBase is, as the code tells it</h2>
+<p>A single-user home-inventory system for several houses. The core loop is <em>register all, act later</em>: <b>Snap</b> a photo or note into the inbox, <b>Sort</b> it (what is it, is it right, where is it), <b>Act</b> (keep, sell, donate, toss, later), <b>Gone</b>. Around that core, lenses add a field of work on the same Things: the <b>Computer lab</b> (device roles, backups, storage volumes, services, VMs, containers), <b>Energy</b> (meters, tariffs, monthly kWh), and a <b>Spatial</b> twin (LiDAR and GeoJSON room scans, 2D/3D plans, snap to wall, photo cameras). A third ring holds personal-knowledge tools: Ideas, Tasks with timers, a generated Wiki, an Ask-AI chat, a Galaxy bubble view, a Systems mind map and an Activity log.</p>
+<p>Four clients share one tRPC API and one MySQL database: the desktop <b>Workbench</b> (<code>/</code>, 16 routes), the phone-first <b>Flow</b> (<code>/flow/</code>, 4 tabs), a native <b>iOS</b> app (7.9k lines of Swift), and the Computer Lab adapter. Collectors (Telegram bot, storage, services, energy) write through the same API. 339 commits landed between 2026-09-27 and 2026-10-15, most of them by agent sessions working in parallel; <code>AGENTS.md</code> freezes the contracts those clients depend on.</p>
+
+<div class="kpi">
+  <div><b>25.6k</b><span>front-end lines (src/)</span></div>
+  <div><b>14.3k</b><span>API lines (api/, excl. tests)</span></div>
+  <div><b>7.9k</b><span>iOS Swift</span></div>
+  <div><b>~130</b><span>tRPC procedures, 20 routers</span></div>
+  <div><b>381</b><span>API tests in 38 files</span></div>
+  <div><b>0</b><span>front-end tests</span></div>
+</div>
+
+<h3>Where the weight sits</h3>
+<table>
+<tr><th>Subsystem</th><th>Approx. lines</th><th>Note</th></tr>
+<tr><td>Core: Things, Places, Photos, pins, inbox, decisions (API + Workbench + Flow)</td><td>~15k</td><td>The product.</td></tr>
+<tr><td>Systems lens: services collectors + Systems/Storage pages</td><td>~9k</td><td><code>api/lib/services*.ts</code> is 5.0k lines of HTML/CLI parsers used only by scripts and tests, not by the API at runtime (only <code>api/lib/services.ts</code> is imported by a router).</td></tr>
+<tr><td>Spatial twin: scans, plans, snap to wall, cameras</td><td>~3.3k</td><td>Mature, well tested (roomScans, scanMerge, placement, snapToWall).</td></tr>
+<tr><td>Energy lens</td><td>~1.3k API + 0.5k Flow</td><td>Clean, measurement-only, good contract discipline.</td></tr>
+<tr><td>Ideas / Tasks / Wiki / Ask AI</td><td>~1.1k</td><td>Loosely coupled to the core; already hidden from the nav when empty.</td></tr>
+<tr><td>iOS app</td><td>7.9k</td><td>Re-implements the Flow rules in Swift (<code>FlowLogic.swift</code>).</td></tr>
+</table>
+<p class="small muted">Roughly a third of the application code is lens and view code. That is not a problem in itself; it is a problem when it sits in the same navigation, the same bundle and the same first-run experience as the core.</p>
+
+<h2>2. Diagnosis</h2>
+<h3>What already serves "minimal start"</h3>
+<ul>
+<li>Flow's Snap tab asks nothing (<code>src/flow/SnapTab.tsx</code>); Sort and Act are one card at a time with <em>skip</em>; "Later" returns after seven days. This is the right loop.</li>
+<li>Focus (<code>src/pages/Focus.tsx</code>) is room-first: numbered frames on a room photo, a thin sheet with name, topic, Place, decision. Temporary names like "Frame 3" are allowed.</li>
+<li>Nav entries for Ideas and Tasks appear only when there is data (<code>Layout.tsx:206-217</code>); heavy pages are lazy-loaded (<code>App.tsx:20-25</code>).</li>
+<li><code>rooms.ensure</code> creates a room on the fly; <code>x-house-id</code> scopes every list; the API works without an LLM configured.</li>
+<li>The API is transactional where it matters (<code>items.create</code>, <code>inbox.acceptMany</code>, scans), with an append-only event log and a good test seam.</li>
+</ul>
+
+<h3>What fights it</h3>
+<ol>
+<li><b>Three "simple" front doors, no single home.</b> Workbench Simple mode, Workbench Focus, Flow and the iOS app all implement a thin loop. Simple mode is only a nav filter plus a redirect to <code>/focus</code> (<code>Layout.tsx:155-223</code>); the Dashboard stays an admin page (house dialogs, topic creation, PDOK parcel lookup: <code>Dashboard.tsx</code>, 708 lines).</li>
+<li><b>The rules for "what needs me" live in three places and already differ.</b> <code>needsCheck</code> / <code>isUnplaced</code> / <code>needsDecision</code> with <code>LATER_DAYS = 7</code> exist in <code>src/flow/data.ts:23-36</code> and <code>ios/…/FlowLogic.swift:6-36</code>; Focus has its own <code>isUnhandledItem</code> (<code>Focus.tsx:56-58</code>) that ignores the seven-day rule. The Dashboard counts a fourth way. Every new client copies the rules again.</li>
+<li><b>A Thing cannot exist without a Topic and a fresh database cannot make a Thing at all.</b> <code>items.areaId</code> is <code>notNull</code>; Focus refuses to admit a frame without a topic (<code>Focus.tsx:252</code>); an empty database greets you with "run <code>npx tsx db/seed.ts</code>" (<code>Dashboard.tsx:654-661</code>) and a house must exist before a room can.</li>
+<li><b>Lenses and views are always on.</b> Galaxy, Systems, Storage, Wiki, Activity, Meterkast↗ and Flow↗ sit in the sidebar of every install; A/B provider compare is a button on every inbox card (<code>Inbox.tsx:674-692</code>); a 5k-line collector library ships in <code>api/lib</code>; <code>@huggingface/transformers</code> (ONNX runtime) is a production dependency for <code>localDetector.ts</code>, which only a script imports.</li>
+<li><b>Monoliths.</b> <code>ItemDetail.tsx</code> 1548 lines, <code>Annotate.tsx</code> 1371, <code>Inbox.tsx</code> 1323, <code>RoomPlan.tsx</code> 1286, <code>api/routers/inbox.ts</code> 1166, <code>Systems.tsx</code> 987. ItemDetail shows every section to every Thing; a teapot gets Relations, Tasks, Linked ideas, sub-objects and History whether or not any exist.</li>
+<li><b>Duplication.</b> <code>DECISIONS</code> is defined twice (<code>Focus.tsx:36</code>, <code>flow/data.ts:13</code>), <code>AREA_ICONS</code> four times (<code>Layout</code>, <code>Dashboard</code>, <code>Galaxy</code>, <code>lib/areaStyle.ts</code>), <code>nameScore</code> twice (<code>items.ts:18</code>, <code>inbox.ts:50</code>), object detection twice (<code>pins.detect</code>, <code>inbox.detectObjects</code>), cutout creation three times (<code>inbox.fileObject</code>, <code>inbox.acceptMany</code>, <code>photos.createCutout</code>). 98 hard-coded colour literals (<code>#d2ff00</code>, <code>#282c20</code>, <code>#3C5D41</code>…) in 21 files instead of theme tokens. Lens fields are declared in <code>src/flow/lenses.ts</code> <em>and</em> in <code>areas.attributeDefs</code> (<code>db/seed.ts</code>).</li>
+<li><b>State that should be shared is per device.</b> Depth (<code>workbenchMode</code>), the Flow lens, the snap Place (<code>flow.snapPlace</code>), skipped cards, hide-handled and topic favourites all live in <code>localStorage</code>, so a phone and a desktop disagree, and the iOS app cannot see them.</li>
+<li><b>Small API hygiene.</b> 17 <code>throw new Error(...)</code> in routers (500s instead of 4xx), e.g. <code>items.setDecision</code> (<code>items.ts:509</code>) and <code>inbox.triage</code> (<code>inbox.ts:365</code>); <code>items.search</code> loads every item and filters in JS (<code>items.ts:880-888</code>); triage sends up to 200 item names from <em>all</em> houses in every prompt (<code>inbox.ts:118-125</code>); no foreign keys in the schema (integrity lives in <code>deleteItemTx</code>); <code>items.create</code> fires a background LLM call after every human create (<code>items.ts:275-329</code>).</li>
+</ol>
+
+<h2>3. The shape of the proposal</h2>
+<p><b>One app, three depths, one queue.</b> Keep the data model (it is sound after the rooms and photos consolidations). Keep Flow and the iOS app as they are until the shared pieces exist. Then:</p>
+<ul>
+<li><b>Depth</b> replaces Simple/Advanced: <em>Quick</em> shows only the five product words; <em>Standard</em> adds kinds, attributes, documents; <em>Detail</em> adds lenses, plans and views. Same screens at every depth; sections appear, nothing moves.</li>
+<li><b>One server-side work queue</b> (<code>items.queue</code>) defines "to sort / to check / to place / to decide" once, for every client.</li>
+<li><b>Lenses and views become switches</b> stored on the server, off by default on a fresh install, and modules in the code (fields, queue rules, Thing sections, nav) rather than pages that know about each other.</li>
+<li><b>A Thing needs nothing but a photo or a name</b> to exist; the Sort queue asks for the rest.</li>
+</ul>
+<p>The mockup shows what that looks like on a phone and on a desktop. The proposals below are the steps; they are independent unless a dependency is named.</p>
+
+<p class="small muted">Tags: <span class="tag s">S</span> small (one session, one file or two) · <span class="tag m">M</span> medium (a few files, a test) · <span class="tag l">L</span> large (several sessions or a product decision) · <span class="tag flow">needs Flow</span> touches <code>src/flow/</code> or <code>flow/</code>, which AGENTS.md reserves for the declutter-flow session · <span class="tag">schema</span> a migration · <span class="tag">contract+</span> adds to an AGENTS.md contract, breaks nothing.</p>
+
+<!-- ============================ A ============================ -->
+<h2>A. Start minimal</h2>
+
+<div class="item" data-id="A1">
+  <div class="hd"><span class="id">A1</span><span class="title">First run creates a house and a default kind; no seed script</span><span class="tag s">S</span><span class="tag">API</span><span class="tag">Workbench</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>An empty database shows "No topics yet — run <code>npx tsx db/seed.ts</code>" (<code>Dashboard.tsx:654-661</code>); a room cannot be made without a house (<code>rooms.ensure</code> requires one); the seed creates seven topics with a computers schema most users never need.</p>
+    <span class="lbl">Proposal</span><p>On boot (or on the first <code>houses.list</code> / <code>areas.list</code> call) the API creates house "Home" and topic "Things" when both tables are empty, and marks that in <code>settings</code>. The Workbench shows a three-step first-run card instead of the seed hint: name your house → optional address → snap your first photo. The seed script stays for the computer-lab schema, run on demand from Settings (D2).</p>
+    <span class="lbl">Why</span><p>Minute one becomes a snap, not a terminal.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="A2">
+  <div class="hd"><span class="id">A2</span><span class="title">A Thing does not need a Topic to exist</span><span class="tag s">S</span><span class="tag">API</span><span class="tag">contract+</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>items.areaId</code> is <code>notNull</code> (<code>db/schema.ts:64</code>); <code>items.create</code> and <code>inbox.acceptMany</code> require <code>areaId</code>; Focus says "Pick a topic before admitting this frame." (<code>Focus.tsx:252</code>). Flow quietly defaults to the first topic (<code>SortTab.tsx:350</code>), which is a different answer to the same question.</p>
+    <span class="lbl">Proposal</span><p>No schema change: the server keeps a default topic per install (the "Things" topic from A1, <code>settings.defaultAreaId</code>) and uses it when <code>areaId</code> is omitted in <code>items.create</code> and <code>acceptMany</code> items. Clients drop the required-topic validation; a Thing on the default topic appears in the Sort queue as "needs a kind" only at Standard depth (C1). Making the column nullable is the cleaner long-term answer but needs a migration and every client; not now.</p>
+    <span class="lbl">Why</span><p>Topic is a Standard-depth concept. Quick depth has Thing, Place, Photo, Decision.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="A3">
+  <div class="hd"><span class="id">A3</span><span class="title">Snap stores its Place on the server, not in the phone</span><span class="tag s">S</span><span class="tag">API</span><span class="tag flow">needs Flow</span><span class="tag">iOS</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Flow remembers where a snap was taken in <code>localStorage</code> (<code>flow.snapPlace</code>, <code>src/flow/data.ts:72-96</code>) "because the capture table has no place column". Since then <code>captures.houseId</code> exists (migration 0013) and a capture's Place lives on its location Photo (<code>photos.setRoom</code>, <code>inbox.assignPlace</code>). The Workbench inbox and the iOS app never see the phone's default.</p>
+    <span class="lbl">Proposal</span><p><code>inbox.create</code> accepts an optional <code>roomId</code> and calls the existing <code>ensureLocationPhotoForCapture(db, id, roomId)</code>. Flow and iOS send "here" with the snap and drop the local store. The Sort card's Place default then comes from <code>inbox.list</code>'s <code>photoRoomId</code>, which already exists.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="A4">
+  <div class="hd"><span class="id">A4</span><span class="title">One-command local setup and a readable boot check</span><span class="tag s">S</span><span class="tag">ops</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Quick start is six commands and a hand-edited <code>.env</code>; a missing <code>DATABASE_URL</code> throws only in production (<code>api/lib/env.ts</code>), in dev the first query fails with a driver error.</p>
+    <span class="lbl">Proposal</span><p><code>npm run setup</code>: validates <code>.env</code> with a plain-language message per variable, runs <code>db:migrate</code>, runs A1's first-run creation and prints the URL. A <code>docker-compose.yml</code> with MySQL 8 and the app for a laptop install. SQLite as an alternative engine is <em>not</em> proposed: the queries use MySQL-specific SQL and JSON columns, and the live system is MySQL.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<!-- ============================ B ============================ -->
+<h2>B. One shell, three depths</h2>
+
+<div class="item" data-id="B1">
+  <div class="hd"><span class="id">B1</span><span class="title">Depth (Quick · Standard · Detail) replaces Simple/Advanced, stored on the server</span><span class="tag s">S</span><span class="tag">Workbench</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>workbenchMode</code> is a two-state <code>localStorage</code> value (<code>src/context/workbenchMode.tsx</code>); Simple filters five nav links and redirects heavy paths to <code>/focus</code> (<code>Layout.tsx:155-223</code>). Advanced is the default, so a new user lands in the full OS.</p>
+    <span class="lbl">Proposal</span><p>Three depths. Components mark their parts with <code>data-depth="standard" | "detail"</code> (or a <code>&lt;Depth at="detail"&gt;</code> wrapper) and the shell hides what is deeper than the current depth. Stored in <code>settings</code> (<code>ui.depth</code>) so the Workbench on two machines and, later, Flow and iOS agree; <code>localStorage</code> only as a cache. Default for a fresh install: Quick. Default for the existing database: Detail, so nothing changes for Rick until he flips it.</p>
+    <span class="lbl">Why</span><p>The same screens serve a quick pass and a detailed one; nobody has to learn a second layout.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="B2">
+  <div class="hd"><span class="id">B2</span><span class="title">"Today" replaces the Dashboard; house and topic admin move to Settings</span><span class="tag m">M</span><span class="tag">Workbench</span><span class="tag">depends: C1</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>The Dashboard is 708 lines: a capture bar, four stat tiles, house chip with edit/add dialogs (PDOK address, parcel lookup, geolocation), topic creation with icon and colour pickers, a rooms list and recent activity. Settings has its own Houses &amp; locations section (<code>Settings.tsx:560</code>), so house editing exists twice.</p>
+    <span class="lbl">Proposal</span><p>Today = the four counters from <code>items.queue</code> (to sort, to decide, no Place, to check), three verbs (Snap, Sort, Decide), recent snaps, and at Detail depth the lens bands (lab coverage, energy month) and the room progress ring. House/topic dialogs move to Settings; the Topics list moves into Things as a filter. Mockup screen "Today".</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="B3">
+  <div class="hd"><span class="id">B3</span><span class="title">Focus becomes the Places tab; Inbox and Sort become one Sort surface</span><span class="tag l">L</span><span class="tag">Workbench</span><span class="tag flow">needs Flow</span><span class="tag">product call</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Two Sort experiences on the web: Flow's one-card Sort (<code>SortTab.tsx</code>, 734 lines) and the Workbench Inbox's dense TriageCard with A/B, detect objects, pin, Place, floor import, merge duplicates (<code>Inbox.tsx</code>, 1323 lines). They call the same procedures (<code>inbox.triage</code>, <code>acceptMany</code>, <code>dismiss</code>) and draw the same frames with different code (<code>Frames</code> in SortTab vs <code>DetectObjects.tsx</code>).</p>
+    <span class="lbl">Proposal</span><p>One <code>SortCard</code> component in <code>src/components/</code> (extracted from Flow's with Rick's consent, since Flow is another session's area) used by both front ends: Quick shows the photo, frames, names and File; Standard adds kind and Place; Detail adds the Workbench extras (A/B, detect, floor import, batch bar). Focus is promoted from <code>/focus</code> to the Places tab. Long term this is how Flow and the Workbench converge without a rewrite: Flow becomes the phone layout of the same components.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="B4">
+  <div class="hd"><span class="id">B4</span><span class="title">Sidebar diet: views and lenses appear only when switched on and when they have data</span><span class="tag s">S</span><span class="tag">Workbench</span><span class="tag">depends: D2</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Every install shows Galaxy, Systems, Storage, Wiki, Activity, Flow↗ and Meterkast↗ (<code>Layout.tsx:147-153, 303-315</code>). Ideas and Tasks already hide when empty (<code>Layout.tsx:206-217</code>); that rule is the right one.</p>
+    <span class="lbl">Proposal</span><p>Generalise the rule: a nav entry shows when its module switch (D2) is on <em>and</em> (for data views) the house has data for it: Systems when a Thing carries <code>containers</code>/<code>services</code>/…, Storage when <code>storage_volumes</code> has rows, Energy when a meter exists. At Quick depth the sidebar is: Today, Snap, Sort, Things, Places, Settings.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="B5">
+  <div class="hd"><span class="id">B5</span><span class="title">The Thing page as disclosure sections</span><span class="tag m">M</span><span class="tag">Workbench</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>ItemDetail.tsx</code> (1548 lines) renders Documents &amp; links, Attributes, Relations, Location, sub-objects, Tasks, Linked ideas, History, pins and plan placement for every Thing, each with its own editor inline.</p>
+    <span class="lbl">Proposal</span><p>A fixed header (photo, name, kind · Place, decision badge, the five decision buttons) and then one small component per section (<code>ThingNotes</code>, <code>ThingDetails</code>, <code>ThingPhotos</code>, <code>ThingSeenIn</code>, <code>ThingRelations</code>, <code>ThingTasks</code>, <code>ThingHistory</code>, lens sections). A section renders only when it has content or is being added; collapsed state remembered per device; an "add" chip row (+ detail, + photo, + document, + relation, + task, + on the plan, + sub-object) is how the detailed process starts. Mockup screen "Thing", notes 10–13. Mechanical split first, behaviour unchanged; depth gating after B1.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="B6">
+  <div class="hd"><span class="id">B6</span><span class="title">The thin sheet becomes the universal quick editor</span><span class="tag s">S</span><span class="tag">Workbench</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Focus's sheet (name, topic, this Place, note, decision, Admit/Save; <code>Focus.tsx:181-409</code>) is the best small editor in the app, and only Focus can open it. All Items, Photos and room pages link to the full ItemDetail.</p>
+    <span class="lbl">Proposal</span><p>Move <code>FocusSheetBody</code> to <code>src/components/ThingSheet.tsx</code>, open it from any Thing row (Things list, Photos, Places, Today's recent snaps). "Full Thing →" stays one tap away. iOS already has <code>PlanThingSheet.swift</code> with the same fields, so the three clients would share a shape.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="B7">
+  <div class="hd"><span class="id">B7</span><span class="title">Direction: the Workbench at phone width uses bottom tabs</span><span class="tag l">L</span><span class="tag">Workbench</span><span class="tag">later</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>The Workbench on a phone is the desktop sidebar in a drawer plus a top bar (<code>Layout.tsx:377-399</code>). Flow exists because of that.</p>
+    <span class="lbl">Proposal</span><p>Once B2, B3 and B6 exist, the Workbench shell renders Flow's five tabs below <code>md</code> and the rail above it (mockup: Device switch). Flow can then be retired or kept as a bookmark to <code>/?depth=quick</code>. Listed as direction, not as a task: it only makes sense after the shared components exist, and it is Rick's call whether Flow stays a separate front end.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<!-- ============================ C ============================ -->
+<h2>C. One definition of the work queue, and small API fixes</h2>
+
+<div class="item" data-id="C1">
+  <div class="hd"><span class="id">C1</span><span class="title"><code>items.queue</code>: the server says what needs attention</span><span class="tag m">M</span><span class="tag">API</span><span class="tag">contract+</span><span class="tag flow">later Flow/iOS</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Flow (<code>src/flow/data.ts:23-36</code>, <code>queue.ts</code>), iOS (<code>FlowLogic.swift:6-36</code>) and Focus (<code>Focus.tsx:56-58</code>) each define needs-check / unplaced / needs-decision. Focus omits the seven-day "Later" return; the Dashboard counts pending captures only. The lab's "needs role" and "backup missing" rules are in <code>src/flow/lenses.ts</code> and nowhere on the server.</p>
+    <span class="lbl">Proposal</span><p><code>items.queue({ houseId?, roomId?, lens? })</code> → <code>{ toSort: captureIds, toCheck: itemIds, toPlace: itemIds, toDecide: itemIds, toName: itemIds, lens: { needsRole, needsBackup } , counts }</code>, computed in <code>api/lib/queue.ts</code> with <code>LATER_DAYS</code> as one constant (later a setting). Workbench (Today, Places, Things filters) uses it first; Flow and iOS can switch when their owners choose, their local rules keep working meanwhile. Unit-tested once, on the server.</p>
+    <span class="lbl">Why</span><p>The whole product is "what still needs me"; that question should have one answer.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="C2">
+  <div class="hd"><span class="id">C2</span><span class="title">Server-side search with a limit</span><span class="tag s">S</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>items.search</code> selects every active item and filters by <code>name.includes(q)</code> in JS, then slices 10 (<code>items.ts:875-889</code>); Flow's Find searches attribute values client-side over the full <code>items.listAll</code> (<code>FindTab.tsx:18-43</code>).</p>
+    <span class="lbl">Proposal</span><p><code>WHERE name LIKE ? OR JSON_SEARCH(attributes, 'one', ?) IS NOT NULL LIMIT 20</code>, scoped to the session house, plus an optional <code>fields</code> flag. Small now; it keeps the phone from downloading the inventory to answer "where is the kettle".</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="C3">
+  <div class="hd"><span class="id">C3</span><span class="title">Optional <code>limit</code>/<code>offset</code> on the big lists</span><span class="tag s">S</span><span class="tag">API</span><span class="tag">contract+</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>items.listAll</code>, <code>photos.listAll</code> and <code>rooms.list</code> return everything; <code>inbox.list</code> caps at 200 silently (<code>inbox.ts:258</code>). Flow loads <code>items.listAll</code> twice (house and all houses, archived included; <code>flow/context.tsx:368-371</code>).</p>
+    <span class="lbl">Proposal</span><p>Add optional <code>limit</code> and <code>offset</code> (default: unchanged, everything) and a <code>total</code> in the response only when <code>limit</code> is passed. No client has to change; the Things list and Photos page can page when the inventory passes a few thousand rows.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="C4">
+  <div class="hd"><span class="id">C4</span><span class="title">One object-detection and one cutout function</span><span class="tag m">M</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>pins.detect</code> (<code>pins.ts</code>) and <code>inbox.detectObjects</code> (<code>inbox.ts:461-582</code>) build nearly the same prompt with reference photos and name matching. Cutout creation (crop, <code>putFile</code>, <code>photos</code> row, event, <code>ensurePinForCutout</code>) is written out in <code>inbox.fileObject</code>, <code>inbox.acceptMany</code> and <code>photos.createCutout</code>.</p>
+    <span class="lbl">Proposal</span><p><code>api/lib/detect.ts</code> (<code>detectObjectsInPhoto(bytes, { referenceItems })</code>) called by both procedures, and <code>api/lib/cutouts.ts</code> (<code>createCutoutTx(tx, …)</code>) called by all three. Behaviour identical; the three tests that cover them stay green.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="C5">
+  <div class="hd"><span class="id">C5</span><span class="title">Scope AI context to the session house</span><span class="tag s">S</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>buildTriageContent</code> lists up to 200 active items from every house in each triage prompt (<code>inbox.ts:118-125</code>); <code>detectObjects</code> and <code>pins.detect</code> do the same (<code>inbox.ts:494</code>, <code>pins.ts:250</code>). <code>resolveSuggestion</code> then has to discard matches from other houses (<code>inbox.ts:170-175</code>).</p>
+    <span class="lbl">Proposal</span><p>Filter the candidate list by <code>ctx.houseId</code> (and the capture's <code>houseId</code>), order by the room of the capture's location Photo first, cap at 200. Fewer tokens, fewer wrong matches, no contract change.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="C6">
+  <div class="hd"><span class="id">C6</span><span class="title">TRPCError codes instead of <code>throw new Error</code></span><span class="tag s">S</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>17 plain throws in routers, e.g. <code>items.setDecision</code> and <code>patchAttributes</code> ("Item not found.", <code>items.ts:509, 540</code>), <code>inbox.triage</code> (<code>inbox.ts:365</code>), <code>areas.update</code> slug clash (<code>areas.ts:100</code>), <code>houses.reassign</code>. They surface as 500 INTERNAL_SERVER_ERROR; clients cannot tell "not found" from "crashed".</p>
+    <span class="lbl">Proposal</span><p>Replace with <code>NOT_FOUND</code> / <code>BAD_REQUEST</code> / <code>CONFLICT</code>. One sitting; the messages stay.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="C7">
+  <div class="hd"><span class="id">C7</span><span class="title">Background link suggestions become opt-in</span><span class="tag s">S</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Every human <code>items.create</code> inserts name-similarity relations synchronously and then fires a fire-and-forget LLM call that inserts more relations after the response (<code>items.ts:238-329</code>). Importers pass <code>suggestLinks: false</code>; people cannot.</p>
+    <span class="lbl">Proposal</span><p>Default <code>suggestLinks</code> from the AI module switch (D2) instead of <code>true</code>, and run the LLM part through the same small job queue as G1 so two creates do not race two LLM calls.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<!-- ============================ D ============================ -->
+<h2>D. Lenses and views as modules</h2>
+
+<div class="item" data-id="D1">
+  <div class="hd"><span class="id">D1</span><span class="title">Module switches in Settings, stored on the server</span><span class="tag m">M</span><span class="tag">API</span><span class="tag">Workbench</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>settings.json</code> holds only LLM keys (<code>api/lib/settings.ts</code>). Which lenses a house uses is implicit: a Flow lens toggle in <code>localStorage</code> (<code>flow.lens</code>), nav entries always on.</p>
+    <span class="lbl">Proposal</span><p><code>settings.modules = { lab, energy, spatial, systems, storage, galaxy, ideasTasksWiki, activity, ai: { autoTriage, compare, suggestLinks } }</code>, read by <code>settings.get</code>, edited in Settings (mockup screen "More"). Fresh install: all off except activity and ai.autoTriage when a provider is configured. Existing database: all on (B1's rule). Nav (B4), Thing sections (B5), Sort extras (B3) and the Flow lens chips read the same flags.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="D2">
+  <div class="hd"><span class="id">D2</span><span class="title">A lens registry: fields, queue rules and sections declared once</span><span class="tag l">L</span><span class="tag">API</span><span class="tag">Workbench</span><span class="tag flow">later Flow/iOS</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Lab fields (role, brand, model, serial, os, cpu, ram_gb…) are declared in <code>src/flow/lenses.ts</code> for Flow and in <code>areas.attributeDefs</code> (<code>db/seed.ts:340-354</code>) for the Workbench's Attributes editor; the role option lists differ (Flow adds <code>storage</code>, <code>phone</code>, <code>sbc</code>, <code>part</code>). The energy lens has its own fields in <code>EnergyParts.tsx</code> and <code>EnergySection.tsx</code>. Which Thing is "in the lab" is <code>inLab()</code> in Flow only.</p>
+    <span class="lbl">Proposal</span><p><code>contracts/lenses/{lab,energy,spatial,systems}.ts</code>: <code>{ key, label, appliesTo(item), fields, queueRules, thingSections, navEntries, settingsFlag }</code>, imported by the API (validation, <code>items.queue</code>), the Workbench and Flow; <code>areas.attributeDefs</code> stays for user-defined topic fields. Done one lens at a time, starting with lab because it has the most duplication. The AGENTS.md key names (<code>role</code>, <code>lab.*</code>, <code>meter_kind</code>…) do not change.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="D3">
+  <div class="hd"><span class="id">D3</span><span class="title">Move collector parsers out of the server</span><span class="tag s">S</span><span class="tag">API</span><span class="tag">scripts</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>api/lib/servicesFleet.ts</code> (1290), <code>servicesMac.ts</code> (703), <code>servicesProjects.ts</code> (714), <code>servicesProxmox.ts</code> (487), <code>servicesDocker.ts</code> (256) are imported only by <code>scripts/services-report-*.ts</code> and their tests; the router imports only <code>api/lib/services.ts</code>. They are HTML-scraping and CLI-parsing code for one machine fleet, bundled with the inventory server.</p>
+    <span class="lbl">Proposal</span><p>Move them to <code>collectors/services/</code> (next to <code>scripts/collectors/energy/</code>), keep <code>api/lib/services.ts</code> as the validation/apply layer, keep the tests. No behaviour change; the server bundle and the mental model both shrink.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="D4">
+  <div class="hd"><span class="id">D4</span><span class="title">Drop <code>@huggingface/transformers</code> from runtime dependencies</span><span class="tag s">S</span><span class="tag">deps</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>api/lib/localDetector.ts</code> (OWL-ViT via ONNX) is imported by <code>scripts/batch-detect-local.mjs</code> only; no router uses it. The package is in <code>dependencies</code> (<code>package.json</code>) and is large.</p>
+    <span class="lbl">Proposal</span><p>Move the detector next to the script under <code>collectors/</code> or <code>scripts/lib/</code> and the package to <code>optionalDependencies</code> (or a separate <code>package.json</code> there). If the local detector is meant to become the default for <code>pins.detect</code> one day, that is a G-series decision; today it is dead weight in every install.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="D5">
+  <div class="hd"><span class="id">D5</span><span class="title">Retire the deprecated <code>attachments.*</code> aliases</span><span class="tag s">S</span><span class="tag">API</span><span class="tag flow">needs Flow</span><span class="tag">lab adapter</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>AGENTS.md keeps <code>attachments.url/add/remove/unlink/listAllImages/listForItem</code> "for one release"; <code>items.get</code> still carries a legacy <code>attachments</code> array with negated link ids (<code>items.ts:162</code>). Flow still calls <code>attachments.url</code> (<code>src/flow/ui.tsx:10,53</code>, <code>ZoomViewer.tsx:22</code>); the lab adapter falls back to <code>attachments.listAllImages</code>.</p>
+    <span class="lbl">Proposal</span><p>Flow switches to <code>photos.url</code> (three lines, its owner's call), the lab adapter confirms it uses <code>photos.*</code>, then the router and the <code>items.get</code> alias go. Removes a whole mental layer for anyone reading the photos code.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<!-- ============================ E ============================ -->
+<h2>E. Code health</h2>
+
+<div class="item" data-id="E1">
+  <div class="hd"><span class="id">E1</span><span class="title">Design tokens for the HomeBase palette and decision colours</span><span class="tag s">S</span><span class="tag">Workbench</span><span class="tag flow">Flow later</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>98 occurrences of <code>#d2ff00</code>, <code>#282c20</code>, <code>#3C5D41</code>, <code>#3a3f2e</code>, <code>#b4b8a5</code> across 21 files, as Tailwind arbitrary values (<code>bg-[#d2ff00]</code>) and inline styles; decision colours (<code>#2F7A45</code>…) repeated in two <code>DECISIONS</code> arrays. The shadcn theme in <code>src/index.css</code> has <code>--primary</code> (moss) but no lime, charcoal or sage token.</p>
+    <span class="lbl">Proposal</span><p>Add <code>lime</code>, <code>charcoal</code>, <code>charcoal-2</code>, <code>sage</code>, and <code>decision-keep/sell/donate/toss/later</code> to <code>tailwind.config.js</code> / <code>index.css</code>; a one-pass replace in <code>src/</code> (Flow's files when its owner agrees). Then a dark theme or a second accent is one file.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="E2">
+  <div class="hd"><span class="id">E2</span><span class="title">One home for shared constants and helpers</span><span class="tag s">S</span><span class="tag">Workbench</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>DECISIONS</code> ×2, <code>AREA_ICONS</code> ×4 (<code>Layout.tsx:46</code>, <code>Dashboard.tsx:31</code>, <code>Galaxy.tsx:22</code>, <code>lib/areaStyle.ts:12</code> — the last one already exists as the shared version and the others do not use it), <code>nameScore</code> ×2 (<code>items.ts:18</code>, <code>inbox.ts:50</code>), <code>boxOf</code>/<code>spottedBox</code> ×2, <code>ThumbPreview</code>/<code>Photo</code>/<code>CaptureImage</code> ×3 (a storageKey → <code>&lt;img&gt;</code> component).</p>
+    <span class="lbl">Proposal</span><p><code>src/lib/decisions.ts</code>, use <code>lib/areaStyle.ts</code> everywhere, <code>api/lib/text.ts</code> for <code>nameScore</code>, <code>src/components/Thumb.tsx</code> (exists) as the one image component. Pure deletion.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="E3">
+  <div class="hd"><span class="id">E3</span><span class="title">Split the six files over 900 lines</span><span class="tag m">M</span><span class="tag">Workbench</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>ItemDetail.tsx</code> 1548, <code>Annotate.tsx</code> 1371, <code>Inbox.tsx</code> 1323, <code>RoomPlan.tsx</code> 1286, <code>api/routers/inbox.ts</code> 1166, <code>Systems.tsx</code> 987. Each holds several unrelated components (e.g. <code>Inbox.tsx</code> has <code>TriageCard</code>, <code>CompareModal</code>, <code>DismissedCard</code>, <code>PinPendingButton</code>, <code>MobileCameraButton</code>).</p>
+    <span class="lbl">Proposal</span><p>Mechanical extraction to <code>src/pages/inbox/*.tsx</code>, <code>src/pages/item/*.tsx</code>, <code>api/routers/inbox/{triage,accept,scan}.ts</code>; no behaviour change; target under 400 lines per file. B5 does this for ItemDetail with a purpose; the rest can follow the same pattern.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="E4">
+  <div class="hd"><span class="id">E4</span><span class="title">First front-end tests, on the pieces that carry rules</span><span class="tag m">M</span><span class="tag">Workbench</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>381 API tests, zero component or hook tests. <code>vitest.config.ts</code> targets <code>api/</code> only.</p>
+    <span class="lbl">Proposal</span><p>A second vitest project with jsdom + Testing Library for: the thin sheet (B6), the Sort card frames (toggle, hide-handled, numbering), the depth gate (B1), <code>house.tsx</code>'s fallback logic, and <code>flow/data.ts</code> rules until C1 moves them server-side. Twenty tests, not two hundred.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="E5">
+  <div class="hd"><span class="id">E5</span><span class="title">ESLint to zero and in <code>npm run check</code></span><span class="tag s">S</span><span class="tag">tooling</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>The status report accepts "eslint at or below the baseline (33 problems)"; <code>npm run check</code> is <code>tsc -b</code> only. <code>react-hooks</code> warnings (e.g. the <code>useEffect</code> in <code>RunningTimerPill</code> reads <code>utils</code> before it is declared, <code>Layout.tsx:100-114</code>) survive.</p>
+    <span class="lbl">Proposal</span><p>Fix the 33, add <code>eslint .</code> to <code>check</code>. Keeps the four parallel sessions from re-introducing the same classes of bug.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="E6">
+  <div class="hd"><span class="id">E6</span><span class="title">One typed preferences module; some keys move to the server</span><span class="tag s">S</span><span class="tag">Workbench</span><span class="tag flow">Flow keys</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Keys: <code>declutter.houseId</code>, <code>declutter.topicFavs</code>, <code>workbenchMode</code>, <code>sidebar.areas/locations/views.collapsed</code>, last room, <code>flow.lens</code>, <code>flow.snapPlace</code>, <code>flow.sort.skipped</code>, <code>flow.sort.hideHandled</code>, each with its own try/catch reader. <code>use-persisted-state.ts</code> exists but is used once.</p>
+    <span class="lbl">Proposal</span><p><code>src/lib/prefs.ts</code> with a typed key table and <code>usePref(key)</code>; depth (B1), lens (D1) and snap Place (A3) leave <code>localStorage</code> for the server; the rest stay device-local by design (collapse state, skipped cards).</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="E7">
+  <div class="hd"><span class="id">E7</span><span class="title">No LAN addresses or item ids in source</span><span class="tag s">S</span><span class="tag">Workbench</span><span class="tag">scripts</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>METERKAST_URL = "http://10.50.0.10/meterkast.html"</code> in <code>Layout.tsx:136</code>; the fleet page URL, Proxmox host and "default macmini-m4 #51" in scripts and AGENTS.md; the iOS README's server IP.</p>
+    <span class="lbl">Proposal</span><p>External links become <code>settings.links[]</code> (shown at Detail depth in the sidebar); collector defaults move to <code>.env</code> / CLI flags with no default. The repository then describes any home, not one.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<!-- ============================ F ============================ -->
+<h2>F. Data model (discuss first)</h2>
+
+<div class="item" data-id="F1">
+  <div class="hd"><span class="id">F1</span><span class="title">Derive cutouts instead of storing crop files</span><span class="tag m">M</span><span class="tag">API</span><span class="tag">product call</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>A cutout is a real JPEG written to <code>uploads/</code> (<code>cropPercent</code> + <code>putFile</code>) with <code>cropBox</code> and <code>sourceCaptureId</code> kept beside it; duplicates needed <code>scripts/photos-dedup.ts</code> and PR #17/#20; both databases share one <code>uploads/</code> folder (the AGENTS.md caution).</p>
+    <span class="lbl">Proposal</span><p>Serve crops on demand: <code>GET /uploads/&lt;key&gt;?crop=x,y,w,h&amp;w=800</code> rendered with sharp and cached on disk under a derived name; <code>photos.createCutout</code> writes the row with a derived <code>storageKey</code> and no file copy. Clients keep receiving a <code>storageKey</code> and a URL, so iOS and the lab adapter are unaffected. Existing files stay. Worth doing only if Rick expects the photo count to keep growing; otherwise reject and keep the dedup script.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="F2">
+  <div class="hd"><span class="id">F2</span><span class="title">Foreign keys for the core tables</span><span class="tag m">M</span><span class="tag">schema</span><span class="tag">product call</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>db/schema.ts</code> declares no <code>references()</code>; <code>items.roomId</code>, <code>photos.itemId</code>, <code>photo_pins.photoId</code>, <code>relations.*</code> rely on <code>deleteItemTx</code> and friends. The status report lists orphan cases that were caught by hand.</p>
+    <span class="lbl">Proposal</span><p>A read-only orphan report first (<code>scripts/db-orphans.mjs</code>), then an additive migration adding FKs with <code>ON DELETE SET NULL</code> for locations and <code>ON DELETE CASCADE</code> for pins and links, applied to the test database and run against the full suite before the live one. Rick's call per AGENTS.md §3; "destructive" in spirit because it can refuse writes that used to succeed.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="F3">
+  <div class="hd"><span class="id">F3</span><span class="title">Consistent product words in the UI (code names stay)</span><span class="tag s">S</span><span class="tag">Workbench</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>AGENTS.md §5: Thing, Place, Photo, Decision, Lens. The Workbench says Items (nav "All Items", stat "Items", "Item 360°"), Topics/Areas, Rooms/Locations, Inbox/Capture/Snap, in the same screen. The database rightly keeps <code>items</code>, <code>areas</code>, <code>rooms</code>, <code>captures</code>.</p>
+    <span class="lbl">Proposal</span><p>A pass over user-visible strings: Things, kind (for Topic, since "Topic" reads as a subject not a category), Places, Snaps, and the five words in titles. One PR, no logic.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<!-- ============================ G ============================ -->
+<h2>G. AI</h2>
+
+<div class="item" data-id="G1">
+  <div class="hd"><span class="id">G1</span><span class="title">Triage new snaps in the background so Sort cards arrive filled</span><span class="tag m">M</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Triage is a button: "Ask AI what this is" in Flow (<code>SortTab.tsx:490-502</code>), "AI triage" in the Workbench (<code>Inbox.tsx:693-711</code>); the Telegram bot triggers it on arrival. A photo snapped on the phone waits for the tap, then for the model, before Sort can begin.</p>
+    <span class="lbl">Proposal</span><p>A small in-process queue (<code>api/lib/jobs.ts</code>, concurrency 1, retry once): <code>inbox.create</code> of an image enqueues <code>triage</code> when <code>settings.modules.ai.autoTriage</code> is on and a provider is configured. <code>inbox.list</code> rows gain <code>triageState: "queued" | "running" | "done" | "failed"</code> so the card can say "looking…". The manual button stays for retries and for installs with the switch off.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="G2">
+  <div class="hd"><span class="id">G2</span><span class="title">A/B compare and Provider B are Detail-depth, off by default</span><span class="tag s">S</span><span class="tag">Workbench</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Every inbox card has an A/B button (<code>Inbox.tsx:674-692</code>); Settings has a full Provider B section and a "which provider for which job" matrix (<code>Settings.tsx:369-520</code>). These are evaluation tools from roadmap phase 2, not sorting tools.</p>
+    <span class="lbl">Proposal</span><p>Gate behind <code>settings.modules.ai.compare</code> (D1) and Detail depth. Nothing removed.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="G3">
+  <div class="hd"><span class="id">G3</span><span class="title">Keep <code>claude -p</code> dev mode out of production code paths</span><span class="tag s">S</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>isClaudeCliDevMode()</code> branches inside <code>inbox.triage</code>, <code>inbox.detectObjects</code> and <code>pins.detect</code>, shelling out to a CLI with the photo bytes (<code>api/lib/claudeCli.ts</code>).</p>
+    <span class="lbl">Proposal</span><p>Make it a provider in <code>api/lib/ai.ts</code> (<code>getModel()</code> returns a CLI-backed model) so the routers have one code path; C4 makes this a one-place change. Refuse to start with it in <code>NODE_ENV=production</code>.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<!-- ============================ H ============================ -->
+<h2>H. Operations</h2>
+
+<div class="item" data-id="H1">
+  <div class="hd"><span class="id">H1</span><span class="title">Production refuses to start without <code>APP_TOKEN</code></span><span class="tag s">S</span><span class="tag">API</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p><code>isAuthorized</code> returns true for everyone and prints one warning when the token is unset (<code>api/lib/auth.ts:73-80</code>), in production too. Uploads and the whole API are then open to the LAN.</p>
+    <span class="lbl">Proposal</span><p>In <code>NODE_ENV=production</code>, exit at boot unless <code>APP_TOKEN</code> is set or <code>ALLOW_OPEN_ACCESS=1</code> is explicit. Dev keeps the warning.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<div class="item" data-id="H2">
+  <div class="hd"><span class="id">H2</span><span class="title"><code>GET /api/health</code> and a documented backup pair</span><span class="tag s">S</span><span class="tag">API</span><span class="tag">docs</span></div>
+  <div class="body">
+    <span class="lbl">Seen</span><p>Liveness is the tRPC <code>ping</code>; launchd and uptime checks have nothing plain to hit. <code>db/backup.mjs</code> backs up MySQL; nothing pairs it with <code>uploads/</code>, which the database rows point at.</p>
+    <span class="lbl">Proposal</span><p><code>/api/health</code> → <code>{ ok, db, uploadsWritable, version }</code> without auth; a <code>backup.sh</code> that dumps the database and rsyncs <code>uploads/</code> in one step, and a README line.</p>
+  </div>
+  <div class="decide"></div>
+</div>
+
+<!-- ============================ ORDER ============================ -->
+<h2>4. A sequence that keeps every client working</h2>
+<div class="phase"><h3>Step 1 — no schema change, no contract break</h3><p>C6, C5, E2, E1, E7, D4, D3, G2, H1, H2, A2 (server default), B1 (depth, Workbench only), B4, F3. Each is one session; the live site, Flow, iOS and the lab adapter do not notice.</p></div>
+<div class="phase"><h3>Step 2 — the shared pieces</h3><p>C1 <code>items.queue</code> with tests → B2 Today → B6 thin sheet everywhere → B5 ItemDetail sections → D1 module switches → G1 background triage → C4 one detect/cutout → E3 splits → E6 prefs → A1 first run → A4 setup. Still additive for every external client.</p></div>
+<div class="phase"><h3>Step 3 — needs the Flow owner or a product call</h3><p>A3 snap Place on the server (Flow + iOS send <code>roomId</code>), D5 retire <code>attachments.*</code>, B3 one SortCard, D2 lens registry, C7, E4 tests, C3 paging, F1 derived cutouts, F2 foreign keys, B7 responsive shell.</p></div>
+
+<h2>5. Not proposed</h2>
+<ul>
+<li>Rewriting Flow or folding the iOS app into a web view. Both work and have owners; the proposals give them shared server rules to adopt at their own pace.</li>
+<li>Replacing MySQL with SQLite "for an easy start". The SQL is MySQL-shaped and the live data is MySQL; A4's compose file is the cheaper answer.</li>
+<li>Removing any lens. The Systems, Energy and Spatial work is real and tested; the proposals make it optional and separable, not smaller.</li>
+<li>Changing the AGENTS.md attribute keys, procedure names or inputs. Every proposal that touches a contract adds an optional field.</li>
+</ul>
+
+<h2>6. Export</h2>
+<p class="small muted">Everything you ticked above, as text. Paste it into a chat with the next session; it includes the proposal ids and your notes.</p>
+<p><button id="btnExport" class="primary" style="font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--charcoal); background: var(--charcoal); color: #f4f4ed; cursor: pointer;">Export decisions</button> <button id="btnCopy" style="font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer;">Copy to clipboard</button> <span id="copyNote" class="small muted"></span></p>
+<textarea id="exportOut" readonly placeholder="Press Export decisions."></textarea>
+
+<p class="small muted" style="margin-top: 40px;">Facts in this page were read from the repository at <code>fbb0719</code>: <code>db/schema.ts</code>, <code>api/routers/*.ts</code>, <code>api/lib/*.ts</code>, <code>src/**</code>, <code>ios/**</code>, <code>AGENTS.md</code>, <code>README.md</code>, <code>docs/status-2026-10-03.md</code>. Line counts via <code>wc -l</code>; colour literal count via <code>rg -c</code>. No test or dev server was run.</p>
+</main>
+
+<script>
+(() => {
+  const KEY = "homebase.review.2026-10-16";
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || "{}"); } catch { return {}; } };
+  const save = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch {} };
+  let state = load();
+  const items = [...document.querySelectorAll(".item[data-id]")];
+
+  for (const el of items) {
+    const id = el.dataset.id;
+    const d = el.querySelector(".decide");
+    d.innerHTML = `
+      <label><input type="radio" name="dec-${id}" value="accept"> <span class="ok-text">Accept</span></label>
+      <label><input type="radio" name="dec-${id}" value="reject"> <span class="no-text">Reject</span></label>
+      <label><input type="radio" name="dec-${id}" value="discuss"> Discuss</label>
+      <input class="note" type="text" placeholder="Note (optional)" aria-label="Note for ${id}">
+      <button type="button" class="clear" style="font: inherit; font-size: 12px; background: none; border: 0; color: var(--muted); cursor: pointer; text-decoration: underline;">clear</button>`;
+    const apply = () => {
+      const s = state[id] || {};
+      for (const r of d.querySelectorAll("input[type=radio]")) r.checked = r.value === s.decision;
+      d.querySelector(".note").value = s.note || "";
+      if (s.decision) el.dataset.decision = s.decision; else delete el.dataset.decision;
+    };
+    d.addEventListener("change", (e) => {
+      if (e.target.type === "radio") { state[id] = { ...(state[id] || {}), decision: e.target.value }; save(state); apply(); refresh(); }
+    });
+    d.querySelector(".note").addEventListener("input", (e) => { state[id] = { ...(state[id] || {}), note: e.target.value }; save(state); });
+    d.querySelector(".clear").addEventListener("click", () => { delete state[id]; save(state); apply(); refresh(); });
+    apply();
+  }
+
+  const filter = document.getElementById("filter");
+  function refresh() {
+    const c = { accept: 0, reject: 0, discuss: 0, open: 0 };
+    for (const el of items) { const s = state[el.dataset.id]; (s && s.decision) ? c[s.decision]++ : c.open++; }
+    document.getElementById("cAccept").textContent = `${c.accept} accepted`;
+    document.getElementById("cReject").textContent = `${c.reject} rejected`;
+    document.getElementById("cDiscuss").textContent = `${c.discuss} discuss`;
+    document.getElementById("cOpen").textContent = `${c.open} open`;
+    const f = filter.value;
+    for (const el of items) {
+      const s = state[el.dataset.id]; const dec = s && s.decision;
+      el.classList.toggle("hidden", !(f === "all" || (f === "open" ? !dec : dec === f)));
+    }
+  }
+  filter.addEventListener("change", refresh);
+
+  function exportText() {
+    const title = (el) => el.querySelector(".title").textContent.trim();
+    const groups = { accept: [], reject: [], discuss: [], open: [] };
+    for (const el of items) {
+      const id = el.dataset.id; const s = state[id] || {};
+      const line = `- ${id} ${title(el)}${s.note ? ` — note: ${s.note}` : ""}`;
+      groups[s.decision || "open"].push(line);
+    }
+    const out = [
+      `# HomeBase review 2026-10-16 — decisions (${new Date().toISOString().slice(0, 10)})`,
+      ``, `## Accepted (${groups.accept.length})`, ...(groups.accept.length ? groups.accept : ["- none"]),
+      ``, `## Discuss (${groups.discuss.length})`, ...(groups.discuss.length ? groups.discuss : ["- none"]),
+      ``, `## Rejected (${groups.reject.length})`, ...(groups.reject.length ? groups.reject : ["- none"]),
+      ``, `## Not yet decided (${groups.open.length})`, ...(groups.open.length ? groups.open : ["- none"]),
+      ``, `Source: docs/review-2026-10-16.html at fbb0719. Ids refer to its sections.`,
+    ].join("\n");
+    document.getElementById("exportOut").value = out;
+    return out;
+  }
+  const doExport = () => { exportText(); document.getElementById("exportOut").scrollIntoView({ behavior: "smooth", block: "center" }); };
+  document.getElementById("btnExport").addEventListener("click", doExport);
+  document.getElementById("btnExportTop").addEventListener("click", doExport);
+  document.getElementById("btnCopy").addEventListener("click", async () => {
+    const t = exportText();
+    try { await navigator.clipboard.writeText(t); document.getElementById("copyNote").textContent = "Copied."; }
+    catch { document.getElementById("copyNote").textContent = "Select the text and copy."; }
+    setTimeout(() => (document.getElementById("copyNote").textContent = ""), 2500);
+  });
+  document.getElementById("btnReset").addEventListener("click", () => {
+    if (!confirm("Clear every decision and note on this page?")) return;
+    state = {}; save(state);
+    for (const el of items) { delete el.dataset.decision; for (const r of el.querySelectorAll("input[type=radio]")) r.checked = false; el.querySelector(".note").value = ""; }
+    refresh();
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>
