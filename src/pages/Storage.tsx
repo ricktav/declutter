@@ -72,6 +72,11 @@ export default function StoragePage() {
       utils.storage.overview.invalidate();
     },
   });
+  const setDiskLink = trpc.storage.setDiskLink.useMutation({
+    onSuccess: () => {
+      utils.storage.overview.invalidate();
+    },
+  });
   // the second click must come within 5 s
   useEffect(() => {
     if (!confirmRemove) return;
@@ -104,9 +109,10 @@ export default function StoragePage() {
     if (!o || !Number.isInteger(itemParam) || selected != null) return;
     const vols: number[] = [];
     for (const c of o.computers) {
-      if (c.id === itemParam) vols.push(...c.volumes.map((v) => v.id), ...c.drives.flatMap((d) => d.volumes.map((v) => v.id)), ...c.attached.flatMap((d) => d.volumes.map((v) => v.id)));
+      const disks = [...c.drives, ...c.attached, ...(c.inferredDisks ?? [])];
+      if (c.id === itemParam) vols.push(...disks.flatMap((d) => d.volumes.map((v) => v.id)));
       else {
-        for (const d of [...c.drives, ...c.attached]) if (d.id === itemParam) vols.push(...d.volumes.map((v) => v.id));
+        for (const d of disks) if (d.id === itemParam && !d.inferred) vols.push(...d.volumes.map((v) => v.id));
       }
     }
     for (const d of o.externals) if (d.id === itemParam) vols.push(...d.volumes.map((v) => v.id));
@@ -121,7 +127,7 @@ export default function StoragePage() {
 
   const maxBytes = useMemo(() => {
     if (!o) return 0;
-    const all = [...o.computers.flatMap((c) => [c, ...c.drives, ...c.attached]), ...o.externals];
+    const all = [...o.computers.flatMap((c) => [...c.drives, ...c.attached, ...(c.inferredDisks ?? [])]), ...o.externals];
     return Math.max(0, ...all.map((d) => d.capacityBytes ?? 0));
   }, [o]);
   const totalUsed = o?.totals.reduce((s, t) => s + t.usedBytes, 0) ?? 0;
@@ -137,7 +143,8 @@ export default function StoragePage() {
     if (!o || selected == null) return null;
     const has = (d: { volumes: { id: number }[] }) => d.volumes.some((v) => v.id === selected);
     for (const c of o.computers) {
-      if (has(c)) return { device: c, hostId: null, attachable: false };
+      const inferred = (c.inferredDisks ?? []).find(has);
+      if (inferred) return { device: inferred, hostId: null, attachable: false };
       const drive = c.drives.find(has);
       if (drive) return { device: drive, hostId: null, attachable: false };
       const att = c.attached.find(has);
@@ -234,6 +241,7 @@ export default function StoragePage() {
           {overview.isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
           {overview.isError && <p className="text-sm text-red-600">{overview.error.message}</p>}
           {setFlags.isError && <p className="text-sm text-red-600">{setFlags.error.message}</p>}
+          {setDiskLink.isError && <p className="text-sm text-red-600">{setDiskLink.error.message}</p>}
           {o?.computers.length === 0 && o.externals.length === 0 && <p className="text-sm text-muted-foreground">No computers, drives or NAS boxes in this house.</p>}
           {listedComputers.length === 0 && hiddenCount > 0 && (
             <p className="text-sm text-muted-foreground">
@@ -276,15 +284,45 @@ export default function StoragePage() {
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap items-start gap-4">
-                {c.drives.length === 0 || c.volumes.length > 0 ? <DeviceBlock device={c} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={select} /> : null}
+                {(c.inferredDisks ?? []).length === 0 && c.drives.length === 0 && c.attached.length === 0 && (
+                  <p className="text-[12px] text-muted-foreground">No disks measured on this machine.</p>
+                )}
+                {(c.inferredDisks ?? []).map((d) => (
+                  <DeviceBlock
+                    key={`inf:${d.diskKey ?? d.name}`}
+                    device={d}
+                    maxBytes={maxBytes}
+                    selectedVolumeId={selected}
+                    onSelectVolume={select}
+                    onLinkDisk={(choice) => setDiskLink.mutate(choice)}
+                    linkPending={setDiskLink.isPending}
+                  />
+                ))}
                 {c.drives.map((d) => (
-                  <DeviceBlock key={d.id} device={d} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={select} />
+                  <DeviceBlock
+                    key={d.id}
+                    device={d}
+                    maxBytes={maxBytes}
+                    selectedVolumeId={selected}
+                    onSelectVolume={select}
+                    onLinkDisk={(choice) => setDiskLink.mutate(choice)}
+                    linkPending={setDiskLink.isPending}
+                  />
                 ))}
               </div>
               {c.attached.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-start gap-4 border-t border-dashed border-border pt-3">
                   {c.attached.map((d) => (
-                    <DeviceBlock key={d.id} device={d} maxBytes={maxBytes} selectedVolumeId={selected} onSelectVolume={select} tag="attached" />
+                    <DeviceBlock
+                      key={d.id}
+                      device={d}
+                      maxBytes={maxBytes}
+                      selectedVolumeId={selected}
+                      onSelectVolume={select}
+                      tag="attached"
+                      onLinkDisk={(choice) => setDiskLink.mutate(choice)}
+                      linkPending={setDiskLink.isPending}
+                    />
                   ))}
                 </div>
               )}

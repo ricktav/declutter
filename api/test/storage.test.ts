@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { areas, houses, items, storageDirs, storageVolumes } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
+import { physicalDiskKey } from "../lib/storageDisks";
 
 beforeEach(resetTestDb);
 
@@ -230,6 +231,91 @@ describe("storage.setFlags", () => {
     await expect(c.storage.setFlags({ itemId: 999999, starred: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(c.storage.setFlags({ itemId: chair })).rejects.toThrow();
     expect((await getTestDb().query.items.findFirst({ where: eq(items.id, nas) }))?.attributes?.["storage.hidden"]).toBeUndefined();
+  });
+});
+
+describe("physicalDiskKey", () => {
+  it("strips /dev, partitions and APFS slices", () => {
+    expect(physicalDiskKey("/dev/sda2", null)).toBe("sda");
+    expect(physicalDiskKey("sdb1", null)).toBe("sdb");
+    expect(physicalDiskKey("nvme0n1p1", null)).toBe("nvme0n1");
+    expect(physicalDiskKey("mmcblk0p2", null)).toBe("mmcblk0");
+    expect(physicalDiskKey("disk7s1", null)).toBe("disk7");
+    expect(physicalDiskKey("disk9s1", "disk9")).toBe("disk9");
+  });
+});
+
+describe("storage disk linking", () => {
+  it("puts computer volumes onto the matching disk Thing and infers a disk with no Thing", async () => {
+    const { areaId, houseId, pc, ssd } = await seedDevices();
+    const db = getTestDb();
+    await db.update(items).set({ attributes: { role: "storage", drive_type: "ssd", storage_gb: 232 } }).where(eq(items.id, ssd));
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: pc,
+      source: "test",
+      volumes: [
+        { mountPoint: "/", device: "/dev/sda2", capacityBytes: 244 * GB, usedBytes: 100 * GB },
+        { mountPoint: "/mnt/external", device: "/dev/sdb1", capacityBytes: 3940 * GB, usedBytes: 200 * GB },
+      ],
+    });
+    const o = await c.storage.overview({});
+    const mini = o.computers.find((x) => x.id === pc)!;
+    expect(mini.drives.map((d) => [d.name, d.measured, d.measure, d.diskKey, d.volumes.map((v) => v.mountPoint)])).toEqual([
+      ["Internal SSD", true, "measured", "sda", ["/"]],
+    ]);
+    expect(mini.inferredDisks.map((d) => [d.name, d.inferred, d.diskKey, d.volumes.map((v) => v.mountPoint)])).toEqual([
+      ["sdb", true, "sdb", ["/mnt/external"]],
+    ]);
+    expect(mini.drives[0].volumes[0].usedBytes).toBe(100 * GB);
+    expect(mini.inferredDisks[0].volumes[0].usedBytes).toBe(200 * GB);
+    expect(await db.select().from(storageVolumes).where(eq(storageVolumes.itemId, ssd))).toHaveLength(0);
+  });
+
+  it("uses storage.disk when size would match the wrong drive", async () => {
+    const { areaId, houseId, pc, ssd } = await seedDevices();
+    const db = getTestDb();
+    await db.update(items).set({ attributes: { role: "storage", storage_gb: 232, "storage.disk": "sdb" } }).where(eq(items.id, ssd));
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: pc,
+      source: "test",
+      volumes: [
+        { mountPoint: "/", device: "sda2", capacityBytes: 244 * GB, usedBytes: 10 * GB },
+        { mountPoint: "/mnt/external", device: "sdb1", capacityBytes: 3940 * GB, usedBytes: 20 * GB },
+      ],
+    });
+    const mini = (await c.storage.overview({})).computers.find((x) => x.id === pc)!;
+    expect(mini.drives[0].diskKey).toBe("sdb");
+    expect(mini.drives[0].volumes.map((v) => v.mountPoint)).toEqual(["/mnt/external"]);
+    expect(mini.inferredDisks.map((d) => d.diskKey)).toEqual(["sda"]);
+  });
+
+  it("leaves two similar disks unlinked when one volume group is ambiguous, and setDiskLink pins one", async () => {
+    const { areaId, houseId, pc, ssd } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: ssd2 }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "System SSD", parentId: pc, attributes: { role: "storage", storage_gb: 256 } })
+      .$returningId();
+    await db.update(items).set({ name: "System SSD", attributes: { role: "storage", storage_gb: 256 } }).where(eq(items.id, ssd));
+    const c = callerFor(houseId);
+    await c.storage.report({ itemId: pc, source: "test", volumes: [{ mountPoint: "/", device: "sda2", capacityBytes: 256 * GB, usedBytes: 80 * GB }] });
+    const before = (await c.storage.overview({})).computers.find((x) => x.id === pc)!;
+    expect(before.inferredDisks.map((d) => d.diskKey)).toEqual(["sda"]);
+    expect(before.drives.map((d) => d.measure).sort()).toEqual(["unlinked", "unlinked"]);
+    expect(await c.storage.setDiskLink({ itemId: ssd, diskKey: "sda" })).toEqual({ id: ssd, diskKey: "sda" });
+    const after = (await c.storage.overview({})).computers.find((x) => x.id === pc)!;
+    expect(after.drives.find((d) => d.id === ssd)?.volumes.map((v) => v.mountPoint)).toEqual(["/"]);
+    expect(after.drives.find((d) => d.id === ssd2)?.measure).toBe("duplicate");
+    expect(after.inferredDisks).toEqual([]);
+  });
+
+  it("labels an inventory-only disk as no collector when the computer has no volumes", async () => {
+    const { houseId, pc, ssd } = await seedDevices();
+    const mini = (await callerFor(houseId).storage.overview({})).computers.find((x) => x.id === pc)!;
+    expect(mini.drives.map((d) => [d.id, d.measure, d.measured])).toEqual([[ssd, "no-collector", false]]);
+    expect(mini.inferredDisks).toEqual([]);
   });
 });
 

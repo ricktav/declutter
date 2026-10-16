@@ -7,16 +7,20 @@ import { items, storageDirs, storageVolumes } from "@db/schema";
 import { logEvent } from "../lib/events";
 import {
   DATA_ROLES,
+  STORAGE_DISK_KEY,
   STORAGE_HIDDEN_KEY,
   STORAGE_STARRED_KEY,
   StorageReportError,
   applyReport,
   applyStorageViewFlag,
   isStorageComputer,
+  isStorageDevice,
   overviewFor,
+  physicalDiskKey,
   removeVolume,
   storageViewFlags,
 } from "../lib/storage";
+import { applyTrackerImport } from "../lib/storageTracker";
 
 const reportVolume = z.object({
   mountPoint: z.string().min(1).max(255),
@@ -133,6 +137,64 @@ export const storageRouter = createRouter({
         });
       }
       return { id: item.id, ...storageViewFlags(next) };
+    }),
+
+  /**
+   * Pin a disk Thing to a kernel disk name (`sda`, `disk9`) so computer-attached
+   * volumes with that `device` draw on it. Null clears the override.
+   */
+  setDiskLink: procedure
+    .input(z.object({ itemId: z.number().int(), diskKey: z.string().min(1).max(64).nullable() }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
+      if (!isStorageDevice(item) || String(item.attributes?.role ?? "") !== "storage") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Not a disk." });
+      }
+      const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
+      const key = input.diskKey == null ? null : physicalDiskKey(input.diskKey, input.diskKey) ?? input.diskKey.toLowerCase();
+      const prev = next[STORAGE_DISK_KEY];
+      if (key == null) {
+        if (!(STORAGE_DISK_KEY in next)) return { id: item.id, diskKey: null as string | null };
+        delete next[STORAGE_DISK_KEY];
+      } else if (prev === key) {
+        return { id: item.id, diskKey: key };
+      } else {
+        next[STORAGE_DISK_KEY] = key;
+      }
+      await db
+        .update(items)
+        .set({ attributes: Object.keys(next).length > 0 ? next : null })
+        .where(eq(items.id, input.itemId));
+      await logEvent({
+        entityType: "item",
+        entityId: input.itemId,
+        action: "storage.disk",
+        summary: `${item.name}: ${STORAGE_DISK_KEY} ${key == null ? "removed" : `= ${key}`}`,
+      });
+      return { id: item.id, diskKey: key };
+    }),
+
+  /**
+   * Pull Data Tracker GET /api/sources (type=file) into storage.report.
+   * Dry unless `dry` is false. Does not change storage.report's contract.
+   */
+  importSources: procedure
+    .input(
+      z.object({
+        sources: z.unknown(),
+        dry: z.boolean().optional(),
+        hostMap: z.record(z.string(), z.union([z.string(), z.number(), z.null()])).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      try {
+        return await applyTrackerImport(getDb(), input);
+      } catch (e) {
+        if (e instanceof StorageReportError) throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+        throw e;
+      }
     }),
 
   dirs: procedure.input(z.object({ volumeId: z.number().int() })).query(async ({ input }) => {

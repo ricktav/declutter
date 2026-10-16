@@ -53,6 +53,7 @@ type OverviewDevice = { id: number; name: string; kind: string; volumes: Overvie
 type OverviewComputer = OverviewDevice & {
   drives: OverviewDevice[];
   attached: OverviewDevice[];
+  inferredDisks?: OverviewDevice[];
 };
 
 function volsOf(d: OverviewDevice): GraphVolume[] {
@@ -69,12 +70,13 @@ function volsOf(d: OverviewDevice): GraphVolume[] {
 }
 
 function asComputer(c: OverviewComputer): GraphComputer {
+  const inferred = (c.inferredDisks ?? []).map((d) => ({ id: d.id, name: d.name, volumes: volsOf(d) }));
   return {
     id: c.id,
     name: c.name,
     kind: c.kind,
-    volumes: volsOf(c),
-    drives: c.drives.map((d) => ({ id: d.id, name: d.name, volumes: volsOf(d) })),
+    volumes: [],
+    drives: [...inferred, ...c.drives.map((d) => ({ id: d.id, name: d.name, volumes: volsOf(d) }))],
     attached: c.attached.map((d) => ({ id: d.id, name: d.name, volumes: volsOf(d) })),
   };
 }

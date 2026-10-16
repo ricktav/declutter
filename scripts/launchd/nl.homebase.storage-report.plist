@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily storage collector on the Mac this file is installed on (07:20 local).
+     Copy to ~/Library/LaunchAgents/. ProgramArguments already pass --item 51
+     (macmini-m4). Change that id on another Mac, then:
+       launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/nl.homebase.storage-report.plist 2>/dev/null
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/nl.homebase.storage-report.plist
+     HOMEBASE_BASE is the API that has storage.report (production :3001). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>nl.homebase.storage-report</string>
+  <key>WorkingDirectory</key>
+  <string>/Volumes/T7/declutter</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>./scripts/storage-report-local.mjs --item 51</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOMEBASE_BASE</key>
+    <string>http://127.0.0.1:3001</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>20</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/ricktav/Library/Logs/homebase-storage-report.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ricktav/Library/Logs/homebase-storage-report.log</string>
+  <key>Nice</key>
+  <integer>10</integer>
+</dict>
+</plist>

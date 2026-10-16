@@ -24,7 +24,7 @@ export function StorageSection({ itemId, role }: { itemId: number; role?: string
     };
     for (const c of o.computers) {
       if (c.id === itemId) {
-        take(c.name, c.volumes);
+        for (const d of c.inferredDisks) take(d.name, d.volumes);
         for (const d of c.drives) take(d.name, d.volumes);
         for (const d of c.attached) take(`${d.name} (attached)`, d.volumes);
       } else {
