@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import { defaultAreaId } from "../lib/defaultTopic";
 import { eq, desc, or, and, asc, ne, isNull } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
@@ -187,7 +188,8 @@ export const itemsRouter = createRouter({
   create: procedure
     .input(
       z.object({
-        areaId: z.number(),
+        // omitted: the default "Things" topic
+        areaId: z.number().optional(),
         name: z.string().min(1),
         description: z.string().optional(),
         attributes: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
@@ -205,12 +207,13 @@ export const itemsRouter = createRouter({
     )
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
+      const areaId = input.areaId ?? (await defaultAreaId(db));
       // insert + location + event are atomic: a bad roomId must not leave an orphan item
       const id = await db.transaction(async (tx) => {
         const [{ id: newId }] = await tx
           .insert(items)
           .values({
-            areaId: input.areaId,
+            areaId,
             name: input.name,
             description: input.description ?? null,
             attributes: input.attributes ?? null,
@@ -227,7 +230,7 @@ export const itemsRouter = createRouter({
             entityId: newId,
             action: "created",
             summary: `Item "${input.name}" created`,
-            payload: { areaId: input.areaId, attributes: input.attributes },
+            payload: { areaId, attributes: input.attributes },
           },
           tx,
         );
@@ -240,7 +243,7 @@ export const itemsRouter = createRouter({
       const siblings = await db
         .select()
         .from(items)
-        .where(and(eq(items.status, "active"), eq(items.areaId, input.areaId)));
+        .where(and(eq(items.status, "active"), eq(items.areaId, areaId)));
       const suggestions: number[] = [];
       for (const s of siblings) {
         if (s.id === id) continue;

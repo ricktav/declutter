@@ -249,12 +249,8 @@ function FocusSheetBody({
       setError("Name is required.");
       return;
     }
-    if (areaId == null) {
-      setError("Pick a topic before admitting this frame.");
-      return;
-    }
     const created = await create.mutateAsync({
-      areaId,
+      ...(areaId != null ? { areaId } : {}),
       name: trimmed,
       description: note.trim() || undefined,
       roomId: placeHere ? roomId : null,
@@ -313,7 +309,7 @@ function FocusSheetBody({
       <SheetHeader className="px-0 pt-0">
         <SheetTitle className="font-data text-[16px]">{title}</SheetTitle>
         <SheetDescription className="text-[12px]">
-          {existing ? "Thin sheet — full Thing page is one tap away." : "Admit this frame as a Thing. Name and topic are required; Place is optional."}
+          {existing ? "Thin sheet — full Thing page is one tap away." : "Admit this frame as a Thing. Only the name is required; without a topic it goes to Things."}
         </SheetDescription>
       </SheetHeader>
 
@@ -330,7 +326,7 @@ function FocusSheetBody({
       <label className="block text-[12px] font-medium">
         Topic
         <div className="mt-1">
-          <AreaPicker value={areaId} onChange={setAreaId} placeholder="pick a topic…" />
+          <AreaPicker value={areaId} onChange={setAreaId} placeholder="Things (optional)" />
         </div>
       </label>
 

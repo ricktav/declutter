@@ -21,6 +21,7 @@ import { createCapture } from "../lib/captures";
 import { clearTriageJobState, maybeAutoTriage, triageJobState } from "../lib/jobs";
 import { setItemLocation } from "../lib/location";
 import { captureScope, promptInventory } from "../lib/aiContext";
+import { defaultAreaId } from "../lib/defaultTopic";
 import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom, WHOLE_SCENE_BOX } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
@@ -606,7 +607,7 @@ export const inboxRouter = createRouter({
         hPct: z.number().min(1).max(100),
         itemId: z.number().nullable(), // null = create new
         itemName: z.string().min(1), // used when creating
-        areaId: z.number(), // used when creating
+        areaId: z.number().optional(), // used when creating; omitted: the default "Things" topic
         roomId: z.number().nullable().optional(),
         houseId: z.number().nullable().optional(),
         markProcessed: z.boolean().default(false),
@@ -616,6 +617,7 @@ export const inboxRouter = createRouter({
       const db = getDb();
       const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
       if (!cap?.storageKey) throw new TRPCError({ code: "BAD_REQUEST", message: "capture has no stored image" });
+      const areaId = input.areaId ?? (input.itemId ? null : await defaultAreaId(db));
 
       let itemId = input.itemId;
       if (!itemId) {
@@ -623,7 +625,7 @@ export const inboxRouter = createRouter({
           const [{ id: newId }] = await tx
             .insert(items)
             .values({
-              areaId: input.areaId,
+              areaId: areaId ?? (await defaultAreaId(db)),
               name: input.itemName,
               description: `Detected in snap: ${cap.rawText ?? "photo"}`,
               houseId: input.houseId ?? ctx.houseId ?? null,
@@ -664,7 +666,7 @@ export const inboxRouter = createRouter({
           db.transaction(async (tx) => {
             await tx.insert(photos).values({
               itemId: targetId,
-              areaId: item?.areaId ?? input.areaId,
+              areaId: item?.areaId ?? areaId ?? (await defaultAreaId(db)),
               title: `Cutout: ${input.label}`,
               storageKey: saved.key,
               mimeType: "image/jpeg",
@@ -710,7 +712,8 @@ export const inboxRouter = createRouter({
         items: z
           .array(
             z.object({
-              areaId: z.number(),
+              // omitted: the existing Thing's topic, or the default "Things" topic for a new one
+              areaId: z.number().optional(),
               itemId: z.number().nullable(),
               itemName: z.string().min(1),
               attributes: z.record(z.string(), z.string()).optional(),
@@ -724,6 +727,7 @@ export const inboxRouter = createRouter({
     )
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
+      const fallbackAreaId = input.items.some((i) => i.areaId == null && !i.itemId) ? await defaultAreaId(db) : null;
       // file copies made inside the transaction: deleted again if it rolls back
       const copies: string[] = [];
       try {
@@ -741,10 +745,11 @@ export const inboxRouter = createRouter({
           for (const it of input.items) {
             let itemId = it.itemId;
             if (!itemId) {
+              const areaId = it.areaId ?? fallbackAreaId ?? (await defaultAreaId(db));
               const [{ id: newId }] = await tx
                 .insert(items)
                 .values({
-                  areaId: it.areaId,
+                  areaId,
                   name: it.itemName,
                   description: cap.rawText?.slice(0, 500) ?? null,
                   attributes: it.attributes ?? null,
@@ -780,7 +785,7 @@ export const inboxRouter = createRouter({
                 copies.push(saved.key);
                 await tx.insert(photos).values({
                   itemId,
-                  areaId: it.areaId,
+                  areaId,
                   title: `Cutout: ${it.itemName}`,
                   storageKey: saved.key,
                   mimeType: "image/jpeg",
@@ -816,7 +821,7 @@ export const inboxRouter = createRouter({
                 if (copy) copies.push(copy.key);
                 await tx.insert(itemLinks).values({
                   itemId,
-                  areaId: it.areaId,
+                  areaId,
                   kind: cap.kind === "link" ? "link" : copy ? "file" : "note",
                   title: cap.url ?? it.itemName,
                   content: cap.rawText ?? null,
