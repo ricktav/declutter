@@ -39,10 +39,13 @@ async function trpc(path, input) {
 }
 
 const plan = await trpc("storage.dedupeVolumes", { dry: !apply, mergeDisks: apply && mergeDisks });
-const volLines = (plan.volumes ?? []).map((g) => {
+const fmtVol = (g) => {
   const drops = g.drop.map((d) => `#${d.id} ${d.itemName} ${d.mountPoint} ${d.source}`).join("; ");
-  return `${g.machineName}#${g.machineId}: keep volume #${g.keep.id} ${g.keep.mountPoint} on ${g.keep.itemName} · drop ${drops}`;
-});
+  const tag = g.ambiguous ? " · SKIP ambiguous (different mountpoints)" : "";
+  return `${g.machineName}#${g.machineId}: keep volume #${g.keep.id} ${g.keep.mountPoint} on ${g.keep.itemName} · drop ${drops}${tag}`;
+};
+const volLines = (plan.volumes ?? []).filter((g) => !g.ambiguous).map(fmtVol);
+const skippedLines = (plan.skipped ?? plan.volumes?.filter((g) => g.ambiguous) ?? []).map(fmtVol);
 const mergeLines = (plan.diskMerges ?? []).map((m) => {
   const extras = m.drop.map((d) => `#${d.id} ${d.name}`).join(", ");
   return `${m.machineName}#${m.machineId}: keep #${m.keep.id} ${m.keep.name} · merge ${extras} (${m.reason})`;
@@ -52,13 +55,16 @@ console.log(
     {
       dry: plan.dry,
       droppedVolumes: plan.droppedVolumes,
+      skippedVolumes: plan.skippedVolumes ?? skippedLines.length,
       mergedDisks: plan.mergedDisks,
       volumeDupes: volLines,
+      skipped: skippedLines,
       diskMerges: mergeLines,
     },
     null,
     2,
   ),
 );
-if (!apply) console.error("dry run: pass --apply to delete duplicate volume rows; --merge-disks also unparents extra disk Things");
+if (!apply) console.error("dry run: pass --apply to delete duplicate volume rows (ambiguous groups are skipped); --merge-disks also unparents extra disk Things");
+else if (skippedLines.length) console.error(`${skippedLines.length} ambiguous group(s) skipped; the rest were applied`);
 else if (mergeLines.length && !mergeDisks) console.error("disk Thing twins listed above were not merged; pass --merge-disks with --apply to unparent the extras");

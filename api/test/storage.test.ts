@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { areas, houses, items, relations, storageDirs, storageVolumes } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
-import { clusterByTwinKeys, machineTwinKeys, physicalDiskKey, sameVolume } from "../lib/storageDisks";
+import { clusterByTwinKeys, machineTwinKeys, physicalDiskKey, sameVolume, volumeDedupeIsSafe } from "../lib/storageDisks";
 
 beforeEach(resetTestDb);
 
@@ -676,8 +676,25 @@ describe("volume identity", () => {
         { mountPoint: "F28675F98ABCDEF0", device: "sda2", capacityBytes: 236e9 },
       ),
     ).toBe(true);
+    expect(
+      sameVolume(
+        { mountPoint: "/", device: "sda2", capacityBytes: 236e9 },
+        { mountPoint: "F28675F98ABCDEF0", device: "sda1", capacityBytes: 236e9 },
+      ),
+    ).toBe(false);
+    expect(sameVolume({ mountPoint: "/", device: "sda2", capacityBytes: 236e9 }, { mountPoint: "F28675F98ABCDEF0", capacityBytes: 236e9 })).toBe(true);
     expect(sameVolume({ mountPoint: "/mnt/backup", device: "/dev/sdb2" }, { mountPoint: "/mnt/backup", device: "sdb2" })).toBe(true);
     expect(sameVolume({ mountPoint: "/", device: "sda2" }, { mountPoint: "/mnt/backup", device: "sdb2" })).toBe(false);
+    expect(
+      sameVolume(
+        { mountPoint: "/", device: "/dev/disk3s5", capacityBytes: 500e9 },
+        { mountPoint: "/System/Volumes/Data", device: "disk3s5", capacityBytes: 500e9 },
+      ),
+    ).toBe(false);
+    expect(volumeDedupeIsSafe({ mountPoint: "/" }, { mountPoint: "/System/Volumes/Data" })).toBe(false);
+    expect(
+      volumeDedupeIsSafe({ mountPoint: "/", device: "sda2" }, { mountPoint: "F28675F98ABCDEF0", device: "sda2" }),
+    ).toBe(true);
     expect(
       sameVolume(
         { mountPoint: "/Volumes/T7", label: "T7", capacityBytes: 1000 * 1024 ** 3 },
@@ -860,7 +877,81 @@ describe("machine volume upsert and overview dedupe", () => {
     expect(plan.diskMerges.some((m) => m.drop.some((d) => d.id === wdc) || m.keep.id === wdc)).toBe(true);
     const applied = await c.storage.dedupeVolumes({ dry: false });
     expect(applied.droppedVolumes).toBeGreaterThan(0);
+    expect(applied.volumes.filter((g) => g.ambiguous)).toEqual([]);
     const again = await c.storage.dedupeVolumes({ dry: false });
     expect(again.droppedVolumes).toBe(0);
+  });
+
+  it("does not treat APFS / and /System/Volumes/Data as one volume, hides Data on the overview, and still drops true dupes", async () => {
+    const { houseId, pc, ssd } = await seedDevices();
+    const c = callerFor(houseId);
+    const db = getTestDb();
+    await c.storage.report({
+      itemId: pc,
+      source: "local-script",
+      volumes: [
+        { mountPoint: "/", device: "/dev/disk3s5", container: "disk3", capacityBytes: 500 * DEC, usedBytes: 200 * DEC },
+        { mountPoint: "/System/Volumes/Data", device: "/dev/disk3s5", container: "disk3", capacityBytes: 500 * DEC, usedBytes: 200 * DEC },
+      ],
+    });
+    const [{ id: leftover }] = await db.insert(storageVolumes).values({
+      itemId: ssd,
+      mountPoint: "/",
+      device: "disk3s5",
+      container: "disk3",
+      capacityBytes: 500 * DEC,
+      usedBytes: 180 * DEC,
+      source: "legacy",
+      measuredAt: new Date("2026-10-01"),
+    }).$returningId();
+    const o = await c.storage.overview({});
+    const mini = o.computers.find((x) => x.id === pc)!;
+    const rootDisk = [...mini.drives, ...mini.inferredDisks].find((d) => d.volumes.some((v) => v.mountPoint === "/"));
+    expect(rootDisk).toBeTruthy();
+    expect(rootDisk!.volumes.map((v) => v.mountPoint)).toEqual(["/"]);
+    expect(rootDisk!.volumes.some((v) => v.mountPoint === "/System/Volumes/Data")).toBe(false);
+    const plan = await c.storage.dedupeVolumes({ dry: true, mergeDisks: true });
+    expect(plan.volumes.some((g) => g.drop.some((d) => d.mountPoint === "/System/Volumes/Data") || g.keep.mountPoint === "/System/Volumes/Data")).toBe(false);
+    expect(plan.volumes.some((g) => g.keep.mountPoint === "/" || g.drop.some((d) => d.mountPoint === "/"))).toBe(true);
+    expect(plan.volumes.every((g) => !g.ambiguous)).toBe(true);
+    const applied = await c.storage.dedupeVolumes({ dry: false });
+    expect(applied.droppedVolumes).toBeGreaterThan(0);
+    expect(applied.skippedVolumes).toBe(0);
+    const rows = await db.select().from(storageVolumes);
+    expect(rows.some((r) => r.id === leftover)).toBe(false);
+    expect(rows.filter((r) => r.mountPoint === "/")).toHaveLength(1);
+    expect(rows.some((r) => r.mountPoint === "/System/Volumes/Data")).toBe(true);
+  });
+
+  it("offers a merge of an import-created inner drive with the enclosure on the same machine", async () => {
+    const { areaId, houseId } = await seedDevices();
+    const db = getTestDb();
+    const [{ id: opti }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "OptiPlex 990", attributes: { role: "desktop", hostname: "optiplex-990" } })
+      .$returningId();
+    const [{ id: enclosure }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "Elements 25A3 11TB", parentId: opti, attributes: { role: "storage", model: "Elements 25A3", storage_gb: 12000 } })
+      .$returningId();
+    const [{ id: inner }] = await db
+      .insert(items)
+      .values({
+        areaId,
+        houseId,
+        name: "WDC WD120EDAZ-11F3RA0",
+        parentId: null,
+        attributes: { role: "storage", model: "WD120EDAZ-11F3RA0", serial: "5PH4Z28D", storage_gb: 12000, "storage.disk": "sde" },
+        verificationStatus: "detected",
+      })
+      .$returningId();
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: opti,
+      source: "test",
+      volumes: [{ mountPoint: "/media/rick/Elements", label: "Elements", device: "sde1", capacityBytes: 12000 * DEC, usedBytes: 3840 * DEC }],
+    });
+    const plan = await c.storage.dedupeVolumes({ dry: true, mergeDisks: true });
+    expect(plan.diskMerges.some((m) => m.machineId === opti && (m.keep.id === inner || m.drop.some((d) => d.id === inner)) && (m.keep.id === enclosure || m.drop.some((d) => d.id === enclosure)))).toBe(true);
   });
 });
