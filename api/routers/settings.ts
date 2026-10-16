@@ -5,6 +5,12 @@ import { getProviderSource } from "../lib/ai";
 import { logEvent } from "../lib/events";
 import { autoTriageReady } from "../lib/jobs";
 
+const httpUrl = z
+  .string()
+  .max(500)
+  .url()
+  .refine((u) => /^https?:\/\//i.test(u), "Use an http:// or https:// address.");
+
 export const settingsRouter = createRouter({
   /** current effective config (key masked) */
   get: procedure.query(async () => {
@@ -114,6 +120,29 @@ export const settingsRouter = createRouter({
     });
     return { autoTriage: input.on, ready: await autoTriageReady() };
   }),
+
+  /** External links (no secrets), read by the sidebar on every page. Null = not set, so not shown. */
+  links: procedure.query(() => {
+    const s = loadSettings();
+    return { meterkastUrl: s.meterkastUrl ?? null, parcelViewerUrl: s.parcelViewerUrl ?? null };
+  }),
+
+  /** Empty string clears a link. */
+  setLinks: procedure
+    .input(
+      z.object({
+        meterkastUrl: z.union([z.literal(""), httpUrl]).optional(),
+        parcelViewerUrl: z.union([z.literal(""), httpUrl]).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const patch: Record<string, string> = {};
+      if (input.meterkastUrl !== undefined) patch.meterkastUrl = input.meterkastUrl;
+      if (input.parcelViewerUrl !== undefined) patch.parcelViewerUrl = input.parcelViewerUrl;
+      saveSettings(patch);
+      await logEvent({ entityType: "settings", action: "updated", summary: "External links updated" });
+      return { ok: true };
+    }),
 
   /** list models the configured key can actually use */
   testConnection: procedure

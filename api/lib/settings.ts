@@ -28,6 +28,10 @@ export interface AppSettings {
   llmDetectSlot?: AiSlot;
   /** Triage new photo snaps in the background. Default off. */
   autoTriage?: boolean;
+  /** External dashboard with live meter readings, linked from the sidebar and Energy sections. */
+  meterkastUrl?: string;
+  /** Parcel map viewer; the address is appended as ?q=. */
+  parcelViewerUrl?: string;
 }
 
 export function loadSettings(): AppSettings {

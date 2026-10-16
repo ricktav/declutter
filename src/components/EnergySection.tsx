@@ -1,11 +1,12 @@
 import { trpc } from "@/providers/trpc";
-import { METERKAST_URL } from "@/components/Layout";
+import { useLinks } from "@/hooks/use-links";
 
 const EUR = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 
 /** Read-only energy figures for a plug or an item a plug powers. Hidden for anything else. */
 export function EnergySection({ itemId }: { itemId: number }) {
   const q = trpc.energy.forItem.useQuery({ itemId });
+  const { meterkastUrl } = useLinks();
   const e = q.data;
   if (q.isError) return <p className="text-[13px] text-muted-foreground">Energy: could not load ({q.error.message})</p>;
   if (!e || !e.plug) return null;
@@ -16,9 +17,11 @@ export function EnergySection({ itemId }: { itemId: number }) {
         <h2 className="micro-label text-muted-foreground">Energy</h2>
         <span className="ml-auto flex items-center gap-3 text-[11px] text-muted-foreground">
           {e.plug.id !== itemId && <span>via {e.plug.name}</span>}
-          <a href={METERKAST_URL} target="_blank" rel="noreferrer" className="underline" title="Live readings on the meterkast dashboard">
-            Live ↗
-          </a>
+          {meterkastUrl && (
+            <a href={meterkastUrl} target="_blank" rel="noreferrer" className="underline" title="Live readings on the meterkast dashboard">
+              Live ↗
+            </a>
+          )}
         </span>
       </div>
       {!s ? (

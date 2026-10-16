@@ -1,6 +1,6 @@
 /** Dutch address lookup against PDOK's free public APIs (Locatieserver +
  * BRK Kadastrale Kaart) - the same endpoints the standalone kadastrale-kaart
- * viewer (http://10.50.0.102/grokbot/kadastrale-kaart/) uses client-side.
+ * viewer (Settings → Links) uses client-side.
  * No key, no backend proxy needed. */
 
 export interface AddressSuggestion {
@@ -102,10 +102,10 @@ export async function fetchParcelInfo(suggestion: AddressSuggestion): Promise<Pa
   };
 }
 
-/** Deep-link into the standalone kadastrale-kaart viewer, which already
- * reads `?q=` on load and runs the same free-text search. */
-export function kadastraleKaartUrl(address: string): string {
-  return "http://10.50.0.102/grokbot/kadastrale-kaart/?q=" + encodeURIComponent(address);
+/** Deep-link into a parcel map viewer (Settings → Links) that reads `?q=` on
+ * load and runs the same free-text search, e.g. the kadastrale-kaart viewer. */
+export function kadastraleKaartUrl(viewerUrl: string, address: string): string {
+  return viewerUrl + (viewerUrl.includes("?") ? "&" : "?") + "q=" + encodeURIComponent(address);
 }
 
 /** PDOK aerial-photo WMTS tile covering a point, for use as a house card thumbnail. */

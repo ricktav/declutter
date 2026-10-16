@@ -42,6 +42,7 @@ import {
 import { formatClock } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useTopicFavs } from "@/lib/topicFavs";
+import { useLinks } from "@/hooks/use-links";
 
 const AREA_ICONS: Record<string, LucideIcon> = {
   laptop: Laptop,
@@ -132,9 +133,6 @@ function RunningTimerPill() {
   );
 }
 
-/** The live energy dashboard on dockermac-1. */
-export const METERKAST_URL = "http://10.50.0.10/meterkast.html";
-
 const PRIMARY_NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/focus", label: "Focus", icon: ScanSearch },
@@ -190,6 +188,7 @@ function WorkbenchModeToggle({ compact = false }: { compact?: boolean }) {
 
 export default function Layout() {
   const { mode } = useWorkbenchMode();
+  const { meterkastUrl } = useLinks();
   const location = useLocation();
   const areas = trpc.areas.list.useQuery();
   const { favIds, toggle: toggleFav, isFaved } = useTopicFavs();
@@ -305,8 +304,8 @@ export default function Layout() {
               <span className="flex-1">Flow</span>
               <span className="text-[11px] opacity-60">↗</span>
             </a>
-            {mode !== "simple" && (
-              <a href={METERKAST_URL} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
+            {mode !== "simple" && meterkastUrl && (
+              <a href={meterkastUrl} target="_blank" rel="noreferrer" className={navLinkClass({ isActive: false })}>
                 <Zap className="h-4 w-4" />
                 <span className="flex-1">Meterkast</span>
                 <span className="text-[11px] opacity-60">↗</span>

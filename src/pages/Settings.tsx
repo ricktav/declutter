@@ -11,6 +11,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { fetchParcelInfo, kadastraleKaartUrl } from "@/lib/pdok";
+import { useLinks } from "@/hooks/use-links";
 import {
   Plug,
   CheckCircle2,
@@ -26,6 +27,7 @@ import {
   X,
   ArrowRightLeft,
   AlertTriangle,
+  Link2,
 } from "lucide-react";
 
 const PRESETS = [
@@ -590,6 +592,57 @@ export default function SettingsPage() {
       <div className="mt-3 rounded-lg border border-border bg-white p-4 space-y-3">
         <HousesSection />
       </div>
+      <div className="mt-8 flex items-center gap-2">
+        <Link2 className="h-4 w-4 text-emerald-700" />
+        <h2 className="text-sm font-semibold">Links</h2>
+      </div>
+      <p className="text-[12px] text-muted-foreground mt-1">
+        Other dashboards on your network. A link that is empty is not shown.
+      </p>
+      <div className="mt-3 rounded-lg border border-border bg-white p-4">
+        <LinksSection />
+      </div>
+    </div>
+  );
+}
+
+type Links = { meterkastUrl: string | null; parcelViewerUrl: string | null };
+
+function LinksSection() {
+  const links = trpc.settings.links.useQuery();
+  if (links.isError) return <p className="text-[12px] text-red-700">Could not load links: {links.error.message}</p>;
+  if (!links.data) return <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />;
+  return <LinksForm key={JSON.stringify(links.data)} saved={links.data} />;
+}
+
+function LinksForm({ saved }: { saved: Links }) {
+  const utils = trpc.useUtils();
+  const [meterkastUrl, setMeterkastUrl] = useState(saved.meterkastUrl ?? "");
+  const [parcelViewerUrl, setParcelViewerUrl] = useState(saved.parcelViewerUrl ?? "");
+  const save = trpc.settings.setLinks.useMutation({ onSuccess: () => utils.settings.links.invalidate() });
+  const dirty = meterkastUrl.trim() !== (saved.meterkastUrl ?? "") || parcelViewerUrl.trim() !== (saved.parcelViewerUrl ?? "");
+  const field = (label: string, hint: string, value: string, set: (v: string) => void, placeholder: string) => (
+    <label className="block">
+      <span className="micro-label text-muted-foreground">{label}</span>
+      <input
+        className="mt-0.5 w-full rounded-md border border-input bg-white px-2 py-1.5 text-[13px] font-data"
+        value={value}
+        onChange={(e) => set(e.target.value)}
+        placeholder={placeholder}
+      />
+      <span className="text-[11px] text-muted-foreground">{hint}</span>
+    </label>
+  );
+  return (
+    <div className="space-y-3">
+      {field("Meter dashboard", "Live meter readings; shown in the sidebar and on a Thing's Energy section.", meterkastUrl, setMeterkastUrl, "http://…/meterkast.html")}
+      {field("Parcel viewer", "Opened with the house address appended as ?q=.", parcelViewerUrl, setParcelViewerUrl, "http://…/kadastrale-kaart/")}
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate({ meterkastUrl: meterkastUrl.trim(), parcelViewerUrl: parcelViewerUrl.trim() })}>
+          {save.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save links"}
+        </Button>
+        {save.error && <span className="text-[12px] text-red-700">{save.error.message}</span>}
+      </div>
     </div>
   );
 }
@@ -729,6 +782,7 @@ function MoveHouseDialog({
 
 function HouseRow({ house, allHouses, roomCount }: { house: HouseRowData; allHouses: { id: number; name: string }[]; roomCount: number }) {
   const utils = trpc.useUtils();
+  const { parcelViewerUrl } = useLinks();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(house.name);
   const [address, setAddress] = useState(house.address ?? "");
@@ -830,17 +884,22 @@ function HouseRow({ house, allHouses, roomCount }: { house: HouseRowData; allHou
             {house.lat.toFixed(5)}, {house.lng.toFixed(5)} — map ↗
           </a>
         )}
-        {house.parcelId && (
+        {house.parcelId && (parcelViewerUrl ? (
           <a
             className="text-[11px] text-primary hover:underline font-data"
-            href={kadastraleKaartUrl(house.address ?? house.parcelId)}
+            href={kadastraleKaartUrl(parcelViewerUrl, house.address ?? house.parcelId)}
             target="_blank"
             rel="noreferrer"
           >
             {house.parcelId}
             {house.parcelAreaM2 != null ? ` · ${house.parcelAreaM2}m²` : ""} — parcel ↗
           </a>
-        )}
+        ) : (
+          <span className="text-[11px] font-data text-muted-foreground">
+            {house.parcelId}
+            {house.parcelAreaM2 != null ? ` · ${house.parcelAreaM2}m²` : ""}
+          </span>
+        ))}
         <div className="font-data text-[11px] text-muted-foreground mt-0.5">
           {`${roomCount} room${roomCount === 1 ? "" : "s"}`}
         </div>

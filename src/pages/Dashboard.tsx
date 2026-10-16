@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
 import { useHouse } from "@/context/house";
+import { useLinks } from "@/hooks/use-links";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { aerialThumbUrl, fetchParcelInfo, kadastraleKaartUrl, reverseGeocode, type AddressSuggestion, type ParcelInfo } from "@/lib/pdok";
 import { ArrowRight, ExternalLink, Inbox, Lightbulb, ListChecks, Loader2, LocateFixed, MapPin, Package, Plus } from "lucide-react";
@@ -391,6 +392,7 @@ function EditHouseDialog({
   onSwitchHouse: (id: number) => void;
   onRequestNew: () => void;
 }) {
+  const { parcelViewerUrl } = useLinks();
   const [name, setName] = useState(house.name);
   const [addr, setAddr] = useState<ResolvedAddress>(() => houseToResolvedAddress(house));
   const utils = trpc.useUtils();
@@ -449,9 +451,9 @@ function EditHouseDialog({
             <div className="mt-0.5">
               <AddressWithParcelPicker value={addr} onResolve={setAddr} />
             </div>
-            {addr.address && (
+            {addr.address && parcelViewerUrl && (
               <a
-                href={kadastraleKaartUrl(addr.address)}
+                href={kadastraleKaartUrl(parcelViewerUrl, addr.address)}
                 target="_blank"
                 rel="noreferrer"
                 className="mt-1 inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
