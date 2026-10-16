@@ -18,7 +18,7 @@ function measureDirsTask(v: { itemId: number; itemName: string; mountPoint: stri
       : `node scripts/storage-report-local.mjs --item ${v.itemId} --only ${v.mountPoint}`;
   return {
     title: `Measure directories on ${v.itemName}: ${vol}`,
-    notes: `No directory sizes yet for ${vol} on ${v.itemName} (item ${v.itemId}).\n\nOn that machine:\n${cmd}`,
+    notes: `No directory sizes yet for ${vol} on ${v.itemName} (item ${v.itemId}).\n\nOn that machine:\n${cmd}\n\nOr from the Mini, every starred machine:\nnode --experimental-strip-types scripts/storage-report-starred.ts --apply --base http://127.0.0.1:3001`,
   };
 }
 
