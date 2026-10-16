@@ -506,7 +506,7 @@ export const itemsRouter = createRouter({
     .mutation(async ({ input }) => {
       const db = getDb();
       const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
-      if (!item) throw new Error("Item not found.");
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
       await db
         .update(items)
         .set({ decision: input.decision, decidedAt: input.decision ? new Date() : null })
@@ -537,7 +537,7 @@ export const itemsRouter = createRouter({
     .mutation(async ({ input }) => {
       const db = getDb();
       const item = await db.query.items.findFirst({ where: eq(items.id, input.id) });
-      if (!item) throw new Error("Item not found.");
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
       const next: Record<string, string | number> = { ...(item.attributes ?? {}) };
       const changed: string[] = [];
       for (const [key, value] of Object.entries(input.set)) {

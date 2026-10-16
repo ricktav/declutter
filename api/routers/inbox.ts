@@ -362,7 +362,7 @@ export const inboxRouter = createRouter({
   triage: procedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
-    if (!cap) throw new Error("capture not found");
+    if (!cap) throw new TRPCError({ code: "NOT_FOUND", message: "capture not found" });
 
     try {
       const content = await buildTriageContent(cap);
@@ -395,7 +395,7 @@ export const inboxRouter = createRouter({
   compare: procedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
     const db = getDb();
     const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
-    if (!cap) throw new Error("capture not found");
+    if (!cap) throw new TRPCError({ code: "NOT_FOUND", message: "capture not found" });
 
     let content: TriageContent;
     try {
@@ -602,7 +602,7 @@ export const inboxRouter = createRouter({
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
-      if (!cap?.storageKey) throw new Error("capture has no stored image");
+      if (!cap?.storageKey) throw new TRPCError({ code: "BAD_REQUEST", message: "capture has no stored image" });
 
       let itemId = input.itemId;
       if (!itemId) {
@@ -716,7 +716,7 @@ export const inboxRouter = createRouter({
       try {
         return await db.transaction(async (tx) => {
           const cap = await tx.query.captures.findFirst({ where: eq(captures.id, input.id) });
-          if (!cap) throw new Error("capture not found");
+          if (!cap) throw new TRPCError({ code: "NOT_FOUND", message: "capture not found" });
 
           let created = 0;
           // boxes only mean something on an image capture's own photo
@@ -866,18 +866,18 @@ export const inboxRouter = createRouter({
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const houseId = input.houseId ?? ctx.houseId;
-      if (houseId == null && input.roomId == null) throw new Error("Pick a house first.");
+      if (houseId == null && input.roomId == null) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a house first." });
       const target = input.roomId != null
         ? await db.query.rooms.findFirst({ where: eq(rooms.id, input.roomId) })
         : null;
-      if (input.roomId != null && !target) throw new Error("Room not found.");
+      if (input.roomId != null && !target) throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
       const targetHouseId = target?.houseId ?? houseId!;
       const match = target ?? (await db.query.rooms.findFirst({
         where: and(eq(rooms.houseId, targetHouseId), sql`lower(${rooms.name}) = ${input.roomName!.trim().toLowerCase()}`),
       }));
       const roomName = target?.name ?? input.roomName!.trim();
       const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.captureId) });
-      if (!cap?.storageKey) throw new Error("Capture has no file to import.");
+      if (!cap?.storageKey) throw new TRPCError({ code: "BAD_REQUEST", message: "Capture has no file to import." });
       // a capture is one timestamped scan; a new situation is a new capture
       if (cap.status === "processed") throw new TRPCError({ code: "BAD_REQUEST", message: "This capture was already imported." });
 
@@ -886,10 +886,10 @@ export const inboxRouter = createRouter({
         const bytes = await readFileBytes(cap.storageKey);
         geojson = JSON.parse(Buffer.from(bytes).toString("utf8"));
       } catch {
-        throw new Error("Not valid JSON.");
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Not valid JSON." });
       }
       const parsed = parseGeojsonFloor(geojson as { features: { geometry: { type: string; coordinates: unknown }; properties: Record<string, unknown> }[] });
-      if (!parsed) throw new Error("No wall geometry found in this file.");
+      if (!parsed) throw new TRPCError({ code: "BAD_REQUEST", message: "No wall geometry found in this file." });
       const { walls, furniturePolys, widthM, depthM } = parsed;
 
       const polys: ScanPoly[] = furniturePolys.map((poly) => {

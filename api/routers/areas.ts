@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { eq, and, sql } from "drizzle-orm";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -97,7 +98,7 @@ export const areasRouter = createRouter({
       if (rest.slug) {
         const clash = await db.query.areas.findFirst({ where: eq(areas.slug, rest.slug) });
         if (clash && clash.id !== id) {
-          throw new Error(`Slug "${rest.slug}" is already used by area "${clash.name}".`);
+          throw new TRPCError({ code: "CONFLICT", message: `Slug "${rest.slug}" is already used by area "${clash.name}".` });
         }
       }
       const patch: Record<string, unknown> = {};

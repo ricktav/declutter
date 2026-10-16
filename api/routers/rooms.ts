@@ -553,7 +553,7 @@ export const roomsRouter = createRouter({
     .mutation(async ({ input }) => {
       const db = getDb();
       const source = await db.query.rooms.findFirst({ where: eq(rooms.id, input.sourceRoomId) });
-      if (!source) throw new Error("Source room not found");
+      if (!source) throw new TRPCError({ code: "NOT_FOUND", message: "Source room not found" });
 
       const { xM: bx, yM: by, wM: bw, dM: bd } = input.bounds;
       const sourceWalls = (source.walls ?? []) as RoomGeometry["walls"];

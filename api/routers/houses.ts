@@ -110,11 +110,11 @@ export const housesRouter = createRouter({
   reassign: procedure
     .input(z.object({ fromId: z.number(), toId: z.number() }))
     .mutation(async ({ input }) => {
-      if (input.fromId === input.toId) throw new Error("Pick a different house to move into");
+      if (input.fromId === input.toId) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a different house to move into" });
       const db = getDb();
       const fromHouse = await db.query.houses.findFirst({ where: eq(houses.id, input.fromId) });
       const toHouse = await db.query.houses.findFirst({ where: eq(houses.id, input.toId) });
-      if (!fromHouse || !toHouse) throw new Error("House not found");
+      if (!fromHouse || !toHouse) throw new TRPCError({ code: "NOT_FOUND", message: "House not found" });
       const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.houseId, input.fromId));
       const photoRows = await photosOfHouse(db, input.fromId);
       await db.transaction(async (tx) => {

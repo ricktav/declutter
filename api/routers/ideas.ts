@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { eq, desc, or } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
@@ -145,7 +146,7 @@ export const ideasRouter = createRouter({
   breakdown: procedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
     const db = getDb();
     const idea = await db.query.ideas.findFirst({ where: eq(ideas.id, input.id) });
-    if (!idea) throw new Error("idea not found");
+    if (!idea) throw new TRPCError({ code: "NOT_FOUND", message: "idea not found" });
     const links = await db.select().from(ideaItems).where(eq(ideaItems.ideaId, idea.id));
     const linked = links.length
       ? await db

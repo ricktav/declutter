@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { eq, desc } from "drizzle-orm";
 import { generateText } from "ai";
 import { createRouter, procedure } from "../middleware";
@@ -160,7 +161,7 @@ export const wikiRouter = createRouter({
   enhance: procedure.input(z.object({ slug: z.string() })).mutation(async ({ input }) => {
     const db = getDb();
     const page = await db.query.wikiPages.findFirst({ where: eq(wikiPages.slug, input.slug) });
-    if (!page) throw new Error("page not found — generate the wiki first");
+    if (!page) throw new TRPCError({ code: "NOT_FOUND", message: "page not found — generate the wiki first" });
     try {
       const model = await getModel();
       const { text } = await generateText({
