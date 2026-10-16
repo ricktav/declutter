@@ -3,6 +3,7 @@ import { createRouter, procedure } from "../middleware";
 import { loadSettings, saveSettings } from "../lib/settings";
 import { getProviderSource } from "../lib/ai";
 import { logEvent } from "../lib/events";
+import { autoTriageReady } from "../lib/jobs";
 
 export const settingsRouter = createRouter({
   /** current effective config (key masked) */
@@ -31,6 +32,7 @@ export const settingsRouter = createRouter({
         llm2VisionModel: s.llm2VisionModel ?? null,
         llmTriageSlot: s.llmTriageSlot ?? "a",
         llmDetectSlot: s.llmDetectSlot ?? "a",
+        autoTriage: s.autoTriage === true,
       },
       xaiEnvConfigured,
       xaiEnv: xaiEnvConfigured ? { llmApiKeyMasked: mask(process.env.XAI_API_KEY) } : null,
@@ -101,6 +103,17 @@ export const settingsRouter = createRouter({
       });
       return { ok: true };
     }),
+
+  /** Triage new photo snaps in the background (needs a configured provider). */
+  setAutoTriage: procedure.input(z.object({ on: z.boolean() })).mutation(async ({ input }) => {
+    saveSettings({ autoTriage: input.on ? true : undefined });
+    await logEvent({
+      entityType: "settings",
+      action: "updated",
+      summary: input.on ? "Background triage of new photos on" : "Background triage of new photos off",
+    });
+    return { autoTriage: input.on, ready: await autoTriageReady() };
+  }),
 
   /** list models the configured key can actually use */
   testConnection: procedure

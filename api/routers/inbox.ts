@@ -18,6 +18,7 @@ import { readFileBytes, copyStoredFile, deleteStoredFile, putFile, withNewFile }
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
 import { createCapture } from "../lib/captures";
+import { clearTriageJobState, maybeAutoTriage, triageJobState } from "../lib/jobs";
 import { setItemLocation } from "../lib/location";
 import { captureScope, promptInventory } from "../lib/aiContext";
 import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom, WHOLE_SCENE_BOX } from "../lib/photos";
@@ -245,6 +246,49 @@ function providerErrorDetail(err: unknown): string | null {
   }
 }
 
+/** Ask the triage model what this capture shows and store its suggestion.
+ * Used by inbox.triage and by the background triage job. */
+export async function triageCapture(id: number, houseId: number | null) {
+  const db = getDb();
+  const cap = await db.query.captures.findFirst({ where: eq(captures.id, id) });
+  if (!cap) throw new TRPCError({ code: "NOT_FOUND", message: "capture not found" });
+
+  try {
+    const content = await buildTriageContent(cap, houseId);
+    const suggestion = isClaudeCliDevMode()
+      ? await runTriageViaClaudeCli(content, houseId)
+      : await runTriage(await getTriageModel(), content, houseId);
+
+    await db.update(captures).set({ suggestion }).where(eq(captures.id, id));
+    clearTriageJobState(id);
+    await logEvent({
+      entityType: "capture",
+      entityId: id,
+      action: "triaged",
+      summary: `AI triage${isClaudeCliDevMode() ? " (claude -p dev mode)" : ""}: spotted ${suggestion.items.length} item${suggestion.items.length === 1 ? "" : "s"} (${suggestion.items.filter((i) => i.isNewItem).length} new)`,
+      actor: "ai",
+      payload: suggestion as unknown as Record<string, unknown>,
+    });
+    return { ok: true as const, suggestion };
+  } catch (err) {
+    const classified = classifyAiError(err);
+    const detail = providerErrorDetail(err);
+    return {
+      ok: false as const,
+      error: detail ? `${classified.message} — ${detail}` : classified.message,
+      retryable: classified instanceof AiMisconfigured === false,
+    };
+  }
+}
+
+/** Background triage state for a list row: queued, running or failed from the
+ * job queue; done once a suggestion is stored; null when nobody asked. */
+function triageView(c: { id: number; suggestion: unknown }) {
+  const job = triageJobState(c.id);
+  if (job) return { triageState: job.state, triageError: job.error };
+  return { triageState: c.suggestion != null ? ("done" as const) : null, triageError: null };
+}
+
 type ListCapturesOpts = {
   houseId?: number | null;
   includeUnknown?: boolean;
@@ -301,6 +345,7 @@ async function listCapturesWithPlace(opts: ListCapturesOpts = {}) {
       houseId,
       houseName: houseId != null ? (houseBy.get(houseId)?.name ?? null) : null,
       hasCamera: loc?.camera != null,
+      ...triageView(c),
     };
   });
   if (opts.houseId == null) return mapped;
@@ -356,41 +401,12 @@ export const inboxRouter = createRouter({
         source: "user",
         houseId: ctx.houseId,
       });
+      await maybeAutoTriage(row, ctx.houseId);
       return { id: row.id, storageKey: row.storageKey };
     }),
 
   /** Ask the LLM to propose where this capture belongs */
-  triage: procedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
-    const db = getDb();
-    const cap = await db.query.captures.findFirst({ where: eq(captures.id, input.id) });
-    if (!cap) throw new TRPCError({ code: "NOT_FOUND", message: "capture not found" });
-
-    try {
-      const content = await buildTriageContent(cap, ctx.houseId);
-      const suggestion = isClaudeCliDevMode()
-        ? await runTriageViaClaudeCli(content, ctx.houseId)
-        : await runTriage(await getTriageModel(), content, ctx.houseId);
-
-      await db.update(captures).set({ suggestion }).where(eq(captures.id, input.id));
-      await logEvent({
-        entityType: "capture",
-        entityId: input.id,
-        action: "triaged",
-        summary: `AI triage${isClaudeCliDevMode() ? " (claude -p dev mode)" : ""}: spotted ${suggestion.items.length} item${suggestion.items.length === 1 ? "" : "s"} (${suggestion.items.filter((i) => i.isNewItem).length} new)`,
-        actor: "ai",
-        payload: suggestion as unknown as Record<string, unknown>,
-      });
-      return { ok: true as const, suggestion };
-    } catch (err) {
-      const classified = classifyAiError(err);
-      const detail = providerErrorDetail(err);
-      return {
-        ok: false as const,
-        error: detail ? `${classified.message} — ${detail}` : classified.message,
-        retryable: classified instanceof AiMisconfigured === false,
-      };
-    }
-  }),
+  triage: procedure.input(z.object({ id: z.number() })).mutation(({ input, ctx }) => triageCapture(input.id, ctx.houseId)),
 
   /** Run the same triage prompt on Provider A and Provider B, side by side */
   compare: procedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {

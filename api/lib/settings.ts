@@ -26,6 +26,8 @@ export interface AppSettings {
   llmTriageSlot?: AiSlot;
   /** Which saved provider pins.detect uses. Default A. */
   llmDetectSlot?: AiSlot;
+  /** Triage new photo snaps in the background. Default off. */
+  autoTriage?: boolean;
 }
 
 export function loadSettings(): AppSettings {

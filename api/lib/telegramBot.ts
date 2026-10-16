@@ -1,6 +1,7 @@
 import { Bot } from "grammy";
 import exifr from "exifr";
 import { createCapture } from "./captures";
+import { maybeAutoTriage } from "./jobs";
 import { tryTranscribe } from "./transcribe";
 
 /**
@@ -75,7 +76,7 @@ export function startTelegramBot(): void {
       // Telegram usually strips EXIF from compressed photos — no GPS is expected, not an error
     }
 
-    await createCapture({
+    const photo = await createCapture({
       kind: "image",
       bytes,
       fileName: `telegram-${largest.file_unique_id}.jpg`,
@@ -84,6 +85,7 @@ export function startTelegramBot(): void {
       rawText: ctx.message.caption ?? null,
       source: "telegram",
     });
+    await maybeAutoTriage(photo, photo.houseId ?? null);
     await ctx.reply(exifGps ? "Photo filed (with location)." : "Photo filed.");
   });
 
