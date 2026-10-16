@@ -289,3 +289,177 @@ describe("storage.importSources", () => {
     expect(machine.drives.find((d) => d.id === ssd)?.diskKey).toBe("sdb");
   });
 });
+
+describe("planTrackerImport identity and stale/moved", () => {
+  const disk = (over: Record<string, unknown>) => ({ type: "file", subtype: "disk", ...over });
+  const vol = (over: Record<string, unknown>) => ({ type: "file", subtype: "filesystem", ...over });
+
+  it("matches a host by IP, not by display name", () => {
+    const parsed = parseTrackerSources({
+      sources: [
+        disk({
+          name: "rick-iMac21-3:sda",
+          disk_model: "APPLE SSD",
+          size_bytes: 500e9,
+          ip: "10.50.0.88",
+          hostname: "rick-iMac21-3",
+          metadata: { serial: "APPLE1", mountpoints: ["/"] },
+        }),
+        vol({ name: "rick-iMac21-3:/", path_or_url: "/", device: "/dev/sda2", size_bytes: 500e9, used_bytes: 100e9, disk: "rick-iMac21-3:sda" }),
+      ],
+    });
+    const inventory: InventoryItem[] = [
+      {
+        id: 12,
+        name: "iMac 21-inch (display name Rick never uses)",
+        areaId: 1,
+        houseId: 1,
+        roomId: null,
+        parentId: null,
+        attributes: { role: "desktop", hostname: "imac-21-2", ip: "10.50.0.88" },
+      },
+    ];
+    const plan = planTrackerImport(parsed, inventory, [], {}, true);
+    expect(plan.hosts[0]).toMatchObject({ host: "rick-iMac21-3", status: "matched", itemId: 12 });
+  });
+
+  it("matches machine.id before hostname and lists unmatched hosts with ip/mac", () => {
+    const parsed = parseTrackerSources({
+      sources: [
+        disk({
+          name: "TavServ:sda",
+          disk_model: "Synology",
+          size_bytes: 4e12,
+          hostname: "TavServ",
+          ip: "10.50.0.20",
+          mac: "aa:bb:cc:dd:ee:20",
+          metadata: { serial: "NAS1", mountpoints: ["/volume1"] },
+        }),
+        vol({ name: "TavServ:/volume1", path_or_url: "/volume1", device: "/dev/md2", size_bytes: 4e12, used_bytes: 1e12, disk: "TavServ:sda" }),
+        disk({
+          name: "ghost:sda",
+          disk_model: "Mystery",
+          size_bytes: 1e12,
+          hostname: "ghost",
+          ip: "10.50.0.99",
+          mac: "11:22:33:44:55:66",
+          metadata: { serial: "GHOST", mountpoints: ["/"] },
+        }),
+      ],
+    });
+    const inventory: InventoryItem[] = [
+      {
+        id: 204,
+        name: "Synology NAS in the cupboard",
+        areaId: 1,
+        houseId: 1,
+        roomId: null,
+        parentId: null,
+        attributes: { role: "nas", hostname: "synology-nas", "machine.id": "TavServ" },
+      },
+    ];
+    const plan = planTrackerImport(parsed, inventory, [], DEFAULT_TRACKER_HOST_MAP, true);
+    expect(plan.hosts.find((h) => h.host === "TavServ")).toMatchObject({ status: "matched", itemId: 204, itemName: "Synology NAS in the cupboard" });
+    const ghost = plan.hosts.find((h) => h.host === "ghost")!;
+    expect(ghost.status).toBe("unmatched");
+    expect(ghost.ip).toBe("10.50.0.99");
+    expect(ghost.mac).toBe("112233445566");
+  });
+
+  it("still imports a sole old sighting, marked stale, and does not skip it for age", () => {
+    const lastSeen = Date.parse("2026-09-12T10:00:00Z");
+    const parsed = parseTrackerSources({
+      sources: [
+        disk({
+          name: "lonely:sda",
+          disk_model: "Old SSD",
+          size_bytes: 250e9,
+          last_seen: lastSeen,
+          hostname: "lonely",
+          metadata: { serial: "OLD1", mountpoints: ["/"] },
+        }),
+        vol({
+          name: "lonely:/",
+          path_or_url: "/",
+          device: "/dev/sda2",
+          size_bytes: 250e9,
+          used_bytes: 100e9,
+          disk: "lonely:sda",
+          last_seen: lastSeen,
+        }),
+      ],
+    });
+    const inventory: InventoryItem[] = [
+      { id: 9, name: "lonely-box", areaId: 1, houseId: 1, roomId: null, parentId: null, attributes: { role: "desktop", hostname: "lonely" } },
+    ];
+    const plan = planTrackerImport(parsed, inventory, [], {}, true);
+    const host = plan.hosts[0];
+    expect(host.status).toBe("matched");
+    expect(host.volumes.map((v) => v.mountPoint)).toEqual(["/"]);
+    expect(host.disks[0]).toMatchObject({ match: "create", stale: true, lastSeen });
+  });
+
+  it("treats a disk seen more recently on another machine as moved, not a duplicate create", () => {
+    const old = Date.parse("2026-08-01T12:00:00Z");
+    const fresh = Date.parse("2026-10-15T12:00:00Z");
+    const parsed = parseTrackerSources({
+      sources: [
+        disk({
+          name: "rick-iMac5k:sdb",
+          disk_model: "PSSD T7",
+          size_bytes: 4e12,
+          last_seen: old,
+          hostname: "rick-iMac5k",
+          metadata: { serial: "T7MOVED", mountpoints: ["/Volumes/T7"] },
+        }),
+        vol({
+          name: "rick-iMac5k:/Volumes/T7",
+          path_or_url: "/Volumes/T7",
+          device: "/dev/sdb1",
+          size_bytes: 4e12,
+          used_bytes: 2e12,
+          disk: "rick-iMac5k:sdb",
+          last_seen: old,
+        }),
+        disk({
+          name: "macmini-m4:disk7",
+          disk_model: "PSSD T7",
+          size_bytes: 4e12,
+          last_seen: fresh,
+          hostname: "macmini-m4",
+          metadata: { serial: "T7MOVED", mountpoints: ["/Volumes/T7"] },
+        }),
+        vol({
+          name: "macmini-m4:/Volumes/T7",
+          path_or_url: "/Volumes/T7",
+          device: "disk7s1",
+          size_bytes: 4e12,
+          used_bytes: 2.1e12,
+          disk: "macmini-m4:disk7",
+          last_seen: fresh,
+        }),
+      ],
+    });
+    const inventory: InventoryItem[] = [
+      { id: 51, name: "macmini-m4", areaId: 1, houseId: 1, roomId: null, parentId: null, attributes: { role: "desktop", hostname: "macmini-m4" } },
+      { id: 80, name: "rick-iMac5k", areaId: 1, houseId: 1, roomId: null, parentId: null, attributes: { role: "desktop", hostname: "rick-imac5k" } },
+      {
+        id: 90,
+        name: "PSSD T7",
+        areaId: 1,
+        houseId: 1,
+        roomId: null,
+        parentId: 80,
+        attributes: { role: "storage", serial: "T7MOVED", storage_gb: 4000 },
+      },
+    ];
+    const plan = planTrackerImport(parsed, inventory, [], {}, true);
+    const imac = plan.hosts.find((h) => h.host === "rick-iMac5k")!;
+    const mini = plan.hosts.find((h) => h.host === "macmini-m4")!;
+    expect(imac.disks[0]).toMatchObject({ match: "moved", diskKey: "sdb" });
+    expect(imac.disks[0].movedTo?.host).toBe("macmini-m4");
+    expect(imac.volumes).toEqual([]);
+    expect(mini.disks[0]).toMatchObject({ match: "reattach", itemId: 90, serial: "T7MOVED" });
+    expect(mini.volumes.map((v) => v.mountPoint)).toEqual(["/Volumes/T7"]);
+  });
+});

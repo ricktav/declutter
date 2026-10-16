@@ -65,8 +65,10 @@ if (file) {
 
 const plan = await trpc("storage.importSources", { sources, dry: !apply });
 const line = (h) => {
-  const disks = h.disks.map((d) => `${d.diskKey}:${d.match}${d.itemId != null ? `#${d.itemId}` : ""}`).join(",") || "-";
-  return `${h.host} → ${h.status}${h.itemId != null ? ` ${h.itemName}#${h.itemId}` : ""}${h.reason ? ` (${h.reason})` : ""} · ${h.volumes.length} vol · ${disks}`;
+  const disks = h.disks.map((d) => `${d.diskKey}:${d.match}${d.itemId != null ? `#${d.itemId}` : ""}${d.stale ? ":stale" : ""}${d.movedTo ? `→${d.movedTo.host}` : ""}`).join(",") || "-";
+  const who = [h.hostname, h.ip, h.mac].filter(Boolean).join("/");
+  const ident = h.status === "unmatched" && who ? ` [${who}]` : "";
+  return `${h.host} → ${h.status}${h.itemId != null ? ` ${h.itemName}#${h.itemId}` : ""}${h.reason ? ` (${h.reason})` : ""}${ident} · ${h.volumes.length} vol · ${disks}`;
 };
 console.log(JSON.stringify({ dry: plan.dry, applied: plan.applied, skippedSources: plan.skippedSources, hosts: plan.hosts.map(line) }, null, 2));
 if (!apply) console.error("dry run: pass --apply to write storage.report and disk links");

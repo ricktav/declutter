@@ -9,7 +9,8 @@
 // only. --only names mount points (each brings the other volumes of its APFS
 // container / disk).
 // On the Mini this finds disk3 (internal), disk7 (T7, TM-T7) and disk9
-// (ExtNVMe, NVMe, Time Machine). Data Tracker only covers the boot disk.
+// (ExtNVMe, NVMe, Time Machine — inventory "Ugreen NVME 1TB" #213, serial
+// SNVS1000GB, attached to Mac mini M4 #51). Data Tracker only covers the boot disk.
 // One volume per APFS volume: each reports its own use (df "Used") and the
 // capacity of its container (diskN). "/" gets no directories when Data is in
 // the report (du would follow firmlinks into Data).

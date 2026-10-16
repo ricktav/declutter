@@ -10,18 +10,30 @@ import { and, eq, inArray } from "drizzle-orm";
 import { items, relations } from "@db/schema";
 import type { getDb } from "../queries/connection";
 import { logEvent } from "./events";
-import { machineHintFromItem, matchMachine, machineHostKeys, normHost } from "./servicesFleet";
-import { STORAGE_DISK_KEY, physicalDiskKey } from "./storageDisks";
-import { applyReport, isDiskThing, isStorageComputer, isStorageDevice, type ReportVolume } from "./storage";
+import { STORAGE_DISK_KEY, physicalDiskKey, serialOf as serialNorm, uuidOf } from "./storageDisks";
+import {
+  applyReport,
+  isDiskThing,
+  isStorageComputer,
+  isStorageDevice,
+  machineIdentity,
+  removeVolumesByDiskKeys,
+  type ReportVolume,
+} from "./storage";
+import { normalizeIdentityValue } from "./identityAttrs";
+import { normalizeIp, normHost } from "./servicesFleet";
 
 type Db = ReturnType<typeof getDb>;
 
 export const TRACKER_SOURCE = "data-tracker";
+/** Calendar age for the "last seen" badge. Old rows are skipped only when a newer sighting of the same disk exists. */
+export const DEFAULT_STALE_DAYS = 7;
 
-/** DT host → HomeBase hostname, item id, or null to skip a stale/duplicate host. */
+/** DT host → HomeBase hostname, item id, or null to skip a duplicate/lab host. Match is never the display name. */
 export const DEFAULT_TRACKER_HOST_MAP: Record<string, string | number | null> = {
   dockermac: "dockermac-1",
   "plugwise-pi": "plugwisepi",
+  TavServ: "synology-nas",
   Mac: null,
 };
 
@@ -33,8 +45,13 @@ export type TrackerDisk = {
   name: string;
   model: string | null;
   serial: string | null;
+  uuid: string | null;
   sizeBytes: number | null;
   mountpoints: string[];
+  lastSeen: number | null;
+  hostname: string | null;
+  ip: string | null;
+  mac: string | null;
 };
 
 export type TrackerVolume = {
@@ -48,9 +65,26 @@ export type TrackerVolume = {
   usedBytes: number;
   diskName: string | null;
   diskKey: string | null;
+  lastSeen: number | null;
+  hostname: string | null;
+  ip: string | null;
+  mac: string | null;
 };
 
-export type ParsedTrackerSources = { disks: TrackerDisk[]; volumes: TrackerVolume[]; skipped: number };
+export type TrackerHostIdentity = {
+  host: string;
+  hostname: string | null;
+  ip: string | null;
+  mac: string | null;
+  lastSeen: number | null;
+};
+
+export type ParsedTrackerSources = {
+  disks: TrackerDisk[];
+  volumes: TrackerVolume[];
+  hosts: TrackerHostIdentity[];
+  skipped: number;
+};
 
 type Attrs = Record<string, string | number> | null;
 
@@ -77,6 +111,62 @@ const SIZE_MULT: Record<string, number> = {
   tb: 1e12,
   tib: 1024 ** 4,
 };
+
+const TIME_KEYS = [
+  "last_seen",
+  "lastSeen",
+  "last_seen_at",
+  "lastSeenAt",
+  "updated_at",
+  "updatedAt",
+  "updated",
+  "seen_at",
+  "seenAt",
+  "last_updated",
+  "lastUpdated",
+  "observed_at",
+  "timestamp",
+  "ts",
+];
+
+/** Epoch ms from a tracker last-seen / updated field (ISO, unix seconds or ms). */
+export function parseTrackerTime(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.round(v < 1e12 ? v * 1000 : v);
+  const s = str(v);
+  if (!s) return null;
+  if (/^\d+(\.\d+)?$/.test(s)) return parseTrackerTime(Number(s));
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : null;
+}
+
+function firstTime(row: Record<string, unknown>): number | null {
+  for (const k of TIME_KEYS) {
+    const t = parseTrackerTime(row[k]);
+    if (t != null) return t;
+  }
+  return null;
+}
+
+function hostIp(row: Record<string, unknown>): string | null {
+  return normalizeIp(str(row.ip) ?? str(row.ipv4) ?? str(row.ip_address) ?? str(row.address));
+}
+
+function hostMac(row: Record<string, unknown>): string | null {
+  const raw = str(row.mac) ?? str(row.mac_address) ?? str(row.hwaddr);
+  if (!raw) return null;
+  const n = normalizeIdentityValue("mac", raw);
+  return n || null;
+}
+
+function hostNameOf(row: Record<string, unknown>, host: string): string | null {
+  return str(row.hostname) ?? str(row.host) ?? host;
+}
+
+export function isTrackerStale(lastSeen: number | null, now: number = Date.now(), staleDays: number = DEFAULT_STALE_DAYS): boolean {
+  if (lastSeen == null || !(staleDays > 0)) return false;
+  return now - lastSeen > staleDays * 86400000;
+}
 
 /** Bytes from a tracker size: 250GB, 4.0TB, 244e9, or a small number as GB. */
 export function parseTrackerSize(v: unknown): number | null {
@@ -173,12 +263,11 @@ function diskKeyOf(name: string | null, device: string | null): string | null {
 }
 
 function serialOf(v: unknown): string | null {
-  const s = str(v);
-  if (!s) return null;
-  const n = s.replace(/\s+/g, "");
-  if (!n) return null;
-  if (/^(unknown|none|n\/?a|null|-|0)$/i.test(n)) return null;
-  return n.toUpperCase();
+  return serialNorm(v);
+}
+
+function uuidFromRow(row: Record<string, unknown>): string | null {
+  return uuidOf(row.uuid ?? row.disk_uuid ?? row.diskUuid ?? row.volume_uuid ?? row.VolumeUUID ?? row.uuid_str);
 }
 
 function modelOf(row: Record<string, unknown>): string | null {
@@ -206,7 +295,20 @@ export function parseTrackerSources(payload: unknown): ParsedTrackerSources {
           : [];
   const disks: TrackerDisk[] = [];
   const volumes: TrackerVolume[] = [];
+  const hostAcc = new Map<string, TrackerHostIdentity>();
   let skipped = 0;
+  const noteHost = (host: string, row: Record<string, unknown>, lastSeen: number | null) => {
+    const key = normHost(host);
+    const prev = hostAcc.get(key);
+    const next: TrackerHostIdentity = {
+      host: prev?.host ?? host,
+      hostname: hostNameOf(row, host) ?? prev?.hostname ?? null,
+      ip: hostIp(row) ?? prev?.ip ?? null,
+      mac: hostMac(row) ?? prev?.mac ?? null,
+      lastSeen: [lastSeen, prev?.lastSeen ?? null].reduce((a, b) => (a == null ? b : b == null ? a : Math.max(a, b))),
+    };
+    hostAcc.set(key, next);
+  };
   for (const raw of list.slice(0, 2000)) {
     const row = flattenSource(raw);
     if (!row) {
@@ -232,14 +334,21 @@ export function parseTrackerSources(payload: unknown): ParsedTrackerSources {
         skipped++;
         continue;
       }
+      const lastSeen = firstTime(row);
+      noteHost(host, row, lastSeen);
       disks.push({
         host,
         diskKey,
         name: name ?? `${host}:${diskKey}`,
         model: modelOf(row),
         serial: serialOf(row.serial ?? row.serial_number ?? row.SerialNumber),
+        uuid: uuidFromRow(row),
         sizeBytes: firstSize(row, SIZE_KEYS),
         mountpoints: listOfStrings(row.mountpoints ?? row.mount_points),
+        lastSeen,
+        hostname: hostNameOf(row, host),
+        ip: hostIp(row),
+        mac: hostMac(row),
       });
       continue;
     }
@@ -262,6 +371,8 @@ export function parseTrackerSources(payload: unknown): ParsedTrackerSources {
       const usedRaw = firstSize(row, USED_KEYS);
       const pct = typeof row.usage_pct === "number" ? row.usage_pct : typeof row.usagePct === "number" ? row.usagePct : null;
       const usedBytes = Math.min(capacityBytes, Math.max(0, usedRaw ?? (pct != null && pct >= 0 ? Math.round((capacityBytes * pct) / 100) : 0)));
+      const lastSeen = firstTime(row);
+      noteHost(host, row, lastSeen);
       const diskName = str(row.disk);
       const deviceRaw = str(row.device) ?? (fromPath?.startsWith("/dev/") ? fromPath : null) ?? diskKeyOf(diskName, null);
       volumes.push({
@@ -275,16 +386,28 @@ export function parseTrackerSources(payload: unknown): ParsedTrackerSources {
         usedBytes,
         diskName,
         diskKey: diskKeyOf(diskName, str(row.device)),
+        lastSeen,
+        hostname: hostNameOf(row, host),
+        ip: hostIp(row),
+        mac: hostMac(row),
       });
       continue;
     }
     skipped++;
   }
   const byDisk = new Map<string, TrackerDisk>();
-  for (const d of disks) byDisk.set(`${normHost(d.host)}:${d.diskKey}`, d);
+  for (const d of disks) {
+    const k = `${normHost(d.host)}:${d.diskKey}`;
+    const prev = byDisk.get(k);
+    if (!prev || (d.lastSeen ?? 0) >= (prev.lastSeen ?? 0)) byDisk.set(k, d);
+  }
   const byVol = new Map<string, TrackerVolume>();
-  for (const v of volumes) byVol.set(`${normHost(v.host)}:${v.mountPoint}`, v);
-  return { disks: [...byDisk.values()], volumes: [...byVol.values()], skipped };
+  for (const v of volumes) {
+    const k = `${normHost(v.host)}:${v.mountPoint}`;
+    const prev = byVol.get(k);
+    if (!prev || (v.lastSeen ?? 0) >= (prev.lastSeen ?? 0)) byVol.set(k, v);
+  }
+  return { disks: [...byDisk.values()], volumes: [...byVol.values()], hosts: [...hostAcc.values()], skipped };
 }
 
 function attrStr(attrs: Attrs, key: string): string | null {
@@ -325,8 +448,100 @@ function lookupHostMap(host: string, hostMap: TrackerHostMap): { skip: true } | 
 }
 
 function isHostThing(item: InventoryItem): boolean {
-  const role = String(item.attributes?.role ?? "");
-  return isStorageComputer({ attributes: item.attributes }) || role === "nas";
+  return isStorageComputer({ attributes: item.attributes });
+}
+
+function unique(xs: Array<string | null | undefined>): string[] {
+  return [...new Set(xs.filter((x): x is string => x != null && x !== ""))];
+}
+
+/** Hostname / IP / MAC / machine.id / aliases — never the Thing's display name. */
+function hostMatchKeys(item: InventoryItem): { machineIds: string[]; hostnames: string[]; ips: string[]; macs: string[] } {
+  const id = machineIdentity(item.attributes);
+  const hostnames: string[] = [];
+  const ips: string[] = [];
+  const macs: string[] = [];
+  const machineIds: string[] = [];
+  const asHost = (raw: string | null | undefined) => {
+    if (raw == null || raw === "") return;
+    const ip = normalizeIp(raw);
+    if (ip && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(raw.trim())) {
+      ips.push(ip);
+      return;
+    }
+    const n = normHost(raw);
+    if (n) hostnames.push(n);
+  };
+  const asMac = (raw: string | null | undefined) => {
+    if (raw == null || raw === "") return;
+    const n = normalizeIdentityValue("mac", raw);
+    if (n) macs.push(n);
+  };
+  if (id.machineId) {
+    machineIds.push(normalizeIp(id.machineId) ?? normHost(id.machineId));
+    asHost(id.machineId);
+    asMac(id.machineId);
+  }
+  asHost(id.hostname);
+  if (id.ip) {
+    const ip = normalizeIp(id.ip);
+    if (ip) ips.push(ip);
+  }
+  asMac(id.mac);
+  for (const a of (id.aliases ?? "").split(/[,;]+/).map((s) => s.trim()).filter(Boolean)) {
+    asHost(a);
+    asMac(a);
+    const ip = normalizeIp(a);
+    if (ip) ips.push(ip);
+  }
+  return { machineIds: unique(machineIds), hostnames: unique(hostnames), ips: unique(ips), macs: unique(macs) };
+}
+
+function matchHostToInventory(
+  host: string,
+  hint: TrackerHostIdentity | undefined,
+  mapped: string | number,
+  hosts: InventoryItem[],
+): { item: InventoryItem | null; status: TrackerHostPlan["status"]; reason?: string } {
+  if (typeof mapped === "number") {
+    const item = hosts.find((h) => h.id === mapped) ?? null;
+    return item ? { item, status: "matched" } : { item: null, status: "unmatched", reason: `item #${mapped}` };
+  }
+  const mappedHost = normHost(String(mapped));
+  const mappedIp = normalizeIp(String(mapped));
+  const wantHost = unique([mappedHost, hint?.hostname ? normHost(hint.hostname) : null, normHost(host)]);
+  const wantIp = unique([mappedIp, hint?.ip ?? null]);
+  const wantMac = unique([hint?.mac ? normalizeIdentityValue("mac", hint.mac) : null]);
+
+  const pick = (hits: InventoryItem[]) => {
+    if (hits.length === 1) return { item: hits[0], status: "matched" as const };
+    if (hits.length > 1) return { item: null, status: "ambiguous" as const, reason: hits.map((h) => `#${h.id}`).join(", ") };
+    return null;
+  };
+
+  const byMachineId = pick(
+    hosts.filter((h) => hostMatchKeys(h).machineIds.some((k) => k === mappedHost || (mappedIp != null && k === mappedIp) || wantHost.includes(k))),
+  );
+  if (byMachineId) return byMachineId;
+
+  const byHost = pick(
+    hosts.filter((h) => hostMatchKeys(h).hostnames.some((k) => wantHost.includes(k))),
+  );
+  if (byHost) return byHost;
+
+  if (wantIp.length) {
+    const byIp = pick(
+      hosts.filter((h) => hostMatchKeys(h).ips.some((k) => wantIp.includes(k))),
+    );
+    if (byIp) return byIp;
+  }
+  if (wantMac.length) {
+    const byMac = pick(
+      hosts.filter((h) => hostMatchKeys(h).macs.some((k) => wantMac.includes(k))),
+    );
+    if (byMac) return byMac;
+  }
+  return { item: null, status: "unmatched" };
 }
 
 const INTERNAL_MOUNTS = new Set(["/", "/boot", "/boot/efi", "/System/Volumes/Data"]);
@@ -341,11 +556,15 @@ export type TrackerDiskMatch = {
   name: string;
   model: string | null;
   serial: string | null;
+  uuid: string | null;
   sizeBytes: number | null;
   itemId: number | null;
   itemName: string | null;
-  match: "serial" | "model-size" | "create" | "inferred" | "ambiguous" | "override";
+  match: "serial" | "uuid" | "model-size" | "create" | "inferred" | "ambiguous" | "override" | "moved" | "reattach";
   internal: boolean;
+  lastSeen: number | null;
+  stale: boolean;
+  movedTo?: { host: string; itemId: number | null; itemName: string | null };
   candidates: Array<{ id: number; name: string }>;
 };
 
@@ -355,8 +574,13 @@ export type TrackerHostPlan = {
   itemName: string | null;
   status: "matched" | "skipped" | "unmatched" | "ambiguous";
   reason?: string;
+  hostname?: string | null;
+  ip?: string | null;
+  mac?: string | null;
+  lastSeen?: number | null;
   disks: TrackerDiskMatch[];
   volumes: ReportVolume[];
+  movedDiskKeys?: string[];
 };
 
 export type TrackerImportPlan = { dry: boolean; hosts: TrackerHostPlan[]; skippedSources: number };
@@ -371,86 +595,83 @@ export type InventoryItem = {
   attributes: Attrs;
 };
 
-function matchDiskToThings(disk: TrackerDisk, things: InventoryItem[]): Omit<TrackerDiskMatch, "internal"> {
-  const serial = disk.serial;
-  if (serial) {
-    const hits = things.filter((t) => serialOf(attrStr(t.attributes, "serial")) === serial);
-    if (hits.length === 1) {
-      const t = hits[0];
-      const existing = attrStr(t.attributes, STORAGE_DISK_KEY);
-      return {
-        diskKey: disk.diskKey,
-        name: disk.model ?? disk.diskKey,
-        model: disk.model,
-        serial: disk.serial,
-        sizeBytes: disk.sizeBytes,
-        itemId: t.id,
-        itemName: t.name,
-        match: existing && existing !== disk.diskKey ? "override" : "serial",
-        candidates: [],
-      };
-    }
-    if (hits.length > 1) {
-      return {
-        diskKey: disk.diskKey,
-        name: disk.model ?? disk.diskKey,
-        model: disk.model,
-        serial: disk.serial,
-        sizeBytes: disk.sizeBytes,
-        itemId: null,
-        itemName: null,
-        match: "ambiguous",
-        candidates: hits.map((t) => ({ id: t.id, name: t.name })),
-      };
-    }
-  }
-  const want = normModel(disk.model);
-  if (want && disk.sizeBytes) {
-    const hits = things.filter((t) => {
-      const hay = normModel(thingModel(t));
-      if (!hay || !hay.includes(want)) return false;
-      return sizeClose(num(t.attributes?.storage_gb), disk.sizeBytes);
-    });
-    if (hits.length === 1) {
-      const t = hits[0];
-      const existing = attrStr(t.attributes, STORAGE_DISK_KEY);
-      return {
-        diskKey: disk.diskKey,
-        name: disk.model ?? disk.diskKey,
-        model: disk.model,
-        serial: disk.serial,
-        sizeBytes: disk.sizeBytes,
-        itemId: t.id,
-        itemName: t.name,
-        match: existing && existing !== disk.diskKey ? "override" : "model-size",
-        candidates: [],
-      };
-    }
-    if (hits.length > 1) {
-      return {
-        diskKey: disk.diskKey,
-        name: disk.model ?? disk.diskKey,
-        model: disk.model,
-        serial: disk.serial,
-        sizeBytes: disk.sizeBytes,
-        itemId: null,
-        itemName: null,
-        match: "ambiguous",
-        candidates: hits.map((t) => ({ id: t.id, name: t.name })),
-      };
-    }
-  }
+function blankDiskMatch(disk: TrackerDisk, match: TrackerDiskMatch["match"], extra: Partial<TrackerDiskMatch> = {}): Omit<TrackerDiskMatch, "internal"> {
   return {
     diskKey: disk.diskKey,
     name: disk.model ?? disk.diskKey,
     model: disk.model,
     serial: disk.serial,
+    uuid: disk.uuid,
     sizeBytes: disk.sizeBytes,
-    itemId: null,
-    itemName: null,
-    match: "create",
-    candidates: things.map((t) => ({ id: t.id, name: t.name })),
+    itemId: extra.itemId ?? null,
+    itemName: extra.itemName ?? null,
+    match,
+    lastSeen: disk.lastSeen,
+    stale: isTrackerStale(disk.lastSeen),
+    movedTo: extra.movedTo,
+    candidates: extra.candidates ?? [],
   };
+}
+
+function thingUuid(t: InventoryItem): string | null {
+  return uuidOf(attrStr(t.attributes, "uuid") ?? attrStr(t.attributes, "disk_uuid"));
+}
+
+function thingSerial(t: InventoryItem): string | null {
+  return serialOf(attrStr(t.attributes, "serial") ?? attrStr(t.attributes, "serial_number"));
+}
+
+function finishMatch(disk: TrackerDisk, t: InventoryItem, kind: "serial" | "uuid" | "model-size" | "reattach"): Omit<TrackerDiskMatch, "internal"> {
+  const existing = attrStr(t.attributes, STORAGE_DISK_KEY);
+  return blankDiskMatch(disk, existing && existing !== disk.diskKey ? "override" : kind, { itemId: t.id, itemName: t.name });
+}
+
+/**
+ * Match a DT disk onto inventory disk Things. Serial/UUID (then model+size)
+ * search every machine so a portable is reattached, never duplicated.
+ */
+function matchDiskToThings(disk: TrackerDisk, local: InventoryItem[], all: InventoryItem[]): Omit<TrackerDiskMatch, "internal"> {
+  const pick = (hits: InventoryItem[], kind: "serial" | "uuid" | "model-size") => {
+    if (hits.length === 1) {
+      const t = hits[0];
+      const localHit = local.some((l) => l.id === t.id);
+      return finishMatch(disk, t, localHit ? kind : "reattach");
+    }
+    if (hits.length > 1) {
+      const onlyLocal = hits.filter((t) => local.some((l) => l.id === t.id));
+      if (onlyLocal.length === 1) return finishMatch(disk, onlyLocal[0], kind);
+      return blankDiskMatch(disk, "ambiguous", { candidates: hits.map((t) => ({ id: t.id, name: t.name })) });
+    }
+    return null;
+  };
+
+  if (disk.uuid) {
+    const hit = pick(
+      all.filter((t) => thingUuid(t) === disk.uuid),
+      "uuid",
+    );
+    if (hit) return hit;
+  }
+  if (disk.serial) {
+    const hit = pick(
+      all.filter((t) => thingSerial(t) === disk.serial),
+      "serial",
+    );
+    if (hit) return hit;
+  }
+  const want = normModel(disk.model);
+  if (want && disk.sizeBytes) {
+    const hit = pick(
+      all.filter((t) => {
+        const hay = normModel(thingModel(t));
+        if (!hay || !hay.includes(want)) return false;
+        return sizeClose(num(t.attributes?.storage_gb), disk.sizeBytes);
+      }),
+      "model-size",
+    );
+    if (hit) return hit;
+  }
+  return blankDiskMatch(disk, "create", { candidates: local.map((t) => ({ id: t.id, name: t.name })) });
 }
 
 function volumesForReport(vols: TrackerVolume[]): ReportVolume[] {
@@ -462,13 +683,44 @@ function volumesForReport(vols: TrackerVolume[]): ReportVolume[] {
     container: v.container,
     capacityBytes: v.capacityBytes,
     usedBytes: v.usedBytes,
+    measuredAt: v.lastSeen != null ? new Date(v.lastSeen) : undefined,
   }));
 }
 
+export function trackerDiskIdentity(d: { uuid?: string | null; serial?: string | null; model?: string | null; sizeBytes?: number | null }): string | null {
+  if (d.uuid) return `u:${d.uuid}`;
+  if (d.serial) return `s:${d.serial}`;
+  const m = normModel(d.model ?? null);
+  if (m && d.sizeBytes) return `m:${m}:${Math.round(d.sizeBytes / 1e9)}`;
+  return null;
+}
+
+function winningSighting(disks: TrackerDisk[]): Map<string, { host: string; lastSeen: number }> {
+  const best = new Map<string, { host: string; lastSeen: number }>();
+  for (const d of disks) {
+    const id = trackerDiskIdentity(d);
+    if (!id || d.lastSeen == null) continue;
+    const prev = best.get(id);
+    if (!prev || d.lastSeen > prev.lastSeen) best.set(id, { host: d.host, lastSeen: d.lastSeen });
+  }
+  return best;
+}
+
+function diskIsMoved(disk: TrackerDisk, winning: Map<string, { host: string; lastSeen: number }>): { host: string; lastSeen: number } | null {
+  const id = trackerDiskIdentity(disk);
+  if (!id || disk.lastSeen == null) return null;
+  const w = winning.get(id);
+  if (!w || w.lastSeen <= disk.lastSeen) return null;
+  if (normHost(w.host) === normHost(disk.host)) return null;
+  return w;
+}
+
 /**
- * Match DT hosts to computer Things and DT disks to drive Things.
- * Does not write. `create` means apply will insert a disk Thing; until then
- * overview infers it from the volume's `device`.
+ * Match DT hosts to computer/NAS Things and DT disks to drive Things.
+ * Does not write. A disk is `moved` when the same UUID/serial (else model+size)
+ * was seen more recently on another host: those volumes stay off this machine.
+ * A sole old sighting still imports, marked stale. `create` means apply will
+ * insert a disk Thing; until then overview infers it from the volume's `device`.
  */
 export function planTrackerImport(
   parsed: ParsedTrackerSources,
@@ -483,78 +735,114 @@ export function planTrackerImport(
   for (const r of attached) attachedTo.set(r.fromItemId, r.toItemId);
   const disksOf = (computerId: number) =>
     disks.filter((d) => d.parentId === computerId || attachedTo.get(d.id) === computerId);
+  const hintByHost = new Map(parsed.hosts.map((h) => [normHost(h.host), h]));
+  const winning = winningSighting(parsed.disks);
 
   const hostNames = [...new Set([...parsed.disks.map((d) => d.host), ...parsed.volumes.map((v) => v.host)])].sort();
   const planHosts: TrackerHostPlan[] = [];
 
   for (const host of hostNames) {
+    const hint = hintByHost.get(normHost(host));
+    const identity = {
+      hostname: hint?.hostname ?? host,
+      ip: hint?.ip ?? null,
+      mac: hint?.mac ?? null,
+      lastSeen: hint?.lastSeen ?? null,
+    };
     const mapped = lookupHostMap(host, hostMap);
     if (mapped.skip) {
-      planHosts.push({ host, itemId: null, itemName: null, status: "skipped", reason: "host map", disks: [], volumes: [] });
+      planHosts.push({ host, itemId: null, itemName: null, status: "skipped", reason: "host map", ...identity, disks: [], volumes: [] });
       continue;
     }
-    let item: InventoryItem | null = null;
-    let status: TrackerHostPlan["status"] = "matched";
-    let reason: string | undefined;
-    if (typeof mapped.mapped === "number") {
-      item = hosts.find((h) => h.id === mapped.mapped) ?? null;
-      if (!item) {
-        status = "unmatched";
-        reason = `item #${mapped.mapped}`;
-      }
-    } else {
-      const hints = hosts.map(machineHintFromItem);
-      const n = normHost(mapped.mapped);
-      const hits = hints.filter((m) => machineHostKeys(m).includes(n));
-      if (hits.length > 1) {
-        status = "ambiguous";
-        reason = hits.map((h) => h.name).join(", ");
-      } else if (hits.length === 1) {
-        item = hosts.find((h) => h.id === hits[0].id) ?? null;
-      } else {
-        const m = matchMachine(mapped.mapped, hints);
-        item = m ? (hosts.find((h) => h.id === m.id) ?? null) : null;
-        if (!item) status = "unmatched";
-      }
-    }
+    const found = matchHostToInventory(host, hint, mapped.mapped, hosts);
     const hostDisks = parsed.disks.filter((d) => normHost(d.host) === normHost(host));
-    const hostVols = parsed.volumes.filter((v) => normHost(v.host) === normHost(host) && v.usedBytes <= v.capacityBytes);
-    if (!item) {
-      planHosts.push({ host, itemId: null, itemName: null, status, reason, disks: [], volumes: [] });
+    const hostVolsAll = parsed.volumes.filter((v) => normHost(v.host) === normHost(host) && v.usedBytes <= v.capacityBytes);
+    if (!found.item) {
+      planHosts.push({
+        host,
+        itemId: null,
+        itemName: null,
+        status: found.status,
+        reason: found.reason,
+        ...identity,
+        disks: [],
+        volumes: [],
+      });
       continue;
     }
+    const item = found.item;
     const things = disksOf(item.id);
-    const diskPlans = hostDisks.map((d) => {
-      const vols = hostVols.filter((v) => v.diskKey === d.diskKey);
+    const movedDiskKeys: string[] = [];
+    const liveVols: TrackerVolume[] = [];
+    const diskPlans: TrackerDiskMatch[] = hostDisks.map((d) => {
+      const vols = hostVolsAll.filter((v) => v.diskKey === d.diskKey);
       const internal = diskLooksInternal(d, vols);
-      const m = matchDiskToThings(d, things);
+      const moved = diskIsMoved(d, winning);
+      if (moved) {
+        movedDiskKeys.push(d.diskKey);
+        const dest = planHosts.find((h) => normHost(h.host) === normHost(moved.host));
+        return {
+          ...blankDiskMatch(d, "moved", {
+            movedTo: { host: moved.host, itemId: dest?.itemId ?? null, itemName: dest?.itemName ?? null },
+          }),
+          internal,
+        };
+      }
+      const m = matchDiskToThings(d, things, disks);
       if (m.match === "create" && vols.length === 0) return { ...m, match: "inferred" as const, internal };
+      liveVols.push(...vols);
       return { ...m, internal };
     });
-    for (const v of hostVols) {
+    for (const v of hostVolsAll) {
+      if (v.diskKey && movedDiskKeys.includes(v.diskKey)) continue;
       if (v.diskKey && !diskPlans.some((d) => d.diskKey === v.diskKey)) {
         diskPlans.push({
           diskKey: v.diskKey,
           name: v.diskKey,
           model: null,
           serial: null,
+          uuid: null,
           sizeBytes: null,
           itemId: null,
           itemName: null,
           match: "inferred",
           internal: INTERNAL_MOUNTS.has(v.mountPoint),
+          lastSeen: v.lastSeen,
+          stale: isTrackerStale(v.lastSeen),
           candidates: things.map((t) => ({ id: t.id, name: t.name })),
         });
+        liveVols.push(v);
+      } else if (!v.diskKey) {
+        liveVols.push(v);
       }
     }
+    const volSeen = new Set<string>();
+    const reportVols = liveVols.filter((v) => {
+      const k = v.mountPoint;
+      if (volSeen.has(k)) return false;
+      volSeen.add(k);
+      return true;
+    });
     planHosts.push({
       host,
       itemId: item.id,
       itemName: item.name,
       status: "matched",
+      ...identity,
       disks: diskPlans,
-      volumes: volumesForReport(hostVols),
+      volumes: volumesForReport(reportVols),
+      movedDiskKeys,
     });
+  }
+
+  // Fill movedTo item ids now that every host is planned.
+  const byHostName = new Map(planHosts.map((h) => [normHost(h.host), h]));
+  for (const h of planHosts) {
+    for (const d of h.disks) {
+      if (d.match !== "moved" || !d.movedTo) continue;
+      const dest = byHostName.get(normHost(d.movedTo.host));
+      if (dest) d.movedTo = { host: dest.host, itemId: dest.itemId, itemName: dest.itemName };
+    }
   }
   return { dry, hosts: planHosts, skippedSources: parsed.skipped };
 }
@@ -579,8 +867,10 @@ export type TrackerImportResult = TrackerImportPlan & {
 
 /**
  * Dry-run (default) returns the plan. Apply writes storage.report per computer
- * (no dirs: local collector keeps those), sets `storage.disk` when absent, and
- * creates a disk Thing when DT has a disk with volumes and no match.
+ * (no dirs: local collector keeps those), sets `storage.disk` when absent,
+ * reattaches a portable seen on a new host, deletes leftover volumes of a disk
+ * that moved away, and creates a disk Thing when DT has a disk with volumes
+ * and no match.
  */
 export async function applyTrackerImport(
   db: Db,
@@ -607,7 +897,7 @@ export async function applyTrackerImport(
     computerIds.length === 0
       ? []
       : await db
-          .select({ fromItemId: relations.fromItemId, toItemId: relations.toItemId })
+          .select({ fromItemId: relations.fromItemId, toItemId: relations.toItemId, id: relations.id })
           .from(relations)
           .where(and(eq(relations.type, "attached-to"), eq(relations.status, "confirmed"), inArray(relations.toItemId, computerIds)));
   const plan = planTrackerImport(parsed, inventory, attached, input.hostMap ?? DEFAULT_TRACKER_HOST_MAP, dry);
@@ -619,6 +909,9 @@ export async function applyTrackerImport(
     if (host.status !== "matched" || host.itemId == null) continue;
     const computer = byId.get(host.itemId);
     if (!computer) continue;
+    if (host.movedDiskKeys && host.movedDiskKeys.length > 0) {
+      await removeVolumesByDiskKeys(db, host.itemId, host.movedDiskKeys);
+    }
     if (host.volumes.length > 0) {
       const result = await applyReport(db, { itemId: host.itemId, source: TRACKER_SOURCE, volumes: host.volumes });
       applied.reports++;
@@ -633,12 +926,14 @@ export async function applyTrackerImport(
       });
     }
     for (const disk of host.disks) {
+      if (disk.match === "moved" || disk.match === "ambiguous" || disk.match === "inferred") continue;
       let itemId = disk.itemId;
       if (disk.match === "create" && itemId == null) {
         const attrs: Record<string, string | number> = {
           role: "storage",
           ...(disk.model ? { model: disk.model } : {}),
           ...(disk.serial ? { serial: disk.serial } : {}),
+          ...(disk.uuid ? { uuid: disk.uuid } : {}),
           ...(disk.sizeBytes ? { storage_gb: Math.round(disk.sizeBytes / 1e9) } : {}),
           [STORAGE_DISK_KEY]: disk.diskKey,
         };
@@ -647,7 +942,7 @@ export async function applyTrackerImport(
           .values({
             areaId: computer.areaId,
             houseId: computer.houseId,
-            roomId: disk.internal ? computer.roomId : computer.roomId,
+            roomId: computer.roomId,
             parentId: disk.internal ? computer.id : null,
             name: (disk.model ?? disk.diskKey).slice(0, 255),
             attributes: attrs,
@@ -678,25 +973,55 @@ export async function applyTrackerImport(
         }
         continue;
       }
-      if (itemId == null || disk.match === "ambiguous" || disk.match === "inferred") continue;
+      if (itemId == null) continue;
       if (disk.match === "override") continue;
       const row = byId.get(itemId) ?? (await db.query.items.findFirst({ where: eq(items.id, itemId) }));
       if (!row) continue;
+      if (disk.match === "reattach") {
+        if (row.parentId != null && row.parentId !== computer.id) {
+          await db.update(items).set({ parentId: disk.internal ? computer.id : null }).where(eq(items.id, itemId));
+        }
+        const existingRels = await db
+          .select()
+          .from(relations)
+          .where(and(eq(relations.fromItemId, itemId), eq(relations.type, "attached-to"), eq(relations.status, "confirmed")));
+        const already = existingRels.some((r) => r.toItemId === computer.id);
+        for (const r of existingRels) {
+          if (r.toItemId !== computer.id) await db.delete(relations).where(eq(relations.id, r.id));
+        }
+        if (!already && !disk.internal) {
+          await db.insert(relations).values({
+            fromItemId: itemId,
+            toItemId: computer.id,
+            type: "attached-to",
+            origin: "user",
+            status: "confirmed",
+          });
+        }
+        if (disk.internal && row.parentId !== computer.id) {
+          await db.update(items).set({ parentId: computer.id }).where(eq(items.id, itemId));
+        }
+      }
       const { next, changed } = mergeAttrs(row.attributes, {
         [STORAGE_DISK_KEY]: disk.diskKey,
         ...(disk.serial ? { serial: disk.serial } : {}),
         ...(disk.model ? { model: disk.model } : {}),
+        ...(disk.uuid ? { uuid: disk.uuid } : {}),
       });
-      if (changed.length === 0) continue;
-      await db.update(items).set({ attributes: next }).where(eq(items.id, itemId));
-      applied.diskLinks++;
-      await logEvent({
-        entityType: "item",
-        entityId: itemId,
-        action: "storage.disk",
-        actor: "system",
-        summary: `${row.name}: ${changed.join(", ")}`,
-      });
+      if (changed.length === 0 && disk.match !== "reattach") continue;
+      if (changed.length > 0) {
+        await db.update(items).set({ attributes: next }).where(eq(items.id, itemId));
+        applied.diskLinks++;
+        await logEvent({
+          entityType: "item",
+          entityId: itemId,
+          action: "storage.disk",
+          actor: "system",
+          summary: `${row.name}: ${changed.join(", ")}`,
+        });
+      } else if (disk.match === "reattach") {
+        applied.diskLinks++;
+      }
     }
   }
   return { ...plan, dry: false, applied };

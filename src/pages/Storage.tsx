@@ -77,6 +77,11 @@ export default function StoragePage() {
       utils.storage.overview.invalidate();
     },
   });
+  const setIdentity = trpc.storage.setIdentity.useMutation({
+    onSuccess: () => {
+      utils.storage.overview.invalidate();
+    },
+  });
   // the second click must come within 5 s
   useEffect(() => {
     if (!confirmRemove) return;
@@ -178,7 +183,7 @@ export default function StoragePage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Storage</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Computers with their disks and volumes as blocks: width is capacity, each volume is a segment as wide as its use, colour is the data role, the light rest is free. Click a volume for its biggest directories.
+            Computers and NAS boxes with their disks and volumes as blocks: width is capacity, each volume is a segment as wide as its use, colour is the data role, the light rest is free. Click a volume for its biggest directories.
           </p>
         </div>
         {(houses.length > 1 || hiddenCount > 0) && (
@@ -242,6 +247,7 @@ export default function StoragePage() {
           {overview.isError && <p className="text-sm text-red-600">{overview.error.message}</p>}
           {setFlags.isError && <p className="text-sm text-red-600">{setFlags.error.message}</p>}
           {setDiskLink.isError && <p className="text-sm text-red-600">{setDiskLink.error.message}</p>}
+          {setIdentity.isError && <p className="text-sm text-red-600">{setIdentity.error.message}</p>}
           {o?.computers.length === 0 && o.externals.length === 0 && <p className="text-sm text-muted-foreground">No computers, drives or NAS boxes in this house.</p>}
           {listedComputers.length === 0 && hiddenCount > 0 && (
             <p className="text-sm text-muted-foreground">
@@ -258,6 +264,27 @@ export default function StoragePage() {
                 <Server className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-sm font-semibold">{c.name}</h2>
                 <span className="text-[12px] text-muted-foreground">{c.kind}{c.roomName ? ` · ${c.roomName}` : ""}{c.hidden ? " · hidden" : ""}</span>
+                {(() => {
+                  const opts = [...new Set([c.machineId, ...(c.identityOptions ?? [])].filter((x): x is string => Boolean(x)))];
+                  if (opts.length === 0) return null;
+                  return (
+                    <label className="ml-2 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+                      <span className="shrink-0">Known as</span>
+                      <select
+                        className="max-w-[12rem] rounded border border-border bg-white px-1.5 py-0.5 text-[11px] disabled:opacity-50"
+                        value={c.machineId ?? ""}
+                        disabled={setIdentity.isPending}
+                        aria-label="Tracker identifier for this machine"
+                        onChange={(e) => setIdentity.mutate({ itemId: c.id, machineId: e.target.value || null })}
+                      >
+                        <option value="">hostname / IP / MAC…</option>
+                        {opts.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })()}
                 <div className="ml-auto flex items-center">
                   <button
                     type="button"
