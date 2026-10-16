@@ -18,6 +18,8 @@ const model = vi.hoisted(() => ({ answer: null as unknown }));
 vi.mock("../lib/ai", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/ai")>()),
   getModel: async () => ({}),
+  getTriageModel: async () => ({}),
+  getTriageVisionModel: async () => ({}),
 }));
 vi.mock("ai", async (importOriginal) => ({
   ...(await importOriginal<typeof import("ai")>()),
