@@ -112,6 +112,24 @@ function looksLikeDiskRest(rest: string): boolean {
   return /^(disk\d+|[hsv]d[a-z]+|[svx]vd[a-z]+|nvme\d+n\d+|mmcblk\d+|nvme\d+)$/i.test(rest);
 }
 
+function firstSize(row: Record<string, unknown>, keys: string[]): number | null {
+  for (const k of keys) {
+    if (row[k] == null) continue;
+    const n = parseTrackerSize(row[k]);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+const SIZE_KEYS = ["size_bytes", "sizeBytes", "size", "capacity_bytes", "capacityBytes", "capacity"];
+const USED_KEYS = ["used_bytes", "usedBytes", "used"];
+
+function subtypeIsDisk(subtype: string | null): boolean {
+  if (!subtype) return false;
+  if (/volume|mount|filesystem|\bfs\b/.test(subtype)) return false;
+  return /disk|drive|hdd|ssd|nvme/.test(subtype);
+}
+
 function hostAndRest(name: string): { host: string; rest: string } | null {
   const i = name.indexOf(":");
   if (i <= 0) return null;
@@ -132,11 +150,16 @@ function sourceKind(row: Record<string, unknown>, rest: string | null): "disk" |
   const kind = str(row.kind ?? row.source_kind ?? row.file_kind)?.toLowerCase();
   if (kind === "disk" || kind === "drive") return "disk";
   if (kind === "volume" || kind === "vol" || kind === "mount") return "volume";
-  if (str(row.disk) && str(row.disk) !== str(row.name)) return "volume";
-  if (row.used != null || row.usedBytes != null || row.usage_pct != null || row.usagePct != null) return "volume";
-  if (Array.isArray(row.mountpoints) || Array.isArray(row.mount_points)) return "disk";
-  if (rest?.startsWith("/")) return "volume";
+  // Live disk rows are `host:sda` with subtype external-drive, metadata.mountpoints
+  // and usage_pct — never `kind: disk`. Name / mountpoints / serial before usage.
   if (rest && looksLikeDiskRest(rest)) return "disk";
+  if (subtypeIsDisk(str(row.subtype))) return "disk";
+  const mounts = listOfStrings(row.mountpoints ?? row.mount_points);
+  const serial = serialOf(row.serial ?? row.serial_number ?? row.SerialNumber);
+  if ((mounts.length > 0 || serial) && !rest?.startsWith("/")) return "disk";
+  if (str(row.disk) && str(row.disk) !== str(row.name)) return "volume";
+  if (row.used != null || row.used_bytes != null || row.usedBytes != null || row.usage_pct != null || row.usagePct != null) return "volume";
+  if (rest?.startsWith("/")) return "volume";
   return null;
 }
 
@@ -159,7 +182,11 @@ function serialOf(v: unknown): string | null {
 }
 
 function modelOf(row: Record<string, unknown>): string | null {
-  return str(row.model) ?? str(row.product) ?? str(row.media_name) ?? null;
+  return str(row.disk_model) ?? str(row.model) ?? str(row.product) ?? str(row.media_name) ?? null;
+}
+
+function pathOrUrl(row: Record<string, unknown>): string | null {
+  return str(row.path_or_url) ?? str(row.path);
 }
 
 /**
@@ -211,14 +238,18 @@ export function parseTrackerSources(payload: unknown): ParsedTrackerSources {
         name: name ?? `${host}:${diskKey}`,
         model: modelOf(row),
         serial: serialOf(row.serial ?? row.serial_number ?? row.SerialNumber),
-        sizeBytes: parseTrackerSize(row.size ?? row.sizeBytes ?? row.capacity ?? row.capacityBytes),
+        sizeBytes: firstSize(row, SIZE_KEYS),
         mountpoints: listOfStrings(row.mountpoints ?? row.mount_points),
       });
       continue;
     }
     if (kind === "volume") {
-      const mountPoint = (parts?.rest?.startsWith("/") ? parts.rest : null) ?? str(row.mountpoint ?? row.mountPoint ?? row.path);
-      const capacityBytes = parseTrackerSize(row.size ?? row.sizeBytes ?? row.capacity ?? row.capacityBytes);
+      const fromPath = pathOrUrl(row);
+      const mountPoint =
+        (parts?.rest?.startsWith("/") ? parts.rest : null) ??
+        (fromPath && fromPath.startsWith("/") && !fromPath.startsWith("/dev/") ? fromPath : null) ??
+        str(row.mountpoint ?? row.mountPoint);
+      const capacityBytes = firstSize(row, SIZE_KEYS);
       if (!mountPoint || capacityBytes == null || capacityBytes <= 0) {
         skipped++;
         continue;
@@ -228,14 +259,15 @@ export function parseTrackerSources(payload: unknown): ParsedTrackerSources {
         skipped++;
         continue;
       }
-      const usedRaw = parseTrackerSize(row.used ?? row.usedBytes);
+      const usedRaw = firstSize(row, USED_KEYS);
       const pct = typeof row.usage_pct === "number" ? row.usage_pct : typeof row.usagePct === "number" ? row.usagePct : null;
       const usedBytes = Math.min(capacityBytes, Math.max(0, usedRaw ?? (pct != null && pct >= 0 ? Math.round((capacityBytes * pct) / 100) : 0)));
       const diskName = str(row.disk);
+      const deviceRaw = str(row.device) ?? (fromPath?.startsWith("/dev/") ? fromPath : null) ?? diskKeyOf(diskName, null);
       volumes.push({
         host,
         mountPoint: mountPoint.slice(0, 255),
-        device: (str(row.device) ?? diskKeyOf(diskName, null))?.slice(0, 128) ?? null,
+        device: deviceRaw?.slice(0, 128) ?? null,
         fsType: fsType?.slice(0, 32) ?? null,
         label: (str(row.label) ?? str(row.volume) ?? (mountPoint === "/" ? "/" : mountPoint.split("/").filter(Boolean).pop() ?? null))?.slice(0, 128) ?? null,
         container: str(row.container)?.slice(0, 64) ?? null,

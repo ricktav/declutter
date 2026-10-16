@@ -3,127 +3,139 @@
     {
       "type": "file",
       "name": "dockermac:sda",
+      "subtype": "disk",
+      "disk_model": "Samsung SSD 850",
+      "path_or_url": "/dev/sda",
+      "size_bytes": 250000000000,
+      "usage_pct": 70,
       "metadata": {
-        "kind": "disk",
-        "model": "Samsung SSD 850",
         "serial": "S21PNXBG996622H",
-        "size": "250GB",
         "mountpoints": ["/", "/boot/efi"]
       }
     },
     {
       "type": "file",
       "name": "dockermac:sdb",
+      "subtype": "external-drive",
+      "disk_model": "Portable",
+      "path_or_url": "/dev/sdb",
+      "size_bytes": 4000000000000,
+      "usage_pct": 79,
       "metadata": {
-        "kind": "disk",
-        "model": "Portable",
         "serial": "NAA50DFF",
-        "size": "4.0TB",
         "mountpoints": ["/mnt/external"]
       }
     },
     {
       "type": "file",
       "name": "dockermac:/",
+      "subtype": "filesystem",
+      "path_or_url": "/",
+      "device": "/dev/sda2",
+      "size_bytes": 244000000000,
+      "used_bytes": 170000000000,
+      "usage_pct": 70,
+      "disk": "dockermac:sda",
       "metadata": {
-        "kind": "volume",
-        "device": "/dev/sda2",
-        "fstype": "ext4",
-        "size": "244GB",
-        "used": "170GB",
-        "usage_pct": 70,
-        "disk": "dockermac:sda"
+        "fstype": "ext4"
       }
     },
     {
       "type": "file",
       "name": "dockermac:/boot/efi",
+      "subtype": "filesystem",
+      "path_or_url": "/boot/efi",
+      "device": "/dev/sda1",
+      "size_bytes": 500000000,
+      "used_bytes": 10000000,
+      "disk": "dockermac:sda",
       "metadata": {
-        "kind": "volume",
-        "device": "/dev/sda1",
-        "fstype": "vfat",
-        "size": "500MB",
-        "used": "10MB",
-        "disk": "dockermac:sda"
+        "fstype": "vfat"
       }
     },
     {
       "type": "file",
       "name": "dockermac:/mnt/external",
+      "subtype": "filesystem",
+      "path_or_url": "/mnt/external",
+      "device": "/dev/sdb1",
+      "size_bytes": 3940000000000,
+      "used_bytes": 3110000000000,
+      "disk": "dockermac:sdb",
       "metadata": {
-        "kind": "volume",
-        "device": "/dev/sdb1",
-        "fstype": "ext4",
-        "size": "3.94TB",
-        "used": "3.11TB",
-        "disk": "dockermac:sdb"
+        "fstype": "ext4"
       }
     },
     {
       "type": "file",
       "name": "dockermac-2:sda",
+      "subtype": "disk",
+      "disk_model": "Crucial MX500",
+      "path_or_url": "/dev/sda",
+      "size_bytes": 500000000000,
+      "usage_pct": 21,
       "metadata": {
-        "kind": "disk",
-        "model": "Crucial MX500",
         "serial": "MX500SERIAL",
-        "size": "500GB",
         "mountpoints": ["/"]
       }
     },
     {
       "type": "file",
       "name": "dockermac-2:/",
+      "subtype": "filesystem",
+      "path_or_url": "/",
+      "device": "/dev/sda2",
+      "size_bytes": 480000000000,
+      "used_bytes": 100000000000,
+      "disk": "dockermac-2:sda",
       "metadata": {
-        "kind": "volume",
-        "device": "/dev/sda2",
-        "fstype": "ext4",
-        "size": "480GB",
-        "used": "100GB",
-        "disk": "dockermac-2:sda"
+        "fstype": "ext4"
       }
     },
     {
       "type": "file",
       "name": "plugwise-pi:mmcblk0",
+      "subtype": "disk",
+      "disk_model": "SD card",
+      "path_or_url": "/dev/mmcblk0",
+      "size_bytes": 32000000000,
       "metadata": {
-        "kind": "disk",
-        "model": "SD card",
-        "serial": "CID123",
-        "size": "32GB"
+        "serial": "CID123"
       }
     },
     {
       "type": "file",
       "name": "plugwise-pi:/",
+      "subtype": "filesystem",
+      "path_or_url": "/",
+      "device": "/dev/mmcblk0p2",
+      "size_bytes": 32000000000,
+      "used_bytes": 8000000000,
+      "disk": "plugwise-pi:mmcblk0",
       "metadata": {
-        "kind": "volume",
-        "device": "/dev/mmcblk0p2",
-        "fstype": "ext4",
-        "size": "32GB",
-        "used": "8GB",
-        "disk": "plugwise-pi:mmcblk0"
+        "fstype": "ext4"
       }
     },
     {
       "type": "file",
       "name": "Mac:disk3",
+      "subtype": "disk",
+      "disk_model": "APPLE SSD",
+      "path_or_url": "/dev/disk3",
+      "size_bytes": 500000000000,
       "metadata": {
-        "kind": "disk",
-        "model": "APPLE SSD",
-        "serial": "STALE",
-        "size": "500GB"
+        "serial": "STALE"
       }
     },
     {
       "type": "file",
       "name": "Mac:/",
-      "metadata": {
-        "kind": "volume",
-        "device": "disk3s1",
-        "size": "500GB",
-        "used": "200GB",
-        "disk": "Mac:disk3"
-      }
+      "subtype": "filesystem",
+      "path_or_url": "/",
+      "device": "disk3s1",
+      "size_bytes": 500000000000,
+      "used_bytes": 200000000000,
+      "disk": "Mac:disk3"
     },
     {
       "type": "backup",
