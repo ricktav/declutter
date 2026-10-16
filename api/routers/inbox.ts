@@ -7,6 +7,7 @@ import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { captures, areas, items, itemLinks, photos, rooms, houses, type TriageSuggestion, type CropBox, type RoomGeometry } from "@db/schema";
 import { parseGeojsonFloor } from "../lib/geojsonFloor";
+import { nameScore } from "../lib/text";
 import { type ScanPoly } from "../lib/scanMerge";
 import { mergeScanObjects, scanMeta, localDate } from "../lib/scanObjects";
 import { recordRoomScan, snapshotRoom } from "../lib/roomScans";
@@ -48,18 +49,6 @@ const detectObjectsSchema = z.object({
 });
 
 const MAX_REFERENCE_PHOTOS = 20;
-
-/** crude name-similarity, same approach as the items router */
-function nameScore(a: string, b: string): number {
-  const tok = (s: string) =>
-    new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2));
-  const A = tok(a);
-  const B = tok(b);
-  if (!A.size || !B.size) return 0;
-  let shared = 0;
-  for (const t of A) if (B.has(t)) shared++;
-  return shared / Math.min(A.size, B.size);
-}
 
 /** A frame on the photo in percent of the image (centre + size), the
  * CropBox / pins.detect convention: inside 0-100 and never zero-sized. */

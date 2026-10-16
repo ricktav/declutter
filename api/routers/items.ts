@@ -7,6 +7,7 @@ import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { areas, items, itemLinks, relations, tasks, ideaItems, ideas, events, houses, rooms, ITEM_DECISIONS, type ItemPos } from "@db/schema";
 import { logEvent } from "../lib/events";
+import { nameScore } from "../lib/text";
 import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { getModel } from "../lib/ai";
 import { roomSummary, setItemLocation } from "../lib/location";
@@ -14,23 +15,6 @@ import { coverPhotos, linkAsLegacy, photoAsLegacy, photosForItem } from "../lib/
 import { placementFor, placementSummaryFor } from "../lib/placement";
 import { snapPosToWalls } from "../lib/snapToWall";
 import { commonIpv4Prefix, identityEntries, identityKind } from "../lib/identityAttrs";
-
-/** crude name-similarity: shared significant tokens */
-function nameScore(a: string, b: string): number {
-  const tok = (s: string) =>
-    new Set(
-      s
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter((t) => t.length > 2),
-    );
-  const A = tok(a);
-  const B = tok(b);
-  if (!A.size || !B.size) return 0;
-  let shared = 0;
-  for (const t of A) if (B.has(t)) shared++;
-  return shared / Math.min(A.size, B.size);
-}
 
 export const itemsRouter = createRouter({
   listByArea: procedure

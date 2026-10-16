@@ -6,23 +6,13 @@ import { getDb } from "../queries/connection";
 import { photoPins, photos, items, areas } from "@db/schema";
 import { coverPhotos } from "../lib/photos";
 import { photoScope, promptInventory } from "../lib/aiContext";
+import { nameScore } from "../lib/text";
 import { readFileBytes } from "../lib/filestore";
 import { toThumbnail, cropPercent, normalizeOrientation } from "../lib/crop";
 import { getDetectVisionModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
-
-function nameScore(a: string, b: string): number {
-  const tok = (s: string) =>
-    new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2));
-  const A = tok(a);
-  const B = tok(b);
-  if (!A.size || !B.size) return 0;
-  let shared = 0;
-  for (const t of A) if (B.has(t)) shared++;
-  return shared / Math.min(A.size, B.size);
-}
 
 const detectSchema = z.object({
   objects: z.array(
