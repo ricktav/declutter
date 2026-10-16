@@ -151,6 +151,9 @@ const VIEWS_NAV = [
   { to: "/activity", label: "Activity", icon: History },
 ];
 
+/** Views that only show up once the house has data for them. */
+const DATA_VIEWS: Record<string, "systems" | "storage"> = { "/systems": "systems", "/storage": "storage" };
+
 const SIMPLE_NAV = new Set(["/focus", "/inbox", "/items", "/photos", "/settings"]);
 const HEAVY_PATHS = new Set(["/galaxy", "/systems", "/storage", "/ideas", "/tasks", "/wiki", "/activity"]);
 
@@ -219,8 +222,9 @@ export default function Layout() {
     ...(hasIdeas ? [{ to: "/ideas", label: "Ideas", icon: Lightbulb }] : []),
     ...(hasTasks ? [{ to: "/tasks", label: "Tasks", icon: ListChecks }] : []),
   ];
+  const views = trpc.settings.views.useQuery(undefined, { staleTime: 60_000 });
   const viewsNav = [
-    ...VIEWS_NAV,
+    ...VIEWS_NAV.filter((v) => !(v.to in DATA_VIEWS) || views.data?.[DATA_VIEWS[v.to]] === true),
     ...(!hasIdeas ? [{ to: "/ideas", label: "Ideas", icon: Lightbulb }] : []),
     ...(!hasTasks ? [{ to: "/tasks", label: "Tasks", icon: ListChecks }] : []),
   ];

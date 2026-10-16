@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createRouter, procedure } from "../middleware";
-import { sql } from "drizzle-orm";
-import { items } from "@db/schema";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { items, storageVolumes } from "@db/schema";
 import { getDb } from "../queries/connection";
 import { loadSettings, saveSettings, UI_DEPTHS } from "../lib/settings";
 import { getProviderSource } from "../lib/ai";
@@ -13,6 +13,10 @@ const httpUrl = z
   .max(500)
   .url()
   .refine((u) => /^https?:\/\//i.test(u), "Use an http:// or https:// address.");
+
+/** Roles the Systems view draws (machines and their containers). */
+const SYSTEMS_ROLES = ["laptop", "desktop", "server", "sbc", "nas", "container", "docker"];
+const STORAGE_ROLES = ["storage", "nas"];
 
 export const settingsRouter = createRouter({
   /** current effective config (key masked) */
@@ -158,6 +162,30 @@ export const settingsRouter = createRouter({
   setDepth: procedure.input(z.object({ depth: z.enum(UI_DEPTHS) })).mutation(({ input }) => {
     saveSettings({ uiDepth: input.depth });
     return { depth: input.depth };
+  }),
+
+  /** Which data views have something to show in the session house, so the
+   * sidebar can leave out pages that would open empty. */
+  views: procedure.query(async ({ ctx }) => {
+    const db = getDb();
+    const role = sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${items.attributes}, '$.role'))`;
+    const active: SQL = ctx.houseId != null
+      ? and(eq(items.status, "active"), eq(items.houseId, ctx.houseId))!
+      : eq(items.status, "active");
+    const any = async (where: SQL | undefined) =>
+      (await db.select({ id: items.id }).from(items).where(and(active, where)).limit(1)).length > 0;
+    const [systems, storageThing, volume] = await Promise.all([
+      any(inArray(role, SYSTEMS_ROLES)),
+      any(inArray(role, STORAGE_ROLES)),
+      db
+        .select({ id: storageVolumes.id })
+        .from(storageVolumes)
+        .innerJoin(items, eq(items.id, storageVolumes.itemId))
+        .where(active)
+        .limit(1)
+        .then((r) => r.length > 0),
+    ]);
+    return { systems, storage: storageThing || volume };
   }),
 
   /** list models the configured key can actually use */
