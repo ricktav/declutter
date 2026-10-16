@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { AtDepth } from "@/context/depth";
 import { timeAgo } from "@/lib/format";
 import {
   Sparkles,
@@ -681,6 +682,7 @@ function TriageCard({
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
         <div className="flex gap-1.5 shrink-0">
+          <AtDepth min="detail">
           <Button
             size="sm"
             variant="outline"
@@ -699,6 +701,7 @@ function TriageCard({
             )}
             A/B
           </Button>
+          </AtDepth>
           {!hasSuggestion && (
             <Button
               size="sm"

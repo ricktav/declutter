@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
+import { AtDepth } from "@/context/depth";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import {
@@ -391,6 +392,7 @@ export default function SettingsPage() {
         </label>
       </div>
 
+      <AtDepth min="detail">
       <div className="mt-6 rounded-lg border border-border bg-white p-4 space-y-3">
         <h2 className="text-sm font-semibold">Which provider for which job</h2>
         <p className="text-[12px] text-muted-foreground">
@@ -580,6 +582,7 @@ export default function SettingsPage() {
           )
         )}
       </div>
+      </AtDepth>
       {/* Houses & locations */}
       <div className="mt-8 flex items-center gap-2">
         <Home className="h-4 w-4 text-emerald-700" />
