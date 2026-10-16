@@ -19,6 +19,7 @@
 //   node scripts/storage-report-local.mjs --item 51 --boot
 //   node scripts/storage-report-local.mjs --item <drive> --only /Volumes/T7
 //   --base http://localhost:3001 (default)   --dirs 15 (1-100)
+// Starred fleet (SSH from the Mini): scripts/storage-report-starred.ts
 // Reads APP_TOKEN from .env when the server has one. macOS and Linux.
 import "dotenv/config";
 import { execFileSync } from "child_process";

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Weekly biggest-folder collector on the Mini (Sunday 07:50 local), after
+     the daily local report at 07:20. Copies to ~/Library/LaunchAgents/ then:
+       launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/nl.homebase.storage-report-starred.plist 2>/dev/null
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/nl.homebase.storage-report-starred.plist
+     SSHs to every starred machine (BatchMode keys). HOMEBASE_SSH_USER if the
+     LAN user is not ricktav. One-shot instead of weekly:
+       node --experimental-strip-types scripts/storage-report-starred.ts --apply --base http://127.0.0.1:3001
+     -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>nl.homebase.storage-report-starred</string>
+  <key>WorkingDirectory</key>
+  <string>/Volumes/T7/declutter</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>./scripts/storage-report-starred.ts --apply</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOMEBASE_BASE</key>
+    <string>http://127.0.0.1:3001</string>
+    <key>HOMEBASE_SSH_USER</key>
+    <string>ricktav</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>50</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/ricktav/Library/Logs/homebase-storage-report-starred.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ricktav/Library/Logs/homebase-storage-report-starred.log</string>
+  <key>Nice</key>
+  <integer>10</integer>
+</dict>
+</plist>
