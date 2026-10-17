@@ -711,7 +711,13 @@ export default function FocusPage() {
                   variant="outline"
                   className="h-7 text-[12px] ml-auto"
                   disabled={detect.isPending}
-                  onClick={() => detect.mutate({ photoId: activePhotoId })}
+                  onClick={() => {
+                    const houseId = rooms.data?.find((r) => r.id === roomId)?.houseId;
+                    detect.mutate({
+                      photoId: activePhotoId,
+                      ...(houseId != null ? { houseId } : {}),
+                    });
+                  }}
                 >
                   {detect.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                   Find frames

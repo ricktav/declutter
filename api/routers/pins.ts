@@ -1,34 +1,33 @@
 import { z } from "zod";
-import { eq, or, desc, inArray } from "drizzle-orm";
+import { eq, or, inArray } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { photoPins, photos, items, areas } from "@db/schema";
-import { coverPhotos } from "../lib/photos";
 import { readFileBytes } from "../lib/filestore";
-import { toThumbnail, cropPercent, normalizeOrientation } from "../lib/crop";
+import { cropPercent, forDetectVision } from "../lib/crop";
 import { getDetectVisionModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
-
-function nameScore(a: string, b: string): number {
-  const tok = (s: string) =>
-    new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2));
-  const A = tok(a);
-  const B = tok(b);
-  if (!A.size || !B.size) return 0;
-  let shared = 0;
-  for (const t of A) if (B.has(t)) shared++;
-  return shared / Math.min(A.size, B.size);
-}
+import {
+  MAX_REFERENCE_PHOTOS,
+  DETECT_BOX_INSTRUCTIONS,
+  buildReferenceContent,
+  detectInventoryPrompt,
+  houseIdForRoom,
+  loadHouseInventory,
+  matchDetectedItem,
+  normalizeDetectBox,
+  pickDetectHouseId,
+} from "../lib/detectMatch";
 
 const detectSchema = z.object({
   objects: z.array(
     z.object({
       label: z.string().describe("short name of the detected object"),
-      xPct: z.number().min(0).max(100).describe("horizontal center, 0-100% of image width"),
-      yPct: z.number().min(0).max(100).describe("vertical center, 0-100% of image height"),
+      xPct: z.number().min(0).max(100).describe("box CENTER x, 0-100% of image width — not top-left"),
+      yPct: z.number().min(0).max(100).describe("box CENTER y, 0-100% of image height — not top-left"),
       wPct: z.number().min(0).max(100).optional().describe("width of the bounding box, 0-100% of image width"),
       hPct: z.number().min(0).max(100).optional().describe("height of the bounding box, 0-100% of image height"),
       matchedItemId: z
@@ -41,35 +40,9 @@ const detectSchema = z.object({
   ),
 });
 
-const MAX_REFERENCE_PHOTOS = 20;
-
 const suggestSchema = z.object({
   label: z.string().describe("short, specific name of the object in the cropped photo"),
 });
-
-type RefContentPart = { type: "text"; text: string } | { type: "image"; image: Uint8Array };
-
-/** Reference photos let the model recognize a re-photographed item by sight
- * instead of guessing from name text alone. */
-async function buildReferenceContent(
-  db: ReturnType<typeof getDb>,
-  allItems: { id: number; name: string }[],
-  limit: number,
-): Promise<RefContentPart[]> {
-  const photoByItem = new Map([...(await coverPhotos(db))].map(([itemId, p]) => [itemId, p.storageKey] as const));
-  const refItems = allItems.filter((it) => photoByItem.has(it.id)).slice(0, limit);
-  const refContent: RefContentPart[] = [];
-  for (const it of refItems) {
-    try {
-      const refBytes = await toThumbnail(await readFileBytes(photoByItem.get(it.id)!));
-      refContent.push({ type: "text", text: `Reference photo — existing item [id ${it.id}]: "${it.name}"` });
-      refContent.push({ type: "image", image: refBytes });
-    } catch {
-      // file missing on disk — skip this one reference, not fatal
-    }
-  }
-  return refContent;
-}
 
 export const pinsRouter = createRouter({
   listForPhoto: procedure
@@ -213,7 +186,7 @@ export const pinsRouter = createRouter({
 
   /** AI: detect objects in the photo, match against inventory, suggest pins */
   detect: procedure
-    .input(z.object({ photoId: z.number() }))
+    .input(z.object({ photoId: z.number(), houseId: z.number().optional() }))
     .mutation(async ({ input }) => {
       const db = getDb();
       const att = await db.query.photos.findFirst({
@@ -224,15 +197,12 @@ export const pinsRouter = createRouter({
       }
 
       try {
-        // normalized: the model's xPct/yPct/wPct/hPct must be computed
-        // against the same upright frame the browser displays, or every
-        // returned box ends up offset/rotated relative to the real objects
-        const bytes = await normalizeOrientation(await readFileBytes(att.storageKey));
-        const allItems = await db
-          .select()
-          .from(items)
-          .where(eq(items.status, "active"))
-          .orderBy(desc(items.updatedAt));
+        // upright + capped: same frame FramedRoomPhoto displays (browser EXIF)
+        // so returned xPct/yPct/wPct/hPct overlay the real objects
+        const bytes = await forDetectVision(await readFileBytes(att.storageKey));
+        const photoHouseId = await houseIdForRoom(db, att.roomId);
+        const houseId = pickDetectHouseId({ photoHouseId, explicitHouseId: input.houseId ?? null });
+        const allItems = await loadHouseInventory(db, houseId);
 
         const refContent = await buildReferenceContent(db, allItems, MAX_REFERENCE_PHOTOS);
 
@@ -247,7 +217,7 @@ export const pinsRouter = createRouter({
                 ...refContent,
                 {
                   type: "text",
-                  text: `Identify the distinct physical objects worth inventorying in the PHOTO BELOW (devices, tools, containers, appliances, furniture — NOT wall, floor, ceiling, windows, or other background). List up to 15 of the most significant objects. Do not pad the list with duplicates, parts of already-listed objects, or background — fewer accurate objects is better than many vague ones.\n\nFor each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height.\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}The user's full existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.slice(0, 200).map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}\n\nPHOTO TO ANALYZE:`,
+                  text: `Identify the distinct physical objects worth inventorying in the PHOTO BELOW (devices, tools, containers, appliances, furniture — NOT wall, floor, ceiling, windows, or other background). List up to 15 of the most significant objects. Do not pad the list with duplicates, parts of already-listed objects, or background — fewer accurate objects is better than many vague ones.\n\n${DETECT_BOX_INSTRUCTIONS}\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}${detectInventoryPrompt(allItems)}\n\nPHOTO TO ANALYZE:`,
                 },
                 { type: "image", image: bytes },
               ],
@@ -255,33 +225,21 @@ export const pinsRouter = createRouter({
           ],
         });
 
-        const itemById = new Map(allItems.map((it) => [it.id, it]));
         let created = 0;
         let matched = 0;
         for (const obj of object.objects.slice(0, 30)) {
-          let itemId: number | null = obj.matchedItemId != null && itemById.has(obj.matchedItemId) ? obj.matchedItemId : null;
-          if (itemId) {
-            matched++;
-          } else {
-            let best = 0;
-            for (const it of allItems) {
-              const s = nameScore(obj.label, it.name);
-              if (s > best) {
-                best = s;
-                itemId = it.id;
-              }
-            }
-            if (best < 0.5) itemId = null;
-            else matched++;
-          }
+          const box = normalizeDetectBox(obj);
+          if (!box) continue;
+          const hit = matchDetectedItem(obj.label, obj.matchedItemId, allItems);
+          if (hit.itemId) matched++;
           await db.insert(photoPins).values({
             photoId: input.photoId,
-            xPct: obj.xPct,
-            yPct: obj.yPct,
-            wPct: obj.wPct ?? null,
-            hPct: obj.hPct ?? null,
+            xPct: box.xPct,
+            yPct: box.yPct,
+            wPct: box.wPct,
+            hPct: box.hPct,
             label: obj.label,
-            itemId,
+            itemId: hit.itemId,
             origin: "ai",
             status: "suggested",
           });
