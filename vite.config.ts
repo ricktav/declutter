@@ -19,7 +19,9 @@ const https = fs.existsSync(certFile) && fs.existsSync(keyFile)
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
-    devServer({ entry: "api/boot.ts", exclude: [/^\/(?!api\/|uploads\/).*$/] }),
+    // api/lib holds helpers the Workbench imports as modules (serviceUrls, identityAttrs, ...);
+    // Vite must serve those, not the API
+    devServer({ entry: "api/boot.ts", exclude: [/^\/(?!api\/|uploads\/).*$/, /^\/api\/lib\//] }),
     react(),
   ],
   server: {
