@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { callerFor } from "./caller";
+import { DEFAULT_LINKS } from "../lib/settings";
 
 let dir: string;
 let before: string | undefined;
@@ -18,11 +19,11 @@ afterEach(() => {
 });
 
 describe("settings.links", () => {
-  it("is empty until set, so nothing is linked", async () => {
-    expect(await callerFor(null).settings.links()).toEqual({ meterkastUrl: null, parcelViewerUrl: null });
+  it("gives the old built-in links until set", async () => {
+    expect(await callerFor(null).settings.links()).toEqual(DEFAULT_LINKS);
   });
 
-  it("saves one link without touching the other, and clears with an empty string", async () => {
+  it("saves one link without touching the other, and turns it off with an empty string", async () => {
     const c = callerFor(null);
     await c.settings.setLinks({ meterkastUrl: "http://meters.local/live.html", parcelViewerUrl: "https://maps.example/viewer/" });
     await c.settings.setLinks({ meterkastUrl: "http://meters.local/other.html" });

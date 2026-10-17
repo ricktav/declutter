@@ -3,7 +3,7 @@ import { createRouter, procedure } from "../middleware";
 import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { items, storageVolumes } from "@db/schema";
 import { getDb } from "../queries/connection";
-import { loadSettings, saveSettings, UI_DEPTHS } from "../lib/settings";
+import { DEFAULT_LINKS, loadSettings, saveSettings, UI_DEPTHS } from "../lib/settings";
 import { getProviderSource } from "../lib/ai";
 import { logEvent } from "../lib/events";
 import { autoTriageReady } from "../lib/jobs";
@@ -128,13 +128,16 @@ export const settingsRouter = createRouter({
     return { autoTriage: input.on, ready: await autoTriageReady() };
   }),
 
-  /** External links (no secrets), read by the sidebar on every page. Null = not set, so not shown. */
+  /** External links (no secrets), read by the sidebar on every page. Null = turned off, so not shown. */
   links: procedure.query(() => {
     const s = loadSettings();
-    return { meterkastUrl: s.meterkastUrl ?? null, parcelViewerUrl: s.parcelViewerUrl ?? null };
+    return {
+      meterkastUrl: s.meterkastUrl === undefined ? DEFAULT_LINKS.meterkastUrl : s.meterkastUrl,
+      parcelViewerUrl: s.parcelViewerUrl === undefined ? DEFAULT_LINKS.parcelViewerUrl : s.parcelViewerUrl,
+    };
   }),
 
-  /** Empty string clears a link. */
+  /** Empty string turns a link off. */
   setLinks: procedure
     .input(
       z.object({
@@ -143,9 +146,9 @@ export const settingsRouter = createRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const patch: Record<string, string> = {};
-      if (input.meterkastUrl !== undefined) patch.meterkastUrl = input.meterkastUrl;
-      if (input.parcelViewerUrl !== undefined) patch.parcelViewerUrl = input.parcelViewerUrl;
+      const patch: Record<string, string | null> = {};
+      if (input.meterkastUrl !== undefined) patch.meterkastUrl = input.meterkastUrl || null;
+      if (input.parcelViewerUrl !== undefined) patch.parcelViewerUrl = input.parcelViewerUrl || null;
       saveSettings(patch);
       await logEvent({ entityType: "settings", action: "updated", summary: "External links updated" });
       return { ok: true };

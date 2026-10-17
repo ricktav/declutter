@@ -15,6 +15,12 @@ export type AiSlot = "a" | "b";
 export const UI_DEPTHS = ["quick", "standard", "detail"] as const;
 export type UiDepth = (typeof UI_DEPTHS)[number];
 
+/** The links the Workbench used before they moved to Settings, so an install that never set them keeps them. */
+export const DEFAULT_LINKS = {
+  meterkastUrl: "http://10.50.0.10/meterkast.html",
+  parcelViewerUrl: "http://10.50.0.102/grokbot/kadastrale-kaart/",
+};
+
 export interface AppSettings {
   llmBaseUrl?: string;
   llmApiKey?: string;
@@ -30,10 +36,10 @@ export interface AppSettings {
   llmDetectSlot?: AiSlot;
   /** Triage new photo snaps in the background. Default off. */
   autoTriage?: boolean;
-  /** External dashboard with live meter readings, linked from the sidebar and Energy sections. */
-  meterkastUrl?: string;
-  /** Parcel map viewer; the address is appended as ?q=. */
-  parcelViewerUrl?: string;
+  /** External dashboard with live meter readings, linked from the sidebar and Energy sections. Unset: DEFAULT_LINKS; null: off. */
+  meterkastUrl?: string | null;
+  /** Parcel map viewer; the address is appended as ?q=. Unset: DEFAULT_LINKS; null: off. */
+  parcelViewerUrl?: string | null;
   /** How much of the Workbench shows: quick, standard or detail. Unset: see settings.ui. */
   uiDepth?: UiDepth;
 }
