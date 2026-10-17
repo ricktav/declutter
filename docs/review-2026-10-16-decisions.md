@@ -7,10 +7,10 @@ Rick's decisions on `docs/review-2026-10-16.html`, given 2026-10-16. 36 accepted
 | Id | What | PR |
 | --- | --- | --- |
 | C6 | TRPCError codes for the 17 plain throws; also fixes the `inbox-triage-boxes` test mock that failed on `main` without an LLM key | [#26](https://github.com/ricktav/declutter/pull/26) |
-| H1, H2 | Production exits without `APP_TOKEN` (or explicit `ALLOW_OPEN_ACCESS=1`), `GET /api/health`, `scripts/backup.sh` | [#27](https://github.com/ricktav/declutter/pull/27) |
+| H1, H2 | `GET /api/health`, `scripts/backup.sh`; a missing `APP_TOKEN` only warns at boot (Rick, 2026-10-17: no token on the trusted LAN) | [#27](https://github.com/ricktav/declutter/pull/27) |
 | C5 | AI prompt inventories scoped to the capture's or Photo's house, room first | [#28](https://github.com/ricktav/declutter/pull/28) |
 | D4 | `@huggingface/transformers` to devDependencies (script-only) | [#30](https://github.com/ricktav/declutter/pull/30) |
-| E7 (Workbench) | Meterkast and parcel-viewer URLs are settings (`settings.links` / `setLinks`), links hidden when unset; collector host defaults stay until the launchd plist carries them | [#31](https://github.com/ricktav/declutter/pull/31) |
+| E7 (Workbench) | Meterkast and parcel-viewer URLs are settings (`settings.links` / `setLinks`), unset links default to the old URLs, an emptied link is off; collector host defaults stay until the launchd plist carries them | [#31](https://github.com/ricktav/declutter/pull/31) |
 | A2 | Default topic "Things" on the server: `areaId` optional on `items.create`, `inbox.fileObject`, `inbox.acceptMany` | [#33](https://github.com/ricktav/declutter/pull/33) |
 | B1, G2 | Depth (Quick / Standard / Detail) stored on the server; Provider B and A/B at Detail only | [#34](https://github.com/ricktav/declutter/pull/34) |
 | (found) | `npm run dev` served a blank Workbench since 2026-10-08: `/api/lib/*.ts` went to the API | [#35](https://github.com/ricktav/declutter/pull/35) |
@@ -23,9 +23,8 @@ Rick's decisions on `docs/review-2026-10-16.html`, given 2026-10-16. 36 accepted
 | C2 | `items.search` in MySQL with a limit, prefix first, optional attribute-value match (`fields`) | [#42](https://github.com/ricktav/declutter/pull/42) |
 | F3 | Product words in the Workbench copy: Thing, Place, Kind, Sort, snap (code names unchanged) | [#43](https://github.com/ricktav/declutter/pull/43) |
 
-Before #27 is deployed: check that production's `.env` has `APP_TOKEN`, or the next boot stops with an explanation.
 
-After merging: #31 needs the two URLs entered under Settings → Links; #41 does nothing until "Triage new photos automatically" is switched on.
+After merging: #41 does nothing until "Triage new photos automatically" is switched on.
 
 Merge order that avoids conflicts: #35 first (dev server), then #26, #28 → #41, #34 → #39, and the rest in any order. #37, #38 and #43 touch the same Workbench files at neighbouring lines (text-only conflicts).
 
