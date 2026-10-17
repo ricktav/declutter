@@ -301,13 +301,16 @@ function ZoomableGeojson({ storageKey }: { storageKey: string }) {
   );
 }
 
-/** Before a pending (untriaged) photo goes into the pin canvas, confirm
- * where it was taken - unlike an already-filed item, nothing here carries a
- * location yet, and that confirmation rides along in the URL so a new item
- * created while pinning starts out placed instead of homeless. */
-function PinPendingButton({ captureId }: { captureId: number }) {
+/** Before a pending (untriaged) photo without a Place goes into the pin
+ * canvas, confirm where it was taken; that confirmation rides along in the
+ * URL so a new item created while pinning starts out placed instead of
+ * homeless. A photo that already has a Place goes straight in: the Place
+ * button next to this one changes it. */
+function PinPendingButton({ capture }: { capture: InboxCapture }) {
+  const captureId = capture.id;
   const navigate = useNavigate();
-  const { houseId } = useHouse();
+  const { houseId: sessionHouseId } = useHouse();
+  const houseId = capture.houseId ?? sessionHouseId;
   const [open, setOpen] = useState(false);
   const lastRoomId = useLastRoomId();
   const [roomId, setRoomIdRaw] = useState<number | null>(null);
@@ -326,6 +329,28 @@ function PinPendingButton({ captureId }: { captureId: number }) {
       navigate(`/annotate/${res.photoId}?roomId=${roomId ?? "none"}`);
     },
   });
+  const pinPlaced = trpc.photos.ensureForCapture.useMutation({
+    onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
+  });
+
+  if (capture.photoRoomId != null) {
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-6 text-[11px]"
+        title={`Pin objects on this photo (Place: ${capture.roomName ?? `#${capture.photoRoomId}`})`}
+        disabled={pinPlaced.isPending}
+        onClick={(e) => {
+          e.stopPropagation();
+          pinPlaced.mutate({ captureId });
+        }}
+      >
+        {pinPlaced.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <MapPin className="h-3 w-3 mr-1" />}
+        Pin
+      </Button>
+    );
+  }
 
   return (
     <>
@@ -661,7 +686,7 @@ function TriageCard({
                   <ScanSearch className="h-3 w-3 mr-1" /> detect objects
                 </Button>
                 <CapturePlaceButton capture={capture} onPick={onPlace} />
-                <PinPendingButton captureId={capture.id} />
+                <PinPendingButton capture={capture} />
               </div>
             </div>
           )}
@@ -1304,13 +1329,17 @@ export default function InboxPage() {
             <div className="flex items-center gap-1">
               {(() => {
                 const cap = (captures.data ?? []).find((c) => c.id === lightbox.captureId);
-                return cap ? <CapturePlaceButton capture={cap} onPick={(c) => setPlaceTarget(placeTargetOf(c))} /> : null;
+                return (
+                  <>
+                    {cap && <CapturePlaceButton capture={cap} onPick={(c) => setPlaceTarget(placeTargetOf(c))} />}
+                    {lightbox.isPending && cap ? (
+                      <PinPendingButton capture={cap} />
+                    ) : (
+                      <PinCaptureButton captureId={lightbox.captureId} />
+                    )}
+                  </>
+                );
               })()}
-              {lightbox.isPending ? (
-                <PinPendingButton captureId={lightbox.captureId} />
-              ) : (
-                <PinCaptureButton captureId={lightbox.captureId} />
-              )}
             </div>
           )
         }
