@@ -41,6 +41,21 @@ Match `attributes.hostname`, `ip`, `machine.id`, `aliases`, `host_alias`. Starre
 
 If `host` matches two machines the call is refused (`BAD_REQUEST`).
 
+## Collecting mounts from `storage.overview`
+
+Call with **`houseId: null`** (all houses). Do **not** read `computers[].volumes` — after Machine → Disks that array is only leftover inferred mounts (often empty, or just something like OptiPlex `/media/rick/Extern`). Real filesystems sit on the disks under the machine.
+
+For computer `c` the mount list is:
+
+```
+[...c.drives, ...c.attached, ...(c.inferredDisks ?? []), ...(c.unlinkedDisks ?? []), ...(c.remoteMounts ?? [])]
+  .flatMap((d) => d.volumes)
+```
+
+Use each volume’s `mountPoint` (and optional `label` / `device`). Skip `measure: "remote"` if you only scanned local disks. `dirCount` is how many folders HomeBase already has.
+
+A Storage card that shows disk bars already has volumes, even when `c.volumes` is `[]`.
+
 ## Body
 
 ```json
@@ -112,12 +127,12 @@ Omit the `authorization` header when the server has no `APP_TOKEN`.
 
 ## Mapping from file-scanner (`dir_rollup`)
 
-1. Group rollup rows by host, then by volume prefix (longest matching `df` mount, or HomeBase `storage.overview` mounts for that machine).
+1. Group rollup rows by host, then by volume prefix (longest matching `df` mount, or the flattened overview mounts above).
 2. Keep **immediate children of the mount** (one path component more than the mount). Rank by size, take at most 100.
 3. POST one `storage.reportDirs` per host (`source: "file-inventory"`).
 4. Skip mounts HomeBase does not have; read `skipped` instead of inventing a volume.
 
-Volumes still missing after Data Tracker / Mini local `df` will always skip — run a disk report first, then folders.
+Disk rows (`df`) are filled by Data Tracker `homebase-sync.js` on prodesk-rt1 (~60 s after sources, `storage.enabled` in `homebase-map.json`; Mini is `skip_hosts`) and by Mini `storage-report-local.mjs` for item 51. `scripts/storage-import-data-tracker.mjs` is the same import, run by hand. Folders wait until those mounts exist.
 
 ## Do not use for this
 
