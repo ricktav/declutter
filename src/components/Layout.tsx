@@ -205,7 +205,7 @@ export default function Layout() {
   ];
   const views = trpc.settings.views.useQuery(undefined, { staleTime: 60_000 });
   const viewsNav = [
-    ...VIEWS_NAV.filter((v) => !(v.to in DATA_VIEWS) || views.data?.[DATA_VIEWS[v.to]] === true),
+    ...VIEWS_NAV.filter((v) => !(v.to in DATA_VIEWS) || views.isError || views.data?.[DATA_VIEWS[v.to]] === true),
     ...(!hasIdeas ? [{ to: "/ideas", label: "Ideas", icon: Lightbulb }] : []),
     ...(!hasTasks ? [{ to: "/tasks", label: "Tasks", icon: ListChecks }] : []),
   ];
