@@ -167,14 +167,14 @@ export const settingsRouter = createRouter({
     return { depth: input.depth };
   }),
 
-  /** Which data views have something to show in the session house, so the
-   * sidebar can leave out pages that would open empty. */
-  views: procedure.query(async ({ ctx }) => {
+  /** Which data views have something to show in any house, so the sidebar can
+   * leave them out of an install without machines or drives. Not scoped to
+   * the session house: Systems and Storage can show every house, and the
+   * machines mostly sit in another house than the one in the header. */
+  views: procedure.query(async () => {
     const db = getDb();
     const role = sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${items.attributes}, '$.role'))`;
-    const active: SQL = ctx.houseId != null
-      ? and(eq(items.status, "active"), eq(items.houseId, ctx.houseId))!
-      : eq(items.status, "active");
+    const active: SQL = eq(items.status, "active");
     const any = async (where: SQL | undefined) =>
       (await db.select({ id: items.id }).from(items).where(and(active, where)).limit(1)).length > 0;
     const [systems, storageThing, volume] = await Promise.all([

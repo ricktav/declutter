@@ -21,15 +21,15 @@ async function thing(houseId: number, attributes: Record<string, string | number
 }
 
 describe("settings.views", () => {
-  it("shows neither view for a house without machines or storage", async () => {
+  it("shows neither view without machines or storage in any house", async () => {
     await thing(h1, { brand: "Ikea" });
     expect(await callerFor(h1).settings.views()).toEqual({ systems: false, storage: false });
   });
 
-  it("shows Systems once a machine exists in the session house only", async () => {
-    await thing(h1, { role: "server" });
+  it("shows Systems once a machine exists in any house, whatever the session house", async () => {
+    await thing(h2, { role: "server" });
     expect(await callerFor(h1).settings.views()).toEqual({ systems: true, storage: false });
-    expect((await callerFor(h2).settings.views()).systems).toBe(false);
+    expect((await callerFor(h2).settings.views()).systems).toBe(true);
     expect((await callerFor(null).settings.views()).systems).toBe(true);
   });
 
