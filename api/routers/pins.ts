@@ -11,6 +11,7 @@ import { getDetectVisionModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
+import { labelCropWithClaude } from "../lib/claudeLabel";
 
 function nameScore(a: string, b: string): number {
   const tok = (s: string) =>
@@ -42,6 +43,11 @@ const detectSchema = z.object({
 });
 
 const MAX_REFERENCE_PHOTOS = 20;
+
+/** Hand-drawn Focus frames start as "Frame N" until Claude names the crop. */
+export function isPlaceholderFrameLabel(label: string): boolean {
+  return !label.trim() || /^Frame\s+\d+$/i.test(label.trim());
+}
 
 const suggestSchema = z.object({
   label: z.string().describe("short, specific name of the object in the cropped photo"),
@@ -354,6 +360,58 @@ export const pinsRouter = createRouter({
       } catch (err) {
         const classified = classifyAiError(err);
         return { ok: false as const, error: classified.message };
+      }
+    }),
+
+  /**
+   * Focus hand-drawn frames: crop the existing pin's box and name it with
+   * `claude -p` (api/lib/claudeLabel.ts). Always the Claude Code CLI — not
+   * the configured vision API and not gated on AI_DEV_PROVIDER. Soft-fails
+   * with ok:false so the generic "Frame N" label and Admit stay usable.
+   */
+  labelWithClaude: procedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const [pin] = await db.select().from(photoPins).where(eq(photoPins.id, input.id));
+      if (!pin || pin.status === "dismissed") {
+        return { ok: false as const, error: null };
+      }
+      // Already admitted, or the user renamed it — don't spend a CLI call.
+      if (pin.itemId != null || !isPlaceholderFrameLabel(pin.label)) {
+        return { ok: true as const, label: pin.label };
+      }
+      const att = await db.query.photos.findFirst({
+        where: eq(photos.id, pin.photoId),
+      });
+      if (!att?.storageKey) {
+        return { ok: false as const, error: "No stored image for this photo." };
+      }
+      const wPct = pin.wPct && pin.wPct > 0 ? pin.wPct : 12;
+      const hPct = pin.hPct && pin.hPct > 0 ? pin.hPct : 12;
+
+      try {
+        const bytes = await readFileBytes(att.storageKey);
+        const cropped = await cropPercent(bytes, { xPct: pin.xPct, yPct: pin.yPct, wPct, hPct });
+        const raw = await labelCropWithClaude(new Uint8Array(cropped));
+        const label = raw?.replace(/\s+/g, " ").trim().slice(0, 255) ?? "";
+        if (!label) {
+          return { ok: false as const, error: "Could not identify this frame." };
+        }
+
+        const [current] = await db.select().from(photoPins).where(eq(photoPins.id, input.id));
+        if (!current || current.status === "dismissed") {
+          return { ok: false as const, error: null };
+        }
+        // Admit or a rename may have landed while claude -p was running.
+        if (current.itemId != null || !isPlaceholderFrameLabel(current.label)) {
+          return { ok: true as const, label: current.label };
+        }
+
+        await db.update(photoPins).set({ label }).where(eq(photoPins.id, input.id));
+        return { ok: true as const, label };
+      } catch {
+        return { ok: false as const, error: "Could not identify this frame." };
       }
     }),
 });
