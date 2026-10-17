@@ -14,7 +14,7 @@ Rick's decisions on `docs/review-2026-10-16.html`, given 2026-10-16. 36 accepted
 | A2 | Default topic "Things" on the server: `areaId` optional on `items.create`, `inbox.fileObject`, `inbox.acceptMany` | [#33](https://github.com/ricktav/declutter/pull/33) |
 | B1, G2 | Depth (Quick / Standard / Detail) stored on the server; Provider B and A/B at Detail only | [#34](https://github.com/ricktav/declutter/pull/34) |
 | (found) | `npm run dev` served a blank Workbench since 2026-10-08: `/api/lib/*.ts` went to the API | [#35](https://github.com/ricktav/declutter/pull/35) |
-| D3 | Services collector parsers moved to `scripts/collectors/services/`; host helpers to `api/lib/hostNames.ts` | [#36](https://github.com/ricktav/declutter/pull/36) |
+| D3 | Services collector parsers moved to `scripts/collectors/services/`; host helpers to `api/lib/hostNames.ts` | [#36](https://github.com/ricktav/declutter/pull/36) (Rick: `services-report-all` ok on the Mac mini, 2026-10-17) |
 | E2 | One topic icon list (also fixes icons AreaView offered that the sidebar showed as a box), `DECISIONS`, `nameScore`, `StoredImage` | [#37](https://github.com/ricktav/declutter/pull/37) |
 | E1 | `hb-*` and `decision-*` colour tokens (CSS variables); 82 Workbench literals replaced, rendering identical | [#38](https://github.com/ricktav/declutter/pull/38) |
 | B4 (data half) | Systems and Storage in the sidebar only when the house has machines / drives (`settings.views`); stacked on #34 | [#39](https://github.com/ricktav/declutter/pull/39) |
