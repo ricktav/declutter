@@ -190,20 +190,29 @@ export const TYPE_LABELS: Record<string, string> = {
   phone: "Phone",
 };
 
+/** Own keys only, so inherited names ("constructor", "toString") are never Types. */
+export function isTypeNode(type: string | null | undefined): type is string {
+  return type != null && Object.hasOwn(TYPE_TREE, type);
+}
+
+function parentOf(type: string): string | null {
+  return isTypeNode(type) ? TYPE_TREE[type] : null;
+}
+
 /** Parent, grandparent, … up to the root; [] for a root or an unknown Type. */
 export function ancestorsOf(type: string): string[] {
   const out: string[] = [];
-  let p = TYPE_TREE[type] ?? null;
+  let p = parentOf(type);
   while (p != null && !out.includes(p)) {
     out.push(p);
-    p = TYPE_TREE[p] ?? null;
+    p = parentOf(p);
   }
   return out;
 }
 
-/** True when `type` is `node` or lies in its subtree. */
+/** True when `type` is `node` or lies in its subtree; both must be tree nodes. */
 export function isUnder(type: string | null, node: string): boolean {
-  if (!type) return false;
+  if (!isTypeNode(type) || !isTypeNode(node)) return false;
   return type === node || ancestorsOf(type).includes(node);
 }
 
@@ -238,9 +247,9 @@ const ROLE_TYPES: Record<string, string> = {
  */
 export function derivedType(attrs: Record<string, unknown>): string | null {
   const stored = attrStr(attrs, "type")?.trim().toLowerCase() || null;
-  if (stored && stored in TYPE_TREE) return stored;
-  const fromRole = ROLE_TYPES[roleKey(attrs)];
-  if (fromRole) return fromRole;
+  if (isTypeNode(stored)) return stored;
+  const role = roleKey(attrs);
+  if (Object.hasOwn(ROLE_TYPES, role)) return ROLE_TYPES[role];
   return stored;
 }
 
@@ -267,9 +276,12 @@ export const SCHEMA_PRESETS: Array<{ id: string; label: string; types: string[] 
   { id: "computers-displays-storage", label: "Computers & displays & storage", types: ["computer", "display", "storage"] },
 ];
 
+/** The `types` filter token for Things without a known Type (none, or an unknown stored `type`). */
+export const OTHER_TYPE = "other";
+
 /**
  * Type and Tags facets: Type matches when the Thing's Type is under any chosen
- * node; Tags match when the Thing has any chosen tag (OR within a facet); both
+ * node, or the Thing has no known Type and OTHER_TYPE ("other") is chosen; Tags match when the Thing has any chosen tag (OR within a facet); both
  * facets must match (AND across). An empty facet matches everything.
  */
 export function matchesTaxonomy(
@@ -279,7 +291,8 @@ export function matchesTaxonomy(
   const types = filter.types ?? [];
   if (types.length > 0) {
     const t = derivedType(attrs);
-    if (!types.some((n) => isUnder(t, n))) return false;
+    const ok = types.some((n) => (n === OTHER_TYPE ? !isTypeNode(t) : isUnder(t, n)));
+    if (!ok) return false;
   }
   const tags = (filter.tags ?? []).map(normTag).filter(Boolean);
   if (tags.length > 0) {
@@ -363,6 +376,13 @@ function machineTags(text: string, attrs: Record<string, unknown>): string[] {
  *    ("accessory"). Otherwise "none".
  * `tags` is the full tag list to keep: the Thing's own tags plus apple /
  * raspberry-pi / hp / dell from the name or brand.
+ *
+ * It judges the Thing only: it does NOT apply isMachineItem's exclusions
+ * (archived, `lab.exclude = yes`, a `parentId`). "computer" equals
+ * isMachineItem only for active, top-level, non-excluded Things; callers
+ * (the backfill) filter those themselves.
+ * Known false positive of the name step: `\bpi` also matches "Pi-hole" (a
+ * service name), which then comes out "suggested", never "computer".
  */
 export function judgeComputer(item: {
   name: string;

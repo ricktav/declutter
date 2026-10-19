@@ -62,6 +62,16 @@ describe("derivedType and tagsOf", () => {
     expect(derivedType({ type: "toaster" })).toBe("toaster");
   });
 
+  it("inherited object keys are never Types", () => {
+    expect(derivedType({ type: "constructor" })).toBe("constructor");
+    expect(isUnder(derivedType({ type: "constructor" }), "computer")).toBe(false);
+    expect(derivedType({ role: "constructor" })).toBeNull();
+    expect(derivedType({ role: "toString" })).toBeNull();
+    expect(ancestorsOf("constructor")).toEqual([]);
+    expect(isUnder("constructor", "constructor")).toBe(false);
+    expect(isUnder("imac", "toString")).toBe(false);
+  });
+
   it("splits tags, adds brand, lower case, de-duplicated", () => {
     expect(tagsOf({ tags: "Apple, home lab,,apple", brand: "Apple" })).toEqual(["apple", "home-lab"]);
     expect(tagsOf({ brand: "Raspberry Pi" })).toEqual(["raspberry-pi"]);
@@ -95,6 +105,17 @@ describe("filter semantics (Review Focus 7)", () => {
   it("the Computers & storage preset hides a keyboard", () => {
     const cds = SCHEMA_PRESETS.find((p) => p.id === "computers-displays-storage")!;
     expect(pick({ types: cds.types })).not.toContain("keyboard");
+  });
+  it("'other' matches Things without a known Type, alone or with nodes", () => {
+    const extra: Array<[string, Record<string, unknown>]> = [
+      ["none", {}],
+      ["toaster", { type: "toaster" }],
+      ["ctor", { type: "constructor" }],
+      ["mini", { type: "mac-mini" }],
+    ];
+    const sel = (types: string[]) => extra.filter(([, a]) => matchesTaxonomy(a, { types })).map(([n]) => n);
+    expect(sel(["other"])).toEqual(["none", "toaster", "ctor"]);
+    expect(sel(["other", "desktop"])).toEqual(["none", "toaster", "ctor", "mini"]);
   });
   it("empty facets match everything", () => {
     expect(pick({})).toHaveLength(things.length);
