@@ -4,6 +4,7 @@ import { areas, houses, items, relations, storageDirs, storageVolumes } from "@d
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 import { clusterByTwinKeys, machineTwinKeys, physicalDiskKey, sameVolume, volumeDedupeIsSafe } from "../lib/storageDisks";
+import { isCoreSimulatorMount } from "../lib/storage";
 
 beforeEach(resetTestDb);
 
@@ -117,6 +118,104 @@ describe("storage.report", () => {
     // the lab keys stay meaningful: whole-device GB, rounded, from the sum of the volumes
     expect(item?.attributes?.storage_gb).toBe(Math.round((4000 * GB) / 1e9));
     expect(item?.attributes?.storage_free_gb).toBe(Math.round((1900 * GB) / 1e9));
+  });
+});
+
+const SIM_IOS = "/Library/Developer/CoreSimulator/Volumes/iOS_21F79";
+const SIM_WATCH = "/Library/Developer/CoreSimulator/Volumes/watchOS_21T575";
+
+describe("CoreSimulator volumes", () => {
+  it("matches the CoreSimulator prefix and not a normal mount", () => {
+    expect(isCoreSimulatorMount(SIM_IOS)).toBe(true);
+    expect(isCoreSimulatorMount(SIM_WATCH)).toBe(true);
+    expect(isCoreSimulatorMount("/Library/Developer/CoreSimulator/")).toBe(true);
+    expect(isCoreSimulatorMount("/")).toBe(false);
+    expect(isCoreSimulatorMount("/Library/Developer")).toBe(false);
+    expect(isCoreSimulatorMount("/Volumes/iOS_21F79")).toBe(false);
+  });
+
+  it("does not create a volume from a tracker CoreSimulator row or a storage.report of that mount; / still does", async () => {
+    const db = getTestDb();
+    const [{ id: areaId }] = await db.insert(areas).values({ slug: "computers", name: "Computers" }).$returningId();
+    const [{ id: houseId }] = await db.insert(houses).values({ name: "Thuis" }).$returningId();
+    const [{ id: air }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "macbook-air-m2", attributes: { role: "laptop", hostname: "macbook-air-m2" } })
+      .$returningId();
+    const c = callerFor(houseId);
+
+    const imported = await c.storage.importSources({
+      sources: {
+        sources: [
+          {
+            type: "file",
+            name: "macbook-air-m2:/Library/Developer/CoreSimulator/Volumes/iOS_21F79",
+            size_bytes: 20e9,
+            used_bytes: 10e9,
+          },
+          {
+            type: "file",
+            name: "macbook-air-m2:/",
+            size_bytes: 250e9,
+            used_bytes: 100e9,
+          },
+        ],
+      },
+      dry: false,
+    });
+    expect(imported.skippedSimulator).toBe(1);
+    const afterImport = await db.select().from(storageVolumes).where(eq(storageVolumes.itemId, air));
+    expect(afterImport.map((r) => r.mountPoint)).toEqual(["/"]);
+    expect(afterImport.find((r) => r.mountPoint === "/")?.usedBytes).toBe(100e9);
+
+    const reported = await c.storage.report({
+      itemId: air,
+      source: "test",
+      volumes: [
+        { mountPoint: SIM_IOS, capacityBytes: 20e9, usedBytes: 12e9 },
+        { mountPoint: SIM_WATCH, capacityBytes: 8e9, usedBytes: 3e9 },
+        { mountPoint: "/", capacityBytes: 250e9, usedBytes: 110e9 },
+      ],
+    });
+    expect(reported.volumes).toBe(1);
+    const afterReport = await db.select().from(storageVolumes).where(eq(storageVolumes.itemId, air));
+    expect(afterReport.map((r) => r.mountPoint)).toEqual(["/"]);
+    expect(afterReport.find((r) => r.mountPoint === "/")?.usedBytes).toBe(110e9);
+  });
+
+  it("does not refresh an existing CoreSimulator volume and does not delete it", async () => {
+    const db = getTestDb();
+    const [{ id: areaId }] = await db.insert(areas).values({ slug: "computers", name: "Computers" }).$returningId();
+    const [{ id: houseId }] = await db.insert(houses).values({ name: "Thuis" }).$returningId();
+    const [{ id: air }] = await db
+      .insert(items)
+      .values({ areaId, houseId, name: "macbook-air-m2", attributes: { role: "laptop", hostname: "macbook-air-m2" } })
+      .$returningId();
+    await db.insert(storageVolumes).values({
+      itemId: air,
+      mountPoint: SIM_IOS,
+      capacityBytes: 20e9,
+      usedBytes: 5e9,
+      source: "legacy",
+      measuredAt: new Date("2026-01-01T12:00:00Z"),
+    });
+    const before = await db.query.storageVolumes.findFirst({ where: eq(storageVolumes.mountPoint, SIM_IOS) });
+    expect(before).toBeTruthy();
+    const c = callerFor(houseId);
+    await c.storage.report({
+      itemId: air,
+      source: "test",
+      volumes: [
+        { mountPoint: SIM_IOS, capacityBytes: 20e9, usedBytes: 19e9 },
+        { mountPoint: "/", capacityBytes: 250e9, usedBytes: 1 },
+      ],
+    });
+    const after = await db.select().from(storageVolumes).where(eq(storageVolumes.itemId, air));
+    const sim = after.find((r) => r.mountPoint === SIM_IOS)!;
+    expect(sim.usedBytes).toBe(5e9);
+    expect(sim.source).toBe("legacy");
+    expect(sim.measuredAt.getTime()).toBe(before!.measuredAt.getTime());
+    expect(after.find((r) => r.mountPoint === "/")?.usedBytes).toBe(1);
   });
 });
 

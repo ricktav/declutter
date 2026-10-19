@@ -16,6 +16,7 @@ import {
   applyReport,
   applyStorageDedupes,
   applyStorageViewFlag,
+  isCoreSimulatorMount,
   isStorageComputer,
   isStorageDevice,
   machineIdentity,
@@ -49,15 +50,18 @@ export const storageRouter = createRouter({
     .input(z.object({ itemId: z.number().int(), source: z.string().min(1).max(32), volumes: z.array(reportVolume).min(1).max(64) }))
     .mutation(async ({ input }) => {
       const db = getDb();
+      const volumes = input.volumes.filter((v) => !isCoreSimulatorMount(v.mountPoint));
       try {
-        const result = await applyReport(db, input);
-        await logEvent({
-          entityType: "item",
-          entityId: input.itemId,
-          action: "storage.report",
-          summary: `${input.source} reported ${result.volumes} volume(s)`,
-          payload: { source: input.source, volumes: input.volumes.map((v) => v.mountPoint) },
-        });
+        const result = await applyReport(db, { ...input, volumes });
+        if (result.volumes > 0) {
+          await logEvent({
+            entityType: "item",
+            entityId: input.itemId,
+            action: "storage.report",
+            summary: `${input.source} reported ${result.volumes} volume(s)`,
+            payload: { source: input.source, volumes: volumes.map((v) => v.mountPoint) },
+          });
+        }
         return result;
       } catch (e) {
         if (e instanceof StorageReportError) throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
