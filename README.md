@@ -98,3 +98,6 @@ Try it: `npm run dev` → open `/` → switch to **Simple** → pick a room → 
 - Uploads go through `POST /api/upload` (multipart); the file type is sniffed from content and
   only images, audio, video, PDF, JSON/GeoJSON and 3D scan formats are accepted. Stored files
   are served with `nosniff` and non-media types download instead of rendering.
+- `node scripts/backfill-type.mjs [--base URL]` classifies existing Things by the evidence ladder (`db/taxonomy.ts`) and prints the proposed `type` and `tags` per Thing; dry run, writes nothing (default base `http://127.0.0.1:3001`).
+- `--apply` writes `type` and `tags` (no other key) through `items.patchAttributes` for verdict "computer" and role-derived types only; never "suggested" unless listed with `--ids 306,64`.
+- Run it against a test dev server first (`--base http://127.0.0.1:3002`), review the table, then apply on production; Things with an archived status, a parent or `lab.exclude = yes` are skipped.
