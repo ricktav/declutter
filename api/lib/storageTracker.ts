@@ -22,6 +22,7 @@ import {
 } from "./storageDisks";
 import {
   applyReport,
+  isCoreSimulatorMount,
   isDiskThing,
   isStorageComputer,
   isStorageDevice,
@@ -94,6 +95,7 @@ export type ParsedTrackerSources = {
   volumes: TrackerVolume[];
   hosts: TrackerHostIdentity[];
   skipped: number;
+  skippedSimulator: number;
 };
 
 type Attrs = Record<string, string | number> | null;
@@ -307,6 +309,7 @@ export function parseTrackerSources(payload: unknown): ParsedTrackerSources {
   const volumes: TrackerVolume[] = [];
   const hostAcc = new Map<string, TrackerHostIdentity>();
   let skipped = 0;
+  let skippedSimulator = 0;
   const noteHost = (host: string, row: Record<string, unknown>, lastSeen: number | null) => {
     const key = normHost(host);
     const prev = hostAcc.get(key);
@@ -378,6 +381,11 @@ export function parseTrackerSources(payload: unknown): ParsedTrackerSources {
         skipped++;
         continue;
       }
+      if (isCoreSimulatorMount(mountPoint)) {
+        skipped++;
+        skippedSimulator++;
+        continue;
+      }
       const usedRaw = firstSize(row, USED_KEYS);
       const pct = typeof row.usage_pct === "number" ? row.usage_pct : typeof row.usagePct === "number" ? row.usagePct : null;
       const usedBytes = Math.min(capacityBytes, Math.max(0, usedRaw ?? (pct != null && pct >= 0 ? Math.round((capacityBytes * pct) / 100) : 0)));
@@ -417,7 +425,7 @@ export function parseTrackerSources(payload: unknown): ParsedTrackerSources {
     const prev = byVol.get(k);
     if (!prev || (v.lastSeen ?? 0) >= (prev.lastSeen ?? 0)) byVol.set(k, v);
   }
-  return { disks: [...byDisk.values()], volumes: [...byVol.values()], hosts: [...hostAcc.values()], skipped };
+  return { disks: [...byDisk.values()], volumes: [...byVol.values()], hosts: [...hostAcc.values()], skipped, skippedSimulator };
 }
 
 function attrStr(attrs: Attrs, key: string): string | null {
@@ -649,7 +657,7 @@ export type TrackerHostPlan = {
   movedDiskKeys?: string[];
 };
 
-export type TrackerImportPlan = { dry: boolean; hosts: TrackerHostPlan[]; skippedSources: number };
+export type TrackerImportPlan = { dry: boolean; hosts: TrackerHostPlan[]; skippedSources: number; skippedSimulator: number };
 
 export type InventoryItem = {
   id: number;
@@ -1017,7 +1025,7 @@ export function planTrackerImport(
       if (dest) d.movedTo = { host: dest.host, itemId: dest.itemId, itemName: dest.itemName };
     }
   }
-  return { dry, hosts: planHosts, skippedSources: parsed.skipped };
+  return { dry, hosts: planHosts, skippedSources: parsed.skipped, skippedSimulator: parsed.skippedSimulator };
 }
 
 function mergeAttrs(current: Attrs, patch: Record<string, string | number | null>): { next: Record<string, string | number>; changed: string[] } {

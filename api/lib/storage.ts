@@ -60,6 +60,16 @@ export type ReportVolume = {
   measuredAt?: Date | string | number | null;
 };
 
+/** Xcode CoreSimulator disk images. Skip on ingest; never create or refresh. */
+export const CORESIMULATOR_MOUNT_PREFIX = "/Library/Developer/CoreSimulator/";
+
+/** True when the mount is the CoreSimulator root or a path under it. */
+export function isCoreSimulatorMount(mountPoint: string | null | undefined): boolean {
+  if (mountPoint == null || mountPoint === "") return false;
+  const mp = normalizeMountPoint(mountPoint);
+  return mp === "/Library/Developer/CoreSimulator" || mp.startsWith(CORESIMULATOR_MOUNT_PREFIX);
+}
+
 export type ReportInput = { itemId: number; source: string; volumes: ReportVolume[] };
 
 export class StorageReportError extends Error {}
@@ -200,11 +210,13 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
   if (!item) throw new StorageReportError("Item not found.");
   if (!isStorageDevice(item)) throw new StorageReportError("Not a computer, drive or NAS: give the report a storage device.");
   if (item.status === "archived") throw new StorageReportError("Item is archived: a report needs an active device.");
-  for (const v of input.volumes) {
+  const volumes = input.volumes.filter((v) => !isCoreSimulatorMount(v.mountPoint));
+  for (const v of volumes) {
     if (v.usedBytes > v.capacityBytes) throw new StorageReportError(`${v.mountPoint}: used (${v.usedBytes}) above capacity (${v.capacityBytes}).`);
   }
+  if (volumes.length === 0) return { volumes: 0, dirs: 0 };
   const reportedCapacity = new Map<string, number>();
-  for (const v of input.volumes) {
+  for (const v of volumes) {
     if (v.container == null) continue;
     const seen = reportedCapacity.get(v.container);
     if (seen !== undefined && seen !== v.capacityBytes) throw new StorageReportError(`container ${v.container}: capacity differs between volumes.`);
@@ -227,7 +239,7 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
       ? await tx.select().from(storageVolumes).where(inArray(storageVolumes.itemId, scope.memberIds))
       : [];
 
-    for (const v of input.volumes) {
+    for (const v of volumes) {
       const explicitAt = explicitMeasuredAt(v);
       const measuredAt = explicitAt ? (explicitAt.getTime() > now.getTime() ? now : explicitAt) : now;
       const mountPoint = normalizeMountPoint(v.mountPoint);
@@ -284,7 +296,7 @@ export async function applyReport(db: Db, input: ReportInput): Promise<{ volumes
       if (row) await syncDeviceTotals(tx, id, row.attributes);
     }
   });
-  return { volumes: input.volumes.length, dirs: dirCount };
+  return { volumes: volumes.length, dirs: dirCount };
 }
 
 export type DirsReportVolume = {

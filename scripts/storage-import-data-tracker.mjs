@@ -70,5 +70,8 @@ const line = (h) => {
   const ident = h.status === "unmatched" && who ? ` [${who}]` : "";
   return `${h.host} → ${h.status}${h.itemId != null ? ` ${h.itemName}#${h.itemId}` : ""}${h.reason ? ` (${h.reason})` : ""}${ident} · ${h.volumes.length} vol · ${disks}`;
 };
-console.log(JSON.stringify({ dry: plan.dry, applied: plan.applied, skippedSources: plan.skippedSources, hosts: plan.hosts.map(line) }, null, 2));
+const summary = { dry: plan.dry, applied: plan.applied, skippedSources: plan.skippedSources, hosts: plan.hosts.map(line) };
+if (typeof plan.skippedSimulator === "number") summary.skippedSimulator = plan.skippedSimulator;
+console.log(JSON.stringify(summary, null, 2));
+if (plan.skippedSimulator) console.error(`skipped ${plan.skippedSimulator} CoreSimulator volume(s)`);
 if (!apply) console.error("dry run: pass --apply to write storage.report and disk links");
