@@ -15,6 +15,8 @@ import { EnergySection } from "@/components/EnergySection";
 import { StorageSection } from "@/components/StorageSection";
 import { PhotoCropZoom } from "@/components/PhotoCropZoom";
 import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
+import { TagsField, TypeSelect } from "@/components/ItemTaxonomy";
+import { ItemPinSchematics } from "@/components/ItemPinSchematics";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
@@ -519,7 +521,7 @@ export default function ItemDetail() {
       {/* header */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-[12px] text-muted-foreground flex items-center gap-2 min-w-0">
+          <div className="text-[12px] text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             <span className="micro-label shrink-0">Kind</span>
             <select
               aria-label="Kind"
@@ -546,6 +548,16 @@ export default function ItemDetail() {
               </Link>
             )}
             <span className="shrink-0">/ Thing #{it.id}</span>
+            <TypeSelect
+              attributes={it.attributes}
+              disabled={patchAttrs.isPending}
+              onChange={(type) => patchAttrs.mutate({ id: itemId, set: { type } })}
+            />
+            <TagsField
+              attributes={it.attributes}
+              disabled={patchAttrs.isPending}
+              onSave={(tags) => patchAttrs.mutate({ id: itemId, set: { tags } })}
+            />
             {it.status === "archived" && (
               <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                 <Archive className="h-3 w-3" /> Archived
@@ -1445,6 +1457,7 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
                 </div>
               ))}
             </div>
+            <ItemPinSchematics itemId={p.itemId} pins={p.pins} />
           </>
         ) : (
           <>
