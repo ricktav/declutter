@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { eq, or, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { photoPins, photos, items, areas } from "@db/schema";
+import { photoPins, photos } from "@db/schema";
 import { coverPhotos } from "../lib/photos";
+import { pinItemSummary, roomWithDescendants, withPinItems } from "../lib/pins";
 import { photoScope, promptInventory } from "../lib/aiContext";
 import { nameScore } from "../lib/text";
 import { readFileBytes } from "../lib/filestore";
@@ -67,31 +68,48 @@ export const pinsRouter = createRouter({
     .input(z.object({ photoId: z.number() }))
     .query(async ({ input }) => {
       const db = getDb();
-      const pins = await db
-        .select()
-        .from(photoPins)
-        .where(eq(photoPins.photoId, input.photoId));
-      const itemIds = [...new Set(pins.map((p) => p.itemId).filter((x): x is number => !!x))];
-      const linked = itemIds.length
-        ? await db.select().from(items).where(or(...itemIds.map((i) => eq(items.id, i))))
-        : [];
-      const nameMap = new Map(linked.map((i) => [i.id, i.name]));
-      const descMap = new Map(linked.map((i) => [i.id, i.description ?? null]));
-      // area color, not just name - the pin marker's fill reflects the
-      // linked item's category, so a "black desk lamp" and a "Sonos
-      // speaker" read differently on the photo at a glance
-      const allAreas = await db.select().from(areas);
-      const areaColorById = new Map(allAreas.map((a) => [a.id, a.color]));
-      const areaColorByItem = new Map(linked.map((i) => [i.id, areaColorById.get(i.areaId) ?? null]));
-      return pins
-        .filter((p) => p.status !== "dismissed")
-        .map((p) => ({
-          ...p,
-          itemName: p.itemId ? (nameMap.get(p.itemId) ?? null) : null,
-          itemDescription: p.itemId ? (descMap.get(p.itemId) ?? null) : null,
-          itemAreaColor: p.itemId ? (areaColorByItem.get(p.itemId) ?? null) : null,
-        }));
+      const pins = await db.select().from(photoPins).where(eq(photoPins.photoId, input.photoId));
+      return (await withPinItems(db, pins)).map(({ pin, itemName, itemDescription, itemAreaColor }) => ({
+        ...pin,
+        itemName,
+        itemDescription,
+        itemAreaColor,
+      }));
     }),
+
+  /** Every pin on the Photos of a room and the rooms cut from it, each with
+   * its Thing's role, Type, tags, decision and area: the room page's Schema
+   * view in one call. Dismissed pins and pins of archived or rejected Things
+   * are left out; item-less pins come with item: null. Not house-scoped: a
+   * room belongs to one house. Ordered by photo, then pin. */
+  listForRoom: procedure.input(z.object({ roomId: z.number() })).query(async ({ input }) => {
+    const db = getDb();
+    const roomIds = await roomWithDescendants(db, input.roomId);
+    const pics = await db
+      .select({ id: photos.id, title: photos.title, storageKey: photos.storageKey })
+      .from(photos)
+      .where(inArray(photos.roomId, roomIds));
+    if (!pics.length) return [];
+    const picById = new Map(pics.map((p) => [p.id, p]));
+    const pins = await db
+      .select()
+      .from(photoPins)
+      .where(inArray(photoPins.photoId, [...picById.keys()]))
+      .orderBy(asc(photoPins.photoId), asc(photoPins.id));
+    return (await withPinItems(db, pins))
+      .filter(({ linked }) => !linked || (linked.status === "active" && linked.verificationStatus !== "rejected"))
+      .map(({ pin, linked, itemName, itemAreaColor }) => {
+        const pic = picById.get(pin.photoId)!;
+        return {
+          photoTitle: pic.title,
+          photoStorageKey: pic.storageKey,
+          ...pin,
+          itemName,
+          itemAreaColor,
+          item: linked ? pinItemSummary(linked) : null,
+        };
+      });
+  }),
 
   /** items pinned anywhere (back-references for the item page) */
   listForItem: procedure.input(z.object({ itemId: z.number() })).query(async ({ input }) => {
