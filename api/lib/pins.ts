@@ -1,6 +1,7 @@
 // api/lib/pins.ts
 // Shared reads for photo pins: the item join that pins.listForPhoto and
 // pins.listForRoom both need, and the room set a room page rolls up.
+import { derivedType, tagsOf } from "@db/taxonomy";
 import { inArray } from "drizzle-orm";
 import { areas, items, photoPins, rooms } from "@db/schema";
 import type { getDb } from "../queries/connection";
@@ -9,19 +10,7 @@ type Db = ReturnType<typeof getDb>;
 type PinRow = typeof photoPins.$inferSelect;
 type ItemRow = typeof items.$inferSelect;
 
-// TODO(schematic-view): replace with @db/taxonomy derivedType/tagsOf when Task 0 lands
-function derivedType(attrs: Record<string, unknown>): string | null {
-  if (typeof attrs.type === "string" && attrs.type) return attrs.type;
-  if (typeof attrs.role === "string" && attrs.role) return attrs.role;
-  return null;
-}
 
-// TODO(schematic-view): replace with @db/taxonomy derivedType/tagsOf when Task 0 lands
-function tagsOf(attrs: Record<string, unknown>): string[] {
-  const raw = typeof attrs.tags === "string" ? attrs.tags.split(",") : [];
-  if (typeof attrs.brand === "string") raw.push(attrs.brand);
-  return [...new Set(raw.map((t) => t.trim().toLowerCase()).filter(Boolean))];
-}
 
 /** The attributes a schematic block shows in its details; the rest stays on the item page. */
 const DETAIL_KEYS = ["hostname", "ip", "os", "ram_gb", "storage_gb", "cpu", "brand"] as const;
