@@ -14,6 +14,8 @@ interface Props {
   allowCreate?: boolean;
   onCreateNew?: (name: string) => void;
   autoFocus?: boolean;
+  /** Search this house; null = every house. Absent = the session house. */
+  houseId?: number | null;
 }
 
 export function ItemPicker({
@@ -25,6 +27,7 @@ export function ItemPicker({
   allowCreate = false,
   onCreateNew,
   autoFocus,
+  houseId,
 }: Props) {
   const [internalQ, setInternalQ] = useState("");
   const q = value ?? internalQ;
@@ -35,7 +38,7 @@ export function ItemPicker({
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
-  const results = trpc.items.search.useQuery({ q }, { enabled: q.length > 0 });
+  const results = trpc.items.search.useQuery(houseId === undefined ? { q } : { q, houseId }, { enabled: q.length > 0 });
   const matches = (results.data ?? []).filter((r) => r.id !== excludeId);
   const showCreateRow = allowCreate && q.trim().length > 0 && matches.length === 0 && !results.isLoading;
   const rowCount = matches.length + (showCreateRow ? 1 : 0);

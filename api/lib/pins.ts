@@ -37,11 +37,11 @@ export function pinItemSummary(it: ItemRow) {
   };
 }
 
-/** Pins without the dismissed ones, each with its linked Thing (null when
- * item-less or the item is gone) and the name, description and area colour
- * the pin marker shows. */
-export async function withPinItems(db: Db, pins: PinRow[]) {
-  const live = pins.filter((p) => p.status !== "dismissed");
+/** Pins without the dismissed ones (unless `includeDismissed`), each with its
+ * linked Thing (null when item-less or the item is gone) and the name,
+ * description and area colour the pin marker shows. */
+export async function withPinItems(db: Db, pins: PinRow[], opts: { includeDismissed?: boolean } = {}) {
+  const live = opts.includeDismissed ? pins : pins.filter((p) => p.status !== "dismissed");
   const itemIds = [...new Set(live.map((p) => p.itemId).filter((x): x is number => !!x))];
   const linked = itemIds.length ? await db.select().from(items).where(inArray(items.id, itemIds)) : [];
   const byId = new Map(linked.map((i) => [i.id, i]));

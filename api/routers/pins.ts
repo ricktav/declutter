@@ -64,12 +64,15 @@ async function buildReferenceContent(
 }
 
 export const pinsRouter = createRouter({
+  /** A Photo's pins without the dismissed ones; `includeDismissed` adds them
+   * (Annotate's "Place a Thing" restores a Thing's dismissed pin instead of
+   * adding a second pin for it on the same Photo). */
   listForPhoto: procedure
-    .input(z.object({ photoId: z.number() }))
+    .input(z.object({ photoId: z.number(), includeDismissed: z.boolean().optional() }))
     .query(async ({ input }) => {
       const db = getDb();
       const pins = await db.select().from(photoPins).where(eq(photoPins.photoId, input.photoId));
-      return (await withPinItems(db, pins)).map(({ pin, itemName, itemDescription, itemAreaColor }) => ({
+      return (await withPinItems(db, pins, { includeDismissed: input.includeDismissed })).map(({ pin, itemName, itemDescription, itemAreaColor }) => ({
         ...pin,
         itemName,
         itemDescription,

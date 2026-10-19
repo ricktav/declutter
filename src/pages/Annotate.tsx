@@ -16,6 +16,8 @@ import {
 import { RoomPicker } from "@/components/RoomPicker";
 import { invalidatePhotoPlace } from "@/components/PhotoPlaceDialog";
 import { useHouse } from "@/context/house";
+import { PlaceThingPanel } from "@/components/PlaceThingPanel";
+import { existingPinFor, nextUnplaced, usePlaceThings } from "@/lib/placeThings";
 import {
   Sparkles,
   Loader2,
@@ -163,7 +165,10 @@ export default function AnnotatePage() {
       ? { id: preselectQuery.data.id, name: preselectQuery.data.name }
       : null;
 
-  const pinsQuery = trpc.pins.listForPhoto.useQuery({ photoId: attId });
+  // dismissed pins too: Place a Thing restores a Thing's dismissed pin on
+  // this Photo instead of adding a second one; everything else skips them
+  const pinsInput = { photoId: attId, includeDismissed: true };
+  const pinsQuery = trpc.pins.listForPhoto.useQuery(pinsInput);
   const urlQuery = trpc.photos.get.useQuery({ id: attId });
   // the Photo's own Place: shown and changed in the header
   const photoRow = urlQuery.data?.photo ?? null;
@@ -241,6 +246,14 @@ export default function AnnotatePage() {
     bottom: number;
   } | null>(null);
 
+  // "Place a Thing" (pick a Thing, tap the Photo) is the default when the
+  // Photo has a room; "Draw a frame" is the free flow (and the ?itemId= one)
+  const [modeChoice, setModeChoice] = useState<"place" | "draw" | null>(null);
+  const mode = modeChoice ?? (preselectId == null && photoRoomId != null ? "place" : "draw");
+  const [placeThing, setPlaceThing] = useState<{ id: number; name: string } | null>(null);
+  const [placeHint, setPlaceHint] = useState<string | null>(null);
+  const [placing, setPlacing] = useState(false);
+
   const invalidate = () => utils.pins.listForPhoto.invalidate({ photoId: attId });
   /** After a pin change: the photo's pins, plus the item view's Placement
    * pane of every Thing the pin pointed at before (read from the cached
@@ -249,12 +262,15 @@ export default function AnnotatePage() {
     const ids = new Set<number>();
     if (itemId != null) ids.add(itemId);
     if (pinId != null) {
-      const before = utils.pins.listForPhoto.getData({ photoId: attId })?.find((p) => p.id === pinId)?.itemId;
+      const before = utils.pins.listForPhoto.getData(pinsInput)?.find((p) => p.id === pinId)?.itemId;
       if (before != null) ids.add(before);
     }
     for (const i of ids) utils.items.placement.invalidate({ itemId: i });
     utils.items.placementSummary.invalidate();
-    invalidate();
+    // Place a Thing's "pinned here / elsewhere" states
+    for (const i of ids) utils.pins.listForItem.invalidate({ itemId: i });
+    utils.pins.listForRoom.invalidate();
+    return invalidate();
   };
 
   const addPin = trpc.pins.add.useMutation({ onSuccess: (_res, vars) => invalidatePin(null, vars.itemId) });
@@ -304,7 +320,8 @@ export default function AnnotatePage() {
     }
   }, [areas.data, newItemArea]);
 
-  const pins: Pin[] = pinsQuery.data ?? [];
+  const allPins: Pin[] = pinsQuery.data ?? [];
+  const pins: Pin[] = allPins.filter((p) => p.status !== "dismissed");
   const confirmed = pins.filter((p) => p.status === "confirmed");
   const suggestedAll = pins.filter((p) => p.status === "suggested");
   const isExisting = (p: Pin) => isExistingSuggestedPin(p, isLikelyDuplicate(p, confirmed));
@@ -313,6 +330,75 @@ export default function AnnotatePage() {
   const framedSuggested = framesOnPhoto(visibleSuggested, selectedSuggestionId, (p) => p.id);
   const pinNumber = new Map(pins.map((p, i) => [p.id, i + 1]));
   const visibleSuggestedIds = visibleSuggested.map((p) => p.id).join(",");
+  const place = usePlaceThings({ roomId: photoRoomId, photoId: attId, pins: allPins });
+
+  useEffect(() => {
+    if (mode !== "place") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPlaceThing(null);
+        setPlaceHint(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mode]);
+
+  const selectPlaceThing = (thing: { id: number; name: string } | null) => {
+    setPlaceThing(thing);
+    setPlaceHint(null);
+    // a Thing already framed here: show its frame with the corner handles
+    const here = thing ? confirmed.find((p) => p.itemId === thing.id && p.wPct != null) : undefined;
+    setSelectedPinId(here?.id ?? null);
+    setSelectedSuggestionId(null);
+  };
+
+  /** A tap (or a drawn box) on the Photo in Place a Thing: the selected
+   * Thing's pin on this Photo moves there and keeps its frame size (a drawn
+   * box sets a new one) - restored if it was dismissed - or, without one, a
+   * new 20 % frame is added. Never a second pin for one Thing on one Photo. */
+  const placeAt = async (pt: { xPct: number; yPct: number }, box: { wPct: number; hPct: number } | null) => {
+    const thing = placeThing;
+    if (!thing) {
+      setPlaceHint("Pick a Thing in the list first, then tap the Photo.");
+      return;
+    }
+    if (placing) return;
+    setPlacing(true);
+    setPlaceHint(null);
+    try {
+      const existing = existingPinFor(allPins, thing.id);
+      let pinId: number;
+      if (existing) {
+        await reposition.mutateAsync({
+          id: existing.id,
+          xPct: pt.xPct,
+          yPct: pt.yPct,
+          ...(box ? { wPct: box.wPct, hPct: box.hPct } : {}),
+          status: "confirmed",
+          itemId: thing.id,
+        });
+        pinId = existing.id;
+      } else {
+        const frame = { xPct: pt.xPct, yPct: pt.yPct, wPct: box?.wPct ?? 20, hPct: box?.hPct ?? 20 };
+        const res = await addPin.mutateAsync({ photoId: attId, ...frame, itemId: thing.id, label: thing.name });
+        pinId = res.id;
+        // the Photo is now "seen in photos" for the Thing too, as in Draw a
+        // frame; createCutout finds this pin and adds no second one
+        ensureItemPhoto(thing.id, frame);
+      }
+      await invalidatePin(pinId, thing.id);
+      setSelectedPinId(pinId);
+      setSelectedSuggestionId(null);
+      setEditingPinId(null);
+      const next = nextUnplaced(place.rows, thing.id);
+      setPlaceThing(next ? { id: next.id, name: next.name } : null);
+    } catch (e) {
+      setPlaceHint(`Not placed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPlacing(false);
+    }
+  };
 
   useEffect(() => {
     if (selectedSuggestionId == null) return;
@@ -509,6 +595,14 @@ export default function AnnotatePage() {
     const top = Math.min(start.yPct, pt.yPct);
     const bottom = Math.max(start.yPct, pt.yPct);
     const drewBox = right - left > DRAW_THRESHOLD || bottom - top > DRAW_THRESHOLD;
+    setDrawingBox(null);
+    if (mode === "place") {
+      void placeAt(
+        drewBox ? { xPct: (left + right) / 2, yPct: (top + bottom) / 2 } : start,
+        drewBox ? { wPct: right - left, hPct: bottom - top } : null,
+      );
+      return;
+    }
     setPending(
       drewBox
         ? { xPct: (left + right) / 2, yPct: (top + bottom) / 2, wPct: right - left, hPct: bottom - top }
@@ -618,7 +712,9 @@ export default function AnnotatePage() {
         </Button>
         <h1 className="text-xl font-semibold tracking-tight">Annotate photo</h1>
         <span className="text-[12px] text-muted-foreground">
-          click to pin · double-click a pin to edit · drag a selected suggestion's corners to resize
+          {mode === "place"
+            ? "pick a Thing, tap the Photo · click a pin to show its frame handles · double-click to edit"
+            : "click to pin · double-click a pin to edit · drag a selected suggestion's corners to resize"}
         </span>
         <Button
           size="sm"
@@ -892,7 +988,9 @@ export default function AnnotatePage() {
                 return (
                   <div
                     key={`edit-frame-${p.id}`}
-                    className="absolute"
+                    // only the handles take the pointer: a tap inside the frame
+                    // still reaches the Photo (Place a Thing moves a pin there)
+                    className="absolute pointer-events-none"
                     style={{
                       left: `${box.xPct - w / 2}%`,
                       top: `${box.yPct - h / 2}%`,
@@ -905,7 +1003,7 @@ export default function AnnotatePage() {
                         key={corner}
                         data-resize-handle={`${p.id}-${corner}`}
                         className={cn(
-                          "absolute h-2.5 w-2.5 rounded-sm bg-white border-2 border-[#2d4a22] z-10",
+                          "absolute h-2.5 w-2.5 rounded-sm bg-white border-2 border-[#2d4a22] z-10 pointer-events-auto",
                           corner === "tl" && "-top-1.5 -left-1.5 cursor-nwse-resize",
                           corner === "tr" && "-top-1.5 -right-1.5 cursor-nesw-resize",
                           corner === "bl" && "-bottom-1.5 -left-1.5 cursor-nesw-resize",
@@ -1014,6 +1112,43 @@ export default function AnnotatePage() {
 
         {/* side panel */}
         <aside className="w-80 shrink-0 space-y-4">
+          <div className="flex rounded-md border border-border bg-white p-0.5 text-[12px]" role="tablist">
+            {(
+              [
+                ["place", "Place a Thing"],
+                ["draw", "Draw a frame"],
+              ] as const
+            ).map(([m, label]) => (
+              <button
+                key={m}
+                role="tab"
+                aria-selected={mode === m}
+                data-mode={m}
+                className={cn(
+                  "flex-1 rounded px-2 py-1",
+                  mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
+                )}
+                onClick={() => {
+                  setModeChoice(m);
+                  setPending(null);
+                  setPlaceHint(null);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {mode === "place" && (
+            <PlaceThingPanel
+              hasRoom={photoRoomId != null}
+              rows={place.rows}
+              loading={place.loading}
+              selected={placeThing}
+              onSelect={selectPlaceThing}
+              onToggleFlag={(pin) => reposition.mutate({ id: pin.id, flagged: !pin.flagged })}
+              hint={placing ? "Placing…" : placeHint}
+            />
+          )}
           {editingPin && (
             <div className="rounded-lg border border-primary bg-white p-3 space-y-2">
               <div className="flex items-center justify-between">

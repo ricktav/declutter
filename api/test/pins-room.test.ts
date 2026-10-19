@@ -124,3 +124,18 @@ describe("pins.listForRoom", () => {
     expect(await callerFor(null).pins.listForRoom({ roomId: 999999 })).toEqual([]);
   });
 });
+
+describe("pins.listForPhoto includeDismissed", () => {
+  it("leaves dismissed pins out by default and adds them on request", async () => {
+    const { h1, zolder, photo, thing, pin } = await seed();
+    const p = await photo(zolder, "dismissed");
+    const t = await thing("Lamp");
+    const live = await pin(p, t);
+    const gone = await pin(p, t, { status: "dismissed" });
+    const caller = callerFor(h1);
+    expect((await caller.pins.listForPhoto({ photoId: p })).map((r) => r.id)).toEqual([live]);
+    const all = await caller.pins.listForPhoto({ photoId: p, includeDismissed: true });
+    expect(all.map((r) => r.id).sort((a, b) => a - b)).toEqual([live, gone].sort((a, b) => a - b));
+    expect(all.find((r) => r.id === gone)).toMatchObject({ status: "dismissed", itemName: "Lamp" });
+  });
+});
