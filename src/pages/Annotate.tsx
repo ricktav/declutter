@@ -252,7 +252,11 @@ export default function AnnotatePage() {
   const place = usePlaceThings({ roomId: photoRoomId, photoId: attId, pins: pinsQuery.data ?? [] });
   const preselectInRoom = preselected != null && place.rows.some((r) => r.id === preselected.id);
   const [modeChoice, setModeChoice] = useState<"place" | "draw" | null>(null);
-  const mode = modeChoice ?? (photoRoomId != null && (preselectId == null || preselectInRoom) ? "place" : "draw");
+  // from the original ?itemId= (not the cleared one), so placing it or the
+  // banner's Cancel never flips the panel; Place while the room still loads
+  const openedForRoomThing = preselectId != null && (place.loading || place.rows.some((r) => r.id === preselectId));
+  const modeKnown = modeChoice != null || urlQuery.data != null;
+  const mode = modeChoice ?? (photoRoomId != null && (preselectId == null || openedForRoomThing) ? "place" : "draw");
   const [placeChoice, setPlaceChoice] = useState<{ thing: { id: number; name: string } | null } | null>(null);
   const placeThing = placeChoice ? placeChoice.thing : preselectInRoom ? preselected : null;
   const setPlaceThing = (thing: { id: number; name: string } | null) => setPlaceChoice({ thing });
@@ -410,6 +414,21 @@ export default function AnnotatePage() {
     } finally {
       setPlacing(false);
     }
+  };
+
+  /** Placing a Thing, a tap on an AI suggestion (frame or marker) is a tap
+   * on the Photo; a Thing without a pin here adopts the suggestion's box. */
+  const placeOnSuggestion = (e: { clientX: number; clientY: number }, p: Pin) => {
+    if (mode !== "place" || !placeThing) return false;
+    const box = boxFor(p);
+    if (existingPinFor(allPins, placeThing.id) == null && box.wPct != null && box.hPct != null) {
+      void placeAt({ xPct: box.xPct, yPct: box.yPct }, { wPct: box.wPct, hPct: box.hPct });
+      return true;
+    }
+    const pt = pctFromEvent(e);
+    if (!pt) return false;
+    void placeAt(pt, null);
+    return true;
   };
 
   useEffect(() => {
@@ -925,12 +944,7 @@ export default function AnnotatePage() {
                       onMouseLeave={() => setHoveredSuggestionId((cur) => (cur === p.id ? null : cur))}
                       onClick={(e) => {
                         e.stopPropagation();
-                        // placing a Thing: a tap on an AI frame is a tap on the Photo
-                        const pt = mode === "place" && placeThing ? pctFromEvent(e) : null;
-                        if (pt) {
-                          void placeAt(pt, null);
-                          return;
-                        }
+                        if (placeOnSuggestion(e, p)) return;
                         setSelectedSuggestionId((cur) => toggleSelection(cur, p.id));
                         setSelectedPinId(null);
                       }}
@@ -1051,12 +1065,8 @@ export default function AnnotatePage() {
                   onPointerUp={onPinPointerUp}
                   onClick={(e) => {
                     e.stopPropagation();
-                    // placing a Thing: an AI suggestion's marker is part of its frame
-                    const pt = mode === "place" && placeThing && p.status === "suggested" ? pctFromEvent(e) : null;
-                    if (pt) {
-                      void placeAt(pt, null);
-                      return;
-                    }
+                    // an AI suggestion's marker is part of its frame
+                    if (p.status === "suggested" && placeOnSuggestion(e, p)) return;
                     if (p.status === "confirmed" && p.wPct != null) {
                       setSelectedPinId((cur) => (cur === p.id ? null : p.id));
                       setSelectedSuggestionId(null);
@@ -1137,6 +1147,8 @@ export default function AnnotatePage() {
 
         {/* side panel */}
         <aside className="w-80 shrink-0 space-y-4">
+          {/* the default mode depends on the Photo's room: no switch until it is known */}
+          {modeKnown && (
           <div className="flex rounded-md border border-border bg-white p-0.5 text-[12px]" role="tablist">
             {(
               [
@@ -1163,7 +1175,8 @@ export default function AnnotatePage() {
               </button>
             ))}
           </div>
-          {mode === "place" && (
+          )}
+          {modeKnown && mode === "place" && (
             <PlaceThingPanel
               hasRoom={photoRoomId != null}
               rows={place.rows}
