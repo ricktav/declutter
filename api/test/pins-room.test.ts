@@ -3,6 +3,7 @@
 // Photos of a room and of the rooms cut from it, with each Thing's role,
 // Type, tags, decision and area colour, in one call.
 import { beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { areas, houses, items, photoPins, photos, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
@@ -137,5 +138,35 @@ describe("pins.listForPhoto includeDismissed", () => {
     const all = await caller.pins.listForPhoto({ photoId: p, includeDismissed: true });
     expect(all.map((r) => r.id).sort((a, b) => a - b)).toEqual([live, gone].sort((a, b) => a - b));
     expect(all.find((r) => r.id === gone)).toMatchObject({ status: "dismissed", itemName: "Lamp" });
+  });
+});
+
+describe("pins.add onePerThing", () => {
+  it("moves the Thing's existing pin on the Photo (any status) instead of adding a second one", async () => {
+    const { db, h1, zolder, photo, thing, pin } = await seed();
+    const p = await photo(zolder, "one-per-thing");
+    const t = await thing("Kettle");
+    const other = await thing("Toaster");
+    const dismissed = await pin(p, t, { status: "dismissed", wPct: 12, hPct: 8 });
+    const caller = callerFor(h1);
+
+    const moved = await caller.pins.add({ photoId: p, xPct: 30, yPct: 70, itemId: t, label: "Kettle", onePerThing: true });
+    expect(moved).toEqual({ id: dismissed, existing: true });
+    let rows = await db.select().from(photoPins).where(eq(photoPins.photoId, p));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: dismissed, xPct: 30, yPct: 70, wPct: 12, hPct: 8, status: "confirmed" });
+
+    // a given frame replaces the old one
+    await caller.pins.add({ photoId: p, xPct: 40, yPct: 40, wPct: 25, hPct: 20, itemId: t, onePerThing: true });
+    rows = await db.select().from(photoPins).where(eq(photoPins.photoId, p));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ xPct: 40, wPct: 25, hPct: 20 });
+
+    // another Thing gets its own pin; without the flag the old behaviour stays
+    const fresh = await caller.pins.add({ photoId: p, xPct: 10, yPct: 10, wPct: 20, hPct: 20, itemId: other, onePerThing: true });
+    expect(fresh.existing).toBe(false);
+    await caller.pins.add({ photoId: p, xPct: 50, yPct: 50, itemId: t });
+    rows = await db.select().from(photoPins).where(eq(photoPins.photoId, p));
+    expect(rows).toHaveLength(3);
   });
 });

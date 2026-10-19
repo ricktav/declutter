@@ -25,6 +25,8 @@ export type PlaceRow = {
   state: PlaceState;
   /** this Thing's confirmed pin on this Photo, when it has one */
   pinHere: PlacePin | null;
+  /** the child room a rolled-up Thing sits in; null when in the Photo's room */
+  roomName: string | null;
 };
 
 const STATE_ORDER: Record<PlaceState, number> = { none: 0, elsewhere: 1, here: 2 };
@@ -41,11 +43,12 @@ export function existingPinFor<P extends PlacePin>(pins: P[], itemId: number): P
   );
 }
 
-/** The Thing after `currentId` (wrapping) that is not pinned on this Photo yet. */
+/** The Thing after `currentId` (wrapping) that is not pinned on this Photo
+ * yet; from the first row when `currentId` is not in the list. */
 export function nextUnplaced(rows: PlaceRow[], currentId: number): PlaceRow | null {
   const i = rows.findIndex((r) => r.id === currentId);
-  for (let k = 1; k <= rows.length; k++) {
-    const r = rows[(Math.max(i, 0) + k) % rows.length];
+  for (let k = 0; k < rows.length; k++) {
+    const r = rows[(i + 1 + k) % rows.length];
     if (r.id !== currentId && r.state !== "here") return r;
   }
   return null;
@@ -108,6 +111,7 @@ export function usePlaceThings({
       return {
         id: t.id,
         name: t.name,
+        roomName: t.ownerRoomId !== roomId ? t.ownerRoomName : null,
         chip: chipFor((t.attributes ?? {}) as Record<string, unknown>),
         state,
         pinHere,

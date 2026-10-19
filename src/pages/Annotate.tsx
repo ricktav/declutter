@@ -247,10 +247,15 @@ export default function AnnotatePage() {
   } | null>(null);
 
   // "Place a Thing" (pick a Thing, tap the Photo) is the default when the
-  // Photo has a room; "Draw a frame" is the free flow (and the ?itemId= one)
+  // Photo has a room; "Draw a frame" is the free flow. A ?itemId= Thing of
+  // this room opens Place a Thing with it selected; any other one, Draw.
+  const place = usePlaceThings({ roomId: photoRoomId, photoId: attId, pins: pinsQuery.data ?? [] });
+  const preselectInRoom = preselected != null && place.rows.some((r) => r.id === preselected.id);
   const [modeChoice, setModeChoice] = useState<"place" | "draw" | null>(null);
-  const mode = modeChoice ?? (preselectId == null && photoRoomId != null ? "place" : "draw");
-  const [placeThing, setPlaceThing] = useState<{ id: number; name: string } | null>(null);
+  const mode = modeChoice ?? (photoRoomId != null && (preselectId == null || preselectInRoom) ? "place" : "draw");
+  const [placeChoice, setPlaceChoice] = useState<{ thing: { id: number; name: string } | null } | null>(null);
+  const placeThing = placeChoice ? placeChoice.thing : preselectInRoom ? preselected : null;
+  const setPlaceThing = (thing: { id: number; name: string } | null) => setPlaceChoice({ thing });
   const [placeHint, setPlaceHint] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
 
@@ -330,13 +335,12 @@ export default function AnnotatePage() {
   const framedSuggested = framesOnPhoto(visibleSuggested, selectedSuggestionId, (p) => p.id);
   const pinNumber = new Map(pins.map((p, i) => [p.id, i + 1]));
   const visibleSuggestedIds = visibleSuggested.map((p) => p.id).join(",");
-  const place = usePlaceThings({ roomId: photoRoomId, photoId: attId, pins: allPins });
 
   useEffect(() => {
     if (mode !== "place") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setPlaceThing(null);
+        setPlaceChoice({ thing: null });
         setPlaceHint(null);
       }
     };
@@ -367,27 +371,35 @@ export default function AnnotatePage() {
     setPlacing(true);
     setPlaceHint(null);
     try {
-      const existing = existingPinFor(allPins, thing.id);
-      let pinId: number;
-      if (existing) {
-        await reposition.mutateAsync({
-          id: existing.id,
-          xPct: pt.xPct,
-          yPct: pt.yPct,
-          ...(box ? { wPct: box.wPct, hPct: box.hPct } : {}),
-          status: "confirmed",
-          itemId: thing.id,
-        });
-        pinId = existing.id;
-      } else {
-        const frame = { xPct: pt.xPct, yPct: pt.yPct, wPct: box?.wPct ?? 20, hPct: box?.hPct ?? 20 };
-        const res = await addPin.mutateAsync({ photoId: attId, ...frame, itemId: thing.id, label: thing.name });
-        pinId = res.id;
+      // the server moves the Thing's pin on this Photo when it has one
+      // (onePerThing); a tap keeps that pin's frame, a new pin gets 20 %
+      const hasPin = existingPinFor(allPins, thing.id) != null;
+      const frame = box ?? (hasPin ? null : { wPct: 20, hPct: 20 });
+      const res = await addPin.mutateAsync({
+        photoId: attId,
+        xPct: pt.xPct,
+        yPct: pt.yPct,
+        ...(frame ?? {}),
+        itemId: thing.id,
+        label: thing.name,
+        onePerThing: true,
+      });
+      const pinId = res.id;
+      const leaving = backToItem && preselected != null && thing.id === preselected.id;
+      if (!res.existing) {
         // the Photo is now "seen in photos" for the Thing too, as in Draw a
         // frame; createCutout finds this pin and adds no second one
-        ensureItemPhoto(thing.id, frame);
+        const cut = { xPct: pt.xPct, yPct: pt.yPct, wPct: frame?.wPct ?? 20, hPct: frame?.hPct ?? 20 };
+        if (leaving) await addItemPhoto.mutateAsync({ itemId: thing.id, sourcePhotoId: attId, box: cut }).catch(() => undefined);
+        else ensureItemPhoto(thing.id, cut);
       }
       await invalidatePin(pinId, thing.id);
+      if (leaving) {
+        utils.pins.listForItem.invalidate({ itemId: thing.id });
+        navigate(`/items/${thing.id}`);
+        return;
+      }
+      if (preselected && thing.id === preselected.id) setPreselectCleared(true);
       setSelectedPinId(pinId);
       setSelectedSuggestionId(null);
       setEditingPinId(null);
@@ -801,7 +813,7 @@ export default function AnnotatePage() {
       {preselected && (
         <div className="mt-3 flex items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-[12px] text-sky-900">
           <span>
-            Pinning: <b>{preselected.name}</b> · draw a box on the photo
+            Pinning: <b>{preselected.name}</b> · {mode === "place" ? "tap the photo" : "draw a box on the photo"}
           </span>
           <Button size="sm" variant="outline" className="h-6 text-[11px] ml-auto" onClick={cancelPreselect}>
             Cancel
@@ -913,6 +925,12 @@ export default function AnnotatePage() {
                       onMouseLeave={() => setHoveredSuggestionId((cur) => (cur === p.id ? null : cur))}
                       onClick={(e) => {
                         e.stopPropagation();
+                        // placing a Thing: a tap on an AI frame is a tap on the Photo
+                        const pt = mode === "place" && placeThing ? pctFromEvent(e) : null;
+                        if (pt) {
+                          void placeAt(pt, null);
+                          return;
+                        }
                         setSelectedSuggestionId((cur) => toggleSelection(cur, p.id));
                         setSelectedPinId(null);
                       }}
@@ -988,9 +1006,9 @@ export default function AnnotatePage() {
                 return (
                   <div
                     key={`edit-frame-${p.id}`}
-                    // only the handles take the pointer: a tap inside the frame
-                    // still reaches the Photo (Place a Thing moves a pin there)
-                    className="absolute pointer-events-none"
+                    // in Place a Thing only the handles take the pointer, so a tap
+                    // inside the frame reaches the Photo and moves a pin there
+                    className={cn("absolute", mode === "place" && "pointer-events-none")}
                     style={{
                       left: `${box.xPct - w / 2}%`,
                       top: `${box.yPct - h / 2}%`,
@@ -1003,7 +1021,8 @@ export default function AnnotatePage() {
                         key={corner}
                         data-resize-handle={`${p.id}-${corner}`}
                         className={cn(
-                          "absolute h-2.5 w-2.5 rounded-sm bg-white border-2 border-[#2d4a22] z-10 pointer-events-auto",
+                          "absolute h-2.5 w-2.5 rounded-sm bg-white border-2 border-[#2d4a22] z-10",
+                          mode === "place" && "pointer-events-auto",
                           corner === "tl" && "-top-1.5 -left-1.5 cursor-nwse-resize",
                           corner === "tr" && "-top-1.5 -right-1.5 cursor-nesw-resize",
                           corner === "bl" && "-bottom-1.5 -left-1.5 cursor-nesw-resize",
@@ -1032,6 +1051,12 @@ export default function AnnotatePage() {
                   onPointerUp={onPinPointerUp}
                   onClick={(e) => {
                     e.stopPropagation();
+                    // placing a Thing: an AI suggestion's marker is part of its frame
+                    const pt = mode === "place" && placeThing && p.status === "suggested" ? pctFromEvent(e) : null;
+                    if (pt) {
+                      void placeAt(pt, null);
+                      return;
+                    }
                     if (p.status === "confirmed" && p.wPct != null) {
                       setSelectedPinId((cur) => (cur === p.id ? null : p.id));
                       setSelectedSuggestionId(null);

@@ -62,7 +62,7 @@ export function PlaceThingPanel({
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
               <span>
                 Already pinned elsewhere — make sure this is the same physical object, not a similar one that needs
-                its own item.
+                its own Thing.
               </span>
             </div>
           )}
@@ -99,7 +99,10 @@ export function PlaceThingPanel({
                   )}
                   onClick={() => onSelect(isSel ? null : { id: r.id, name: r.name })}
                 >
-                  <span className="min-w-0 flex-1 truncate">{r.name}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {r.name}
+                    {r.roomName && <span className="ml-1 text-[11px] text-muted-foreground">· {r.roomName}</span>}
+                  </span>
                   {r.chip && (
                     <span className="shrink-0 rounded bg-muted px-1 py-0.5 font-data text-[10px] text-muted-foreground">
                       {r.chip}

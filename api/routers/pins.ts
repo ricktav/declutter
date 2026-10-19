@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -124,6 +124,10 @@ export const pinsRouter = createRouter({
     return pins.filter((p) => p.status !== "dismissed").map((p) => ({ ...p, photo: byId.get(p.photoId) ?? null }));
   }),
 
+  /** Adds a user pin. With `onePerThing` (Annotate's Place a Thing), a pin
+   * of the same Thing on the same Photo, whatever its status, is moved there
+   * instead: confirmed, its frame kept unless wPct/hPct are given, and
+   * `{ id, existing: true }` returned, as ensurePinForCutout does. */
   add: procedure
     .input(
       z.object({
@@ -134,31 +138,51 @@ export const pinsRouter = createRouter({
         hPct: z.number().min(0).max(100).optional(),
         label: z.string().default(""),
         itemId: z.number().optional(),
+        onePerThing: z.boolean().optional(),
       }),
     )
     .mutation(async ({ input }) => {
       const db = getDb();
-      const [{ id }] = await db
-        .insert(photoPins)
-        .values({
-          photoId: input.photoId,
-          xPct: input.xPct,
-          yPct: input.yPct,
-          wPct: input.wPct ?? null,
-          hPct: input.hPct ?? null,
-          label: input.label,
-          itemId: input.itemId ?? null,
-          origin: "user",
-          status: "confirmed",
-        })
-        .$returningId();
-      await logEvent({
-        entityType: "pin",
-        entityId: id,
-        action: "pin-added",
-        summary: `Pin "${input.label || "untitled"}" added to photo #${input.photoId}`,
+      return db.transaction(async (tx) => {
+        if (input.onePerThing && input.itemId != null) {
+          const mine = await tx
+            .select()
+            .from(photoPins)
+            .where(and(eq(photoPins.photoId, input.photoId), eq(photoPins.itemId, input.itemId)))
+            .orderBy(asc(photoPins.id))
+            .for("update");
+          const rank = { confirmed: 0, suggested: 1, dismissed: 2 } as const;
+          const existing = [...mine].sort((a, b) => rank[a.status] - rank[b.status])[0];
+          if (existing) {
+            const patch: Partial<typeof photoPins.$inferInsert> = { xPct: input.xPct, yPct: input.yPct, status: "confirmed" };
+            if (input.wPct !== undefined) patch.wPct = input.wPct;
+            if (input.hPct !== undefined) patch.hPct = input.hPct;
+            await tx.update(photoPins).set(patch).where(eq(photoPins.id, existing.id));
+            return { id: existing.id, existing: true };
+          }
+        }
+        const [{ id }] = await tx
+          .insert(photoPins)
+          .values({
+            photoId: input.photoId,
+            xPct: input.xPct,
+            yPct: input.yPct,
+            wPct: input.wPct ?? null,
+            hPct: input.hPct ?? null,
+            label: input.label,
+            itemId: input.itemId ?? null,
+            origin: "user",
+            status: "confirmed",
+          })
+          .$returningId();
+        await logEvent({
+          entityType: "pin",
+          entityId: id,
+          action: "pin-added",
+          summary: `Pin "${input.label || "untitled"}" added to photo #${input.photoId}`,
+        }, tx);
+        return { id, existing: false };
       });
-      return { id };
     }),
 
   update: procedure
