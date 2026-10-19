@@ -9,6 +9,7 @@ import { ThingModal } from "@/components/ThingModal";
 import {
   hasFilterParams,
   isEmptyFilter,
+  NEUTRAL_PIN_COLOR,
   loadStoredSchemaFilter,
   parseSchemaFilter,
   pinTitle,
@@ -22,6 +23,8 @@ import {
 
 /** width / height per storageKey, so a Photo's schematic keeps its shape across renders and rooms. */
 const photoAspects = new Map<string, number>();
+/** Used when the Photo cannot be loaded, so its blocks still draw. */
+const FALLBACK_ASPECT = 4 / 3;
 
 /**
  * The room page's Schema view: per Photo of the room (and its rolled-up child
@@ -46,8 +49,8 @@ export function RoomSchema({ roomId }: { roomId: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // A filter that arrives by URL (a shared link, back/forward) becomes the remembered one too.
-  const urlFilter = hasFilterParams(params) ? JSON.stringify(filter) : null;
+  // A non-empty filter that arrives by URL (a shared link, back/forward) becomes the remembered one too.
+  const urlFilter = hasFilterParams(params) && !isEmptyFilter(filter) ? JSON.stringify(filter) : null;
   useEffect(() => {
     if (urlFilter) storeSchemaFilter(JSON.parse(urlFilter) as SchemaFilter);
   }, [urlFilter]);
@@ -151,19 +154,23 @@ function SchemaPhotoCard({
   onPick: (p: SchemaPin) => void;
 }) {
   const url = trpc.photos.url.useQuery({ key: storageKey });
-  const [aspect, setAspect] = useState<number | null>(() => photoAspects.get(storageKey) ?? null);
+  const [loaded, setAspect] = useState<number | null>(() => photoAspects.get(storageKey) ?? null);
+  const [broken, setBroken] = useState(false);
+  const aspect = loaded ?? (broken || url.isError || (url.isSuccess && !url.data?.url) ? FALLBACK_ASPECT : null);
   const visible = visibleSchemaPins(pins, filter, showPoints);
 
   return (
     <section className="rounded-lg border border-border p-2" data-photo-id={photoId}>
       <div className="mb-1.5 truncate text-[12px] font-medium">{title || `Photo #${photoId}`}</div>
-      <div className="grid grid-cols-2 gap-2 items-start">
+      <div className="grid grid-cols-1 gap-2 items-start sm:grid-cols-2">
         <div className="overflow-hidden rounded bg-muted" style={aspect ? { aspectRatio: String(aspect) } : undefined}>
           {url.data?.url && (
             <img
               src={url.data.url}
               alt=""
+              loading="lazy"
               className="block h-full w-full"
+              onError={() => setBroken(true)}
               onLoad={(e) => {
                 const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
                 if (w > 0 && h > 0) {
@@ -214,7 +221,7 @@ function SchemaPinCard({ pin, onPick }: { pin: SchemaPin; onPick: (p: SchemaPin)
       data-card-pin-id={pin.id}
       onClick={() => onPick(pin)}
       className="flex w-full items-start gap-2 rounded border border-border bg-background px-2 py-1.5 text-left hover:bg-muted"
-      style={{ borderLeft: `3px ${pin.status === "suggested" ? "dashed" : "solid"} ${pin.itemAreaColor ?? "#8A8F86"}` }}
+      style={{ borderLeft: `3px ${pin.status === "suggested" ? "dashed" : "solid"} ${pin.itemAreaColor ?? NEUTRAL_PIN_COLOR}` }}
     >
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1 text-[12px] font-medium">

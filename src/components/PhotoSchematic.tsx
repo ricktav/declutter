@@ -1,6 +1,13 @@
-import { isFramed, pinTitle, pinTypeLabel, visibleSchemaPins, type SchemaFilter, type SchemaPin } from "@/lib/schemaFilter";
+import {
+  NEUTRAL_PIN_COLOR as NEUTRAL,
+  isFramed,
+  pinTitle,
+  pinTypeLabel,
+  visibleSchemaPins,
+  type SchemaFilter,
+  type SchemaPin,
+} from "@/lib/schemaFilter";
 
-const NEUTRAL = "#8A8F86";
 const GRID =
   "linear-gradient(to right, rgb(128 128 128 / 0.08) 1px, transparent 1px), linear-gradient(to bottom, rgb(128 128 128 / 0.08) 1px, transparent 1px)";
 
@@ -46,7 +53,7 @@ export function PhotoSchematic({
             title={typeLabel ? `${pinTitle(p)} — ${typeLabel}` : pinTitle(p)}
             onClick={() => onPick(p)}
             className={
-              "absolute overflow-hidden rounded-sm px-1 py-0.5 text-left leading-tight hover:brightness-95 focus:outline-none" +
+              "absolute overflow-hidden rounded-sm px-1 py-0.5 text-left leading-tight hover:brightness-95 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-foreground" +
               (p.flagged ? " ring-2 ring-amber-500 ring-offset-1" : "") +
               (selected ? " outline outline-2 outline-offset-1 outline-foreground" : "")
             }
@@ -73,6 +80,7 @@ export function PhotoSchematic({
             data-pin-id={p.id}
             data-point="1"
             title={pinTitle(p)}
+            aria-label={pinTitle(p)}
             onClick={() => onPick(p)}
             className={"absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full" + (p.flagged ? " ring-2 ring-amber-500" : "")}
             style={{

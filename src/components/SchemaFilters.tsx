@@ -5,6 +5,7 @@ import { DECISIONS } from "@/lib/decisions";
 import {
   DECISION_FILTERS,
   EMPTY_SCHEMA_FILTER,
+  NEUTRAL_PIN_COLOR,
   activePreset,
   type DecisionFilter,
   type SchemaFilter,
@@ -95,6 +96,8 @@ export function SchemaFilters({
               type="button"
               className="text-muted-foreground hover:text-foreground"
               title={expanded ? "Collapse" : "Expand"}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${TYPE_LABELS[node] ?? node}`}
+              aria-expanded={expanded}
               onClick={() =>
                 setOpen((s) => {
                   const n = new Set(s);
@@ -132,7 +135,8 @@ export function SchemaFilters({
     <div className="mb-3 space-y-2 rounded-lg border border-border bg-muted/30 p-2.5" data-testid="schema-filters">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="micro-label text-muted-foreground mr-1">Show</span>
-        <button type="button" className={chip(preset === "everything")} onClick={() => onChange(EMPTY_SCHEMA_FILTER)}>
+        <button type="button" className={chip(preset === "everything")}
+          aria-pressed={preset === "everything"} onClick={() => onChange(EMPTY_SCHEMA_FILTER)}>
           Everything
         </button>
         {SCHEMA_PRESETS.map((p) => (
@@ -141,6 +145,7 @@ export function SchemaFilters({
             type="button"
             data-preset={p.id}
             className={chip(preset === p.id)}
+            aria-pressed={preset === p.id}
             onClick={() => onChange({ ...EMPTY_SCHEMA_FILTER, types: [...p.types] })}
           >
             {p.label}
@@ -153,6 +158,7 @@ export function SchemaFilters({
           type="button"
           className="flex items-center gap-1 text-[12px] font-medium"
           onClick={() => setTreeOpen((v) => !v)}
+          aria-expanded={treeOpen}
           data-testid="type-tree-toggle"
         >
           {treeOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -189,6 +195,7 @@ export function SchemaFilters({
               type="button"
               data-tag={t}
               className={chip(filter.tags.includes(t))}
+              aria-pressed={filter.tags.includes(t)}
               onClick={() => onChange({ ...filter, tags: toggle(filter.tags, t) })}
             >
               {t}
@@ -206,9 +213,10 @@ export function SchemaFilters({
               type="button"
               data-topic={t.id}
               className={chip(filter.topics.includes(t.id))}
+              aria-pressed={filter.topics.includes(t.id)}
               onClick={() => onChange({ ...filter, topics: toggle(filter.topics, t.id) })}
             >
-              <span className="h-2 w-2 rounded-full" style={{ background: t.color ?? "#8A8F86" }} />
+              <span className="h-2 w-2 rounded-full" style={{ background: t.color ?? NEUTRAL_PIN_COLOR }} />
               {t.name}
             </button>
           ))}
@@ -220,6 +228,7 @@ export function SchemaFilters({
           type="button"
           data-testid="filter-flagged"
           className={chip(filter.flagged)}
+          aria-pressed={filter.flagged}
           onClick={() => onChange({ ...filter, flagged: !filter.flagged })}
         >
           <Flag className="h-3 w-3" /> Flagged

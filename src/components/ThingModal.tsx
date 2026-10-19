@@ -3,7 +3,7 @@ import { TYPE_LABELS, ancestorsOf } from "@db/taxonomy";
 import { trpc } from "@/providers/trpc";
 import { DECISIONS } from "@/lib/decisions";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { pinTitle, type SchemaPin } from "@/lib/schemaFilter";
+import { NEUTRAL_PIN_COLOR, pinTitle, type SchemaPin } from "@/lib/schemaFilter";
 
 const DETAIL_LABELS: Array<[string, string, string?]> = [
   ["hostname", "Hostname"],
@@ -67,7 +67,7 @@ export function ThingModal({ pin, onClose }: { pin: SchemaPin | null; onClose: (
                     {full.data?.area && (
                       <Row label="Topic">
                         <span className="inline-flex items-center gap-1">
-                          <span className="h-2 w-2 rounded-full" style={{ background: full.data.area.color ?? "#8A8F86" }} />
+                          <span className="h-2 w-2 rounded-full" style={{ background: full.data.area.color ?? NEUTRAL_PIN_COLOR }} />
                           {full.data.area.name}
                         </span>
                       </Row>
@@ -99,7 +99,7 @@ export function ThingModal({ pin, onClose }: { pin: SchemaPin | null; onClose: (
                   Open Thing
                 </Link>
               )}
-              <Link to={`/annotate/${pin.photoId}`} className="rounded border border-border px-2.5 py-1 hover:bg-muted" data-testid="open-annotate">
+              <Link to={item ? `/annotate/${pin.photoId}?itemId=${item.id}` : `/annotate/${pin.photoId}`} className="rounded border border-border px-2.5 py-1 hover:bg-muted" data-testid="open-annotate">
                 Open in Annotate
               </Link>
             </div>

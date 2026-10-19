@@ -27,6 +27,9 @@ export type SchemaFilter = {
 
 export const EMPTY_SCHEMA_FILTER: SchemaFilter = { types: [], tags: [], topics: [], flagged: false, decision: null };
 
+/** Fill and border for a pin whose Thing has no Topic colour. */
+export const NEUTRAL_PIN_COLOR = "#8A8F86";
+
 export const SCHEMA_FILTER_STORAGE_KEY = "workbench.schema.filter";
 
 /** URL keys the filter owns (besides `schema` itself). */
@@ -125,6 +128,7 @@ export function activePreset(f: SchemaFilter): string | null {
 export function pinMatches(pin: SchemaPin, f: SchemaFilter): boolean {
   const item = pin.item;
   if (f.flagged && !pin.flagged) return false;
+  // a Thing-less pin has no Topic, so it never matches a Topic filter
   if (f.topics.length && (item == null || !f.topics.includes(item.areaId))) return false;
   if (f.decision) {
     const d = item?.decision ?? null;
