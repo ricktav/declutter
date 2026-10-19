@@ -65,7 +65,7 @@ export function ThingModal({ pin, onClose }: { pin: SchemaPin | null; onClose: (
                 {item && (
                   <>
                     {full.data?.area && (
-                      <Row label="Topic">
+                      <Row label="Kind">
                         <span className="inline-flex items-center gap-1">
                           <span className="h-2 w-2 rounded-full" style={{ background: full.data.area.color ?? NEUTRAL_PIN_COLOR }} />
                           {full.data.area.name}

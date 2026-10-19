@@ -206,7 +206,7 @@ export function SchemaFilters({
 
       {shownTopics.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[12px] font-medium mr-1">Topic</span>
+          <span className="text-[12px] font-medium mr-1">Kind</span>
           {shownTopics.map((t) => (
             <button
               key={t.id}

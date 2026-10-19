@@ -524,9 +524,9 @@ export default function ItemDetail() {
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <div className="text-[12px] text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
-            <span className="micro-label shrink-0">Topic</span>
+            <span className="micro-label shrink-0">Kind</span>
             <select
-              aria-label="Topic"
+              aria-label="Kind"
               className="h-7 w-52 shrink-0 rounded-md border border-input bg-white px-1.5 text-[12px]"
               value={it.areaId}
               disabled={update.isPending}
@@ -1300,7 +1300,7 @@ export default function ItemDetail() {
           <DialogHeader>
             <DialogTitle>Pick Place</DialogTitle>
             <DialogDescription>
-              Where this Thing sits. Topic (above the name) stays what it is.
+              Where this Thing sits. Kind (above the name) stays what it is.
             </DialogDescription>
           </DialogHeader>
           <RoomPicker
