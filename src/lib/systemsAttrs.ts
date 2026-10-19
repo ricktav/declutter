@@ -1,4 +1,26 @@
 import { dbMergeKey, isProjectSourceLabel, projectMergeKey } from "../../api/lib/servicesProjects";
+import { attrStr, type Attrs } from "@db/taxonomy";
+
+// The machine rule lives in db/taxonomy.ts (one definition of "computer" for
+// Systems, the schematic and the API); re-exported here for existing callers.
+export {
+  attrStr,
+  hasMachineSignal,
+  isMachineItem,
+  isNetworkItem,
+  isNetworkRole,
+  isOtherComputersItem,
+  isPeripheralRole,
+  LAB_AREA_SLUGS,
+  MACHINE_ROLES,
+  MACHINE_SIGNAL_KEYS,
+  NETWORK_ROLES,
+  normRole,
+  PERIPHERAL_ROLES,
+  roleKey,
+  SKIP_ROLES,
+  type Attrs,
+} from "@db/taxonomy";
 
 /**
  * Attribute convention for the Systems mindmap. Other bots can fill these
@@ -62,71 +84,9 @@ import { dbMergeKey, isProjectSourceLabel, projectMergeKey } from "../../api/lib
 export const IMPORTANCE = ["kern", "ondersteunend", "proef", "afvoeren"] as const;
 export type Importance = (typeof IMPORTANCE)[number];
 
-export const MACHINE_ROLES = new Set(["laptop", "desktop", "server", "sbc", "nas"]);
-export const LAB_AREA_SLUGS = new Set(["computers", "network"]);
 export const SERVICE_ROLES = new Set(["service", "software"]);
 export const CONTAINER_ROLES = new Set(["container", "docker"]);
 export const WEB_ROLES = new Set(["web", "pwa", "website", "app"]);
-const SKIP_ROLES = new Set(["storage", "service", "software", "meter", "part"]);
-const PERIPHERAL_ROLES = new Set([
-  "peripheral",
-  "keyboard",
-  "mouse",
-  "monitor",
-  "phone",
-  "tablet",
-  "patchpanel",
-  "cable",
-  "accessory",
-]);
-const NETWORK_ROLES = new Set(["switch", "router", "ap", "network", "accesspoint"]);
-
-const MACHINE_SIGNAL_KEYS = [
-  "ip",
-  "ip_address",
-  "hostname",
-  "host",
-  "mac",
-  "os",
-  "cpu",
-  "ram",
-  "ram_gb",
-  "storage_gb",
-  "storage_free_gb",
-] as const;
-
-export function normRole(role: string): string {
-  return role.trim().toLowerCase().replace(/[\s_-]+/g, "");
-}
-
-export function roleKey(attrs: Attrs): string {
-  return normRole(attrStr(attrs, "role") ?? "");
-}
-
-export function isPeripheralRole(role: string): boolean {
-  return PERIPHERAL_ROLES.has(normRole(role));
-}
-
-export function isNetworkRole(role: string): boolean {
-  return NETWORK_ROLES.has(normRole(role));
-}
-
-export function hasMachineSignal(attrs: Attrs, hasVolumes = false): boolean {
-  if (hasVolumes) return true;
-  for (const k of MACHINE_SIGNAL_KEYS) {
-    if (attrStr(attrs, k)) return true;
-  }
-  return false;
-}
-
-function isSkippedBase(it: { attributes: Attrs; parentId?: number | null; status?: string }): boolean {
-  if (it.status === "archived") return true;
-  if (attrStr(it.attributes, "lab.exclude") === "yes") return true;
-  if (it.parentId != null) return true;
-  return false;
-}
-
-export type Attrs = Record<string, string | number> | null | undefined;
 
 export type ServiceRec = {
   name: string;
@@ -185,12 +145,6 @@ export type ProjectRec = {
   path?: string;
 };
 
-export function attrStr(attrs: Attrs, key: string): string | null {
-  const v = attrs?.[key];
-  if (v == null || v === "") return null;
-  return String(v);
-}
-
 export function parseImportance(attrs: Attrs): Importance | null {
   const v = attrStr(attrs, "importance")?.trim().toLowerCase();
   if (v && (IMPORTANCE as readonly string[]).includes(v)) return v as Importance;
@@ -247,47 +201,6 @@ export function usedHeatColor(base: string, usedPct: number | null | undefined):
   const g = Math.round(a[1] + (b[1] - a[1]) * t);
   const bl = Math.round(a[2] + (b[2] - a[2]) * t);
   return `rgb(${r},${g},${bl})`;
-}
-
-export function isMachineItem(it: {
-  attributes: Attrs;
-  areaSlug?: string | null;
-  parentId?: number | null;
-  status?: string;
-  hasVolumes?: boolean;
-}): boolean {
-  if (isSkippedBase(it)) return false;
-  const role = roleKey(it.attributes);
-  if (isPeripheralRole(role) || isNetworkRole(role) || SKIP_ROLES.has(role)) return false;
-  if (MACHINE_ROLES.has(role)) return true;
-  if (!role) return hasMachineSignal(it.attributes, it.hasVolumes === true);
-  return false;
-}
-
-export function isNetworkItem(it: {
-  attributes: Attrs;
-  parentId?: number | null;
-  status?: string;
-}): boolean {
-  if (isSkippedBase(it)) return false;
-  const role = roleKey(it.attributes);
-  if (isPeripheralRole(role)) return false;
-  return isNetworkRole(role);
-}
-
-/** Top-level Computers/Network Things that are not machines, network gear, or peripherals. */
-export function isOtherComputersItem(it: {
-  attributes: Attrs;
-  areaSlug?: string | null;
-  parentId?: number | null;
-  status?: string;
-  hasVolumes?: boolean;
-}): boolean {
-  if (isSkippedBase(it)) return false;
-  const role = roleKey(it.attributes);
-  if (isPeripheralRole(role) || SKIP_ROLES.has(role)) return false;
-  if (isMachineItem(it) || isNetworkItem(it)) return false;
-  return LAB_AREA_SLUGS.has(it.areaSlug ?? "");
 }
 
 function parseJsonOrList(raw: unknown): unknown[] {
