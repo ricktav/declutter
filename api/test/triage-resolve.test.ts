@@ -49,3 +49,21 @@ describe("resolveSuggestion roomId is house-scoped", () => {
     expect((await resolveSuggestion(obj(null, id), h2)).roomId).toBe(hal);
   });
 });
+
+describe("resolveSuggestion keeps attributes.type only for Type-tree keys", () => {
+  const withAttrs = (attributes: Record<string, string>) => ({
+    note: "n",
+    floor: null,
+    room: null,
+    items: [{ itemName: "thing", areaSlug: "x", matchedItemId: null, isNewItem: true, attributes, confidence: "high" as const }],
+  });
+  it("keeps a tree key (lower-cased) and drops free text, leaving other keys alone", async () => {
+    await seed();
+    const kept = await resolveSuggestion(withAttrs({ type: "iMac", brand: "Apple" }), null);
+    expect(kept.items[0].attributes).toEqual({ type: "imac", brand: "Apple" });
+    const dropped = await resolveSuggestion(withAttrs({ type: "kitchen appliance", ram_gb: "8" }), null);
+    expect(dropped.items[0].attributes).toEqual({ ram_gb: "8" });
+    const proto = await resolveSuggestion(withAttrs({ type: "constructor" }), null);
+    expect(proto.items[0].attributes).toEqual({});
+  });
+});

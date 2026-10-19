@@ -9,7 +9,7 @@
 //
 // Only active, top-level Things without lab.exclude = yes are judged. Only the
 // keys `type` and `tags` are written, via items.patchAttributes.
-import { judgeComputer, derivedType, tagsOf, attrStr } from "../db/taxonomy.ts";
+import { judgeComputer, derivedType, tagsOf, attrStr, isTypeNode, isUnder } from "../db/taxonomy.ts";
 
 const argv = process.argv.slice(2);
 const arg = (n) => {
@@ -48,7 +48,9 @@ try {
     const tagStr = tags.join(",");
     const change = type != null && (curType !== type || (tagStr !== "" && curTags !== tagStr));
     const safe = v.verdict === "computer" || (v.verdict !== "suggested" && v.type == null && roleType != null);
-    rows.push({ it, v, type, tagStr, curType, change, safe, chosen: IDS.has(it.id) && v.verdict === "suggested" });
+    // never replace a deliberate Type with one that is not under it (imac → desktop): Rick decides
+    const downgrade = type != null && isTypeNode(curType) && curType !== type && !isUnder(type, curType);
+    rows.push({ it, v, type, tagStr, curType, change, safe, downgrade, chosen: IDS.has(it.id) && v.verdict === "suggested" });
   }
 
   const cell = (s) => String(s ?? "").replace(/\s+/g, " ").slice(0, 38);
@@ -56,7 +58,7 @@ try {
   const todo = [];
   for (const r of rows) {
     const a = r.it.attributes ?? {};
-    const act = !r.change ? "-" : r.safe || r.chosen ? "write" : "review";
+    const act = !r.change ? "-" : !r.downgrade && (r.safe || r.chosen) ? "write" : "review";
     if (act === "write") todo.push(r);
     console.log(
       [r.it.id, cell(r.it.name), attrStr(a, "role") ?? "", attrStr(a, "brand") ?? "", r.curType, r.type ?? "", r.tagStr, r.v.rule, r.v.verdict, act].join("\t"),

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Flag } from "lucide-react";
 import { trpc } from "@/providers/trpc";
@@ -39,10 +39,16 @@ export function RoomSchema({ roomId }: { roomId: number }) {
   const filter = parseSchemaFilter(params);
   const showPoints = params.get("points") === "1";
   const [picked, setPicked] = useState<SchemaPin | null>(null);
+  // `?thing=<itemId>` (from the item page): that Thing is selected and its Photo scrolled into view
+  const thingRaw = Number(params.get("thing"));
+  const thing = Number.isInteger(thingRaw) && thingRaw > 0 ? thingRaw : null;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const scrolledFor = useRef<number | null>(null);
 
-  // A bare `?schema=1` (a link, the switch) takes the remembered filter.
+  // A bare `?schema=1` (a link, the switch) takes the remembered filter; a
+  // link to one Thing does not, so a remembered filter cannot hide it.
   useEffect(() => {
-    if (hasFilterParams(params)) return;
+    if (hasFilterParams(params) || params.has("thing")) return;
     const stored = loadStoredSchemaFilter();
     if (stored && !isEmptyFilter(stored)) setParams((prev) => withSchemaFilter(prev, stored), { replace: true });
     // once per mount: later changes go through setFilter
@@ -85,6 +91,13 @@ export function RoomSchema({ roomId }: { roomId: number }) {
     return out;
   }, [pins.data]);
 
+  const thingPhotoId = thing == null ? null : (groups.find((g) => g.pins.some((p) => p.itemId === thing))?.photoId ?? null);
+  useEffect(() => {
+    if (thingPhotoId == null || scrolledFor.current === thing) return;
+    scrolledFor.current = thing;
+    rootRef.current?.querySelector(`[data-photo-id="${thingPhotoId}"]`)?.scrollIntoView({ block: "center" });
+  }, [thing, thingPhotoId]);
+
   const topics = useMemo(
     () => (areas.data ?? []).map((a) => ({ id: a.id, name: a.name, color: a.color })),
     [areas.data],
@@ -97,7 +110,7 @@ export function RoomSchema({ roomId }: { roomId: number }) {
   const shown = groups.reduce((n, g) => n + visibleSchemaPins(g.pins, filter, showPoints).length, 0);
 
   return (
-    <div data-testid="room-schema">
+    <div data-testid="room-schema" ref={rootRef}>
       <SchemaFilters filter={filter} onChange={setFilter} pins={all} topics={topics} />
       <div className="mb-2 flex items-center justify-between text-[12px] text-muted-foreground">
         <span data-testid="schema-count">
@@ -123,7 +136,7 @@ export function RoomSchema({ roomId }: { roomId: number }) {
               pins={g.pins}
               filter={filter}
               showPoints={showPoints}
-              selectedItemId={picked?.itemId ?? null}
+              selectedItemId={picked?.itemId ?? thing}
               onPick={setPicked}
             />
           ))}

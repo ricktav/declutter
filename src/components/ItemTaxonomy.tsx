@@ -1,4 +1,4 @@
-import { TYPE_LABELS, TYPE_TREE, ancestorsOf, derivedType, isTypeNode } from "@db/taxonomy";
+import { typeLabel, TYPE_TREE, ancestorsOf, derivedType, isTypeNode } from "@db/taxonomy";
 
 type Attrs = Record<string, string | number> | null;
 
@@ -15,10 +15,6 @@ function typeGroups(): Array<{ root: string; nodes: Array<{ type: string; depth:
 }
 
 const GROUPS = typeGroups();
-
-function typeLabel(t: string): string {
-  return TYPE_LABELS[t] ?? t;
-}
 
 /**
  * The Thing's Type (`attributes.type`): a select over the Type tree grouped by

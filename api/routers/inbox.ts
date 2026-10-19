@@ -7,6 +7,7 @@ import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { captures, areas, items, itemLinks, photos, rooms, houses, type TriageSuggestion, type CropBox, type RoomGeometry } from "@db/schema";
 import { parseGeojsonFloor } from "../lib/geojsonFloor";
+import { isTypeNode } from "@db/taxonomy";
 import { nameScore } from "../lib/text";
 import { type ScanPoly } from "../lib/scanMerge";
 import { mergeScanObjects, scanMeta, localDate } from "../lib/scanObjects";
@@ -135,6 +136,18 @@ async function buildTriageContent(cap: CaptureRow, sessionHouseId: number | null
   return parts;
 }
 
+/**
+ * Triage attributes as the model gave them, except `type`: kept (lower case)
+ * only when it is a Type-tree key, so free text ("kitchen appliance") never
+ * lands in `attributes.type`.
+ */
+export function cleanTriageAttributes(attrs: Record<string, string>): Record<string, string> {
+  if (!Object.hasOwn(attrs, "type")) return attrs;
+  const { type, ...rest } = attrs;
+  const t = String(type ?? "").trim().toLowerCase();
+  return isTypeNode(t) ? { ...rest, type: t } : rest;
+}
+
 /** Resolve matchedItemId -> matchedItemName and suggest a floor/room from any
  * matched item's own location when the model didn't already (everything in
  * one photo is almost certainly the same room, same logic as Detect
@@ -178,7 +191,7 @@ export async function resolveSuggestion(object: RawTriage, houseId: number | nul
       matchedItemId: it.matchedItemId,
       matchedItemName: it.matchedItemId != null ? (byId.get(it.matchedItemId)?.name ?? null) : null,
       isNewItem: it.isNewItem,
-      attributes: it.attributes,
+      attributes: cleanTriageAttributes(it.attributes),
       confidence: it.confidence,
       box: cleanBox(it.box),
     })),

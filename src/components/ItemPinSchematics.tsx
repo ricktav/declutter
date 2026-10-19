@@ -32,7 +32,7 @@ function usePhotoAspect(storageKey: string): number | null {
 /**
  * For each Photo this Thing is pinned in (and that has a room), a small
  * schematic of that Photo: this Thing's block outlined, the others dimmed.
- * A click opens the room page's Schema view.
+ * A click opens the room page's Schema view with this Thing selected.
  */
 export function ItemPinSchematics({
   itemId,
@@ -78,7 +78,7 @@ function PinSchematicCard({
   const own = card.pins.find((p) => p.itemId === itemId);
   // an unframed pin of this Thing still shows, as a point
   const showPoints = own != null && !isFramed(own);
-  const to = `/rooms/${card.roomId}?schema=1`;
+  const to = `/rooms/${card.roomId}?schema=1&thing=${itemId}`;
   return (
     <div className="min-w-0" data-photo-id={card.photoId}>
       {aspect != null ? (

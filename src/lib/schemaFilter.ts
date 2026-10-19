@@ -9,7 +9,7 @@
  */
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
-import { SCHEMA_PRESETS, TYPE_LABELS, isTypeNode, OTHER_TYPE, matchesTaxonomy } from "@db/taxonomy";
+import { SCHEMA_PRESETS, typeLabel, isTypeNode, OTHER_TYPE, matchesTaxonomy } from "@db/taxonomy";
 
 export type SchemaPin = inferRouterOutputs<AppRouter>["pins"]["listForRoom"][number];
 
@@ -95,6 +95,7 @@ export function withoutSchema(params: URLSearchParams): URLSearchParams {
   const next = new URLSearchParams(params);
   next.delete("schema");
   next.delete("points");
+  next.delete("thing");
   for (const k of FILTER_KEYS) next.delete(k);
   return next;
 }
@@ -154,7 +155,7 @@ export function pinTitle(pin: SchemaPin): string {
 
 export function pinTypeLabel(pin: SchemaPin): string | null {
   const t = pin.item?.type;
-  if (t) return TYPE_LABELS[t] ?? t;
+  if (t) return typeLabel(t);
   return pin.item?.role ?? null;
 }
 

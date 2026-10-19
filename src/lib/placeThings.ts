@@ -3,7 +3,7 @@
 // whether it is pinned on this Photo, on another Photo, or nowhere yet, and
 // which existing pin a tap should move instead of adding a second one.
 import { useMemo } from "react";
-import { derivedType, TYPE_LABELS } from "@db/taxonomy";
+import { derivedType, typeLabel } from "@db/taxonomy";
 import { trpc } from "@/providers/trpc";
 
 export type PlaceState = "here" | "elsewhere" | "none";
@@ -56,7 +56,7 @@ export function nextUnplaced(rows: PlaceRow[], currentId: number): PlaceRow | nu
 
 function chipFor(attrs: Record<string, unknown>): string | null {
   const t = derivedType(attrs);
-  if (t) return Object.hasOwn(TYPE_LABELS, t) ? TYPE_LABELS[t] : t;
+  if (t) return typeLabel(t);
   return typeof attrs.role === "string" && attrs.role.trim() ? attrs.role.trim() : null;
 }
 

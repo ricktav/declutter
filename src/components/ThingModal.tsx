@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { TYPE_LABELS, ancestorsOf } from "@db/taxonomy";
+import { typeLabel, ancestorsOf } from "@db/taxonomy";
 import { trpc } from "@/providers/trpc";
 import { DECISIONS } from "@/lib/decisions";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -40,7 +40,7 @@ export function ThingModal({ pin, onClose }: { pin: SchemaPin | null; onClose: (
   const key = coverKey(full.data?.photos as ItemPhoto[] | undefined);
   const cover = trpc.photos.url.useQuery({ key: key ?? "" }, { enabled: key != null });
   const type = item?.type ?? null;
-  const typeLine = type ? [type, ...ancestorsOf(type)].map((t) => TYPE_LABELS[t] ?? t).join(" › ") : null;
+  const typeLine = type ? [type, ...ancestorsOf(type)].map(typeLabel).join(" › ") : null;
   const decision = item?.decision ? (DECISIONS.find((d) => d.key === item.decision) ?? null) : null;
   const attrs = (item?.attributes ?? {}) as Record<string, string | number | undefined>;
 

@@ -190,6 +190,11 @@ export const TYPE_LABELS: Record<string, string> = {
   phone: "Phone",
 };
 
+/** The label of a Type; own keys only, so "constructor" is never a label. Unknown Types show as written. */
+export function typeLabel(type: string): string {
+  return Object.hasOwn(TYPE_LABELS, type) ? TYPE_LABELS[type] : type;
+}
+
 /** Own keys only, so inherited names ("constructor", "toString") are never Types. */
 export function isTypeNode(type: string | null | undefined): type is string {
   return type != null && Object.hasOwn(TYPE_TREE, type);

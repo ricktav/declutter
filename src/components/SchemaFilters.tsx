@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Flag } from "lucide-react";
-import { OTHER_TYPE, SCHEMA_PRESETS, TYPE_LABELS, TYPE_TREE, ancestorsOf, isTypeNode, isUnder } from "@db/taxonomy";
+import { OTHER_TYPE, SCHEMA_PRESETS, typeLabel, TYPE_TREE, ancestorsOf, isTypeNode, isUnder } from "@db/taxonomy";
 import { DECISIONS } from "@/lib/decisions";
 import {
   DECISION_FILTERS,
@@ -96,7 +96,7 @@ export function SchemaFilters({
               type="button"
               className="text-muted-foreground hover:text-foreground"
               title={expanded ? "Collapse" : "Expand"}
-              aria-label={`${expanded ? "Collapse" : "Expand"} ${TYPE_LABELS[node] ?? node}`}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${typeLabel(node)}`}
               aria-expanded={expanded}
               onClick={() =>
                 setOpen((s) => {
@@ -120,7 +120,7 @@ export function SchemaFilters({
               disabled={implied}
               onChange={() => toggleType(node)}
             />
-            {TYPE_LABELS[node] ?? node}
+            {typeLabel(node)}
             {count > 0 && <span className="text-[10px] text-muted-foreground">{count}</span>}
           </label>
         </div>
@@ -129,7 +129,7 @@ export function SchemaFilters({
     );
   };
 
-  const typeSummary = filter.types.map((t) => (t === OTHER_TYPE ? "Other" : (TYPE_LABELS[t] ?? t))).join(", ");
+  const typeSummary = filter.types.map((t) => (t === OTHER_TYPE ? "Other" : typeLabel(t))).join(", ");
 
   return (
     <div className="mb-3 space-y-2 rounded-lg border border-border bg-muted/30 p-2.5" data-testid="schema-filters">
