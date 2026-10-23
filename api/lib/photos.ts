@@ -11,6 +11,7 @@ import { sniffMime } from "./sniff";
 import { logEvent } from "./events";
 import { releaseStoredFiles } from "./entities";
 import { roomSummary } from "./location";
+import { imageSizeFields } from "./imageSize";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Pick<Db, "select" | "insert" | "update" | "query">;
@@ -146,6 +147,7 @@ export async function ensureLocationPhotoInTx(
   // own copy of the bytes: a capture and a photo never share a key
   const copy = await putFile({ bytes, fileName: `locations/${cap.storageKey.split("/").pop() ?? "photo"}`, contentType: mimeType });
   written.push(copy.key);
+  const dim = await imageSizeFields(bytes);
   const [{ id }] = await tx
     .insert(photos)
     .values({
@@ -155,6 +157,8 @@ export async function ensureLocationPhotoInTx(
       sourceCaptureId: cap.id,
       roomId: roomId ?? null,
       title: "Location photo",
+      width: dim.width,
+      height: dim.height,
     })
     .$returningId();
   await logEvent({ entityType: "photo", entityId: id, action: "created", summary: `Location photo created from capture #${cap.id}` }, tx);
@@ -187,19 +191,41 @@ export async function photosForItem(db: Db, itemId: number): Promise<Array<Photo
   ].sort((a, b) => +b.createdAt - +a.createdAt || b.id - a.id);
 }
 
-export async function coverPhotos(db: Db, itemIds?: number[]): Promise<Map<number, { id: number; storageKey: string }>> {
-  const out = new Map<number, { id: number; storageKey: string }>();
+export type CoverPhoto = {
+  id: number;
+  storageKey: string;
+  cropBox: CropBox | null;
+  width: number | null;
+  height: number | null;
+};
+
+export async function coverPhotos(db: Db, itemIds?: number[]): Promise<Map<number, CoverPhoto>> {
+  const out = new Map<number, CoverPhoto>();
   if (itemIds && itemIds.length === 0) return out;
   const rows = await db
-    .select({ id: photos.id, itemId: photos.itemId, storageKey: photos.storageKey, cropBox: photos.cropBox })
+    .select({
+      id: photos.id,
+      itemId: photos.itemId,
+      storageKey: photos.storageKey,
+      cropBox: photos.cropBox,
+      width: photos.width,
+      height: photos.height,
+    })
     .from(photos)
     .where(itemIds ? inArray(photos.itemId, itemIds) : isNotNull(photos.itemId))
     .orderBy(asc(photos.id));
   for (const r of rows) {
     if (r.itemId == null) continue;
+    const cover: CoverPhoto = {
+      id: r.id,
+      storageKey: r.storageKey,
+      cropBox: r.cropBox ?? null,
+      width: r.width ?? null,
+      height: r.height ?? null,
+    };
     if (r.cropBox) {
-      out.set(r.itemId, { id: r.id, storageKey: r.storageKey }); // ascending ids: the last cutout is the newest
-    } else if (!out.has(r.itemId)) out.set(r.itemId, { id: r.id, storageKey: r.storageKey });
+      out.set(r.itemId, cover); // ascending ids: the last cutout is the newest
+    } else if (!out.has(r.itemId)) out.set(r.itemId, cover);
   }
   // a whole-scene pin on a location photo is the Thing's photo when it has none of its own
   const missing = itemIds ? itemIds.filter((id) => !out.has(id)) : null;
@@ -209,6 +235,8 @@ export async function coverPhotos(db: Db, itemIds?: number[]): Promise<Map<numbe
       itemId: photoPins.itemId,
       photoId: photos.id,
       storageKey: photos.storageKey,
+      width: photos.width,
+      height: photos.height,
       wPct: photoPins.wPct,
       hPct: photoPins.hPct,
     })
@@ -224,7 +252,13 @@ export async function coverPhotos(db: Db, itemIds?: number[]): Promise<Map<numbe
     .orderBy(asc(photos.id));
   for (const r of pinRows) {
     if (r.itemId == null || out.has(r.itemId) || !isWholeSceneBox(r)) continue;
-    out.set(r.itemId, { id: r.photoId, storageKey: r.storageKey });
+    out.set(r.itemId, {
+      id: r.photoId,
+      storageKey: r.storageKey,
+      cropBox: null,
+      width: r.width ?? null,
+      height: r.height ?? null,
+    });
   }
   return out;
 }
@@ -235,6 +269,7 @@ export async function addPhoto(
 ): Promise<{ id: number; storageKey: string }> {
   const bytes = await readFileBytes(input.storageKey);
   const mimeType = await sniffMime(bytes, input.fileName);
+  const dim = await imageSizeFields(bytes);
   const [{ id }] = await db
     .insert(photos)
     .values({
@@ -244,6 +279,8 @@ export async function addPhoto(
       storageKey: input.storageKey,
       mimeType,
       size: bytes.byteLength,
+      width: dim.width,
+      height: dim.height,
     })
     .$returningId();
   await logEvent({

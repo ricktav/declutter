@@ -5,7 +5,8 @@ import { eq, desc, or, and, asc, ne, isNull, sql } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { areas, items, itemLinks, relations, tasks, ideaItems, ideas, events, houses, rooms, ITEM_DECISIONS, type ItemPos } from "@db/schema";
+import { areas, items, itemLinks, relations, tasks, ideaItems, ideas, events, houses, rooms, ITEM_DECISIONS, MODEL3D_ROUTES, type ItemPos } from "@db/schema";
+import { effectiveModel3dRoute, parseModel3dUrl } from "@db/model3d";
 import { logEvent } from "../lib/events";
 import { nameScore } from "../lib/text";
 import { queueFor, QUEUE_LENSES } from "../lib/queue";
@@ -105,13 +106,22 @@ export const itemsRouter = createRouter({
       const areaById = new Map(allAreas.map((a) => [a.id, a]));
       const roomsById = await roomSummary(db, rows.map((r) => r.roomId).filter((x): x is number => x != null));
       const covers = await coverPhotos(db, rows.map((r) => r.id));
-      const listed = rows.map((r) => ({
-        ...r,
-        imageKey: covers.get(r.id)?.storageKey ?? null,
-        areaName: areaById.get(r.areaId)?.name ?? null,
-        areaSlug: areaById.get(r.areaId)?.slug ?? null,
-        room: r.roomId != null ? (roomsById.get(r.roomId) ?? null) : null,
-      }));
+      const listed = rows.map((r) => {
+        const cover = covers.get(r.id);
+        return {
+          ...r,
+          imageKey: cover?.storageKey ?? null,
+          imageIsCutout: cover?.cropBox != null,
+          imageWidth: cover?.width ?? null,
+          imageHeight: cover?.height ?? null,
+          model3dRoute: r.model3dRoute,
+          model3dUrl: r.model3dUrl,
+          effectiveModel3dRoute: effectiveModel3dRoute(r.model3dRoute, r.attributes),
+          areaName: areaById.get(r.areaId)?.name ?? null,
+          areaSlug: areaById.get(r.areaId)?.slug ?? null,
+          room: r.roomId != null ? (roomsById.get(r.roomId) ?? null) : null,
+        };
+      });
       const q = input.q?.trim();
       return q ? listed.filter((r) => itemMatchesQuery(r, q)) : listed;
     }),
@@ -171,6 +181,7 @@ export const itemsRouter = createRouter({
       : [];
     return {
       ...item,
+      effectiveModel3dRoute: effectiveModel3dRoute(item.model3dRoute, item.attributes),
       area,
       house,
       room,
@@ -717,6 +728,61 @@ export const itemsRouter = createRouter({
   listRelations: procedure
     .input(z.object({ type: z.string().min(1).max(64) }))
     .query(async ({ input }) => getDb().select().from(relations).where(eq(relations.type, input.type))),
+
+  /**
+   * Set how a Thing gets its 3D model, and/or the model URL homebase-3d
+   * wrote back. Single `id` or `ids` (at most 200). Never deletes a Thing.
+   */
+  setModel3d: procedure
+    .input(
+      z
+        .object({
+          id: z.number().optional(),
+          ids: z.array(z.number()).max(200).optional(),
+          route: z.enum(MODEL3D_ROUTES).optional(),
+          url: z.string().max(512).nullable().optional(),
+        })
+        .refine((v) => v.id != null || (v.ids?.length ?? 0) > 0, { message: "id or ids required" })
+        .refine((v) => v.route !== undefined || v.url !== undefined, { message: "route or url required" }),
+    )
+    .mutation(async ({ input }) => {
+      const uniqueIds = [...new Set([...(input.id != null ? [input.id] : []), ...(input.ids ?? [])])];
+      if (uniqueIds.length > 200) throw new TRPCError({ code: "BAD_REQUEST", message: "at most 200" });
+      let url: string | null | undefined;
+      try {
+        url = input.url === undefined ? undefined : parseModel3dUrl(input.url);
+      } catch (err) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: err instanceof Error ? err.message : "Invalid model3dUrl." });
+      }
+      const db = getDb();
+      let count = 0;
+      await db.transaction(async (tx) => {
+        for (const id of uniqueIds) {
+          const before = await tx.query.items.findFirst({ where: eq(items.id, id) });
+          if (!before) continue;
+          await tx
+            .update(items)
+            .set({
+              ...(input.route !== undefined ? { model3dRoute: input.route } : {}),
+              ...(url !== undefined ? { model3dUrl: url } : {}),
+              model3dUpdatedAt: new Date(),
+            })
+            .where(eq(items.id, id));
+          await logEvent(
+            {
+              entityType: "item",
+              entityId: id,
+              action: "model3d",
+              summary: `Item "${before.name}" 3D model ${input.route != null ? `route ${input.route}` : "url"} updated`,
+              payload: { route: input.route ?? null, url: url ?? null },
+            },
+            tx,
+          );
+          count++;
+        }
+      });
+      return { ok: true as const, count };
+    }),
 
   /** Move and/or retopic many Things in one go (All items batch bar). */
   updateMany: procedure

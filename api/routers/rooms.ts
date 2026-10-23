@@ -3,7 +3,7 @@ import { eq, and, ne, sql, isNotNull, desc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { rooms, items, photos, roomScans, type RoomGeometry, type ItemPos, type RoomScanChange } from "@db/schema";
+import { rooms, items, photos, roomScans, roomScanLinks, type RoomGeometry, type ItemPos, type RoomScanChange } from "@db/schema";
 import { logEvent } from "../lib/events";
 import { recordRoomScan, revertRoomScanTx, scanCounts, snapshotRoom } from "../lib/roomScans";
 import { FURNITURE_KIND_MAP } from "../lib/geojsonFloor";
@@ -481,6 +481,69 @@ export const roomsRouter = createRouter({
     const { files, ...result } = await db.transaction((tx) => revertRoomScanTx(tx, input.scanId));
     await releaseStoredFiles(db, files);
     return result;
+  }),
+
+  /**
+   * Pointer only: record that an external companion's scan belongs to this
+   * room. Never creates, moves or deletes Things or photos, and does not
+   * write room_scans / call upsertFromScan. The same (source, externalId)
+   * re-linked to another room is moved.
+   */
+  linkScan: procedure
+    .input(
+      z.object({
+        roomId: z.number().int().positive(),
+        source: z.string().trim().min(1).max(64),
+        externalId: z.string().trim().min(1).max(255),
+        capturedAt: z.coerce.date().optional(),
+        metadata: z.record(z.string().max(64), z.union([z.string().max(500), z.number(), z.boolean(), z.null()])).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const room = await db.query.rooms.findFirst({ where: eq(rooms.id, input.roomId) });
+      if (!room) throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
+      const existing = await db.query.roomScanLinks.findFirst({
+        where: and(eq(roomScanLinks.source, input.source), eq(roomScanLinks.externalId, input.externalId)),
+      });
+      const values = {
+        roomId: input.roomId,
+        source: input.source,
+        externalId: input.externalId,
+        capturedAt: input.capturedAt ?? null,
+        metadata: input.metadata ?? null,
+      };
+      if (existing) {
+        await db.update(roomScanLinks).set(values).where(eq(roomScanLinks.id, existing.id));
+        await logEvent({
+          entityType: "room",
+          entityId: input.roomId,
+          action: "scan-linked",
+          summary: `External scan ${input.source}:${input.externalId} linked to room "${room.name}"`,
+          payload: { source: input.source, externalId: input.externalId, existing: true },
+        });
+        const [row] = await db.select().from(roomScanLinks).where(eq(roomScanLinks.id, existing.id));
+        return { ...row, created: false as const };
+      }
+      const [{ id }] = await db.insert(roomScanLinks).values(values).$returningId();
+      await logEvent({
+        entityType: "room",
+        entityId: input.roomId,
+        action: "scan-linked",
+        summary: `External scan ${input.source}:${input.externalId} linked to room "${room.name}"`,
+        payload: { source: input.source, externalId: input.externalId, existing: false },
+      });
+      const [row] = await db.select().from(roomScanLinks).where(eq(roomScanLinks.id, id));
+      return { ...row, created: true as const };
+    }),
+
+  /** A room's external scan links, newest first. Not rooms.scans (those are geometry imports). */
+  linkedScans: procedure.input(z.object({ roomId: z.number() })).query(async ({ input }) => {
+    return getDb()
+      .select()
+      .from(roomScanLinks)
+      .where(eq(roomScanLinks.roomId, input.roomId))
+      .orderBy(desc(roomScanLinks.id));
   }),
 
   remove: procedure

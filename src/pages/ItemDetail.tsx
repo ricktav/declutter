@@ -16,6 +16,7 @@ import { StorageSection } from "@/components/StorageSection";
 import { PhotoCropZoom } from "@/components/PhotoCropZoom";
 import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { TagsField, TypeSelect } from "@/components/ItemTaxonomy";
+import { Model3dRouteSelect } from "@/components/Model3dRouteSelect";
 import { ItemPinSchematics } from "@/components/ItemPinSchematics";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
@@ -42,7 +43,8 @@ import {
   ListTodo,
   Lightbulb,
 } from "lucide-react";
-import type { AttributeDef } from "@db/schema";
+import type { AttributeDef, Model3dRoute } from "@db/schema";
+import { model3dRouteLabel } from "@db/model3d";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
 import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs";
@@ -385,6 +387,7 @@ export default function ItemDetail() {
   const setParent = trpc.items.setParent.useMutation({ onSuccess: invalidate });
   const createChild = trpc.items.create.useMutation({ onSuccess: invalidate });
   const patchAttrs = trpc.items.patchAttributes.useMutation({ onSuccess: invalidate });
+  const setModel3d = trpc.items.setModel3d.useMutation({ onSuccess: invalidate });
 
   if (item.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
   if (!item.data) return <div className="p-8 text-sm">Thing not found.</div>;
@@ -1023,6 +1026,29 @@ export default function ItemDetail() {
               )}
             </section>
           )}
+
+          <details className="rounded-lg border border-border bg-white p-3">
+            <summary className="cursor-pointer text-[13px] list-none flex items-center gap-2">
+              <span className="micro-label text-muted-foreground">3D model</span>
+              <span className="text-[12px] text-muted-foreground">
+                {model3dRouteLabel(it.model3dRoute, it.attributes)}
+              </span>
+            </summary>
+            <div className="mt-2 space-y-2">
+              <Model3dRouteSelect
+                route={(it.model3dRoute ?? "auto") as Model3dRoute}
+                attributes={it.attributes}
+                disabled={setModel3d.isPending}
+                onChange={(route) => setModel3d.mutate({ id: it.id, route })}
+              />
+              {it.model3dUrl ? (
+                <div className="font-data text-[11px] text-muted-foreground break-all">{it.model3dUrl}</div>
+              ) : (
+                <div className="text-[11px] text-muted-foreground">No model file yet — homebase-3d can write one later.</div>
+              )}
+              {setModel3d.isError && <p className="text-[12px] text-destructive">{setModel3d.error.message}</p>}
+            </div>
+          </details>
 
           {/* relations - collapses to a single add-button when empty */}
           {confirmed.length === 0 && !addingRelation ? (
