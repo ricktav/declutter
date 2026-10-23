@@ -73,6 +73,20 @@ rooms.linkedScans({ roomId }) → { id, roomId, source, externalId, capturedAt, 
 
 Newest first.
 
+## `inbox.importGeojson` and `homebase-scan/1`
+
+`parseGeojsonFloor` (`api/lib/geojsonFloor.ts`) accepts the enriched FeatureCollection from homebase-3d when `properties.format` (or top-level `format`) is `homebase-scan/1`, or when any feature has `properties.featureType`. Coordinates are room-frame metres (shifted so min x/y is the origin).
+
+| `featureType` | Geometry | Plan |
+| --- | --- | --- |
+| `room` | Polygon | floor outline → `widthM` / `depthM` (not furniture) |
+| `wall` | LineString | `walls[]` kind `wall` |
+| `opening` | LineString | `walls[]` kind `door` or `window` from `properties.kind` (not a wall) |
+| `object` | Polygon | furniture (`kind` / `category`, optional `wM` `dM` `hM` `rotDeg`) |
+| `photo` | Point | ignored for the plan (returned as `photos` for later) |
+
+A file with no `featureType` (old MappedIn lon/lat export) is unchanged: every LineString is a wall/door/window, every Polygon is furniture.
+
 ## Migration
 
 `0014_photo-size-scan-links`: nullable `photos.width` / `photos.height`; new table `room_scan_links`. Additive only.

@@ -924,13 +924,16 @@ export const inboxRouter = createRouter({
         const meta = scanMeta(poly.kind);
         const xs = poly.ring.map((p) => p[0]);
         const ys = poly.ring.map((p) => p[1]);
+        const fromRing = xs.length > 0;
         return {
           kind: poly.kind,
           label: meta.label,
-          xM: +Math.min(...xs).toFixed(2),
-          yM: +Math.min(...ys).toFixed(2),
-          wM: Math.max(0.1, +(Math.max(...xs) - Math.min(...xs)).toFixed(2)),
-          dM: Math.max(0.1, +(Math.max(...ys) - Math.min(...ys)).toFixed(2)),
+          xM: poly.xM ?? (fromRing ? +Math.min(...xs).toFixed(2) : 0),
+          yM: poly.yM ?? (fromRing ? +Math.min(...ys).toFixed(2) : 0),
+          wM: Math.max(0.1, +(poly.wM ?? (fromRing ? Math.max(...xs) - Math.min(...xs) : 0.1)).toFixed(2)),
+          dM: Math.max(0.1, +(poly.dM ?? (fromRing ? Math.max(...ys) - Math.min(...ys) : 0.1)).toFixed(2)),
+          ...(poly.rotDeg != null ? { rotDeg: poly.rotDeg } : {}),
+          ...(poly.hM != null ? { hM: poly.hM } : {}),
         };
       });
 
