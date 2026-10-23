@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Thumb } from "@/components/Thumb";
 import { timeAgo } from "@/lib/format";
-import { Archive, LayoutGrid, List as ListIcon, Search, Trash2, FolderInput, Tag } from "lucide-react";
+import { Archive, Box, LayoutGrid, List as ListIcon, Search, Trash2, FolderInput, Tag } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePersistedState } from "@/hooks/use-persisted-state";
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { RoomPicker } from "@/components/RoomPicker";
 import { AreaPicker } from "@/components/AreaPicker";
 import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
+import { Model3dRouteSelect } from "@/components/Model3dRouteSelect";
 import { useHouse } from "@/context/house";
 import { itemMatchesQuery } from "@/lib/itemSearch";
+import type { Model3dRoute } from "@db/schema";
 
 type ItemRow = {
   id: number;
@@ -27,6 +29,8 @@ type ItemRow = {
   imageKey: string | null;
   status: string;
   verificationStatus: string;
+  attributes: Record<string, string | number> | null;
+  model3dRoute: Model3dRoute;
 };
 
 export default function AllItems() {
@@ -51,6 +55,7 @@ export default function AllItems() {
   const [moveRoomId, setMoveRoomId] = useState<number | null>(null);
   const [moveAreaId, setMoveAreaId] = useState<number | null>(null);
   const [rowAction, setRowAction] = useState<{ id: number; name: string; kind: "move" | "topic" } | null>(null);
+  const [batchRoute, setBatchRoute] = useState<Model3dRoute>("auto");
 
   useEffect(() => {
     if (initialRoom != null) setRoomIds([initialRoom]);
@@ -130,6 +135,16 @@ export default function AllItems() {
       refresh();
     },
   });
+  const setModel3d = trpc.items.setModel3d.useMutation({
+    onSuccess: () => {
+      utils.items.listAll.invalidate();
+      utils.items.get.invalidate();
+    },
+  });
+  const setRoute = (ids: number[], route: Model3dRoute) => {
+    if (ids.length === 1) setModel3d.mutate({ id: ids[0], route });
+    else setModel3d.mutate({ ids, route });
+  };
 
   const selectedRows = sorted.filter((i) => selected.has(i.id));
   const batchCount = selectedRows.length;
@@ -219,6 +234,18 @@ export default function AllItems() {
           <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => { setMoveAreaId(null); setTopicOpen(true); }}>
             <Tag className="h-3.5 w-3.5 mr-1" /> Kind
           </Button>
+          <label className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
+            <Box className="h-3.5 w-3.5" /> 3D
+            <Model3dRouteSelect
+              route={batchRoute}
+              autoMode="plain"
+              disabled={setModel3d.isPending}
+              onChange={(route) => {
+                setBatchRoute(route);
+                setRoute(selectedRows.map((i) => i.id), route);
+              }}
+            />
+          </label>
           <ConfirmDelete
             trigger={
               <Button size="sm" variant="ghost" className="h-7 text-[12px] text-destructive">
@@ -262,6 +289,7 @@ export default function AllItems() {
                   <SortableTh label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   <SortableTh label="Kind" column="topic" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   <SortableTh label="Place" column="location" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                  <th className="w-36">3D</th>
                   <SortableTh label="Updated" column="updated" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   <th className="w-28" />
                 </tr>
@@ -275,6 +303,8 @@ export default function AllItems() {
                     onToggle={() => toggleOne(it.id)}
                     onMove={() => setRowAction({ id: it.id, name: it.name, kind: "move" })}
                     onTopic={() => setRowAction({ id: it.id, name: it.name, kind: "topic" })}
+                    routePending={setModel3d.isPending}
+                    onRoute={(route) => setRoute([it.id], route)}
                     removePending={removeOne.isPending}
                     onDelete={() => removeOne.mutate({ id: it.id })}
                   />
@@ -331,6 +361,8 @@ function ItemRowView({
   onToggle,
   onMove,
   onTopic,
+  routePending,
+  onRoute,
   removePending,
   onDelete,
 }: {
@@ -339,6 +371,8 @@ function ItemRowView({
   onToggle: () => void;
   onMove: () => void;
   onTopic: () => void;
+  routePending: boolean;
+  onRoute: (route: Model3dRoute) => void;
   removePending: boolean;
   onDelete: () => void;
 }) {
@@ -375,6 +409,14 @@ function ItemRowView({
       <td className="text-[12px] text-muted-foreground">
         {it.room?.name ?? "—"}
         {it.room?.floor && <span className="ml-1.5 rounded bg-muted px-1.5 text-[10px]">{it.room.floor}</span>}
+      </td>
+      <td>
+        <Model3dRouteSelect
+          route={it.model3dRoute ?? "auto"}
+          attributes={it.attributes}
+          disabled={routePending}
+          onChange={onRoute}
+        />
       </td>
       <td className="font-data text-[11px] text-muted-foreground">{timeAgo(it.updatedAt)}</td>
       <td>

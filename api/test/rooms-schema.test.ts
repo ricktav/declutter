@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
 import { houses, rooms } from "@db/schema";
 import { getTestDb, resetTestDb } from "./db";
 
@@ -30,5 +31,13 @@ describe("rooms schema", () => {
       { houseId: h2, name: "Keuken", source: "manual" },
     ]);
     expect(await db.select().from(rooms)).toHaveLength(2);
+  });
+
+  it("has a room_scan_links table for external companion pointers", async () => {
+    const db = getTestDb();
+    const [cols] = (await db.execute(
+      sql`select column_name as c from information_schema.columns where table_schema = database() and table_name = 'room_scan_links' order by ordinal_position`,
+    )) as unknown as [{ c: string }[]];
+    expect(cols.map((r) => r.c)).toEqual(["id", "roomId", "source", "externalId", "capturedAt", "metadata", "createdAt"]);
   });
 });

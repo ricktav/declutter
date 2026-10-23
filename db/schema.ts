@@ -78,6 +78,12 @@ export const items = mysqlTable(
     // parks it for another pass instead of forcing an answer now
     decision: varchar("decision", { length: 16 }).$type<ItemDecision>(),
     decidedAt: timestamp("decidedAt"),
+    // 3D model for the knolling/companion app. `auto` is resolved at read
+    // time (favourites → Object Capture, else Meshy). url is /uploads/… or
+    // a .glb / .usdz / .js URL; never delete a Thing to clear it.
+    model3dRoute: varchar("model3dRoute", { length: 16 }).$type<Model3dRoute>().notNull().default("auto"),
+    model3dUrl: varchar("model3dUrl", { length: 512 }),
+    model3dUpdatedAt: timestamp("model3dUpdatedAt"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
     archivedAt: timestamp("archivedAt"),
@@ -91,6 +97,11 @@ export const items = mysqlTable(
 
 export const ITEM_DECISIONS = ["keep", "sell", "donate", "toss", "later"] as const;
 export type ItemDecision = (typeof ITEM_DECISIONS)[number];
+
+/** How a Thing gets a 3D model. `auto` resolves per Thing (favourites → capture, else meshy). */
+export const MODEL3D_ROUTES = ["auto", "none", "agent", "meshy", "capture"] as const;
+export type Model3dRoute = (typeof MODEL3D_ROUTES)[number];
+export type EffectiveModel3dRoute = Exclude<Model3dRoute, "auto">;
 
 // Footprint on a room's 2D/3D plan — absent until the item is placed.
 export interface ItemPos {
@@ -193,6 +204,32 @@ export const roomScans = mysqlTable(
 );
 export type RoomScanRow = typeof roomScans.$inferSelect;
 
+// ---------------------------------------------------------------------------
+// Room scan links — pointer only. An external companion (homebase-3d) records
+// that its scan belongs to a HomeBase room. Never creates, moves or deletes
+// Things or photos; not a room_scans row and not rooms.upsertFromScan.
+// ---------------------------------------------------------------------------
+export const roomScanLinks = mysqlTable(
+  "room_scan_links",
+  {
+    id: serial("id").primaryKey(),
+    roomId: bigint("roomId", { mode: "number", unsigned: true }).notNull(),
+    // the companion app, e.g. "homebase-3d"
+    source: varchar("source", { length: 64 }).notNull(),
+    // that app's id for the scan (folder name, uuid, …)
+    externalId: varchar("externalId", { length: 255 }).notNull(),
+    capturedAt: timestamp("capturedAt"),
+    metadata: json("metadata").$type<Record<string, string | number | boolean | null>>(),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [
+    index("room_scan_links_room_idx").on(t.roomId),
+    // one HomeBase room per external scan; re-link moves it
+    uniqueIndex("room_scan_links_source_ext_uq").on(t.source, t.externalId),
+  ],
+);
+export type RoomScanLink = typeof roomScanLinks.$inferSelect;
+
 export interface RoomGeometry {
   // kind defaults to "wall" when absent (the original single-room seed data
   // predates this field) - door/window segments can land anywhere on a real
@@ -239,6 +276,10 @@ export const photos = mysqlTable(
     size: bigint("size", { mode: "number" }),
     sourceCaptureId: bigint("sourceCaptureId", { mode: "number", unsigned: true }),
     cropBox: json("cropBox").$type<CropBox | null>(),
+    // pixel size of the stored file after EXIF orientation (the size a
+    // browser shows). Null until probed on write or by the backfill script.
+    width: bigint("width", { mode: "number" }),
+    height: bigint("height", { mode: "number" }),
     // where the photo was taken, in its room's frame (same frame as
     // items.pos); null until placed. Reset when the photo changes room.
     // Cutouts never have one: a crop of a Thing is not a viewpoint.

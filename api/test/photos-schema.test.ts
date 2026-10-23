@@ -47,6 +47,14 @@ describe("photos schema", () => {
     ]);
   });
 
+  it("has nullable pixel size columns on photos", async () => {
+    const db = getTestDb();
+    const [cols] = (await db.execute(
+      sql`select column_name as c from information_schema.columns where table_schema = database() and table_name = 'photos' and column_name in ('width','height') order by 1`,
+    )) as unknown as [{ c: string }[]];
+    expect(cols.map((r) => r.c)).toEqual(["height", "width"]);
+  });
+
   it("has no attachments or photo_annotations table any more", async () => {
     const db = getTestDb();
     const [rows] = await db.execute(

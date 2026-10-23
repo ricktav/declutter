@@ -11,6 +11,7 @@ import { captures, items, photoPins, photos, type PhotoCamera } from "@db/schema
 import { readFileBytes, urlForKey, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
+import { imageSizeFields } from "../lib/imageSize";
 import { logEvent } from "../lib/events";
 import {
   addPhoto,
@@ -61,6 +62,67 @@ async function readSourceBytes(key: string): Promise<Uint8Array> {
 export const photosRouter = createRouter({
   /** Same-origin URL for any stored key (photo, capture, file). */
   url: procedure.input(z.object({ key: z.string() })).query(async ({ input }) => ({ url: await urlForKey(input.key) })),
+
+  /**
+   * Batch resolver for photos.url. ids are photo ids; keys are storage keys
+   * (the same as photos.url / items.listAll imageKey). At least one list,
+   * at most 200 entries combined. Missing ids are omitted; a key with no
+   * photo row still gets a url (dimensions null).
+   */
+  urls: procedure
+    .input(
+      z
+        .object({
+          ids: z.array(z.number().int().positive()).max(200).optional(),
+          keys: z.array(z.string().min(1).max(512)).max(200).optional(),
+        })
+        .refine((v) => (v.ids?.length ?? 0) + (v.keys?.length ?? 0) > 0, { message: "ids or keys required" })
+        .refine((v) => (v.ids?.length ?? 0) + (v.keys?.length ?? 0) <= 200, { message: "at most 200" }),
+    )
+    .query(async ({ input }) => {
+      const db = getDb();
+      const ids = [...new Set(input.ids ?? [])];
+      const keys = [...new Set(input.keys ?? [])];
+      const byId = new Map<number, (typeof photos.$inferSelect)>();
+      const byKey = new Map<string, (typeof photos.$inferSelect)>();
+      if (ids.length) {
+        for (const p of await db.select().from(photos).where(inArray(photos.id, ids))) {
+          byId.set(p.id, p);
+          byKey.set(p.storageKey, p);
+        }
+      }
+      if (keys.length) {
+        const missing = keys.filter((k) => !byKey.has(k));
+        if (missing.length) {
+          for (const p of await db.select().from(photos).where(inArray(photos.storageKey, missing))) {
+            if (!byKey.has(p.storageKey)) byKey.set(p.storageKey, p);
+          }
+        }
+      }
+      const out: Array<{
+        id: number | null;
+        key: string;
+        url: string | null;
+        width: number | null;
+        height: number | null;
+      }> = [];
+      const seen = new Set<string>();
+      const push = async (id: number | null, key: string, width: number | null, height: number | null) => {
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ id, key, url: await urlForKey(key), width, height });
+      };
+      for (const id of ids) {
+        const p = byId.get(id);
+        if (!p) continue;
+        await push(p.id, p.storageKey, p.width ?? null, p.height ?? null);
+      }
+      for (const key of keys) {
+        const p = byKey.get(key);
+        await push(p?.id ?? null, key, p?.width ?? null, p?.height ?? null);
+      }
+      return out;
+    }),
 
   get: procedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const photo = await getDb().query.photos.findFirst({ where: eq(photos.id, input.id) });
@@ -119,11 +181,12 @@ export const photosRouter = createRouter({
     const cap = await db.query.captures.findFirst({ where: eq(captures.id, sourceCaptureId) });
     if (!cap?.storageKey) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
     const cropped = await cropPercent(await readSourceBytes(cap.storageKey), input.box);
+    const dim = await imageSizeFields(cropped);
     const saved = await withNewFile(
       { bytes: new Uint8Array(cropped), fileName: `items/${photo.itemId ?? "photo"}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
       async (file) => {
         await db.transaction(async (tx) => {
-          await tx.update(photos).set({ storageKey: file.key, size: file.size, cropBox: input.box, camera: null }).where(eq(photos.id, input.photoId));
+          await tx.update(photos).set({ storageKey: file.key, size: file.size, cropBox: input.box, camera: null, width: dim.width, height: dim.height }).where(eq(photos.id, input.photoId));
           if (photo.itemId) {
             const [loc] = await tx
               .select({ id: photos.id })
@@ -200,6 +263,7 @@ export const photosRouter = createRouter({
 
       const maxDim = { small: 480, medium: 900, big: undefined }[input.photoSize];
       const cropped = await cropPercent(bytes, input.box, maxDim);
+      const dim = await imageSizeFields(cropped);
       return withNewFile(
         { bytes: new Uint8Array(cropped), fileName: `items/${input.itemId}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
         (saved) =>
@@ -214,6 +278,8 @@ export const photosRouter = createRouter({
                 sourceCaptureId,
                 cropBox: input.box,
                 title: "Photo",
+                width: dim.width,
+                height: dim.height,
               })
               .$returningId();
             await logEvent(

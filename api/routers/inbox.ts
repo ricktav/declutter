@@ -19,6 +19,7 @@ import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { readFileBytes, copyStoredFile, deleteStoredFile, putFile, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
+import { imageSizeFields } from "../lib/imageSize";
 import { createCapture } from "../lib/captures";
 import { clearTriageJobState, maybeAutoTriage, triageJobState } from "../lib/jobs";
 import { setItemLocation } from "../lib/location";
@@ -663,6 +664,7 @@ export const inboxRouter = createRouter({
       // the item is in the capture: pin it on the capture's location photo
       // (made now when the snap has none yet), so "Seen in photos" shows it
       const { photoId: locationPhotoId } = await ensureLocationPhotoForCapture(db, cap.id, input.roomId);
+      const dim = await imageSizeFields(cropped);
       await withNewFile(
         { bytes: new Uint8Array(cropped), fileName: `items/${targetId}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
         (saved) =>
@@ -676,6 +678,8 @@ export const inboxRouter = createRouter({
               size: saved.size,
               sourceCaptureId: cap.id,
               cropBox: box,
+              width: dim.width,
+              height: dim.height,
             });
             await logEvent(
               {
@@ -780,6 +784,7 @@ export const inboxRouter = createRouter({
                   }
                 }
                 const cropped = await cropPercent(capBytes, it.box);
+                const dim = await imageSizeFields(cropped);
                 const saved = await putFile({
                   bytes: new Uint8Array(cropped),
                   fileName: `items/${itemId}/cutout-${Date.now()}.jpg`,
@@ -795,6 +800,8 @@ export const inboxRouter = createRouter({
                   size: saved.size,
                   sourceCaptureId: cap.id,
                   cropBox: it.box,
+                  width: dim.width,
+                  height: dim.height,
                 });
                 await logEvent({
                   entityType: "item",
