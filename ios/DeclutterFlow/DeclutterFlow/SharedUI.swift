@@ -92,6 +92,22 @@ struct DecisionBadge: View {
     }
 }
 
+/// Same idea as the Workbench “3D” pill on All Things: shown when `model3dUrl` is set.
+struct Model3dBadge: View {
+    var visible: Bool
+    var body: some View {
+        if visible {
+            Text(Model3d.copy.hasModel)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color(hex: 0x166534))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Color(hex: 0xD1FAE5), in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+                .accessibilityLabel("Has a 3D model")
+        }
+    }
+}
+
 struct ProgressRing: View {
     let value: Int
     let total: Int
