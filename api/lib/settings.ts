@@ -16,10 +16,35 @@ export const UI_DEPTHS = ["quick", "standard", "detail"] as const;
 export type UiDepth = (typeof UI_DEPTHS)[number];
 
 /** The links the Workbench used before they moved to Settings, so an install that never set them keeps them. */
+export const DEFAULT_HOMEBASE_3D_URL = "http://10.50.0.102:3010";
+
 export const DEFAULT_LINKS = {
   meterkastUrl: "http://10.50.0.10/meterkast.html",
   parcelViewerUrl: "http://10.50.0.102/grokbot/kadastrale-kaart/",
+  homebase3dUrl: DEFAULT_HOMEBASE_3D_URL,
 };
+
+export type ExternalLinks = {
+  meterkastUrl: string | null;
+  parcelViewerUrl: string | null;
+  homebase3dUrl: string | null;
+};
+
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+/** Settings win; HOMEBASE_3D_URL is the unset fallback for the companion app. */
+export function effectiveExternalLinks(s: AppSettings, env: NodeJS.ProcessEnv = process.env): ExternalLinks {
+  const env3d = env.HOMEBASE_3D_URL?.trim();
+  const homebaseFallback = stripTrailingSlash(env3d || DEFAULT_LINKS.homebase3dUrl);
+  return {
+    meterkastUrl: s.meterkastUrl === undefined ? DEFAULT_LINKS.meterkastUrl : s.meterkastUrl,
+    parcelViewerUrl: s.parcelViewerUrl === undefined ? DEFAULT_LINKS.parcelViewerUrl : s.parcelViewerUrl,
+    homebase3dUrl:
+      s.homebase3dUrl === undefined ? homebaseFallback : s.homebase3dUrl === null ? null : stripTrailingSlash(s.homebase3dUrl),
+  };
+}
 
 export interface AppSettings {
   llmBaseUrl?: string;
@@ -40,6 +65,8 @@ export interface AppSettings {
   meterkastUrl?: string | null;
   /** Parcel map viewer; the address is appended as ?q=. Unset: DEFAULT_LINKS; null: off. */
   parcelViewerUrl?: string | null;
+  /** homebase-3d companion (Thing page at `<base>/things/<id>`). Unset: HOMEBASE_3D_URL or DEFAULT_LINKS; null: off. */
+  homebase3dUrl?: string | null;
   /** How much of the Workbench shows: quick, standard or detail. Unset: see settings.ui. */
   uiDepth?: UiDepth;
 }

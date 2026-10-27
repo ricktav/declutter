@@ -23,6 +23,7 @@ const SystemsPage = lazy(() => import("@/pages/Systems"));
 const StoragePage = lazy(() => import("@/pages/Storage"));
 const WikiPage = lazy(() => import("@/pages/Wiki"));
 const RoomsRedirect = lazy(() => import("@/pages/RoomsRedirect"));
+const Model3dFixturePreview = lazy(() => import("@/pages/Model3dFixturePreview"));
 
 function Loading() {
   return <div className="p-6 text-[13px] text-muted-foreground">Loading…</div>;
@@ -33,6 +34,7 @@ export default function App() {
     <AskProvider>
       <Suspense fallback={<Loading />}>
         <Routes>
+          <Route path="/dev/model3d-fixtures" element={<Model3dFixturePreview />} />
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/focus" element={<FocusPage />} />

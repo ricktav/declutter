@@ -17,6 +17,7 @@ import { PhotoCropZoom } from "@/components/PhotoCropZoom";
 import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { TagsField, TypeSelect } from "@/components/ItemTaxonomy";
 import { Model3dRouteSelect } from "@/components/Model3dRouteSelect";
+import { ItemModel3dSection } from "@/components/ItemModel3dSection";
 import { ItemPinSchematics } from "@/components/ItemPinSchematics";
 import { timeAgo } from "@/lib/format";
 import { uploadFile } from "@/lib/upload";
@@ -1027,7 +1028,7 @@ export default function ItemDetail() {
             </section>
           )}
 
-          <details className="rounded-lg border border-border bg-white p-3">
+          <details className="rounded-lg border border-border bg-white p-3" open={!!it.model3dUrl}>
             <summary className="cursor-pointer text-[13px] list-none flex items-center gap-2">
               <span className="micro-label text-muted-foreground">3D model</span>
               <span className="text-[12px] text-muted-foreground">
@@ -1035,6 +1036,7 @@ export default function ItemDetail() {
               </span>
             </summary>
             <div className="mt-2 space-y-2">
+              <ItemModel3dSection itemId={it.id} url={it.model3dUrl} />
               <Model3dRouteSelect
                 route={(it.model3dRoute ?? "auto") as Model3dRoute}
                 attributes={it.attributes}
@@ -1043,9 +1045,7 @@ export default function ItemDetail() {
               />
               {it.model3dUrl ? (
                 <div className="font-data text-[11px] text-muted-foreground break-all">{it.model3dUrl}</div>
-              ) : (
-                <div className="text-[11px] text-muted-foreground">No model file yet — homebase-3d can write one later.</div>
-              )}
+              ) : null}
               {setModel3d.isError && <p className="text-[12px] text-destructive">{setModel3d.error.message}</p>}
             </div>
           </details>

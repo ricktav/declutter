@@ -22,7 +22,7 @@ HomeBase stores the choice; homebase-3d writes the file URL later. Never delete 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `model3dRoute` | `'auto' \| 'none' \| 'agent' \| 'meshy' \| 'capture'` | stored choice; default `auto` |
-| `model3dUrl` | `string \| null` | `/uploads/…`, `local/…`, or an http(s) URL to a `.glb` / `.usdz` / `.js` module |
+| `model3dUrl` | `string \| null` | `/uploads/…`, `local/…`, or an http(s) URL to a `.glb` / `.gltf` / `.usdz` / `.js` module |
 | `effectiveModel3dRoute` | `'none' \| 'agent' \| 'meshy' \| 'capture'` | computed: `auto` → `capture` when `attributes.favourite` / `favorite` is `yes`/`true`/`1`, else `meshy` |
 
 ```
@@ -36,6 +36,31 @@ items.setModel3d({
 ```
 
 `agent` is procedural Three.js code (3d-model-anything style). `capture` is Apple Object Capture. `meshy` is image-to-3D GLB.
+
+### Workbench viewer (HomeBase Thing page)
+
+When `model3dUrl` is set, the Workbench detail page lazy-loads a small orbit/zoom viewer. It does not change these procedures.
+
+| Format | How HomeBase loads it |
+| --- | --- |
+| `.glb` / `.gltf` | `GLTFLoader` (CORS `anonymous` for remote URLs) |
+| `.usdz` | `USDLoader` if it works; otherwise a download link. Preview is not reliable in every browser. |
+| `.js` (route 1) | `fetch` (credentials omitted, CORS) → static check for `export function build(THREE)` → `import()` from a blob URL → `build(THREE)` must return an `Object3D` in metres, Y-up. Failures stay inside the viewer. |
+
+The generated JS still runs in the Workbench page (a true iframe sandbox cannot hand an `Object3D` back). homebase-3d must therefore treat the module as code that a browser on another origin will fetch and execute.
+
+**homebase-3d must serve every model file (`/models/…/*.js`, `.glb`, `.usdz`, plus `.meta.json` / `.preview.png` if those are fetched cross-origin) with:**
+
+```
+Access-Control-Allow-Origin: *          # or the Workbench origin
+Access-Control-Allow-Methods: GET, HEAD
+Content-Type: text/javascript           # for .js (application/javascript is fine)
+Cross-Origin-Resource-Policy: cross-origin
+```
+
+Without the CORS header the Workbench fetch fails and the viewer shows “could not be reached”. `.js` files must not be served as `text/plain` if you want a native `import(url)` to work; HomeBase uses a blob URL after fetch, so CORS + a 200 body is enough.
+
+The Thing page link is `<homebase3dUrl>/things/<id>`. Configure `homebase3dUrl` in Settings → Links, or `HOMEBASE_3D_URL` (default `http://10.50.0.102:3010`). Empty / null hides the link.
 
 ## `photos.urls`
 

@@ -46,6 +46,7 @@ describe("model3d helpers", () => {
     expect(parseModel3dUrl("local/mug.usdz")).toBe("local/mug.usdz");
     expect(parseModel3dUrl("https://cdn.example/x.js")).toBe("https://cdn.example/x.js");
     expect(parseModel3dUrl("https://cdn.example/x.glb?v=1")).toBe("https://cdn.example/x.glb?v=1");
+    expect(parseModel3dUrl("https://cdn.example/x.gltf")).toBe("https://cdn.example/x.gltf");
     expect(() => parseModel3dUrl("https://cdn.example/x.png")).toThrow(/glb/);
     expect(() => parseModel3dUrl("ftp://x.glb")).toThrow(/uploads/);
     expect(() => parseModel3dUrl("not a url")).toThrow(/path or URL/);

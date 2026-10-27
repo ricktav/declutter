@@ -3,7 +3,7 @@ import { createRouter, procedure } from "../middleware";
 import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { items, storageVolumes } from "@db/schema";
 import { getDb } from "../queries/connection";
-import { DEFAULT_LINKS, loadSettings, saveSettings, UI_DEPTHS } from "../lib/settings";
+import { effectiveExternalLinks, loadSettings, saveSettings, UI_DEPTHS } from "../lib/settings";
 import { getProviderSource } from "../lib/ai";
 import { logEvent } from "../lib/events";
 import { autoTriageReady } from "../lib/jobs";
@@ -129,13 +129,7 @@ export const settingsRouter = createRouter({
   }),
 
   /** External links (no secrets), read by the sidebar on every page. Null = turned off, so not shown. */
-  links: procedure.query(() => {
-    const s = loadSettings();
-    return {
-      meterkastUrl: s.meterkastUrl === undefined ? DEFAULT_LINKS.meterkastUrl : s.meterkastUrl,
-      parcelViewerUrl: s.parcelViewerUrl === undefined ? DEFAULT_LINKS.parcelViewerUrl : s.parcelViewerUrl,
-    };
-  }),
+  links: procedure.query(() => effectiveExternalLinks(loadSettings())),
 
   /** Empty string turns a link off. */
   setLinks: procedure
@@ -143,12 +137,14 @@ export const settingsRouter = createRouter({
       z.object({
         meterkastUrl: z.union([z.literal(""), httpUrl]).optional(),
         parcelViewerUrl: z.union([z.literal(""), httpUrl]).optional(),
+        homebase3dUrl: z.union([z.literal(""), httpUrl]).optional(),
       }),
     )
     .mutation(async ({ input }) => {
       const patch: Record<string, string | null> = {};
       if (input.meterkastUrl !== undefined) patch.meterkastUrl = input.meterkastUrl || null;
       if (input.parcelViewerUrl !== undefined) patch.parcelViewerUrl = input.parcelViewerUrl || null;
+      if (input.homebase3dUrl !== undefined) patch.homebase3dUrl = input.homebase3dUrl || null;
       saveSettings(patch);
       await logEvent({ entityType: "settings", action: "updated", summary: "External links updated" });
       return { ok: true };
