@@ -261,7 +261,10 @@ private struct DecisionListSheet: View {
                             RemotePhoto(storageKey: it.imageKey, api: session.api, cornerRadius: 8)
                                 .frame(width: 56, height: 56)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(it.name).font(.system(size: 14, weight: .medium)).lineLimit(1)
+                                HStack(spacing: 6) {
+                                    Text(it.name).font(.system(size: 14, weight: .medium)).lineLimit(1)
+                                    Model3dBadge(visible: it.hasModel3d)
+                                }
                                 Text(FlowLogic.placeLabel(it, houses: session.houses).isEmpty ? "no Place" : FlowLogic.placeLabel(it, houses: session.houses))
                                     .font(.system(size: 11))
                                     .foregroundStyle(FlowTheme.muted)
@@ -306,6 +309,7 @@ private struct DecisionListSheet: View {
                                 RemotePhoto(storageKey: it.imageKey, api: session.api, cornerRadius: 6)
                                     .frame(width: 40, height: 40)
                                 Text(it.name).font(.system(size: 13)).lineLimit(1)
+                                Model3dBadge(visible: it.hasModel3d)
                                 Spacer()
                                 Button("Restore") {
                                     Task { await restore(it) }

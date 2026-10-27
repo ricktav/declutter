@@ -73,9 +73,19 @@ The phone and the server must be on the same network (or a VPN). A `localhost` U
 | **Snap** | Camera / library → `POST /api/upload` (`file`, `scope=inbox`) → `inbox.create`. Optional Place (“where you are”). Notes and links. **Scan this Place** (RoomPlan LiDAR) → `rooms.upsertFromScan` (`source: "roomplan"`, the picked room's own house and name, so it updates that room, plus `objects`: the furniture RoomPlan found as footprints in the plan frame). The server files those as detected Things and merges a rescan by kind and distance, like the MappedIn import; after saving, the scan screen shows the counts from `things` and the session refreshes so the plan shows them. |
 | **Sort** | Inbox Photos: AI triage, name / kind, Place, file (`inbox.acceptMany`) or dismiss. Check (`items.setVerification`). Place (`items.update` with `roomId`). |
 | **Act** | Keep / sell / donate / toss / later (`items.setDecision`). Sell list / donate box / toss run. **Gone** (`items.setArchived`). Later returns after 7 days. |
-| **Find** | Search Things or Places. Decision on the Thing sheet. A Place (`rooms.get`) shows its 2D / 3D plan when one exists, or offers a LiDAR scan. |
+| **Find** | Search Things or Places. Decision on the Thing sheet. A Place (`rooms.get`) shows its 2D / 3D plan when one exists, or offers a LiDAR scan. A Thing with `model3dUrl` shows an inline 3D viewer (USDZ / GLB / route-1 JS) and a **3D** badge on the list. See `ios/DeclutterFlow/docs/model3d.md`. |
 
 Tabs match web Flow. Photos load through `photos.url` plus the same Bearer token (the relative `/uploads/…` URL is not enough on its own).
+
+## 3D models
+
+A Thing whose `model3dUrl` is set gets a green **3D** badge in Find (and Act lists) and an orbit viewer on the Thing sheet. How to point a **test** Thing at a sample file (never the live database): `ios/DeclutterFlow/docs/model3d.md`.
+
+- `.usdz` — SceneKit
+- `.glb` / `.gltf` — GLTFKit2 (Swift package, MIT) → SceneKit
+- `.js` — bundled three.js r186 in a WKWebView (`export function build(THREE)`, metres, Y-up). No CDN.
+
+First Xcode open resolves the GLTFKit2 package. Do not change the bundle id or signing team.
 
 ## Known gaps vs web Flow
 
@@ -89,7 +99,8 @@ Tabs match web Flow. Photos load through `photos.url` plus the same Bearer token
 
 ## API it uses
 
-tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany` (`roomId`), `inbox.dismiss`, `items.listAll`,
+tRPC: `ping`, `inbox.list`, `inbox.create`, `inbox.triage`, `inbox.acceptMany` (`roomId`), `inbox.dismiss`, `items.listAll`
+(now also decodes `model3dUrl` / `model3dRoute` / `effectiveModel3dRoute`),
 `items.update` (`roomId`), `items.setVerification`, `items.setArchived`, `items.setDecision`, `items.patchAttributes`
 (client ready, unused in V1 UI), `houses.list`, `areas.list`, `rooms.list`, `rooms.ensure`, `rooms.get`, `rooms.upsertFromScan`, `photos.url`.
 Header `x-house-id` from Settings.

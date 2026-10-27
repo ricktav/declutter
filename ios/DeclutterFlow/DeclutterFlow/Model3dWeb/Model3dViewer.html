@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>3D</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #f4f1ea; overflow: hidden; touch-action: none; }
+    #box { position: absolute; inset: 0; }
+    canvas { display: block; width: 100%; height: 100%; }
+  </style>
+  <script type="importmap">
+    { "imports": { "three": "./three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="box"></div>
+  <script type="module">
+    import * as THREE from "three";
+
+    const COPY = {
+      unsupported: "This model format cannot be shown here.",
+      unreachable: "The 3D model could not be reached.",
+      parse: "The 3D model could not be read.",
+      agent: "The agent module failed to load or threw.",
+    };
+
+    function post(type, extra) {
+      try {
+        window.webkit?.messageHandlers?.model3d?.postMessage({ type, ...(extra || {}) });
+      } catch (_) { /* native side gone */ }
+    }
+
+    function looksLikeAgentModelModule(source) {
+      const stripped = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      return (
+        /\bexport\s+(?:async\s+)?function\s+build\s*\(/.test(stripped) ||
+        /\bexport\s*\{[^}]*\bbuild\b[^}]*\}/.test(stripped)
+      );
+    }
+
+    function fail(kind, detail) {
+      post("fail", { kind, detail: detail ? String(detail) : undefined });
+    }
+
+    function fit(camera, object) {
+      const box = new THREE.Box3().setFromObject(object);
+      if (box.isEmpty()) return false;
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z, 0.05);
+      const fov = (camera.fov * Math.PI) / 180;
+      const dist = (maxDim / (2 * Math.tan(fov / 2))) * 1.7;
+      camera.near = Math.max(dist / 200, 0.01);
+      camera.far = Math.max(dist * 80, 50);
+      camera.position.set(center.x + dist * 0.72, center.y + dist * 0.55, center.z + dist * 0.72);
+      camera.lookAt(center);
+      camera.updateProjectionMatrix();
+      return { center, maxDim, dist };
+    }
+
+    function attachOrbit(el, camera, getState) {
+      let dragging = false;
+      let lastX = 0;
+      let lastY = 0;
+      let pinch = 0;
+      el.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        el.setPointerCapture(e.pointerId);
+      });
+      el.addEventListener("pointerup", () => { dragging = false; });
+      el.addEventListener("pointercancel", () => { dragging = false; });
+      el.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        const st = getState();
+        if (!st) return;
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        const { center } = st;
+        const offset = camera.position.clone().sub(center);
+        const sph = new THREE.Spherical().setFromVector3(offset);
+        sph.theta -= dx * 0.008;
+        sph.phi = Math.min(Math.max(0.05, sph.phi - dy * 0.008), Math.PI - 0.05);
+        camera.position.copy(center).add(new THREE.Vector3().setFromSpherical(sph));
+        camera.lookAt(center);
+      });
+      el.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const st = getState();
+        if (!st) return;
+        const { center, maxDim, dist } = st;
+        const offset = camera.position.clone().sub(center);
+        const factor = Math.exp(e.deltaY * 0.0015);
+        offset.multiplyScalar(factor);
+        const len = offset.length();
+        const min = maxDim * 0.25;
+        const max = dist * 10;
+        if (len < min) offset.setLength(min);
+        if (len > max) offset.setLength(max);
+        camera.position.copy(center).add(offset);
+        camera.lookAt(center);
+      }, { passive: false });
+      el.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 2) {
+          const a = e.touches[0], b = e.touches[1];
+          pinch = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        }
+      }, { passive: true });
+      el.addEventListener("touchmove", (e) => {
+        if (e.touches.length !== 2) return;
+        e.preventDefault();
+        const st = getState();
+        if (!st) return;
+        const a = e.touches[0], b = e.touches[1];
+        const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        if (!pinch) { pinch = d; return; }
+        const { center, maxDim, dist } = st;
+        const offset = camera.position.clone().sub(center);
+        offset.multiplyScalar(pinch / d);
+        pinch = d;
+        const len = offset.length();
+        const min = maxDim * 0.25;
+        const max = dist * 10;
+        if (len < min) offset.setLength(min);
+        if (len > max) offset.setLength(max);
+        camera.position.copy(center).add(offset);
+        camera.lookAt(center);
+      }, { passive: false });
+    }
+
+    async function loadAgent() {
+      let source;
+      try {
+        const res = await fetch("./model.js", { cache: "no-cache" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        source = await res.text();
+      } catch (err) {
+        fail("unreachable", err && err.message);
+        return;
+      }
+      if (!looksLikeAgentModelModule(source)) {
+        fail("agent", "Not an agent model module (missing export function build).");
+        return;
+      }
+      const blobUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+      try {
+        const mod = await import(blobUrl);
+        if (typeof mod.build !== "function") throw new Error("Module has no build() export.");
+        let built;
+        try {
+          built = await mod.build(THREE);
+        } catch (err) {
+          throw new Error(err instanceof Error ? err.message : "build() threw");
+        }
+        if (!built || typeof built !== "object" || built.isObject3D !== true) {
+          throw new Error("build() did not return a Three.js object.");
+        }
+        return built;
+      } catch (err) {
+        fail("agent", err && err.message);
+        return null;
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
+    }
+
+    const el = document.getElementById("box");
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf4f1ea);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 100);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    el.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xf4f1ea, 0x8a8370, 0.95));
+    const key = new THREE.DirectionalLight(0xffffff, 1.15);
+    key.position.set(2.4, 4.2, 2.8);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xe8e4d8, 0.45);
+    fill.position.set(-2.2, 1.6, -1.4);
+    scene.add(fill);
+
+    function resize() {
+      const w = el.clientWidth || window.innerWidth;
+      const h = el.clientHeight || window.innerHeight || w;
+      if (w === 0 || h === 0) return;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    resize();
+    window.addEventListener("resize", resize);
+
+    let fitState = null;
+    attachOrbit(el, camera, () => fitState);
+
+    function loop() {
+      requestAnimationFrame(loop);
+      renderer.render(scene, camera);
+    }
+    loop();
+
+    try {
+      const object = await loadAgent();
+      if (!object) return;
+      scene.add(object);
+      fitState = fit(camera, object);
+      if (!fitState) {
+        fail("parse", "Empty object.");
+        return;
+      }
+      post("loaded");
+    } catch (err) {
+      fail("agent", err && err.message);
+    }
+  </script>
+</body>
+</html>
