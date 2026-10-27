@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { pathToFileURL } from "url";
 import { describe, expect, it } from "vitest";
+import * as THREE from "three";
 import {
   hasModel3dUrl,
   homebase3dThingUrl,
@@ -58,5 +60,16 @@ describe("model3dView helpers", () => {
     expect(glb.readUInt32LE(0)).toBe(0x46546c67);
     expect(glb.readUInt32LE(4)).toBe(2);
     expect(glb.length).toBeGreaterThan(64);
+  });
+
+  it("agent-cube.js build(THREE) returns a 20 cm Object3D", async () => {
+    const url = pathToFileURL(path.resolve("public/fixtures/model3d/agent-cube.js")).href;
+    const mod = (await import(url)) as { build: (three: typeof THREE) => THREE.Object3D };
+    const obj = mod.build(THREE);
+    expect(obj.isObject3D).toBe(true);
+    const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+    expect(size.x).toBeCloseTo(0.2, 5);
+    expect(size.y).toBeCloseTo(0.2, 5);
+    expect(size.z).toBeCloseTo(0.2, 5);
   });
 });

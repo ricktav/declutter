@@ -16,4 +16,6 @@ http://127.0.0.1:3002/fixtures/model3d/cube.glb
 http://127.0.0.1:3002/fixtures/model3d/agent-cube.js
 ```
 
+Or open `/dev/model3d-fixtures` on that port — same viewer, no Thing required.
+
 Do not write these URLs into the live database.
