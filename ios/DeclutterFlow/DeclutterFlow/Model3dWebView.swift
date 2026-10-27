@@ -16,6 +16,8 @@ struct Model3dWebView: UIViewRepresentable {
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.defaultWebpagePreferences.preferredContentMode = .mobile
         config.userContentController.add(context.coordinator, name: "model3d")
+        // ES module imports from file:// are blocked in WKWebView; serve the staged folder on a private scheme.
+        config.setURLSchemeHandler(context.coordinator.files, forURLScheme: Model3dFileScheme.scheme)
         config.suppressesIncrementalRendering = true
 
         let web = WKWebView(frame: .zero, configuration: config)
@@ -47,6 +49,7 @@ struct Model3dWebView: UIViewRepresentable {
         weak var webView: WKWebView?
         var cancelled = false
         private var loadedDir: URL?
+        let files = Model3dFileScheme()
 
         init(onFail: @escaping (Model3dFail, String?) -> Void, onReady: @escaping () -> Void) {
             self.onFail = onFail
@@ -56,8 +59,8 @@ struct Model3dWebView: UIViewRepresentable {
         func load(directory: URL, in webView: WKWebView) {
             if loadedDir == directory { return }
             loadedDir = directory
-            let html = directory.appendingPathComponent("Model3dViewer.html")
-            webView.loadFileURL(html, allowingReadAccessTo: directory)
+            files.root = directory
+            webView.load(URLRequest(url: URL(string: "\(Model3dFileScheme.scheme)://local/Model3dViewer.html")!))
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -105,4 +108,36 @@ struct Model3dWebView: UIViewRepresentable {
             }
         }
     }
+}
+
+/// Serves files from one staged folder (`Model3dViewer.html`, three.js, `model.js`) to the WKWebView.
+final class Model3dFileScheme: NSObject, WKURLSchemeHandler {
+    static let scheme = "declutter-model3d"
+    var root: URL?
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let root, let url = urlSchemeTask.request.url else {
+            urlSchemeTask.didFailWithError(URLError(.badURL))
+            return
+        }
+        let base = root.standardizedFileURL
+        let file = base.appendingPathComponent(url.path.split(separator: "/").joined(separator: "/")).standardizedFileURL
+        guard file.path.hasPrefix(base.path + "/"), let data = try? Data(contentsOf: file) else {
+            urlSchemeTask.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: [:])!)
+            urlSchemeTask.didFinish()
+            return
+        }
+        let mime: String
+        switch file.pathExtension.lowercased() {
+        case "html": mime = "text/html; charset=utf-8"
+        case "js", "mjs": mime = "text/javascript; charset=utf-8"
+        default: mime = "application/octet-stream"
+        }
+        let headers = ["Content-Type": mime, "Content-Length": String(data.count), "Cache-Control": "no-store"]
+        urlSchemeTask.didReceive(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!)
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
