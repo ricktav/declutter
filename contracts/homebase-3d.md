@@ -44,7 +44,7 @@ When `model3dUrl` is set, the Workbench detail page lazy-loads a small orbit/zoo
 | Format | How HomeBase loads it |
 | --- | --- |
 | `.glb` / `.gltf` | `GLTFLoader` (CORS `anonymous` for remote URLs) |
-| `.usdz` | `USDZLoader` if it works; otherwise a download link. Preview is not reliable in every browser. |
+| `.usdz` | `USDLoader` if it works; otherwise a download link. Preview is not reliable in every browser. |
 | `.js` (route 1) | `fetch` (credentials omitted, CORS) → static check for `export function build(THREE)` → `import()` from a blob URL → `build(THREE)` must return an `Object3D` in metres, Y-up. Failures stay inside the viewer. |
 
 The generated JS still runs in the Workbench page (a true iframe sandbox cannot hand an `Object3D` back). homebase-3d must therefore treat the module as code that a browser on another origin will fetch and execute.
