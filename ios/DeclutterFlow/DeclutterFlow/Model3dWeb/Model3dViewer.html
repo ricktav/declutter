@@ -206,19 +206,22 @@
     }
     loop();
 
-    try {
-      const object = await loadAgent();
-      if (!object) return;
-      scene.add(object);
-      fitState = fit(camera, object);
-      if (!fitState) {
-        fail("parse", "Empty object.");
-        return;
+    async function main() {
+      try {
+        const object = await loadAgent();
+        if (!object) return;
+        scene.add(object);
+        fitState = fit(camera, object);
+        if (!fitState) {
+          fail("parse", "Empty object.");
+          return;
+        }
+        post("loaded");
+      } catch (err) {
+        fail("agent", err && err.message);
       }
-      post("loaded");
-    } catch (err) {
-      fail("agent", err && err.message);
     }
+    main();
   </script>
 </body>
 </html>
