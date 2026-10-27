@@ -609,7 +609,7 @@ export default function SettingsPage() {
   );
 }
 
-type Links = { meterkastUrl: string | null; parcelViewerUrl: string | null };
+type Links = { meterkastUrl: string | null; parcelViewerUrl: string | null; homebase3dUrl: string | null };
 
 function LinksSection() {
   const links = trpc.settings.links.useQuery();
@@ -622,8 +622,12 @@ function LinksForm({ saved }: { saved: Links }) {
   const utils = trpc.useUtils();
   const [meterkastUrl, setMeterkastUrl] = useState(saved.meterkastUrl ?? "");
   const [parcelViewerUrl, setParcelViewerUrl] = useState(saved.parcelViewerUrl ?? "");
+  const [homebase3dUrl, setHomebase3dUrl] = useState(saved.homebase3dUrl ?? "");
   const save = trpc.settings.setLinks.useMutation({ onSuccess: () => utils.settings.links.invalidate() });
-  const dirty = meterkastUrl.trim() !== (saved.meterkastUrl ?? "") || parcelViewerUrl.trim() !== (saved.parcelViewerUrl ?? "");
+  const dirty =
+    meterkastUrl.trim() !== (saved.meterkastUrl ?? "") ||
+    parcelViewerUrl.trim() !== (saved.parcelViewerUrl ?? "") ||
+    homebase3dUrl.trim() !== (saved.homebase3dUrl ?? "");
   const field = (label: string, hint: string, value: string, set: (v: string) => void, placeholder: string) => (
     <label className="block">
       <span className="micro-label text-muted-foreground">{label}</span>
@@ -640,8 +644,9 @@ function LinksForm({ saved }: { saved: Links }) {
     <div className="space-y-3">
       {field("Meter dashboard", "Live meter readings; shown in the sidebar and on a Thing's Energy section.", meterkastUrl, setMeterkastUrl, "http://…/meterkast.html")}
       {field("Parcel viewer", "Opened with the house address appended as ?q=.", parcelViewerUrl, setParcelViewerUrl, "http://…/kadastrale-kaart/")}
+      {field("homebase-3d", "Companion app. A Thing's detail page links to <base>/things/<id>. Empty hides the link. Override with HOMEBASE_3D_URL.", homebase3dUrl, setHomebase3dUrl, "http://10.50.0.102:3010")}
       <div className="flex items-center gap-2">
-        <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate({ meterkastUrl: meterkastUrl.trim(), parcelViewerUrl: parcelViewerUrl.trim() })}>
+        <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate({ meterkastUrl: meterkastUrl.trim(), parcelViewerUrl: parcelViewerUrl.trim(), homebase3dUrl: homebase3dUrl.trim() })}>
           {save.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save links"}
         </Button>
         {save.error && <span className="text-[12px] text-red-700">{save.error.message}</span>}

@@ -16,6 +16,7 @@ import { Model3dRouteSelect } from "@/components/Model3dRouteSelect";
 import { useHouse } from "@/context/house";
 import { itemMatchesQuery } from "@/lib/itemSearch";
 import type { Model3dRoute } from "@db/schema";
+import { hasModel3dUrl, MODEL3D_VIEW_COPY } from "@/lib/model3dView";
 
 type ItemRow = {
   id: number;
@@ -31,6 +32,7 @@ type ItemRow = {
   verificationStatus: string;
   attributes: Record<string, string | number> | null;
   model3dRoute: Model3dRoute;
+  model3dUrl: string | null;
 };
 
 export default function AllItems() {
@@ -56,6 +58,7 @@ export default function AllItems() {
   const [moveAreaId, setMoveAreaId] = useState<number | null>(null);
   const [rowAction, setRowAction] = useState<{ id: number; name: string; kind: "move" | "topic" } | null>(null);
   const [batchRoute, setBatchRoute] = useState<Model3dRoute>("auto");
+  const [onlyWithModel, setOnlyWithModel] = useState(false);
 
   useEffect(() => {
     if (initialRoom != null) setRoomIds([initialRoom]);
@@ -65,9 +68,10 @@ export default function AllItems() {
     return (items.data ?? []).filter((i) => {
       if (areaId != null && i.areaId !== areaId) return false;
       if (roomIds.length > 0 && (i.roomId == null || !roomIds.includes(i.roomId))) return false;
+      if (onlyWithModel && !hasModel3dUrl(i.model3dUrl)) return false;
       return itemMatchesQuery(i, q);
     });
-  }, [items.data, q, areaId, roomIds]);
+  }, [items.data, q, areaId, roomIds, onlyWithModel]);
 
   const sorted = useMemo(() => {
     const rows = [...filtered];
@@ -215,6 +219,10 @@ export default function AllItems() {
             )}
           </div>
         </details>
+        <label className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          <input type="checkbox" checked={onlyWithModel} onChange={(e) => setOnlyWithModel(e.target.checked)} />
+          {MODEL3D_VIEW_COPY.filterHasModel}
+        </label>
         <div className="ml-auto flex gap-1 rounded-md border border-border p-0.5">
           <button className={cn("rounded p-1", view === "list" ? "bg-muted" : "text-muted-foreground")} onClick={() => setView("list")} title="List">
             <ListIcon className="h-3.5 w-3.5" />
@@ -272,7 +280,12 @@ export default function AllItems() {
                 </label>
                 <Link to={`/items/${it.id}`} className="group block rounded-lg border border-border bg-white p-2 hover:border-primary/50">
                   <Thumb storageKey={it.imageKey} size="lg" />
-                  <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">{it.name}</div>
+                  <div className="mt-1.5 truncate text-[13px] font-medium group-hover:text-primary">
+                    {it.name}
+                    {hasModel3dUrl(it.model3dUrl) && (
+                      <span className="ml-1.5 align-middle text-[10px] font-medium text-emerald-800 bg-emerald-100 rounded px-1.5">{MODEL3D_VIEW_COPY.hasModel}</span>
+                    )}
+                  </div>
                 </Link>
               </div>
             ))}
@@ -388,6 +401,9 @@ function ItemRowView({
         <Link to={`/items/${it.id}`} className="font-medium text-primary hover:underline">
           {it.name}
         </Link>
+        {hasModel3dUrl(it.model3dUrl) && (
+          <span className="ml-1.5 inline-block text-[10px] font-medium text-emerald-800 bg-emerald-100 rounded px-1.5">{MODEL3D_VIEW_COPY.hasModel}</span>
+        )}
         {it.verificationStatus === "detected" && (
           <span className="ml-1.5 inline-block text-[10px] font-medium text-amber-700 bg-amber-100 rounded px-1.5">needs review</span>
         )}

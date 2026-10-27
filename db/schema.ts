@@ -80,7 +80,7 @@ export const items = mysqlTable(
     decidedAt: timestamp("decidedAt"),
     // 3D model for the knolling/companion app. `auto` is resolved at read
     // time (favourites → Object Capture, else Meshy). url is /uploads/… or
-    // a .glb / .usdz / .js URL; never delete a Thing to clear it.
+    // a .glb / .gltf / .usdz / .js URL; never delete a Thing to clear it.
     model3dRoute: varchar("model3dRoute", { length: 16 }).$type<Model3dRoute>().notNull().default("auto"),
     model3dUrl: varchar("model3dUrl", { length: 512 }),
     model3dUpdatedAt: timestamp("model3dUpdatedAt"),

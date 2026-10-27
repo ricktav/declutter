@@ -36,7 +36,7 @@ export const MODEL3D_ROUTE_LABELS: Record<EffectiveModel3dRoute, string> = {
   capture: "Object Capture",
 };
 
-/** A stored path under /uploads, a local/ key, or an http(s) URL to a .glb / .usdz / .js module. */
+/** A stored path under /uploads, a local/ key, or an http(s) URL to a .glb / .gltf / .usdz / .js module. */
 export function parseModel3dUrl(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   const s = raw.trim();
@@ -45,8 +45,8 @@ export function parseModel3dUrl(raw: string | null | undefined): string | null {
   if (/\s/.test(s) || /[\u0000-\u001F]/.test(s)) throw new Error("model3dUrl must be a path or URL.");
   if (s.startsWith("/uploads/") || s.startsWith("local/")) return s;
   if (/^https?:\/\//i.test(s)) {
-    if (!/\.(glb|usdz|js)(\?|#|$)/i.test(s)) throw new Error("A remote model3dUrl must point at a .glb, .usdz or .js file.");
+    if (!/\.(glb|gltf|usdz|js)(\?|#|$)/i.test(s)) throw new Error("A remote model3dUrl must point at a .glb, .gltf, .usdz or .js file.");
     return s;
   }
-  throw new Error("model3dUrl must be /uploads/…, local/…, or an http(s) URL to a .glb / .usdz / .js file.");
+  throw new Error("model3dUrl must be /uploads/…, local/…, or an http(s) URL to a .glb / .gltf / .usdz / .js file.");
 }
