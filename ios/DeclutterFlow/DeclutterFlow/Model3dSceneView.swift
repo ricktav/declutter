@@ -56,7 +56,7 @@ struct Model3dSceneView: UIViewRepresentable {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 do {
                     let scene = try SCNScene(url: url, options: [
-                        .createNormalsIfAbsent: true,
+                        SCNSceneSource.LoadingOption.createNormalsIfAbsent: true,
                     ])
                     DispatchQueue.main.async {
                         guard let self, !self.cancelled else { return }
