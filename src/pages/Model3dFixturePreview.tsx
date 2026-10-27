@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { useSearchParams } from "react-router";
 import { MODEL3D_VIEW_COPY } from "@/lib/model3dView";
 
 const Model3dViewer = lazy(() => import("@/components/Model3dViewer"));
@@ -6,18 +7,37 @@ const Model3dViewer = lazy(() => import("@/components/Model3dViewer"));
 const CUBE = "/fixtures/model3d/cube.glb";
 const AGENT = "/fixtures/model3d/agent-cube.js";
 
+/** Same-origin path (`/fixtures/…`) or http(s). Used only on this dev page. */
+function fixtureQuerySrc(raw: string | null): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s || /\s/.test(s)) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("/") && !s.startsWith("//")) return s;
+  return null;
+}
+
 /**
  * Dev/test only. Renders the same lazy viewer the Thing page uses, against
  * the checked-in fixtures, so a test instance can try GLB + route-1 JS
- * without live inventory. Not linked from the sidebar.
+ * without live inventory. `?src=` adds one more viewer for a path or URL.
+ * Not linked from the sidebar.
  */
 export default function Model3dFixturePreview() {
+  const [params] = useSearchParams();
+  const querySrc = fixtureQuerySrc(params.get("src"));
   return (
     <div className="max-w-3xl mx-auto px-6 py-8 space-y-6">
       <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
         Fixture preview only — not inventory. Same viewer as the Thing detail page.
       </div>
       <h1 className="text-xl font-semibold tracking-tight">3D viewer fixtures</h1>
+      {querySrc && (
+        <section className="space-y-2">
+          <h2 className="micro-label text-muted-foreground break-all">src — {querySrc}</h2>
+          <Viewer src={querySrc} />
+        </section>
+      )}
       <section className="space-y-2">
         <h2 className="micro-label text-muted-foreground">GLB — {CUBE}</h2>
         <Viewer src={CUBE} />
