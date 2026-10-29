@@ -10,3 +10,4 @@ uploads/
 settings.json
 .certs/
 backups/
+/backup-*.sql
