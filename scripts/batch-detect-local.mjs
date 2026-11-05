@@ -19,6 +19,14 @@ const GENERIC_FALLBACK = [
   "air purifier", "video doorbell", "wireless charger", "decorative object",
   "dining chair", "dining table", "curtain", "cushion", "painting",
   "power strip", "tablet", "phone", "headphones", "speaker",
+  // desk / storage — the living-room list missed these on shelf and desk photos
+  "box", "storage box", "cardboard box", "plastic box",
+  "computer monitor", "monitor", "keyboard", "computer keyboard", "mouse",
+  "laptop", "book", "notebook", "bag", "backpack", "handbag",
+  "cable", "power cable", "usb cable", "bottle", "water bottle",
+  "shelf", "bookshelf", "desk", "drawer",
+  "hard drive", "external drive", "router", "printer",
+  "charger", "power adapter",
 ];
 
 async function withConcurrency(items, limit, fn) {
