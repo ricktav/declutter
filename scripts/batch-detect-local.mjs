@@ -3,6 +3,11 @@
 // this exercises api/lib/localDetector.ts and api/lib/claudeLabel.ts
 // directly against the real DB to produce a reviewable batch of
 // detected (unconfirmed) items.
+//
+// Default detector is OWLv2 (Xenova/owlv2-base-patch16-ensemble) at
+// threshold 0.30. The old OWL-ViT patch32 @ 0.12 path:
+//   LOCAL_DETECTOR_MODEL=owlvit node scripts/batch-detect-local.mjs
+//   node scripts/batch-detect-local.mjs --model owlvit
 import "dotenv/config";
 import { eq } from "drizzle-orm";
 import * as schema from "../db/schema.ts";
@@ -11,6 +16,20 @@ import { detectObjectsLocal } from "../api/lib/localDetector.ts";
 import { labelCropWithClaude } from "../api/lib/claudeLabel.ts";
 import { cropPercent } from "../api/lib/crop.ts";
 import { readFileBytes, putFile } from "../api/lib/filestore.ts";
+
+function argValue(flag) {
+  const i = process.argv.indexOf(flag);
+  if (i >= 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith("-")) return process.argv[i + 1];
+  return undefined;
+}
+
+const cliModel = argValue("--model");
+const cliThreshold = argValue("--threshold");
+const detectOpts = {
+  maxResults: 10,
+  ...(cliModel ? { model: cliModel } : {}),
+  ...(cliThreshold != null && Number.isFinite(Number(cliThreshold)) ? { threshold: Number(cliThreshold) } : {}),
+};
 
 const db = getDb();
 
@@ -65,7 +84,7 @@ async function main() {
     if (!cap.storageKey) continue;
     console.log(`--- capture #${cap.id} (${cap.storageKey}) ---`);
     const bytes = await readFileBytes(cap.storageKey);
-    const detections = await detectObjectsLocal(bytes, candidateLabels, { threshold: 0.12, maxResults: 10 });
+    const detections = await detectObjectsLocal(bytes, candidateLabels, detectOpts);
 
     const known = detections.filter((d) => itemByName.has(d.label));
     const unknown = detections.filter((d) => !itemByName.has(d.label));
@@ -111,7 +130,7 @@ async function main() {
         .values({
           areaId,
           name: d.claudeLabel,
-          description: "Detected locally (OWL-ViT) + labeled via claude -p, from a batch Telegram import",
+          description: "Detected locally + labeled via claude -p, from a batch Telegram import",
           verificationStatus: "detected",
         })
         .$returningId();
