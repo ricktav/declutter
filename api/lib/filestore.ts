@@ -12,6 +12,11 @@ import crypto from "crypto";
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 
+/** Directory putFile writes to: this process's ./uploads, not a fixed production path. */
+export function uploadsRoot(): string {
+  return UPLOAD_DIR;
+}
+
 function ensureDir() {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }

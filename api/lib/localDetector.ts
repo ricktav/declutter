@@ -172,6 +172,107 @@ export function mergeDetections(
   return kept;
 }
 
+function knownLabelSet(knownLabels?: Iterable<string>): Set<string> {
+  return new Set([...(knownLabels ?? [])].map((s) => s.trim().toLowerCase()).filter(Boolean));
+}
+
+function isKnownLabel(d: LocalDetection, known: Set<string>): boolean {
+  return known.has(d.label.trim().toLowerCase());
+}
+
+/**
+ * One box per known item name (highest score). Two "Mac mini" hits on the
+ * same photo would otherwise file two cutouts of the same Thing. Unknown
+ * labels are left alone — two non-overlapping "bottle" boxes can be two bottles.
+ */
+export function dedupeKnownDetections(
+  dets: LocalDetection[],
+  knownLabels?: Iterable<string>,
+): LocalDetection[] {
+  const known = knownLabelSet(knownLabels);
+  if (known.size === 0) return dets;
+  const best = new Map<string, LocalDetection>();
+  for (const d of dets) {
+    const key = d.label.trim().toLowerCase();
+    if (!known.has(key)) continue;
+    const prev = best.get(key);
+    if (!prev || d.score > prev.score) best.set(key, d);
+  }
+  // preserve original order: first time we see a known name, emit the winner
+  const emitted = new Set<string>();
+  const merged: LocalDetection[] = [];
+  for (const d of dets) {
+    const key = d.label.trim().toLowerCase();
+    if (!known.has(key)) {
+      merged.push(d);
+      continue;
+    }
+    if (emitted.has(key)) continue;
+    emitted.add(key);
+    merged.push(best.get(key)!);
+  }
+  return merged;
+}
+
+export function defaultFlorenceReserve(maxResults: number): number {
+  if (maxResults <= 0) return 0;
+  return Math.max(1, Math.floor(maxResults / 3));
+}
+
+/**
+ * Bounded output that still gives Florence novel boxes a seat. Known-name
+ * OWL hits stay first (they already won overlaps). Then Florence, then
+ * leftover generic OWL, up to maxResults. The reserve is a minimum for
+ * Florence when it found anything — unused slots go back to known/generic.
+ */
+export function selectBoundedDetections(
+  dets: LocalDetection[],
+  opts: { maxResults?: number; knownLabels?: Iterable<string>; florenceReserve?: number } = {},
+): LocalDetection[] {
+  const maxResults = opts.maxResults ?? 15;
+  if (maxResults <= 0) return [];
+  const known = knownLabelSet(opts.knownLabels);
+  const knownHits: LocalDetection[] = [];
+  const florenceHits: LocalDetection[] = [];
+  const otherHits: LocalDetection[] = [];
+  for (const d of dets) {
+    if (isKnownLabel(d, known)) knownHits.push(d);
+    else if (d.source === "florence") florenceHits.push(d);
+    else otherHits.push(d);
+  }
+  const minF = Math.min(
+    opts.florenceReserve ?? defaultFlorenceReserve(maxResults),
+    florenceHits.length,
+    maxResults,
+  );
+  const takenKnown = knownHits.slice(0, maxResults - minF);
+  const takenFlorence = florenceHits.slice(0, maxResults - takenKnown.length);
+  const takenOther = otherHits.slice(0, maxResults - takenKnown.length - takenFlorence.length);
+  return [...takenKnown, ...takenFlorence, ...takenOther];
+}
+
+/** Merge → one box per known name → bounded list with a Florence seat. */
+export function finalizeDetections(
+  owl: LocalDetection[],
+  florence: LocalDetection[],
+  opts: {
+    preferLabels?: Iterable<string>;
+    knownLabels?: Iterable<string>;
+    maxResults?: number;
+    florenceReserve?: number;
+    iouThresh?: number;
+  } = {},
+): LocalDetection[] {
+  const knownLabels = opts.knownLabels ?? opts.preferLabels;
+  const merged = mergeDetections(owl, florence, { preferLabels: knownLabels, iouThresh: opts.iouThresh });
+  const deduped = dedupeKnownDetections(merged, knownLabels);
+  return selectBoundedDetections(deduped, {
+    maxResults: opts.maxResults,
+    knownLabels,
+    florenceReserve: opts.florenceReserve,
+  });
+}
+
 /**
  * Detect objects matching any of `candidateLabels` (zero-shot text prompts -
  * pass real item names to get correctly-identified, tightly-boxed results
@@ -314,6 +415,7 @@ export type DetectSceneOpts = {
   model?: string;
   florence?: boolean;
   knownLabels?: Iterable<string>;
+  florenceReserve?: number;
 };
 
 /**
@@ -335,5 +437,9 @@ export async function detectSceneLocal(
   const florence = isFlorenceEnabled(opts)
     ? await detectObjectsFlorence(imageBytes, { maxResults: 100 })
     : [];
-  return mergeDetections(owl, florence, { preferLabels: opts.knownLabels }).slice(0, cap);
+  return finalizeDetections(owl, florence, {
+    knownLabels: opts.knownLabels,
+    maxResults: cap,
+    florenceReserve: opts.florenceReserve,
+  });
 }
