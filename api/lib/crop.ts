@@ -16,6 +16,26 @@ export async function normalizeOrientation(input: Uint8Array): Promise<Buffer> {
 }
 
 /**
+ * Image bytes sent to a vision model that must return percent boxes.
+ * Same upright frame as the browser (and FramedRoomPhoto): EXIF is baked in,
+ * then the long edge is capped so the provider does not rescale a 4000px
+ * phone photo in an unknown way. Percentages stay resolution-independent.
+ */
+export const DETECT_VISION_MAX_EDGE = 1568;
+
+export async function forDetectVision(input: Uint8Array, maxEdge = DETECT_VISION_MAX_EDGE): Promise<Buffer> {
+  const upright = await normalizeOrientation(input);
+  const meta = await sharp(upright).metadata();
+  const w = meta.width ?? 1;
+  const h = meta.height ?? 1;
+  let pipeline = sharp(upright);
+  if (Math.max(w, h) > maxEdge) {
+    pipeline = pipeline.resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true });
+  }
+  return pipeline.jpeg({ quality: 90 }).toBuffer();
+}
+
+/**
  * Cut a region out of an image. Box is expressed in percentages of the
  * ORIGINAL image (xPct/yPct = center, wPct/hPct = size), so a snap and its
  * cutouts stay in sync however the image is displayed.

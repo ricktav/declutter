@@ -9,7 +9,8 @@ import { pinItemSummary, roomWithDescendants, withPinItems } from "../lib/pins";
 import { photoScope, promptInventory } from "../lib/aiContext";
 import { nameScore } from "../lib/text";
 import { readFileBytes } from "../lib/filestore";
-import { toThumbnail, cropPercent, normalizeOrientation } from "../lib/crop";
+import { toThumbnail, cropPercent, forDetectVision } from "../lib/crop";
+import { DETECT_BOX_INSTRUCTIONS, normalizeDetectBox } from "../lib/detectMatch";
 import { getDetectVisionModel } from "../lib/ai";
 import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
@@ -20,10 +21,10 @@ const detectSchema = z.object({
   objects: z.array(
     z.object({
       label: z.string().describe("short name of the detected object"),
-      xPct: z.number().min(0).max(100).describe("horizontal center, 0-100% of image width"),
-      yPct: z.number().min(0).max(100).describe("vertical center, 0-100% of image height"),
-      wPct: z.number().min(0).max(100).optional().describe("width of the bounding box, 0-100% of image width"),
-      hPct: z.number().min(0).max(100).optional().describe("height of the bounding box, 0-100% of image height"),
+      xPct: z.number().describe("box CENTER x, 0-100% of image width — not the top-left"),
+      yPct: z.number().describe("box CENTER y, 0-100% of image height — not the top-left"),
+      wPct: z.number().optional().describe("width of the bounding box, 0-100% of image width"),
+      hPct: z.number().optional().describe("height of the bounding box, 0-100% of image height"),
       matchedItemId: z
         .number()
         .nullable()
@@ -266,10 +267,9 @@ export const pinsRouter = createRouter({
       }
 
       try {
-        // normalized: the model's xPct/yPct/wPct/hPct must be computed
-        // against the same upright frame the browser displays, or every
-        // returned box ends up offset/rotated relative to the real objects
-        const bytes = await normalizeOrientation(await readFileBytes(att.storageKey));
+        // upright + capped: same frame FramedRoomPhoto displays (browser EXIF)
+        // so returned xPct/yPct/wPct/hPct overlay the real objects
+        const bytes = await forDetectVision(await readFileBytes(att.storageKey));
         const allItems = await promptInventory(db, await photoScope(db, att, ctx.houseId));
 
         const refContent = await buildReferenceContent(db, allItems, MAX_REFERENCE_PHOTOS);
@@ -285,7 +285,7 @@ export const pinsRouter = createRouter({
                 ...refContent,
                 {
                   type: "text",
-                  text: `Identify the distinct physical objects worth inventorying in the PHOTO BELOW (devices, tools, containers, appliances, furniture — NOT wall, floor, ceiling, windows, or other background). List up to 15 of the most significant objects. Do not pad the list with duplicates, parts of already-listed objects, or background — fewer accurate objects is better than many vague ones.\n\nFor each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height.\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}The user's existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}\n\nPHOTO TO ANALYZE:`,
+                  text: `Identify the distinct physical objects worth inventorying in the PHOTO BELOW (devices, tools, containers, appliances, furniture — NOT wall, floor, ceiling, windows, or other background). List up to 15 of the most significant objects. Do not pad the list with duplicates, parts of already-listed objects, or background — fewer accurate objects is better than many vague ones.\n\n${DETECT_BOX_INSTRUCTIONS}\n\n${refContent.length ? "Some existing items' reference photos were shown above this message. If an object in the photo below is the SAME PHYSICAL OBJECT as one of those reference photos, set matchedItemId to its id — only if you actually recognize it visually, not from the name alone.\n\n" : ""}The user's existing inventory (for name-based context only, not all of these have a reference photo):\n${allItems.map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}\n\nPHOTO TO ANALYZE:`,
                 },
                 { type: "image", image: bytes },
               ],
@@ -297,6 +297,8 @@ export const pinsRouter = createRouter({
         let created = 0;
         let matched = 0;
         for (const obj of object.objects.slice(0, 30)) {
+          const box = normalizeDetectBox(obj);
+          if (!box) continue;
           let itemId: number | null = obj.matchedItemId != null && itemById.has(obj.matchedItemId) ? obj.matchedItemId : null;
           if (itemId) {
             matched++;
@@ -314,10 +316,10 @@ export const pinsRouter = createRouter({
           }
           await db.insert(photoPins).values({
             photoId: input.photoId,
-            xPct: obj.xPct,
-            yPct: obj.yPct,
-            wPct: obj.wPct ?? null,
-            hPct: obj.hPct ?? null,
+            xPct: box.xPct,
+            yPct: box.yPct,
+            wPct: box.wPct,
+            hPct: box.hPct,
             label: obj.label,
             itemId,
             origin: "ai",
