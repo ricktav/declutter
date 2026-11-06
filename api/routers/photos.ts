@@ -7,7 +7,7 @@ import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
-import { captures, items, photoPins, photos, type PhotoCamera } from "@db/schema";
+import { captures, items, photoPins, photos, ITEM_DECISIONS, type PhotoCamera } from "@db/schema";
 import { urlForKey, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
@@ -30,6 +30,7 @@ import {
   unlinkPhoto,
 } from "../lib/photos";
 import { roomPhotosFor } from "../lib/placement";
+import { fileFrame } from "../lib/fileFrame";
 
 const cropBoxInput = z.object({
   xPct: z.number().min(0).max(100),
@@ -221,6 +222,32 @@ export const photosRouter = createRouter({
       }),
     )
     .mutation(({ input }) => createCutoutFor(getDb(), input)),
+
+  /** A frame on a photo becomes a Thing in one call (Workbench: Focus,
+   * Annotate): the Thing (new when itemId is null, then itemName is
+   * required), its Decision and a confirmed pin (pinId links an existing
+   * pin, else one is ensured) in one transaction; then, best-effort, a
+   * cutout of the frame. cutoutError reports a failed crop without rolling
+   * back the Thing. suggestLinks defaults to false. */
+  fileFrame: procedure
+    .input(
+      z.object({
+        sourcePhotoId: z.number(),
+        box: cropBoxInput,
+        itemId: z.number().nullable(),
+        itemName: z.string().max(255).optional(),
+        description: z.string().optional(),
+        areaId: z.number().optional(),
+        roomId: z.number().nullable().optional(),
+        houseId: z.number().nullable().optional(),
+        pinId: z.number().optional(),
+        label: z.string().optional(),
+        decision: z.enum(ITEM_DECISIONS).nullable().optional(),
+        suggestLinks: z.boolean().optional(),
+        photoSize: z.enum(["small", "medium", "big"]).optional(),
+      }),
+    )
+    .mutation(({ input, ctx }) => fileFrame(getDb(), ctx.houseId, input)),
 
   listAll: procedure.query(() => listPhotoCatalog(getDb())),
 
