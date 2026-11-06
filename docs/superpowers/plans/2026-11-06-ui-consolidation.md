@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove the duplicate paths the 2026-11-06 modal/viewer review found in the Workbench (batched photo URLs with server-side size for the three grids, one capture→Photo promotion, one atomic frame→Thing call, one crop dialog, one Place picker), then the measured performance smells, then two functional gaps, without touching `src/flow/` or any contract in `AGENTS.md` §2.
+**Goal:** Remove the duplicate paths the 2026-11-06 modal/viewer review found in the Workbench (batched photo URLs with server-side size for the three grids, one capture→Photo promotion, one atomic frame→Thing call, one crop dialog, one Place picker), then the measured performance smells, then two functional gaps. Do not edit `flow/` or `src/flow/`. Do not remove or rename a contract already listed in `AGENTS.md` §2. The tasks do add three, and each task records the new line in §2: `photos.fileFrame` (Task 4), `pins.forItemPhotos` (Task 7), and an optional `roomId` on `inbox.create` (Task 12).
 
-**Checked by:** `docs/consolidation-plan-check.md` (PR #53, 2026-11-06): all findings confirmed on `2ac71b8`; its nine amendments are folded in below (Task 3 file list, Task 4 input, Task 7 scope, Task 12 test, `AGENTS.md` steps, PR sequencing, out-of-scope list). It cites `docs/repo-review.md` and `docs/pr-audit.md`, which are not in the repo; ignore those references.
+**Checked by:** `docs/consolidation-plan-check.md` (PR #53, 2026-11-06): all findings confirmed on `2ac71b8`; its nine amendments are folded in below (Task 3 file list, Task 4 input, Task 7 scope, Task 12 test, `AGENTS.md` steps, out-of-scope list). The check's note about pull-request order is obsolete. #22, #29, #54 and #55 are on `main`. #23 and #5 are closed, not merged. Follow the pull-request section below. It cites `docs/repo-review.md` and `docs/pr-audit.md`, which are not in the repo; ignore those references.
 
 **Architecture:** Server first where the server already has the better path (`photos.urls`, `inbox.acceptMany`-style transactions), then a small set of shared hooks/components in `src/hooks` and `src/components` that the pages call. Every task ends with `npm run check`; API tasks add a vitest in `api/test/`; pure helpers in `src/lib` get vitest tests too (Task 1 wires that up). New tRPC procedures are added, never renamed.
 
@@ -34,7 +34,7 @@
 
 ## Findings (spec) and how to verify them
 
-Run from `/Volumes/T7/declutter` on `main` ≥ `594f63a`.
+Run from the worktree on `origin/main` at `e75d045` (includes #22, #54 and #55). The counts below were checked on that commit.
 
 | # | Finding | Verify | Expected |
 |---|---|---|---|
@@ -49,15 +49,16 @@ Run from `/Volumes/T7/declutter` on `main` ≥ `594f63a`.
 | P4 | `Model3dViewer` recreates the renderer per `src` | `grep -n "}, \[src\]);" src/components/Model3dViewer.tsx` | line 160 |
 | P5 | `ItemRoomPreview` renders itself inside its own overlay (second `rooms.get`) | `grep -n "<ItemRoomPreview" src/components/ItemRoomPreview.tsx` | 1 hit (self) |
 | G1 | The Workbench item page has no Decision control | `grep -c "setDecision" src/pages/ItemDetail.tsx` | `0` |
-| G2 | A snap's Place is only remembered client-side (Flow `localStorage`); `inbox.create` takes no `roomId` | `grep -n "roomId" api/routers/inbox.ts \| sed -n '1,3p'` and lines 384-412 | no `roomId` in `create`'s input |
+| G2 | A snap's Place is only remembered client-side (Flow `localStorage`); `inbox.create` takes no `roomId` | `grep -n "roomId" api/routers/inbox.ts \| sed -n '1,3p'` and lines 385-412 | no `roomId` in `create`'s input |
 
-Not in this plan (needs its own brainstorm): linking a photo pin to a plan position (`items.pos` ↔ `photo_pins`); Flow-owned items (`src/flow` Sheet, ZoomViewer, client queue rules, `attachments.url`). Still-open leftovers from the 5 Oct review that this plan does not touch and that should not be forgotten: close draft PR #5 (the 4 Oct iOS app), fix the README route table's `/snap` row, add a `.github/` workflow that runs `npm run check` and `npm test`.
+Not in this plan (needs its own brainstorm): linking a photo pin to a plan position (`items.pos` ↔ `photo_pins`); Flow-owned items (`src/flow` Sheet, ZoomViewer, client queue rules, `attachments.url`). Leftovers from the 5 Oct review that this plan still does not touch: the README route table's `/snap` row, and a `.github/` workflow that runs `npm run check` and `npm test`. Draft PR #5 (the 4 Oct iOS app) is already closed, not merged. Do not merge it, and do not treat closing it as remaining work.
 
-**Open pull requests and this plan** (from the check; state as of `439b37d`, 2026-11-06 evening):
-- **#22** landed on `main` as `c8b15ab` ("Name Focus hand-drawn frames with claude -p after create"; PR closed). `src/pages/Focus.tsx` and `api/routers/pins.ts` moved: **re-run the Findings greps and re-read `Focus.tsx` (`admit`) before Tasks 1 and 4.** `pins.labelWithClaude` stays a draw-time naming step: do not fold it into `fileFrame`, do not delete it when `admit` is rewritten.
-- **#54** landed (`439b37d`): `normalizeDetectBox` / `forDetectVision` in `api/lib/detectMatch.ts` + `crop.ts`, used by `pins.detect` and `inbox.detectObjects`; `AGENTS.md` §2 has a "Detect boxes" line. Nothing left to port from #23.
-- **#29** merged (`dbab631`, `15a62c2`): independent files.
-- **#23** and **#5** closed on 2026-11-06 (branches kept).
+**Pull requests and this plan** (no open pull requests; `origin/main` is `e75d045`, 2026-11-06):
+- **#22** is on `main` as `c8b15ab` ("Name Focus hand-drawn frames with claude -p after create"). The Focus and pins line numbers in the tasks below are already the ones on that `main`. `pins.labelWithClaude` stays a draw-time naming step: do not fold it into `fileFrame`, do not delete it when `admit` is rewritten.
+- **#54** is on `main` (`439b37d`): `normalizeDetectBox` / `forDetectVision` in `api/lib/detectMatch.ts` + `crop.ts`, used by `pins.detect` and `inbox.detectObjects`; `AGENTS.md` §2 has a "Detect boxes" line. Nothing left to port. Do not bring in #23's house loader.
+- **#55** is on `main` (`71a79e1`): iOS Sort only. An existing Thing goes to `inbox.acceptMany` with its `itemId`; a new name stays `itemId: null`. This plan does not edit `ios/`. Do not revert #55. Task 12 is `inbox.create`'s optional `roomId`, not `acceptMany`.
+- **#29** is on `main` (`dbab631`, `15a62c2`): independent files.
+- **#23** and **#5** were closed on 2026-11-06, not merged (branches kept). Do not merge either of them.
 
 ## File Structure
 
@@ -74,7 +75,7 @@ Create:
 - `api/lib/fileFrame.ts` — `fileFrame` transaction. `api/test/photos-fileFrame.test.ts`
 - `api/test/pins-forItemPhotos.test.ts`, `api/test/inbox-create-room.test.ts`
 
-Modify (exact ranges are as of `594f63a`; re-check after #22 lands): `vitest.config.ts`; `AGENTS.md` §2 (three contract lines, one per new procedure/input: Tasks 4, 7, 12); `api/routers/photos.ts` (add `fileFrame`; extract `createCutout` body); `api/routers/pins.ts` (add `forItemPhotos`); `api/routers/inbox.ts:384-412` (`create` gains `roomId`); `src/components/ui/dialog.tsx` (`size="full"`); `RoomSchema.tsx`, `ItemPinSchematics.tsx`, `RoomPhotoPool.tsx`, `RoomPhotoCard.tsx`, `AttachPhotoDialog.tsx`, `PhotoPlaceDialog.tsx`, `ChooseFromLibraryDialog.tsx`, `RecropDialog.tsx`, `PhotoCropZoom.tsx`, `DetectObjects.tsx`, `RoomPlan2D.tsx`, `RoomPlan3D.tsx`, `Model3dViewer.tsx`, `ItemRoomPreview.tsx`; `src/pages/Annotate.tsx`, `Focus.tsx`, `ItemDetail.tsx`, `AllItems.tsx`, `Inbox.tsx`, `Photos.tsx`.
+Modify (ranges on `origin/main` at `e75d045`): `vitest.config.ts`; `AGENTS.md` §2 (three added lines, one per new procedure/input: Tasks 4, 7, 12 — existing contracts stay); `api/routers/photos.ts` (add `fileFrame`; extract `createCutout` body); `api/routers/pins.ts` (add `forItemPhotos`; `add` is 138–150); `api/routers/inbox.ts:385-412` (`create` gains optional `roomId`; `assignPlace` to factor is 1068–1120); `src/components/ui/dialog.tsx` (`size="full"`); `RoomSchema.tsx`, `ItemPinSchematics.tsx`, `RoomPhotoPool.tsx`, `RoomPhotoCard.tsx`, `AttachPhotoDialog.tsx`, `PhotoPlaceDialog.tsx`, `ChooseFromLibraryDialog.tsx`, `RecropDialog.tsx`, `PhotoCropZoom.tsx`, `DetectObjects.tsx`, `RoomPlan2D.tsx`, `RoomPlan3D.tsx`, `Model3dViewer.tsx`, `ItemRoomPreview.tsx`; `src/pages/Annotate.tsx`, `Focus.tsx`, `ItemDetail.tsx`, `AllItems.tsx`, `Inbox.tsx`, `Photos.tsx`.
 
 ---
 
@@ -117,7 +118,7 @@ describe("boxesEqual", () => {
 - [ ] **Step 3: Run it to verify it fails**: `npx vitest run src/lib/cropBox.test.ts` → FAIL "Cannot find module './cropBox'".
 - [ ] **Step 4: Implement `src/lib/cropBox.ts`** with the four exports above.
 - [ ] **Step 5: Run it to verify it passes**: same command → PASS (3 tests).
-- [ ] **Step 6: Replace the five local `type CropBox = {...}` declarations with `import type { CropBox } from "@/lib/cropBox"`**, and in `PhotoCropZoom.tsx` delete its local `DEFAULT_BOX` / `boxesEqual` in favour of the imports. In `Annotate.tsx` and `Focus.tsx` replace every `left: \`${x.xPct - x.wPct / 2}%\`` style block (Annotate lines ≈938, 1027, 1111; Focus ≈125, 663) with `const r = frameRect(box)` and `left: \`${r.left}%\`, top: \`${r.top}%\`, width: \`${r.width}%\`, height: \`${r.height}%\`` (keep Annotate's `calc(... - TOOLBAR_PAD)` on top/height where present).
+- [ ] **Step 6: Replace the five local `type CropBox = {...}` declarations with `import type { CropBox } from "@/lib/cropBox"`**, and in `PhotoCropZoom.tsx` delete its local `DEFAULT_BOX` / `boxesEqual` in favour of the imports. In `Annotate.tsx` and `Focus.tsx` replace every `left: \`${x.xPct - x.wPct / 2}%\`` style block (Annotate lines 938, 1027, 1111; Focus 129 and 722) with `const r = frameRect(box)` and `left: \`${r.left}%\`, top: \`${r.top}%\`, width: \`${r.width}%\`, height: \`${r.height}%\`` (keep Annotate's `calc(... - TOOLBAR_PAD)` on top/height where present).
 - [ ] **Step 7: Verify**: `grep -rn "type CropBox = {" src | wc -l` → `0`; `npm run check` → exit 0.
 - [ ] **Step 8: Commit** — `git add vitest.config.ts src/lib/cropBox.ts src/lib/cropBox.test.ts src/components src/pages && git commit -m "One CropBox type and frameRect helper; vitest also runs src/lib tests"`.
 
@@ -175,7 +176,7 @@ describe("chunkKeys", () => {
 - [ ] **Step 1: Implement the hook file** with the four exports.
 - [ ] **Step 2: AttachPhotoDialog** — `export type AttachTarget = PhotoTarget` (keeps `Photos.tsx:657` compiling); `key={photoTargetKey(target)}`; in `run` replace the `ensure` mutation + `photoId` state with `const id = await resolve(target)`; replace the invalidation block (lines 73-78) with `invalidatePhotoChange(utils, { itemIds: [t.id, ...(fromItemId != null ? [fromItemId] : [])] })`.
 - [ ] **Step 3: PhotoPlaceDialog** — the capture variant of `PlaceTarget` becomes `Extract<PhotoTarget, { source: "capture" }>`; `invalidatePhotoPlace` keeps its name and signature (Inbox:1351 calls it) but its body becomes `invalidatePhotoChange(utils)`; the `ensure` mutation becomes `resolve(target, roomId)`.
-- [ ] **Step 4: ChooseFromLibraryDialog, RecropDialog, PhotoCropZoom, RoomPhotoCard, Inbox:175/326/332, Photos:100/105/111** — same substitution: `resolve({ source: "capture", captureId }, roomId?)` where `ensureForCapture.mutateAsync` was; `invalidatePhotoChange(utils, …)` where ad-hoc lists were (Recrop/PhotoCropZoom pass `{ photoId }`). Keep every `setLastRoomId(...)` call and every `navigate(\`/annotate/${photoId}?roomId=…\`)` that follows a success today: Annotate still reads `?roomId=` (`confirmedRoomId = photoRoomId ?? roomIdFromUrl`).
+- [ ] **Step 4: ChooseFromLibraryDialog, RecropDialog, PhotoCropZoom, RoomPhotoCard, Inbox:175/326/332, Photos:100/105/111** — same substitution: `resolve({ source: "capture", captureId }, roomId?)` where `ensureForCapture.mutateAsync` was; `invalidatePhotoChange(utils, …)` where ad-hoc lists were (Recrop/PhotoCropZoom pass `{ photoId }`). Keep every `setLastRoomId(...)` call and every `navigate(\`/annotate/${photoId}?roomId=…\`)` that follows a success today: Annotate still reads `?roomId=` (`confirmedRoomId = photoRoomId ?? roomIdFromUrl`, line 179). Task 6 later drops `?roomId=` on the Inbox "Where was this taken?" dialog only, after `resolve` has written the photo's room, and that step still calls `setLastRoomId(roomId)`.
 - [ ] **Step 5: Verify**: `grep -rn "ensureForCapture.useMutation" src --include=*.tsx | grep -v src/flow` → exactly one hit, in `src/hooks/use-photo-from-target.ts`; `grep -rn "source: \"capture\"; captureId: number }" src | wc -l` → `1`; `npm run check` → 0. In the dev server: Photos → "Attach to Thing" on an inbox image, then "Place" on the same image: the second dialog must reuse the Photo (DB: one `photos` row for that capture).
 - [ ] **Step 6: Commit** — `"usePhotoFromTarget: one capture→Photo promotion and one invalidation set"`.
 
@@ -183,7 +184,7 @@ describe("chunkKeys", () => {
 
 **Files:**
 - Create: `api/lib/fileFrame.ts`, `api/test/photos-fileFrame.test.ts`
-- Modify: `api/routers/photos.ts:222-298` (extract body into `api/lib/photos.ts` as `createCutoutFor`), `api/routers/photos.ts` (add `fileFrame`), `src/pages/Annotate.tsx:296-311`, `src/pages/Focus.tsx:244-262`
+- Modify: `api/routers/photos.ts:222-298` (extract body into `api/lib/photos.ts` as `createCutoutFor`), `api/routers/photos.ts` (add `fileFrame`), `src/pages/Annotate.tsx:296-311`, `src/pages/Focus.tsx:252-281` (`admit`; `items.create` is 245, `createCutout` is 249, `setLastRoomId` inside `admit` is 278, `saveExisting` has its own at 300, the name-fill effect is 231–234, `labelWithClaude` is 525)
 
 **Interfaces:**
 - Produces (lib): `export async function createCutoutFor(db: Db, input: { itemId: number; sourcePhotoId: number; box: CropBox; photoSize: "small" | "medium" | "big" }): Promise<{ id: number; storageKey: string; created: boolean }>` — the current `createCutout` body, unchanged behaviour (dedupe per capture, `ensurePinForCutout`).
@@ -225,12 +226,12 @@ it("(e) a second frame for the same Thing on the same capture reuses the cutout"
 });
 ```
 
-(Adjust `pins.add`'s exact input to `api/routers/pins.ts:131`; `box` is the (a) box.)
+(`pins.add`'s input is `api/routers/pins.ts` 138–150: `photoId`, `xPct`, `yPct`, `wPct`, `hPct`, `label`. The snippet already matches. `listForItem` is 125, so do not start at 131. `box` is the (a) box.)
 
 - [ ] **Step 3: Run to verify they fail**: `npx vitest run api/test/photos-fileFrame.test.ts` → FAIL "fileFrame is not a function".
 - [ ] **Step 4: Implement `api/lib/fileFrame.ts` and the router procedure.**
 - [ ] **Step 5: Run to verify they pass** → PASS (5). Then `npm test` → all green.
-- [ ] **Step 6: Focus `admit`** (`src/pages/Focus.tsx`, `admit` — ≈244-262 on `594f63a`, re-read after #22): when `pin` is set, replace `create` + `pinUpdate` + `cutout` + `setDecision` with one `fileFrame.mutateAsync({ sourcePhotoId: photoId, box: boxOf(pin), itemId: null, itemName: trimmed, description: note.trim() || undefined, areaId, roomId: placeHere ? roomId : null, pinId: pin.id, label: trimmed, decision: draftDecision ?? null })` (`suggestLinks` omitted = false, as today); keep the existing `items.create` path when there is no pin, keep `if (placeHere && roomId != null) setLastRoomId(roomId)`, and leave #22's `labelWithClaude` call where it is. Delete the now-unused `cutout` and `pinUpdate` mutations if nothing else uses them.
+- [ ] **Step 6: Focus `admit`** (`src/pages/Focus.tsx` 252–281): when `pin` is set, replace `create` + `pinUpdate` + `cutout` + `setDecision` with one `fileFrame.mutateAsync({ sourcePhotoId: photoId, box: boxOf(pin), itemId: null, itemName: trimmed, description: note.trim() || undefined, areaId, roomId: placeHere ? roomId : null, pinId: pin.id, label: trimmed, decision: draftDecision ?? null })` (`suggestLinks` omitted = false, as today); keep the existing `items.create` path when there is no pin, keep `if (placeHere && roomId != null) setLastRoomId(roomId)` (line 278 in `admit`; leave the `saveExisting` copy at 300), and leave `labelWithClaude` (line 525) where it is. Delete the now-unused `cutout` and `pinUpdate` mutations if nothing else uses them.
 - [ ] **Step 7: Annotate**: in `savePending` (`createItem.mutateAsync` at ≈line 669, then `ensureItemPhoto` / pin update), call `photos.fileFrame({ sourcePhotoId: attId, box, itemId: null, itemName, areaId, roomId, suggestLinks: true })` instead (Annotate keeps its link suggestions) and invalidate with `invalidatePin(res.pinId, res.itemId)`. Existing-Thing pins (`pins.add` with `onePerThing`) stay as they are.
 - [ ] **Step 7b: `AGENTS.md` §2** — add one line after the `photos.*` list: `photos.fileFrame` (input as above; Workbench only; a frame becomes a Thing, a confirmed pin and, best-effort, a cutout; `cutoutError` reports a failed crop without rolling back the Thing).
 - [ ] **Step 8: Verify**: `grep -n "createCutout.useMutation" src/pages/Focus.tsx` → none; `npm run check` → 0. In the dev server: Focus → frame → name → Save: one row each in `items`, `photo_pins`, `photos` (cropBox set).
@@ -259,7 +260,7 @@ it("(e) a second frame for the same Thing on the same capture reuses the cutout"
 
 **Files:**
 - Create: `src/components/PlacePickerDialog.tsx`
-- Modify: `src/pages/ItemDetail.tsx:1324-1395` (Pick Place), `src/pages/AllItems.tsx:336-351` (Move N Things), `src/pages/Inbox.tsx:392-430` ("Where was this taken?")
+- Modify: `src/pages/ItemDetail.tsx:1324-1395` (Pick Place), `src/pages/AllItems.tsx:336-351` (Move N Things), `src/pages/Inbox.tsx:326-333` (`PinPendingButton` success: keep `setLastRoomId`) and `392-420` ("Where was this taken?")
 
 **Interfaces:**
 - Produces: `PlacePickerDialog({ open, title, description, houseId, roomId, allowNone, confirmLabel, busy, error, onPick, onClose }: { open: boolean; title: string; description?: string; houseId: number | null; roomId: number | null; allowNone?: boolean; confirmLabel: string; busy?: boolean; error?: string | null; onPick: (sel: { houseId: number | null; roomId: number | null }) => void; onClose: () => void })` — `Dialog` + `HouseRoomFields` (`lockToSession` true) + Cancel/confirm row. The caller owns the mutation.
@@ -268,7 +269,7 @@ it("(e) a second frame for the same Thing on the same capture reuses the cutout"
 - [ ] **Step 1: Implement the component.**
 - [ ] **Step 2: ItemDetail** — the Pick Place dialog calls `update.mutate({ id: itemId, roomId, houseId })` from `onPick` (keep its auto-save-on-pick behaviour by calling `onPick` in `HouseRoomFields.onRoom`? No: keep one explicit confirm button, label "Set Place"; the auto-save was the inconsistency).
 - [ ] **Step 3: AllItems** — Move N Things: `onPick` → `updateMany.mutate({ ids, roomId, houseId })`, label "Move".
-- [ ] **Step 4: Inbox** — "Where was this taken?": `onPick` → `resolve({ source: "capture", captureId }, roomId)` (Task 3) then navigate to `/annotate/:photoId`, label "Continue to pin".
+- [ ] **Step 4: Inbox** — "Where was this taken?" (`PinPendingButton`; dialog `src/pages/Inbox.tsx` 392–420, title 395, `RoomPicker` 400, "Continue to pin" 408). Today the unplaced success handler is 326–329: `setLastRoomId(roomId)` then `navigate(/annotate/${photoId}?roomId=…)`. After this task, `onPick` calls `resolve({ source: "capture", captureId }, roomId)` (Task 3), then **still** `setLastRoomId(roomId)`, then navigates to `/annotate/${photoId}` with no `?roomId=`. Dropping the query is fine once `resolve` has written the photo's room (Annotate 179: `confirmedRoomId = photoRoomId ?? roomIdFromUrl`). Do not drop `setLastRoomId`. Label stays "Continue to pin". The already-placed Pin button (332–333) is unchanged.
 - [ ] **Step 5: Verify**: `grep -n "<RoomPicker" src/pages/ItemDetail.tsx src/pages/AllItems.tsx src/pages/Inbox.tsx` → 0 hits; `npm run check` → 0. Dev server: each of the three flows sets the room (check `items.roomId` / photo room in the UI).
 - [ ] **Step 6: Commit** — `"PlacePickerDialog: one dialog to pick a Place in ItemDetail, AllItems and Inbox"`.
 
@@ -336,12 +337,12 @@ it("(e) a second frame for the same Thing on the same capture reuses the cutout"
 ### Task 12: `inbox.create` remembers where the snap was taken
 
 **Files:**
-- Modify: `api/routers/inbox.ts:384-412`
+- Modify: `api/routers/inbox.ts:385-412` (`create`; input 387–396 has no `roomId` yet; `maybeAutoTriage` is 410)
 - Test: `api/test/inbox-create-room.test.ts`
 - Modify: `src/components/CaptureBar.tsx:32` (pass `roomId` from `useLastRoom()` when the Workbench has one)
 
 **Interfaces:**
-- `inbox.create` input gains `roomId: z.number().nullable().optional()`. When set and `kind === "image"` with a `storageKey`: after `createCapture` and **before `maybeAutoTriage`** (so triage never runs on an unplaced snap), run the same code `inbox.assignPlace` runs for `{ ids: [row.id], roomId }` — factor `inbox.ts:1061-1100` into `api/lib/captures.ts` `assignCapturePlace(db, ids: number[], sel: { houseId?: number | null; roomId?: number | null }): Promise<{ count: number }>` and call it from both — so the capture's location Photo exists in that room, `captures.houseId` is that room's house ("room wins and sets the house"; `assignPlace` does not read `ctx.houseId` and neither does this), and `inbox.list` rows carry `photoRoomId`. For `note`/`link`/`file`/`scan` kinds `roomId` is ignored (a note has no location Photo; do not rewrite its house or log `placed`). Output unchanged. Flow and iOS send no `roomId` and see no change; they keep their local place until the Flow owner picks up decision A3 (16 Oct).
+- `inbox.create` input gains `roomId: z.number().nullable().optional()`. When set and `kind === "image"` with a `storageKey`: after `createCapture` and **before `maybeAutoTriage`** (so triage never runs on an unplaced snap), run the same code `inbox.assignPlace` runs for `{ ids: [row.id], roomId }` — factor `inbox.assignPlace` (`api/routers/inbox.ts` 1068–1120; "Place not found." at 1082, the `captures.houseId` write at 1107, the `placed` event at 1108–1116) into `api/lib/captures.ts` `assignCapturePlace(db, ids: number[], sel: { houseId?: number | null; roomId?: number | null }): Promise<{ count: number }>` and call it from both — so the capture's location Photo exists in that room, `captures.houseId` is that room's house ("room wins and sets the house"; `assignPlace` does not read `ctx.houseId` and neither does this), and `inbox.list` rows carry `photoRoomId`. Do not start the extract at 1061: that line is still inside `restore`, and 1061–1100 stops before the house update and the event. For `note`/`link`/`file`/`scan`/`voice` kinds `roomId` is ignored (`inbox.create` accepts `voice` at line 388; `api/lib/telegramBot.ts` sends `kind: "voice"`). A note or a voice capture has no location Photo: do not rewrite its house and do not log `placed`. Output unchanged. Flow and iOS send no `roomId` and see no change; they keep their local place until the Flow owner picks up decision A3 (16 Oct).
 
 - [ ] **Step 1: Write the failing tests**:
 
@@ -364,15 +365,33 @@ it("(d) without roomId nothing changes", async () => {
   const { id } = await api.inbox.create({ kind: "image", storageKey: await writeTestJpeg() });
   expect((await api.inbox.list()).find((c) => c.id === id)!.photoRoomId ?? null).toBeNull();
 });
-it("(e) a note ignores roomId", async () => {
-  const { id } = await api.inbox.create({ kind: "note", rawText: "buy bulbs", roomId: keuken });
+it("(e) a note ignores a room in another house", async () => {
+  const { id } = await api.inbox.create({ kind: "note", rawText: "buy bulbs", roomId: roomInHouse2 });
   const [cap] = await db.select().from(captures).where(eq(captures.id, id));
   expect(cap.houseId).toBe(h1);
   expect((await db.select().from(photos).where(eq(photos.sourceCaptureId, id))).length).toBe(0);
+  expect(
+    await db
+      .select()
+      .from(events)
+      .where(and(eq(events.entityType, "capture"), eq(events.entityId, id), eq(events.action, "placed"))),
+  ).toHaveLength(0);
+});
+it("(f) a voice capture ignores roomId the same way", async () => {
+  const { id } = await api.inbox.create({ kind: "voice", rawText: "buy bulbs", roomId: roomInHouse2 });
+  const [cap] = await db.select().from(captures).where(eq(captures.id, id));
+  expect(cap.houseId).toBe(h1);
+  expect((await db.select().from(photos).where(eq(photos.sourceCaptureId, id))).length).toBe(0);
+  expect(
+    await db
+      .select()
+      .from(events)
+      .where(and(eq(events.entityType, "capture"), eq(events.entityId, id), eq(events.action, "placed"))),
+  ).toHaveLength(0);
 });
 ```
 
-(`api = callerFor(h1)`; seed a second house `h2` with `roomInHouse2`.)
+(`api = callerFor(h1)`; seed a second house `h2` with `roomInHouse2`. Use `roomInHouse2`, not `keuken`: `callerFor(h1)` already stamps `captures.houseId` with house 1, and `keuken` is in that house, so `houseId === h1` would pass even if `assignPlace` ran. `create` logs `action: "created"`; the assert is that there is no `placed` event. Import `events` and `and`.)
 
 - [ ] **Step 2: Run → FAIL. Step 3: Implement (`assignCapturePlace` extraction first, then the `create` change; keep `assignPlace`'s behaviour byte-for-byte — `npx vitest run api/test/inbox-house.test.ts api/test/inbox-location.test.ts` must stay green). Step 4: Run → PASS; `npm test` green.**
 - [ ] **Step 5: CaptureBar** passes `roomId` from `useLastRoom()` (`src/hooks/use-last-room.ts`) only on the image path (`kind: "image"`); the note/link mutations stay as they are.
@@ -388,11 +407,11 @@ it("(e) a note ignores roomId", async () => {
 - **Step scan:** every code step names a file, a signature and the values; bodies appear only in tests and in Task 4's transaction rules, which the signature does not determine.
 - **Type consistency:** `CropBox` (Task 1) is the type used by `createCutoutFor`, `fileFrame`, `CropDialog`, `Box`; `PhotoTarget`/`resolve` (Task 3) is what Task 6's Inbox step calls; `PhotoUrlInfo` (Task 2) is the `photos.urls` row.
 - **Review Focus:** 1→Task 3 step 5 manual check + server find-or-create; 2→Task 4 (c); 3→Task 2 test; 4→Task 4 (e); 5→Task 12 (b)+(c).
-- **Check of 2026-11-06 (PR #53):** all nine amendments applied — Task 12 test rewritten to the real `assignPlace` rule and place-before-triage; `description`/`suggestLinks` on `fileFrame`; Inbox:175 in Task 3; `?roomId=`/`setLastRoomId` kept; Task 7 skips room-less photos and the descendant walk; `AGENTS.md` steps 7b/5b/5b; PR sequencing (#22 first, #23 no, #29 beside, #5 close); goal narrowed and `Thumb.tsx` dropped; leftovers listed.
+- **Check of 2026-11-06, re-aligned to `origin/main` `e75d045`:** the nine amendments from PR #53 are in the tasks, with these corrections. Task 6 keeps `setLastRoomId(roomId)` on Inbox "Where was this taken?" (`PinPendingButton` success, `Inbox.tsx` 326–329) and drops `?roomId=` only after `resolve` writes the photo's room. Task 12 (e) and (f) use `roomInHouse2` and assert no `placed` event; (f) covers `voice`. §2 gains `photos.fileFrame`, `pins.forItemPhotos`, and optional `roomId` on `inbox.create`; existing contracts stay. #22 (`c8b15ab`), #29 (`dbab631`, `15a62c2`), #54 (`439b37d`) and #55 (`71a79e1`) are on `main`. #23 and #5 are closed, not merged. There are no open pull requests. Do not merge #23. Do not close or merge #5. `Thumb.tsx` stays out.
 - **Proportion:** 12 tasks, ~330 lines for roughly 1,200 changed lines of code.
 
 ## Execution notes for the next agent
 
-- Before Task 1: `git fetch && git worktree add ../declutter-ui-consolidation -b ui-consolidation origin/main && cd ../declutter-ui-consolidation && npm install`, run the Findings table (expect the Focus/pins line numbers to differ from the ones cited: #22 and #54 landed after the plan was written), and re-read `src/pages/Focus.tsx` (`admit`) before Tasks 1 and 4. Run the dev server for manual checks against the test DB: `DATABASE_URL="$TEST_URL" npx vite --port 3002` after `node scripts/seed-test-db.mjs`.
+- Before Task 1: `git fetch && git worktree add ../declutter-ui-consolidation -b ui-consolidation origin/main && cd ../declutter-ui-consolidation && npm install`, then run the Findings table. The counts match `e75d045`. Cited ranges on that commit: Focus frame styles 129 and 722, `admit` 252–281, `pins.add` 138–150, `inbox.create` 385–412, `inbox.assignPlace` 1068–1120. #22, #54 and #55 are already on `main`. Do not merge #23 or #5. Run the dev server for manual checks against the test DB: `DATABASE_URL="$TEST_URL" npx vite --port 3002` after `node scripts/seed-test-db.mjs`.
 - Order: A (1→6) is sequential (1 before 4 and 5; 3 before 6). B tasks are independent of each other; C tasks are independent. Push after each phase; ask Rick before merging.
 - After the branch merges, production needs `npm run build` and `launchctl kickstart -k gui/$(id -u)/nl.homebase.live3001` on the Mini (Rick or a session he allows).
