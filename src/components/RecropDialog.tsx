@@ -7,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Box } from "@/components/DetectObjects";
+import { Box } from "@/components/CropBox";
 import { Loader2 } from "lucide-react";
 import { invalidatePhotoChange } from "@/hooks/use-photo-from-target";
 

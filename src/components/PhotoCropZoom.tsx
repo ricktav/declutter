@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
-import { Box } from "@/components/DetectObjects";
+import { Box } from "@/components/CropBox";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/providers/trpc";
 import { Loader2 } from "lucide-react";
