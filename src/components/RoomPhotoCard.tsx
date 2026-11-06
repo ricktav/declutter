@@ -12,7 +12,7 @@ import { invalidatePhotoPlace } from "@/components/PhotoPlaceDialog";
  * Place gets a house-room dropdown.
  */
 export function RoomPhotoCard({
-  storageKey,
+  url,
   captureId,
   photoId,
   photoRoomId,
@@ -21,7 +21,7 @@ export function RoomPhotoCard({
   onPlan,
   onOpen,
 }: {
-  storageKey: string;
+  url: string | null;
   captureId?: number | null;
   photoId?: number | null;
   photoRoomId?: number | null;
@@ -30,7 +30,6 @@ export function RoomPhotoCard({
   onPlan: boolean;
   onOpen: (url: string, photoId: number) => void;
 }) {
-  const url = trpc.photos.url.useQuery({ key: storageKey });
   const navigate = useNavigate();
   const utils = trpc.useUtils();
   const ensure = trpc.photos.ensureForCapture.useMutation();
@@ -66,13 +65,13 @@ export function RoomPhotoCard({
   };
 
   const finish = (to: "pin" | "place" | "zoom", id: number) => {
-    if (to === "zoom") onOpen(url.data!.url!, id);
+    if (to === "zoom") onOpen(url!, id);
     else if (to === "pin") navigate(`/annotate/${id}`);
     else navigate(`/rooms/${photoRoomId ?? roomId}?placePhoto=${id}`);
   };
 
   const go = (to: "pin" | "place" | "zoom") => {
-    if (to === "zoom" && !url.data?.url) return;
+    if (to === "zoom" && !url) return;
     if (to === "place" && placeNeedsRoom) return;
     if (photoId != null && (to !== "place" || photoRoomId != null)) {
       finish(to, photoId);
@@ -94,7 +93,7 @@ export function RoomPhotoCard({
 
   return (
     <div className="relative rounded-lg border border-border bg-white p-2 min-w-0">
-      {url.data?.url && (
+      {url && (
         <button
           type="button"
           onClick={() => go("zoom")}
@@ -105,9 +104,9 @@ export function RoomPhotoCard({
           ⤢
         </button>
       )}
-      {url.data?.url ? (
+      {url ? (
         <button type="button" className="block w-full" onClick={() => go("zoom")} title="Open and pin">
-          <img src={url.data.url} alt="" className="w-full aspect-video object-cover rounded cursor-zoom-in" />
+          <img src={url} alt="" className="w-full aspect-video object-cover rounded cursor-zoom-in" />
         </button>
       ) : (
         <div className="w-full aspect-video rounded bg-muted/40" />

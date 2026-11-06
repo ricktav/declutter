@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
+import { usePhotoUrls } from "@/hooks/use-photo-urls";
 import { RoomSchema } from "@/components/RoomSchema";
 import { withoutSchema } from "@/lib/schemaFilter";
 import { RoomPhotoCard } from "@/components/RoomPhotoCard";
@@ -65,6 +66,7 @@ export function RoomPhotoPool({
     return [...fromCaps, ...extra];
   }, [captures.data, roomPhotos.data, roomId]);
 
+  const { byKey } = usePhotoUrls(cards.map((c) => c.storageKey));
   const loading = captures.isLoading || roomPhotos.isLoading;
 
   const switcher = (
@@ -114,7 +116,7 @@ export function RoomPhotoPool({
           {cards.map((p) => (
             <RoomPhotoCard
               key={p.key}
-              storageKey={p.storageKey}
+              url={byKey.get(p.storageKey)?.url ?? null}
               captureId={p.captureId}
               photoId={p.photoId}
               photoRoomId={p.photoRoomId}

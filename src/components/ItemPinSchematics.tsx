@@ -1,33 +1,8 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
+import { aspectOf, usePhotoUrls } from "@/hooks/use-photo-urls";
 import { PhotoSchematic } from "@/components/PhotoSchematic";
 import { EMPTY_SCHEMA_FILTER, isFramed, type SchemaPin } from "@/lib/schemaFilter";
-
-/** width / height per storageKey, so a reopened modal draws at once. */
-const aspects = new Map<string, number>();
-
-function usePhotoAspect(storageKey: string): number | null {
-  const url = trpc.photos.url.useQuery({ key: storageKey });
-  const [aspect, setAspect] = useState<number | null>(() => aspects.get(storageKey) ?? null);
-  const src = url.data?.url;
-  useEffect(() => {
-    if (aspect != null || !src) return;
-    const img = new Image();
-    img.onload = () => {
-      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-        const a = img.naturalWidth / img.naturalHeight;
-        aspects.set(storageKey, a);
-        setAspect(a);
-      }
-    };
-    img.src = src;
-    return () => {
-      img.onload = null;
-    };
-  }, [aspect, src, storageKey]);
-  return aspect;
-}
 
 /**
  * For each Photo this Thing is pinned in (and that has a room), a small
@@ -56,11 +31,12 @@ export function ItemPinSchematics({
       card.pins.push(pin);
     }
   });
+  const { byKey } = usePhotoUrls(cards.map((c) => c.storageKey));
   if (!cards.length) return null;
   return (
     <div className="mt-2 grid grid-cols-2 gap-2" data-testid="item-pin-schematics">
       {cards.map((c) => (
-        <PinSchematicCard key={c.photoId} itemId={itemId} card={c} />
+        <PinSchematicCard key={c.photoId} itemId={itemId} card={c} aspect={aspectOf(byKey.get(c.storageKey)) ?? 4 / 3} />
       ))}
     </div>
   );
@@ -69,12 +45,13 @@ export function ItemPinSchematics({
 function PinSchematicCard({
   itemId,
   card,
+  aspect,
 }: {
   itemId: number;
+  aspect: number;
   card: { photoId: number; roomId: number; title: string | null; storageKey: string; pins: SchemaPin[] };
 }) {
   const navigate = useNavigate();
-  const aspect = usePhotoAspect(card.storageKey);
   const own = card.pins.find((p) => p.itemId === itemId);
   // an unframed pin of this Thing still shows, as a point
   const showPoints = own != null && !isFramed(own);

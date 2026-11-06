@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Flag } from "lucide-react";
 import { trpc } from "@/providers/trpc";
+import { aspectOf, usePhotoUrls, type PhotoUrlInfo } from "@/hooks/use-photo-urls";
 import { DECISIONS } from "@/lib/decisions";
 import { PhotoSchematic } from "@/components/PhotoSchematic";
 import { SchemaFilters } from "@/components/SchemaFilters";
@@ -21,8 +22,6 @@ import {
   type SchemaPin,
 } from "@/lib/schemaFilter";
 
-/** width / height per storageKey, so a Photo's schematic keeps its shape across renders and rooms. */
-const photoAspects = new Map<string, number>();
 /** Used when the Photo cannot be loaded, so its blocks still draw. */
 const FALLBACK_ASPECT = 4 / 3;
 
@@ -91,6 +90,8 @@ export function RoomSchema({ roomId }: { roomId: number }) {
     return out;
   }, [pins.data]);
 
+  const { byKey, isLoading: urlsLoading } = usePhotoUrls(groups.map((g) => g.storageKey));
+
   const thingPhotoId = thing == null ? null : (groups.find((g) => g.pins.some((p) => p.itemId === thing))?.photoId ?? null);
   useEffect(() => {
     if (thingPhotoId == null || scrolledFor.current === thing) return;
@@ -132,7 +133,8 @@ export function RoomSchema({ roomId }: { roomId: number }) {
               key={g.photoId}
               title={g.title}
               photoId={g.photoId}
-              storageKey={g.storageKey}
+              info={byKey.get(g.storageKey)}
+              urlsSettled={!urlsLoading}
               pins={g.pins}
               filter={filter}
               showPoints={showPoints}
@@ -150,7 +152,8 @@ export function RoomSchema({ roomId }: { roomId: number }) {
 function SchemaPhotoCard({
   title,
   photoId,
-  storageKey,
+  info,
+  urlsSettled,
   pins,
   filter,
   showPoints,
@@ -159,17 +162,18 @@ function SchemaPhotoCard({
 }: {
   title: string | null;
   photoId: number;
-  storageKey: string;
+  info: PhotoUrlInfo | undefined;
+  urlsSettled: boolean;
   pins: SchemaPin[];
   filter: SchemaFilter;
   showPoints: boolean;
   selectedItemId: number | null;
   onPick: (p: SchemaPin) => void;
 }) {
-  const url = trpc.photos.url.useQuery({ key: storageKey });
-  const [loaded, setAspect] = useState<number | null>(() => photoAspects.get(storageKey) ?? null);
+  const [probed, setAspect] = useState<number | null>(null);
   const [broken, setBroken] = useState(false);
-  const aspect = loaded ?? (broken || url.isError || (url.isSuccess && !url.data?.url) ? FALLBACK_ASPECT : null);
+  // the server knows the pixel size; the onLoad probe only covers a Photo not probed yet
+  const aspect = aspectOf(info) ?? probed ?? (broken || (urlsSettled && !info?.url) ? FALLBACK_ASPECT : null);
   const visible = visibleSchemaPins(pins, filter, showPoints);
 
   return (
@@ -177,19 +181,16 @@ function SchemaPhotoCard({
       <div className="mb-1.5 truncate text-[12px] font-medium">{title || `Photo #${photoId}`}</div>
       <div className="grid grid-cols-1 gap-2 items-start sm:grid-cols-2">
         <div className="overflow-hidden rounded bg-muted" style={aspect ? { aspectRatio: String(aspect) } : undefined}>
-          {url.data?.url && (
+          {info?.url && (
             <img
-              src={url.data.url}
+              src={info.url}
               alt=""
               loading="lazy"
               className="block h-full w-full"
               onError={() => setBroken(true)}
               onLoad={(e) => {
                 const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
-                if (w > 0 && h > 0) {
-                  photoAspects.set(storageKey, w / h);
-                  setAspect(w / h);
-                }
+                if (w > 0 && h > 0) setAspect(w / h);
               }}
             />
           )}
