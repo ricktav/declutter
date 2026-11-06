@@ -53,11 +53,11 @@ Run from `/Volumes/T7/declutter` on `main` ≥ `594f63a`.
 
 Not in this plan (needs its own brainstorm): linking a photo pin to a plan position (`items.pos` ↔ `photo_pins`); Flow-owned items (`src/flow` Sheet, ZoomViewer, client queue rules, `attachments.url`). Still-open leftovers from the 5 Oct review that this plan does not touch and that should not be forgotten: close draft PR #5 (the 4 Oct iOS app), fix the README route table's `/snap` row, add a `.github/` workflow that runs `npm run check` and `npm test`.
 
-**Open pull requests and this plan** (from the check):
-- **#22** (`cursor/focus-claude-frame-label-0cb1`, `src/pages/Focus.tsx` +75/−7, `api/routers/pins.ts` +58, CONFLICTING): rebase and merge it **before Task 1**, then re-run the Findings greps and re-read `Focus.tsx` — its `admit` and line numbers move. `pins.labelWithClaude` stays a draw-time naming step: do not fold it into `fileFrame`, do not delete it when `admit` is rewritten.
-- **#23**: do not merge (house scope is on `main` via #28). Port `normalizeDetectBox` / `forDetectVision` as their own change, not by taking the branch; do not absorb its Focus hunk that passes `houseId` into `detect.mutate`.
-- **#29**: independent files; can land beside this plan after its own fixes.
-- **#5**: close.
+**Open pull requests and this plan** (from the check; state as of `439b37d`, 2026-11-06 evening):
+- **#22** landed on `main` as `c8b15ab` ("Name Focus hand-drawn frames with claude -p after create"; PR closed). `src/pages/Focus.tsx` and `api/routers/pins.ts` moved: **re-run the Findings greps and re-read `Focus.tsx` (`admit`) before Tasks 1 and 4.** `pins.labelWithClaude` stays a draw-time naming step: do not fold it into `fileFrame`, do not delete it when `admit` is rewritten.
+- **#54** landed (`439b37d`): `normalizeDetectBox` / `forDetectVision` in `api/lib/detectMatch.ts` + `crop.ts`, used by `pins.detect` and `inbox.detectObjects`; `AGENTS.md` §2 has a "Detect boxes" line. Nothing left to port from #23.
+- **#29** merged (`dbab631`, `15a62c2`): independent files.
+- **#23** and **#5** closed on 2026-11-06 (branches kept).
 
 ## File Structure
 
@@ -393,6 +393,6 @@ it("(e) a note ignores roomId", async () => {
 
 ## Execution notes for the next agent
 
-- Before Task 1: get PR #22 rebased and merged (Rick decides), then `git fetch && git worktree add ../declutter-ui-consolidation -b ui-consolidation origin/main && cd ../declutter-ui-consolidation && npm install`, run the Findings table, and re-read `src/pages/Focus.tsx` (`admit`) before Tasks 1 and 4 — #22 moves those lines. Run the dev server for manual checks against the test DB: `DATABASE_URL="$TEST_URL" npx vite --port 3002` after `node scripts/seed-test-db.mjs`.
+- Before Task 1: `git fetch && git worktree add ../declutter-ui-consolidation -b ui-consolidation origin/main && cd ../declutter-ui-consolidation && npm install`, run the Findings table (expect the Focus/pins line numbers to differ from the ones cited: #22 and #54 landed after the plan was written), and re-read `src/pages/Focus.tsx` (`admit`) before Tasks 1 and 4. Run the dev server for manual checks against the test DB: `DATABASE_URL="$TEST_URL" npx vite --port 3002` after `node scripts/seed-test-db.mjs`.
 - Order: A (1→6) is sequential (1 before 4 and 5; 3 before 6). B tasks are independent of each other; C tasks are independent. Push after each phase; ask Rick before merging.
 - After the branch merges, production needs `npm run build` and `launchctl kickstart -k gui/$(id -u)/nl.homebase.live3001` on the Mini (Rick or a session he allows).
