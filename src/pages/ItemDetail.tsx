@@ -6,7 +6,7 @@ import { useAsk } from "@/context/ask";
 import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
-import { RoomPicker } from "@/components/RoomPicker";
+import { PlacePickerDialog } from "@/components/PlacePickerDialog";
 import { ChooseFromLibraryDialog } from "@/components/ChooseFromLibraryDialog";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ItemRoomPreview } from "@/components/ItemRoomPreview";
@@ -475,12 +475,12 @@ export default function ItemDetail() {
     }
     setLocOpen(true);
   };
-  const applyLoc = (next: number | null) => {
+  const applyLoc = (next: number | null, nextHouse?: number | null) => {
     setRoomId(next);
     update.mutate({
       id: itemId,
       roomId: next,
-      houseId: next == null ? it.houseId : undefined,
+      houseId: next == null ? (nextHouse ?? it.houseId) : undefined,
     });
     setLocOpen(false);
   };
@@ -1321,34 +1321,19 @@ export default function ItemDetail() {
         </div>
       </section>
 
-      <Dialog open={locOpen} onOpenChange={setLocOpen}>
-        <DialogContent className="sm:max-w-md overflow-visible">
-          <DialogHeader>
-            <DialogTitle>Pick Place</DialogTitle>
-            <DialogDescription>
-              Where this Thing sits. Kind (above the name) stays what it is.
-            </DialogDescription>
-          </DialogHeader>
-          <RoomPicker
-            value={roomId}
-            onChange={(id) => {
-              setRoomId(id);
-              if (id != null) applyLoc(id);
-            }}
-            allowNone
-            autoFocus
-            houseId={it.houseId ?? undefined}
-          />
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] text-muted-foreground">
-              {it.room ? `Now: ${it.room.name}` : it.house ? `Unplaced in ${it.house.name}` : "No Place yet"}
-            </p>
-            <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => applyLoc(null)}>
-              Leave unplaced
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <PlacePickerDialog
+        open={locOpen}
+        title="Pick Place"
+        description={`Where this Thing sits. Kind (above the name) stays what it is. ${
+          it.room ? `Now: ${it.room.name}` : it.house ? `Unplaced in ${it.house.name}` : "No Place yet"
+        }.`}
+        houseId={it.houseId ?? null}
+        roomId={roomId}
+        allowNone
+        confirmLabel="Set Place"
+        onPick={(sel) => applyLoc(sel.roomId, sel.houseId)}
+        onClose={() => setLocOpen(false)}
+      />
       <ChooseFromLibraryDialog itemId={itemId} open={libraryOpen} onClose={() => setLibraryOpen(false)} />
       {lightboxPhoto && (
         <PhotoCropZoom

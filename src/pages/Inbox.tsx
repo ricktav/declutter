@@ -7,7 +7,7 @@ import { uploadFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { AreaPicker } from "@/components/AreaPicker";
 import { ItemPicker } from "@/components/ItemPicker";
-import { RoomPicker } from "@/components/RoomPicker";
+import { PlacePickerDialog } from "@/components/PlacePickerDialog";
 import { setLastRoomId } from "@/lib/lastRoom";
 import { useLastRoomId } from "@/hooks/use-last-room";
 import { AiProgressBar } from "@/components/AiProgressBar";
@@ -329,11 +329,12 @@ function PinPendingButton({ capture }: { capture: InboxCapture }) {
   const hasDefaultLocation = roomId != null;
   // two promotions, each with its own spinner and error, as before
   const ensure = usePhotoFromTarget();
-  const pinWithRoom = () =>
-    ensure.resolve({ source: "capture", captureId }, roomId).then(
+  const pinWithRoom = (picked: number | null = roomId) =>
+    ensure.resolve({ source: "capture", captureId }, picked).then(
       (id) => {
-        setLastRoomId(roomId);
-        navigate(`/annotate/${id}?roomId=${roomId ?? "none"}`);
+        setRoomId(picked);
+        setLastRoomId(picked);
+        navigate(`/annotate/${id}?roomId=${picked ?? "none"}`);
       },
       () => {}, // shown in the dialog
     );
@@ -398,35 +399,18 @@ function PinPendingButton({ capture }: { capture: InboxCapture }) {
           </button>
         )}
       </div>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Where was this taken?</DialogTitle>
-          </DialogHeader>
-          <p className="text-[12px] text-muted-foreground -mt-2">
-            Confirms the Place before pinning - a new Thing created there starts out placed.
-          </p>
-          <RoomPicker value={roomId} onChange={setRoomId} houseId={houseId ?? undefined} />
-          <div className="flex justify-end gap-2 mt-1">
-            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              disabled={ensure.isPending}
-              onClick={() => void pinWithRoom()}
-            >
-              {ensure.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-              ) : (
-                <MapPin className="h-3.5 w-3.5 mr-1" />
-              )}
-              Continue to pin
-            </Button>
-          </div>
-          {ensure.error && <div className="text-[12px] text-destructive">{ensure.error.message}</div>}
-        </DialogContent>
-      </Dialog>
+      <PlacePickerDialog
+        open={open}
+        title="Where was this taken?"
+        description="Confirms the Place before pinning - a new Thing created there starts out placed."
+        houseId={houseId ?? null}
+        roomId={roomId}
+        confirmLabel="Continue to pin"
+        busy={ensure.isPending}
+        error={ensure.error ? ensure.error.message : null}
+        onPick={(sel) => pinWithRoom(sel.roomId)}
+        onClose={() => setOpen(false)}
+      />
     </>
   );
 }

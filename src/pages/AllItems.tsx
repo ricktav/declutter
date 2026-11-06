@@ -9,7 +9,7 @@ import { usePersistedState } from "@/hooks/use-persisted-state";
 import { Button } from "@/components/ui/button";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { RoomPicker } from "@/components/RoomPicker";
+import { PlacePickerDialog } from "@/components/PlacePickerDialog";
 import { AreaPicker } from "@/components/AreaPicker";
 import { SortableTh, nextSort, type SortDir } from "@/components/SortableTh";
 import { Model3dRouteSelect } from "@/components/Model3dRouteSelect";
@@ -333,21 +333,18 @@ export default function AllItems() {
         )}
       </div>
 
-      <Dialog open={moveOpen || rowAction?.kind === "move"} onOpenChange={(o) => { if (!o) { setMoveOpen(false); setRowAction(null); } }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Move {actionNames}</DialogTitle>
-          </DialogHeader>
-          <RoomPicker value={moveRoomId} onChange={setMoveRoomId} allowNone />
-          <div className="flex justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={() => { setMoveOpen(false); setRowAction(null); }}>Cancel</Button>
-            <Button size="sm" disabled={updateMany.isPending} onClick={() => updateMany.mutate({ ids: actionIds, roomId: moveRoomId })}>
-              Move
-            </Button>
-          </div>
-          {updateMany.isError && <p className="text-[12px] text-destructive">{updateMany.error.message}</p>}
-        </DialogContent>
-      </Dialog>
+      <PlacePickerDialog
+        open={moveOpen || rowAction?.kind === "move"}
+        title={`Move ${actionNames}`}
+        houseId={null}
+        roomId={moveRoomId}
+        allowNone
+        confirmLabel="Move"
+        busy={updateMany.isPending}
+        error={updateMany.isError ? updateMany.error.message : null}
+        onPick={(sel) => { setMoveRoomId(sel.roomId); updateMany.mutate({ ids: actionIds, roomId: sel.roomId }); }}
+        onClose={() => { setMoveOpen(false); setRowAction(null); }}
+      />
 
       <Dialog open={topicOpen || rowAction?.kind === "topic"} onOpenChange={(o) => { if (!o) { setTopicOpen(false); setRowAction(null); } }}>
         <DialogContent>
