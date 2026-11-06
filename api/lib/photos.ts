@@ -6,12 +6,13 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-
 import { TRPCError } from "@trpc/server";
 import { areas, captures, itemLinks, items, photoPins, photos, rooms, type CropBox, type ItemLink, type ItemPos, type Photo, type PhotoCamera } from "@db/schema";
 import type { getDb } from "../queries/connection";
-import { deleteStoredFile, putFile, readFileBytes } from "./filestore";
+import { deleteStoredFile, putFile, readFileBytes, withNewFile } from "./filestore";
 import { sniffMime } from "./sniff";
 import { logEvent } from "./events";
 import { releaseStoredFiles } from "./entities";
 import { roomSummary } from "./location";
 import { imageSizeFields } from "./imageSize";
+import { cropPercent } from "./crop";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Pick<Db, "select" | "insert" | "update" | "query">;
@@ -85,6 +86,91 @@ export async function ensurePinForCutout(
     tx,
   );
   return { id, created: true };
+}
+
+/** Bytes of a source file, or a readable error when it is gone from disk. */
+export async function readSourceBytes(key: string): Promise<Uint8Array> {
+  try {
+    return await readFileBytes(key);
+  } catch {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
+  }
+}
+
+/** Give an item a photo cropped out of another photo (its source capture
+ * when it has one, else the photo itself), and pin the item on that photo.
+ * One cutout per item and capture: a second call for the same capture
+ * reuses the cutout (created: false) and only makes sure of the pin.
+ * photos.createCutout and photos.fileFrame both go through this. */
+export async function createCutoutFor(
+  db: Db,
+  input: { itemId: number; sourcePhotoId: number; box: CropBox; photoSize: "small" | "medium" | "big" },
+): Promise<{ id: number; storageKey: string; created: boolean }> {
+  const source = await db.query.photos.findFirst({ where: eq(photos.id, input.sourcePhotoId) });
+  if (!source) throw new TRPCError({ code: "NOT_FOUND", message: "Source photo not found." });
+
+  let bytes: Uint8Array;
+  let sourceCaptureId: number | null = null;
+  if (source.sourceCaptureId) {
+    const cap = await db.query.captures.findFirst({ where: eq(captures.id, source.sourceCaptureId) });
+    if (!cap?.storageKey) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
+    bytes = await readSourceBytes(cap.storageKey);
+    sourceCaptureId = cap.id;
+  } else {
+    bytes = await readSourceBytes(source.storageKey);
+  }
+
+  // the cutout's item is in the source photo: pin it there too, so the
+  // item's "Seen in photos" shows that photo
+  const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
+  if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
+  const pinFor = { sourcePhotoId: source.id, itemId: input.itemId, box: input.box, label: item.name };
+
+  // one cutout per item and original photo (a whole Photo of the same capture is not a cutout): pinning again or re-saving does not pile up copies
+  if (sourceCaptureId) {
+    const dup = await db.query.photos.findFirst({
+      where: and(eq(photos.itemId, input.itemId), eq(photos.sourceCaptureId, sourceCaptureId), isNotNull(photos.cropBox)),
+    });
+    if (dup) {
+      await db.transaction((tx) => ensurePinForCutout(tx, pinFor));
+      return { id: dup.id, storageKey: dup.storageKey, created: false as const };
+    }
+  }
+
+  const maxDim = { small: 480, medium: 900, big: undefined }[input.photoSize];
+  const cropped = await cropPercent(bytes, input.box, maxDim);
+  const dim = await imageSizeFields(cropped);
+  return withNewFile(
+    { bytes: new Uint8Array(cropped), fileName: `items/${input.itemId}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
+    (saved) =>
+      db.transaction(async (tx) => {
+        const [{ id }] = await tx
+          .insert(photos)
+          .values({
+            itemId: input.itemId,
+            storageKey: saved.key,
+            mimeType: "image/jpeg",
+            size: saved.size,
+            sourceCaptureId,
+            cropBox: input.box,
+            title: "Photo",
+            width: dim.width,
+            height: dim.height,
+          })
+          .$returningId();
+        await logEvent(
+          {
+            entityType: "photo",
+            entityId: id,
+            action: "created",
+            summary: `Photo cropped from pin location and added to item #${input.itemId}`,
+          },
+          tx,
+        );
+        await ensurePinForCutout(tx, pinFor);
+        return { id, storageKey: saved.key, created: true as const };
+      }),
+  );
 }
 
 /** Find-or-create the bare, item-less "location photo" of a capture: the

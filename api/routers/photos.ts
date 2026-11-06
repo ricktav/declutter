@@ -8,7 +8,7 @@ import { TRPCError } from "@trpc/server";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { captures, items, photoPins, photos, type PhotoCamera } from "@db/schema";
-import { readFileBytes, urlForKey, withNewFile } from "../lib/filestore";
+import { urlForKey, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent } from "../lib/crop";
 import { imageSizeFields } from "../lib/imageSize";
@@ -19,8 +19,9 @@ import {
   CAMERA_FOV_DEFAULT,
   CAMERA_HEIGHT_DEFAULT,
   ensureLocationPhotoForCapture,
-  ensurePinForCutout,
+  createCutoutFor,
   listPhotoCatalog,
+  readSourceBytes,
   photosForItem,
   removePhoto,
   setPhotoCamera,
@@ -49,15 +50,6 @@ const cameraInput = z.object({
 
 /** Room photos returned by photos.roomPhotos. */
 const ROOM_PHOTOS_LIST_MAX = 60;
-
-/** Bytes of a source file, or a readable error when it is gone from disk. */
-async function readSourceBytes(key: string): Promise<Uint8Array> {
-  try {
-    return await readFileBytes(key);
-  } catch {
-    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
-  }
-}
 
 export const photosRouter = createRouter({
   /** Same-origin URL for any stored key (photo, capture, file). */
@@ -228,74 +220,7 @@ export const photosRouter = createRouter({
         photoSize: z.enum(["small", "medium", "big"]).default("big"),
       }),
     )
-    .mutation(async ({ input }) => {
-      const db = getDb();
-      const source = await db.query.photos.findFirst({ where: eq(photos.id, input.sourcePhotoId) });
-      if (!source) throw new TRPCError({ code: "NOT_FOUND", message: "Source photo not found." });
-
-      let bytes: Uint8Array;
-      let sourceCaptureId: number | null = null;
-      if (source.sourceCaptureId) {
-        const cap = await db.query.captures.findFirst({ where: eq(captures.id, source.sourceCaptureId) });
-        if (!cap?.storageKey) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Source photo is no longer available." });
-        bytes = await readSourceBytes(cap.storageKey);
-        sourceCaptureId = cap.id;
-      } else {
-        bytes = await readSourceBytes(source.storageKey);
-      }
-
-      // the cutout's item is in the source photo: pin it there too, so the
-      // item's "Seen in photos" shows that photo
-      const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
-      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
-      const pinFor = { sourcePhotoId: source.id, itemId: input.itemId, box: input.box, label: item.name };
-
-      // one cutout per item and original photo (a whole Photo of the same capture is not a cutout): pinning again or re-saving does not pile up copies
-      if (sourceCaptureId) {
-        const dup = await db.query.photos.findFirst({
-          where: and(eq(photos.itemId, input.itemId), eq(photos.sourceCaptureId, sourceCaptureId), isNotNull(photos.cropBox)),
-        });
-        if (dup) {
-          await db.transaction((tx) => ensurePinForCutout(tx, pinFor));
-          return { id: dup.id, storageKey: dup.storageKey, created: false as const };
-        }
-      }
-
-      const maxDim = { small: 480, medium: 900, big: undefined }[input.photoSize];
-      const cropped = await cropPercent(bytes, input.box, maxDim);
-      const dim = await imageSizeFields(cropped);
-      return withNewFile(
-        { bytes: new Uint8Array(cropped), fileName: `items/${input.itemId}/cutout-${Date.now()}.jpg`, contentType: "image/jpeg" },
-        (saved) =>
-          db.transaction(async (tx) => {
-            const [{ id }] = await tx
-              .insert(photos)
-              .values({
-                itemId: input.itemId,
-                storageKey: saved.key,
-                mimeType: "image/jpeg",
-                size: saved.size,
-                sourceCaptureId,
-                cropBox: input.box,
-                title: "Photo",
-                width: dim.width,
-                height: dim.height,
-              })
-              .$returningId();
-            await logEvent(
-              {
-                entityType: "photo",
-                entityId: id,
-                action: "created",
-                summary: `Photo cropped from pin location and added to item #${input.itemId}`,
-              },
-              tx,
-            );
-            await ensurePinForCutout(tx, pinFor);
-            return { id, storageKey: saved.key, created: true as const };
-          }),
-      );
-    }),
+    .mutation(({ input }) => createCutoutFor(getDb(), input)),
 
   listAll: procedure.query(() => listPhotoCatalog(getDb())),
 
