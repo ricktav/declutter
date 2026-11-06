@@ -21,7 +21,8 @@ export function PlacePickerDialog({
   description,
   houseId,
   roomId,
-  allowNone,
+  allowNone = false,
+  lockToSession = true,
   confirmLabel,
   busy,
   error,
@@ -34,6 +35,8 @@ export function PlacePickerDialog({
   houseId: number | null;
   roomId: number | null;
   allowNone?: boolean;
+  /** false: always show the house select and honour `houseId` over the header house. */
+  lockToSession?: boolean;
   confirmLabel: string;
   busy?: boolean;
   error?: string | null;
@@ -65,7 +68,7 @@ export function PlacePickerDialog({
           onHouse={setHouse}
           onRoom={setRoom}
           allowNone={allowNone}
-          lockToSession
+          lockToSession={lockToSession}
           autoFocus
         />
         <div className="flex justify-end gap-2">

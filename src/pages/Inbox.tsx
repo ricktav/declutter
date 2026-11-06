@@ -405,6 +405,8 @@ function PinPendingButton({ capture }: { capture: InboxCapture }) {
         description="Confirms the Place before pinning - a new Thing created there starts out placed."
         houseId={houseId ?? null}
         roomId={roomId}
+        allowNone
+        lockToSession={false}
         confirmLabel="Continue to pin"
         busy={ensure.isPending}
         error={ensure.error ? ensure.error.message : null}
