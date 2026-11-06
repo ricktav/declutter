@@ -13,8 +13,10 @@ export function photoTargetKey(t: PhotoTarget): string {
 
 /** The one capture→Photo promotion. `resolve` returns the photo id: a photo's
  * own, or the server's find-or-create photo for a capture (with `roomId` as
- * its Place when it has none yet). It always asks the server for a capture,
- * so two dialogs on the same capture share one Photo; no id is cached here. */
+ * its Place when it has none yet). It always asks the server for a capture;
+ * no id is cached here. The server reuses only a bare Photo (no Thing yet), so
+ * two dialogs on the same capture share one Photo only until it is attached to
+ * a Thing: after that a capture target would get a second Photo. */
 export function usePhotoFromTarget() {
   const ensure = trpc.photos.ensureForCapture.useMutation();
   const { mutateAsync } = ensure;
@@ -30,21 +32,26 @@ export function usePhotoFromTarget() {
 }
 
 /** The queries that show a photo, its Place, its pins or its Thing's photos.
- * `itemIds` also refreshes those Things' detail; `photoId` a cutout's source view. */
+ * `itemIds` also refreshes those Things' detail; `photoId` a cutout's source view.
+ * The returned promise settles once every refetch is done; callers that only
+ * need the refresh to start can ignore it. */
 export function invalidatePhotoChange(
   utils: ReturnType<typeof trpc.useUtils>,
   opts?: { itemIds?: number[]; photoId?: number },
-): void {
-  void utils.photos.get.invalidate();
-  void utils.photos.listAll.invalidate();
-  void utils.photos.forRoom.invalidate();
-  void utils.photos.roomPhotos.invalidate();
-  void utils.photos.listForItem.invalidate();
-  void utils.rooms.get.invalidate();
-  void utils.inbox.list.invalidate();
-  void utils.items.listAll.invalidate();
-  void utils.items.placement.invalidate();
-  void utils.items.placementSummary.invalidate();
-  for (const id of opts?.itemIds ?? []) void utils.items.get.invalidate({ id });
-  if (opts?.photoId != null) void utils.photos.sourcePhoto.invalidate({ photoId: opts.photoId });
+): Promise<void> {
+  const all: Promise<void>[] = [
+    utils.photos.get.invalidate(),
+    utils.photos.listAll.invalidate(),
+    utils.photos.forRoom.invalidate(),
+    utils.photos.roomPhotos.invalidate(),
+    utils.photos.listForItem.invalidate(),
+    utils.rooms.get.invalidate(),
+    utils.inbox.list.invalidate(),
+    utils.items.listAll.invalidate(),
+    utils.items.placement.invalidate(),
+    utils.items.placementSummary.invalidate(),
+    ...(opts?.itemIds ?? []).map((id) => utils.items.get.invalidate({ id })),
+  ];
+  if (opts?.photoId != null) all.push(utils.photos.sourcePhoto.invalidate({ photoId: opts.photoId }));
+  return Promise.all(all).then(() => undefined);
 }

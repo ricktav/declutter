@@ -64,8 +64,10 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
         ...(force ? { force: true } : {}),
         ...(force && fromItemId != null ? { fromItemId } : {}),
       });
-      // the Thing's photos and placement (and a moved photo's old owner's) changed
-      invalidatePhotoChange(utils, { itemIds: [t.id, ...(fromItemId != null ? [fromItemId] : [])] });
+      // the Thing's photos and placement (and a moved photo's old owner's)
+      // changed. Wait for the refetch: a grid tile still marked as a capture
+      // would make a second Photo on its next Place or Pin.
+      await invalidatePhotoChange(utils, { itemIds: [t.id, ...(fromItemId != null ? [fromItemId] : [])] });
       setDone(t);
     } catch (err) {
       const e = err as { message?: string; data?: { code?: string; ownerId?: number } };
