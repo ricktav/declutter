@@ -4,6 +4,7 @@ import { Box } from "@/components/DetectObjects";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/providers/trpc";
 import { Loader2 } from "lucide-react";
+import { invalidatePhotoChange } from "@/hooks/use-photo-from-target";
 
 import { DEFAULT_CROP_BOX, boxesEqual, type CropBox } from "@/lib/cropBox";
 
@@ -43,11 +44,9 @@ export function PhotoCropZoom({
   const recrop = trpc.photos.recrop.useMutation({
     onSuccess: () => {
       setSavedBox(box);
-      utils.photos.listForItem.invalidate();
-      utils.photos.get.invalidate();
-      utils.photos.sourcePhoto.invalidate({ photoId });
+      invalidatePhotoChange(utils, { photoId });
+      // recrop does not return the Thing's id: refresh every Thing's detail
       utils.items.get.invalidate();
-      utils.items.placement.invalidate();
     },
   });
 

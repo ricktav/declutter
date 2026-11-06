@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Box } from "@/components/DetectObjects";
 import { Loader2 } from "lucide-react";
+import { invalidatePhotoChange } from "@/hooks/use-photo-from-target";
 
 import type { CropBox } from "@/lib/cropBox";
 
@@ -37,11 +38,11 @@ export function RecropDialog({
 
   const recrop = trpc.photos.recrop.useMutation({
     onSuccess: () => {
-      utils.photos.listForItem.invalidate();
-      utils.photos.get.invalidate();
+      invalidatePhotoChange(utils, { photoId: photoId ?? undefined });
       // ItemDetail reads its attachment list (and thumbnails) through
       // items.get, not photos.listForItem - without this the new
       // storageKey never reaches the page and the old thumbnail lingers
+      // (recrop does not return the Thing's id, so every items.get)
       utils.items.get.invalidate();
       onClose();
     },

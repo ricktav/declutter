@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Box } from "@/components/DetectObjects";
 import { Loader2 } from "lucide-react";
+import { invalidatePhotoChange, usePhotoFromTarget } from "@/hooks/use-photo-from-target";
 
 import type { CropBox } from "@/lib/cropBox";
 type PhotoSize = "small" | "medium" | "big";
@@ -53,19 +54,15 @@ export function ChooseFromLibraryDialog({
   const [box, setBox] = useState<CropBox>({ xPct: 50, yPct: 50, wPct: 40, hPct: 40 });
   const [photoSize, setPhotoSize] = useState<PhotoSize>("big");
 
-  const ensure = trpc.photos.ensureForCapture.useMutation();
+  const photoFrom = usePhotoFromTarget();
   const photoUrl = trpc.photos.get.useQuery(
     { id: sourcePhotoId ?? 0 },
     { enabled: sourcePhotoId != null },
   );
   const create = trpc.photos.createCutout.useMutation({
     onSuccess: () => {
-      utils.photos.listForItem.invalidate({ itemId });
-      utils.items.get.invalidate({ id: itemId });
-      utils.items.listAll.invalidate();
       // the cutout adds a pin in the source photo: the Placement pane and badges change
-      utils.items.placement.invalidate({ itemId });
-      utils.items.placementSummary.invalidate();
+      invalidatePhotoChange(utils, { itemIds: [itemId] });
       reset();
       onClose();
     },
@@ -80,8 +77,7 @@ export function ChooseFromLibraryDialog({
 
   const pick = async (captureId: number) => {
     setPickedCaptureId(captureId);
-    const res = await ensure.mutateAsync({ captureId });
-    setSourcePhotoId(res.photoId);
+    setSourcePhotoId(await photoFrom.resolve({ source: "capture", captureId }));
   };
 
   return (
@@ -117,7 +113,7 @@ export function ChooseFromLibraryDialog({
                 ))}
               </div>
             )}
-            {ensure.isPending && pickedCaptureId != null && (
+            {photoFrom.isPending && pickedCaptureId != null && (
               <div className="text-[12px] text-muted-foreground mt-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" /> Opening photo…
               </div>

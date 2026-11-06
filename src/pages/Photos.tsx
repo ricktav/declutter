@@ -8,6 +8,7 @@ import { timeAgo } from "@/lib/format";
 import { Search, Loader2, MapPin, LayoutGrid, Link2, Camera, Home, Trash2 } from "lucide-react";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { usePersistedState } from "@/hooks/use-persisted-state";
+import { usePhotoFromTarget } from "@/hooks/use-photo-from-target";
 import { AttachPhotoDialog, type AttachTarget } from "@/components/AttachPhotoDialog";
 import { PhotoPlaceDialog, type PlaceResult, type PlaceTarget } from "@/components/PhotoPlaceDialog";
 import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
@@ -97,20 +98,16 @@ function PhotoTile({
   onChangePlace: (target: PlaceTarget) => void;
 }) {
   const navigate = useNavigate();
-  const ensure = trpc.photos.ensureForCapture.useMutation({
-    onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
-  });
+  // one promotion per button, so each keeps its own spinner and error
+  const ensure = usePhotoFromTarget();
   // "Pin a Thing…" opens Annotate with the photo's room, so the pin lands there
   const pinQuery = `?roomId=${photo.roomId ?? "none"}`;
-  const ensureForPin = trpc.photos.ensureForCapture.useMutation({
-    onSuccess: (res) => navigate(`/annotate/${res.photoId}${pinQuery}`),
-  });
+  const ensureForPin = usePhotoFromTarget();
   const inBucket = photo.itemId == null;
   // "Place on the plan": the plan page stands a photo id in its own room. A
   // capture gets its photo (with the chosen room) first; a cutout never.
-  const ensureForPlace = trpc.photos.ensureForCapture.useMutation({
-    onSuccess: (res, vars) => navigate(`/rooms/${vars.roomId}?placePhoto=${res.photoId}`),
-  });
+  const ensureForPlace = usePhotoFromTarget();
+  const capture = { source: "capture" as const, captureId: photo.captureId! };
   const [pickRoom, setPickRoom] = useState(false);
   const canPlace = photo.source === "capture" ? rooms.length > 0 : photo.roomId != null && !photo.isCutout;
   const utils = trpc.useUtils();
@@ -153,7 +150,12 @@ function PhotoTile({
       <button
         className="group w-full rounded-lg border border-border bg-white p-2 text-left hover:border-primary/50 disabled:opacity-60"
         disabled={ensure.isPending}
-        onClick={() => ensure.mutate({ captureId: photo.captureId! })}
+        onClick={() =>
+          ensure.resolve(capture).then(
+            (id) => navigate(`/annotate/${id}`),
+            () => {},
+          )
+        }
         title="Pin objects on this photo"
       >
         {ensure.isPending ? (
@@ -209,7 +211,10 @@ function PhotoTile({
               disabled={ensureForPin.isPending}
               onClick={() =>
                 photo.source === "capture"
-                  ? ensureForPin.mutate({ captureId: photo.captureId! })
+                  ? ensureForPin.resolve(capture).then(
+                      (id) => navigate(`/annotate/${id}${pinQuery}`),
+                      () => {},
+                    )
                   : navigate(`/annotate/${photo.id}${pinQuery}`)
               }
               title="Draw a box around a Thing on this photo"
@@ -227,7 +232,11 @@ function PhotoTile({
                   defaultValue=""
                   onChange={(e) => {
                     const roomId = Number(e.target.value);
-                    if (roomId > 0) ensureForPlace.mutate({ captureId: photo.captureId!, roomId });
+                    if (roomId > 0)
+                      ensureForPlace.resolve(capture, roomId).then(
+                        (id) => navigate(`/rooms/${roomId}?placePhoto=${id}`),
+                        () => {}, // shown under the tile
+                      );
                   }}
                   onBlur={() => !ensureForPlace.isPending && setPickRoom(false)}
                 >

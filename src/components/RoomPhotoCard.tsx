@@ -5,6 +5,7 @@ import { trpc } from "@/providers/trpc";
 import { PhotoRoomSelect } from "@/components/PhotoRoomSelect";
 import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { invalidatePhotoPlace } from "@/components/PhotoPlaceDialog";
+import { usePhotoFromTarget } from "@/hooks/use-photo-from-target";
 
 /**
  * One photo in a room's pool. Pin / Place find-or-create a photo row first
@@ -32,7 +33,7 @@ export function RoomPhotoCard({
 }) {
   const navigate = useNavigate();
   const utils = trpc.useUtils();
-  const ensure = trpc.photos.ensureForCapture.useMutation();
+  const photoFrom = usePhotoFromTarget();
   const setRoom = trpc.photos.setRoom.useMutation({
     onSuccess: (res) => {
       invalidatePhotoPlace(utils);
@@ -44,7 +45,7 @@ export function RoomPhotoCard({
   const [going, setGoing] = useState<"pin" | "place" | "zoom" | null>(null);
   const noRoom = photoRoomId == null;
   const elsewhere = photoRoomId != null && photoRoomId !== roomId;
-  const busy = ensure.isPending || setRoom.isPending;
+  const busy = photoFrom.isPending || setRoom.isPending;
   const placeNeedsRoom = noRoom && photoId != null && captureId == null;
 
   const assignRoom = (nextRoomId: number) => {
@@ -53,14 +54,12 @@ export function RoomPhotoCard({
       return;
     }
     if (captureId == null) return;
-    ensure.mutate(
-      { captureId, roomId: nextRoomId },
-      {
-        onSuccess: (res) => {
-          invalidatePhotoPlace(utils);
-          if (nextRoomId !== roomId) navigate(`/rooms/${nextRoomId}?placePhoto=${res.photoId}`);
-        },
+    photoFrom.resolve({ source: "capture", captureId }, nextRoomId).then(
+      (id) => {
+        invalidatePhotoPlace(utils);
+        if (nextRoomId !== roomId) navigate(`/rooms/${nextRoomId}?placePhoto=${id}`);
       },
+      () => {}, // shown below the room select
     );
   };
 
@@ -79,16 +78,16 @@ export function RoomPhotoCard({
     }
     if (captureId == null) return;
     setGoing(to);
-    ensure.mutate(
-      { captureId, roomId },
-      {
-        onSuccess: (res) => {
+    photoFrom
+      .resolve({ source: "capture", captureId }, roomId)
+      .then(
+        (id) => {
           invalidatePhotoPlace(utils);
-          finish(to, res.photoId);
+          finish(to, id);
         },
-        onSettled: () => setGoing(null),
-      },
-    );
+        () => {}, // shown below the room select
+      )
+      .finally(() => setGoing(null));
   };
 
   return (
@@ -123,7 +122,7 @@ export function RoomPhotoCard({
         <div className="mt-1.5">
           <PhotoRoomSelect houseId={houseId} onPick={assignRoom} disabled={busy} />
           {setRoom.isError && <p className="mt-0.5 text-[11px] text-destructive">{setRoom.error.message}</p>}
-          {ensure.isError && <p className="mt-0.5 text-[11px] text-destructive">{ensure.error.message}</p>}
+          {photoFrom.error && <p className="mt-0.5 text-[11px] text-destructive">{photoFrom.error.message}</p>}
         </div>
       )}
       {elsewhere && photoId != null && (

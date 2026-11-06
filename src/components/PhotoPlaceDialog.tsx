@@ -5,12 +5,13 @@ import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
 import { HouseRoomFields } from "@/components/HouseRoomFields";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { invalidatePhotoChange, photoTargetKey, usePhotoFromTarget, type PhotoTarget } from "@/hooks/use-photo-from-target";
 
 /** The photo whose Place changes: a real photo (photos.setRoom), or an inbox
  * capture that becomes a photo in the chosen room (photos.ensureForCapture). */
 export type PlaceTarget =
   | { source: "photo"; photoId: number; roomId: number | null; houseId: number | null; ofThing: boolean; hasCamera: boolean }
-  | { source: "capture"; captureId: number };
+  | Extract<PhotoTarget, { source: "capture" }>;
 
 /** What changed, for the caller's confirmation line. */
 export type PlaceResult = { roomName: string | null; cameraCleared: boolean; ofThing: boolean };
@@ -18,12 +19,7 @@ export type PlaceResult = { roomName: string | null; cameraCleared: boolean; ofT
 /** The queries that show a photo's room. */
 // eslint-disable-next-line react-refresh/only-export-components
 export function invalidatePhotoPlace(utils: ReturnType<typeof trpc.useUtils>) {
-  utils.photos.get.invalidate();
-  utils.photos.listAll.invalidate();
-  utils.photos.forRoom.invalidate();
-  utils.photos.roomPhotos.invalidate();
-  utils.rooms.get.invalidate();
-  utils.inbox.list.invalidate();
+  invalidatePhotoChange(utils);
 }
 
 /** Change a Photo's Place from the Photos page. */
@@ -41,7 +37,7 @@ export function PhotoPlaceDialog({
       <DialogContent className="max-w-md">
         {target && (
           <PlaceBody
-            key={target.source === "photo" ? `p${target.photoId}` : `c${target.captureId}`}
+            key={photoTargetKey(target)}
             target={target}
             onClose={onClose}
             onMoved={onMoved}
@@ -94,17 +90,21 @@ function PlaceBody({
     },
     onError: resetPicker,
   });
-  const ensure = trpc.photos.ensureForCapture.useMutation({
-    onSuccess: async (_res, vars) => {
-      await utils.rooms.list.invalidate();
-      invalidatePhotoPlace(utils);
-      onMoved({ roomName: nameOf(vars.roomId ?? null), cameraCleared: false, ofThing: false });
-      onClose();
-    },
-    onError: resetPicker,
-  });
-  const pending = setRoom.isPending || ensure.isPending;
-  const error = setRoom.error ?? ensure.error;
+  const photoFrom = usePhotoFromTarget();
+  // a capture becomes its Photo in the picked room
+  const placeCapture = (roomId: number) => {
+    photoFrom.resolve(target, roomId).then(
+      async () => {
+        await utils.rooms.list.invalidate();
+        invalidatePhotoPlace(utils);
+        onMoved({ roomName: nameOf(roomId), cameraCleared: false, ofThing: false });
+        onClose();
+      },
+      resetPicker,
+    );
+  };
+  const pending = setRoom.isPending || photoFrom.isPending;
+  const error = setRoom.error ?? photoFrom.error;
 
   // only a picked room (or the confirmed "Clear Place") saves; the picker
   // never clears the Place by itself
@@ -115,7 +115,7 @@ function PlaceBody({
     if (target.source === "photo") {
       if (roomId !== target.roomId) setRoom.mutate({ id: target.photoId, roomId });
     } else {
-      ensure.mutate({ captureId: target.captureId, roomId });
+      placeCapture(roomId);
     }
   };
 

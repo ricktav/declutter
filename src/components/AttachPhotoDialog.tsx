@@ -5,10 +5,11 @@ import { trpc } from "@/providers/trpc";
 import { ItemPicker } from "@/components/ItemPicker";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { invalidatePhotoChange, photoTargetKey, usePhotoFromTarget, type PhotoTarget } from "@/hooks/use-photo-from-target";
 
 /** What the dialog attaches: a real photo, or an inbox capture that first
  * has to become a photo (photos.ensureForCapture) before it can be attached. */
-export type AttachTarget = { source: "photo"; photoId: number } | { source: "capture"; captureId: number };
+export type AttachTarget = PhotoTarget;
 
 type Thing = { id: number; name: string };
 
@@ -24,11 +25,7 @@ export function AttachPhotoDialog({ target, onClose }: { target: AttachTarget | 
       <DialogContent className="max-w-md">
         {/* keyed so every opening starts from a clean picker */}
         {target && (
-          <AttachBody
-            key={target.source === "photo" ? `p${target.photoId}` : `c${target.captureId}`}
-            target={target}
-            onClose={onClose}
-          />
+          <AttachBody key={photoTargetKey(target)} target={target} onClose={onClose} />
         )}
       </DialogContent>
     </Dialog>
@@ -39,8 +36,10 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
   const utils = trpc.useUtils();
   const [q, setQ] = useState("");
   const [thing, setThing] = useState<Thing | null>(null);
-  // the photo id once known: given for a photo, materialized for a capture
-  const [photoId, setPhotoId] = useState<number | null>(target.source === "photo" ? target.photoId : null);
+  // the photo id once resolved in this dialog, so Try again / Move act on the
+  // same Photo: once attached it is no longer bare, and ensureForCapture
+  // would make a second Photo for the capture
+  const [photoId, setPhotoId] = useState<number | null>(null);
   // the owner the server named: its name for the question, its id so the
   // move happens only from that owner (fromItemId)
   const [conflict, setConflict] = useState<{ name: string; ownerId: number | null } | null>(null);
@@ -48,34 +47,25 @@ function AttachBody({ target, onClose }: { target: AttachTarget; onClose: () => 
   const [retry, setRetry] = useState(false);
   const [done, setDone] = useState<Thing | null>(null);
 
-  const ensure = trpc.photos.ensureForCapture.useMutation();
+  const { resolve, isPending: resolving } = usePhotoFromTarget();
   const attach = trpc.photos.attachToItem.useMutation();
-  const busy = ensure.isPending || attach.isPending;
+  const busy = resolving || attach.isPending;
 
   const run = async (t: Thing, force: boolean, fromItemId?: number | null) => {
     setError(null);
     setRetry(false);
     setConflict(null);
     try {
-      let id = photoId;
-      if (id == null && target.source === "capture") {
-        const res = await ensure.mutateAsync({ captureId: target.captureId });
-        id = res.photoId;
-        setPhotoId(id);
-      }
-      if (id == null) return;
+      const id = photoId ?? (await resolve(target));
+      setPhotoId(id);
       await attach.mutateAsync({
         photoId: id,
         itemId: t.id,
         ...(force ? { force: true } : {}),
         ...(force && fromItemId != null ? { fromItemId } : {}),
       });
-      await utils.photos.listAll.invalidate();
-      void utils.items.placementSummary.invalidate();
       // the Thing's photos and placement (and a moved photo's old owner's) changed
-      void utils.items.get.invalidate({ id: t.id });
-      if (fromItemId != null) void utils.items.get.invalidate({ id: fromItemId });
-      void utils.items.placement.invalidate();
+      invalidatePhotoChange(utils, { itemIds: [t.id, ...(fromItemId != null ? [fromItemId] : [])] });
       setDone(t);
     } catch (err) {
       const e = err as { message?: string; data?: { code?: string; ownerId?: number } };

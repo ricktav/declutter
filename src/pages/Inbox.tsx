@@ -17,6 +17,7 @@ import { ZoomOverlay } from "@/components/ZoomOverlay";
 import { useZoomable } from "@/hooks/use-zoomable";
 import { isGeojsonFile } from "@/lib/geojsonFloor";
 import { PhotoPlaceDialog, type PlaceTarget } from "@/components/PhotoPlaceDialog";
+import { usePhotoFromTarget } from "@/hooks/use-photo-from-target";
 import { HouseRoomFields } from "@/components/HouseRoomFields";
 import { useHouse } from "@/context/house";
 import {
@@ -172,21 +173,24 @@ function PinCaptureButton({
   iconOnly?: boolean;
 }) {
   const navigate = useNavigate();
-  const ensure = trpc.photos.ensureForCapture.useMutation({
-    onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
-  });
+  const photoFrom = usePhotoFromTarget();
+  const pin = () =>
+    photoFrom.resolve({ source: "capture", captureId }, roomId).then(
+      (id) => navigate(`/annotate/${id}`),
+      () => {},
+    );
   if (iconOnly) {
     return (
       <button
         className="absolute bottom-1.5 right-1.5 h-6 w-6 rounded-full bg-white/90 shadow flex items-center justify-center text-muted-foreground hover:text-primary disabled:opacity-50"
         title="Pin objects on this photo"
-        disabled={ensure.isPending}
+        disabled={photoFrom.isPending}
         onClick={(e) => {
           e.stopPropagation();
-          ensure.mutate({ captureId, roomId });
+          void pin();
         }}
       >
-        {ensure.isPending ? (
+        {photoFrom.isPending ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : (
           <MapPin className="h-3.5 w-3.5" />
@@ -200,13 +204,13 @@ function PinCaptureButton({
       variant="outline"
       className={cn("h-6 text-[11px]", className)}
       title="Pin objects on this photo"
-      disabled={ensure.isPending}
+      disabled={photoFrom.isPending}
       onClick={(e) => {
         e.stopPropagation();
-        ensure.mutate({ captureId, roomId });
+        void pin();
       }}
     >
-      {ensure.isPending ? (
+      {photoFrom.isPending ? (
         <Loader2 className="h-3 w-3 animate-spin mr-1" />
       ) : (
         <MapPin className="h-3 w-3 mr-1" />
@@ -323,15 +327,17 @@ function PinPendingButton({ capture }: { capture: InboxCapture }) {
   const rooms = trpc.rooms.list.useQuery({ houseId }, { enabled: houseId != null });
   const roomName = rooms.data?.find((r) => r.id === roomId)?.name ?? "unset";
   const hasDefaultLocation = roomId != null;
-  const ensure = trpc.photos.ensureForCapture.useMutation({
-    onSuccess: (res) => {
-      setLastRoomId(roomId);
-      navigate(`/annotate/${res.photoId}?roomId=${roomId ?? "none"}`);
-    },
-  });
-  const pinPlaced = trpc.photos.ensureForCapture.useMutation({
-    onSuccess: (res) => navigate(`/annotate/${res.photoId}`),
-  });
+  // two promotions, each with its own spinner and error, as before
+  const ensure = usePhotoFromTarget();
+  const pinWithRoom = () =>
+    ensure.resolve({ source: "capture", captureId }, roomId).then(
+      (id) => {
+        setLastRoomId(roomId);
+        navigate(`/annotate/${id}?roomId=${roomId ?? "none"}`);
+      },
+      () => {}, // shown in the dialog
+    );
+  const pinPlaced = usePhotoFromTarget();
 
   if (capture.photoRoomId != null) {
     return (
@@ -343,7 +349,10 @@ function PinPendingButton({ capture }: { capture: InboxCapture }) {
         disabled={pinPlaced.isPending}
         onClick={(e) => {
           e.stopPropagation();
-          pinPlaced.mutate({ captureId });
+          pinPlaced.resolve({ source: "capture", captureId }).then(
+            (id) => navigate(`/annotate/${id}`),
+            () => {},
+          );
         }}
       >
         {pinPlaced.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <MapPin className="h-3 w-3 mr-1" />}
@@ -365,7 +374,7 @@ function PinPendingButton({ capture }: { capture: InboxCapture }) {
             // already have a working default (set here before, or anywhere
             // else that's confirmed one) - pinning again shouldn't re-ask
             // the same question every single time
-            if (hasDefaultLocation) ensure.mutate({ captureId, roomId });
+            if (hasDefaultLocation) void pinWithRoom();
             else setOpen(true);
           }}
         >
@@ -405,7 +414,7 @@ function PinPendingButton({ capture }: { capture: InboxCapture }) {
             <Button
               size="sm"
               disabled={ensure.isPending}
-              onClick={() => ensure.mutate({ captureId, roomId })}
+              onClick={() => void pinWithRoom()}
             >
               {ensure.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
@@ -415,7 +424,7 @@ function PinPendingButton({ capture }: { capture: InboxCapture }) {
               Continue to pin
             </Button>
           </div>
-          {ensure.isError && <div className="text-[12px] text-destructive">{ensure.error.message}</div>}
+          {ensure.error && <div className="text-[12px] text-destructive">{ensure.error.message}</div>}
         </DialogContent>
       </Dialog>
     </>
