@@ -18,7 +18,8 @@ import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 import { classifyAiError, AiMisconfigured } from "../lib/ai-client";
 import { readFileBytes, copyStoredFile, deleteStoredFile, putFile, withNewFile } from "../lib/filestore";
 import { releaseStoredFiles } from "../lib/entities";
-import { cropPercent, toThumbnail, normalizeOrientation } from "../lib/crop";
+import { cropPercent, toThumbnail, normalizeOrientation, forDetectVision } from "../lib/crop";
+import { DETECT_BOX_INSTRUCTIONS, normalizeDetectBox } from "../lib/detectMatch";
 import { imageSizeFields } from "../lib/imageSize";
 import { createCapture } from "../lib/captures";
 import { clearTriageJobState, maybeAutoTriage, triageJobState } from "../lib/jobs";
@@ -37,10 +38,10 @@ const detectObjectsSchema = z.object({
         .nullable()
         .optional()
         .describe("optional one-line description beyond the name, or null"),
-      xPct: z.number().min(0).max(100).describe("horizontal center, 0-100% of image width"),
-      yPct: z.number().min(0).max(100).describe("vertical center, 0-100% of image height"),
-      wPct: z.number().min(1).max(100).describe("width of the bounding box, 0-100% of image width"),
-      hPct: z.number().min(1).max(100).describe("height of the bounding box, 0-100% of image height"),
+      xPct: z.number().describe("box CENTER x, 0-100% of image width — not the top-left"),
+      yPct: z.number().describe("box CENTER y, 0-100% of image height — not the top-left"),
+      wPct: z.number().describe("width of the bounding box, 0-100% of image width"),
+      hPct: z.number().describe("height of the bounding box, 0-100% of image height"),
       matchedItemId: z
         .number()
         .nullable()
@@ -487,10 +488,8 @@ export const inboxRouter = createRouter({
       return { ok: false as const, error: "This capture has no stored image." };
     }
     try {
-      // normalized: the model's xPct/yPct/wPct/hPct must be computed
-      // against the same upright frame the browser displays, or every
-      // returned box ends up offset/rotated relative to the real objects
-      const bytes = await normalizeOrientation(await readFileBytes(cap.storageKey));
+      // upright + capped: same frame the browser displays, so percent boxes overlay
+      const bytes = await forDetectVision(await readFileBytes(cap.storageKey));
       const allItems = await promptInventory(db, await captureScope(db, cap, ctx.houseId));
 
       // reference photos let the model recognize a re-photographed item by
@@ -509,7 +508,7 @@ export const inboxRouter = createRouter({
         }
       }
 
-      const detectPrompt = `Identify the distinct physical objects worth inventorying in the PHOTO (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. For each object give a tight bounding box around the object itself: xPct/yPct is the box CENTER as a percentage of image width/height; wPct/hPct is the box width/height as a percentage of image width/height. Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\nThe user's existing inventory, for name-based matching only - set matchedItemId when an object is clearly the same item by name, otherwise null:\n${allItems.map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`;
+      const detectPrompt = `Identify the distinct physical objects worth inventorying in the PHOTO (devices, tools, containers, appliances — NOT wall, floor, ceiling or background). List up to 12 of the most significant objects, fewer if that's all there is. ${DETECT_BOX_INSTRUCTIONS} Give each object a short, SPECIFIC name (brand + model if visible, e.g. "Mac mini M4", "Dell U2720Q monitor" — not just "computer").\n\nThe user's existing inventory, for name-based matching only - set matchedItemId when an object is clearly the same item by name, otherwise null:\n${allItems.map((i) => `- ${i.id}: ${i.name}`).join("\n") || "(none yet)"}`;
 
       const object = isClaudeCliDevMode()
         ? await claudeCliObject({
@@ -542,18 +541,23 @@ export const inboxRouter = createRouter({
             })
           ).object;
       const itemById = new Map(allItems.map((it) => [it.id, it]));
-      const suggestions = object.objects.slice(0, 15).map((o) => {
+      const suggestions = object.objects.slice(0, 15).flatMap((o) => {
+        const box = normalizeDetectBox(o);
+        if (!box) return [];
         // trust the model's own visual match (it saw the reference photo) over
         // text similarity; fall back to name-overlap only when it found nothing
         const visualMatch = o.matchedItemId != null ? itemById.get(o.matchedItemId) : undefined;
         if (visualMatch) {
-          return {
-            ...o,
-            matchedItemId: visualMatch.id,
-            matchedItemName: visualMatch.name,
-            matchScore: 95,
-            description: visualMatch.description ?? o.description ?? null,
-          };
+          return [
+            {
+              ...o,
+              ...box,
+              matchedItemId: visualMatch.id,
+              matchedItemName: visualMatch.name,
+              matchScore: 95,
+              description: visualMatch.description ?? o.description ?? null,
+            },
+          ];
         }
         let matchedItemId: number | null = null;
         let matchedItemName: string | null = null;
@@ -571,13 +575,16 @@ export const inboxRouter = createRouter({
           matchedItemName = null;
         }
         const matched = matchedItemId != null ? itemById.get(matchedItemId) : undefined;
-        return {
-          ...o,
-          matchedItemId,
-          matchedItemName,
-          matchScore: Math.round(best * 100),
-          description: matched?.description ?? o.description ?? null,
-        };
+        return [
+          {
+            ...o,
+            ...box,
+            matchedItemId,
+            matchedItemName,
+            matchScore: Math.round(best * 100),
+            description: matched?.description ?? o.description ?? null,
+          },
+        ];
       });
       await logEvent({
         entityType: "capture",
