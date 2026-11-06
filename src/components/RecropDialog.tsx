@@ -10,7 +10,7 @@ import {
 import { Box } from "@/components/DetectObjects";
 import { Loader2 } from "lucide-react";
 
-type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
+import type { CropBox } from "@/lib/cropBox";
 
 /** Re-crop a cutout from the original photo it came from. */
 export function RecropDialog({

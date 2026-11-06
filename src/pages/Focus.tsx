@@ -33,7 +33,7 @@ import {
 
 type Pin = inferRouterOutputs<AppRouter>["pins"]["listForPhoto"][number];
 type RoomPhoto = inferRouterOutputs<AppRouter>["photos"]["roomPhotos"][number];
-type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
+import { frameRect, type CropBox } from "@/lib/cropBox";
 
 function boxOf(p: { xPct: number; yPct: number; wPct?: number | null; hPct?: number | null }): CropBox {
   return { xPct: p.xPct, yPct: p.yPct, wPct: p.wPct && p.wPct > 0 ? p.wPct : 12, hPct: p.hPct && p.hPct > 0 ? p.hPct : 12 };
@@ -126,10 +126,10 @@ function FramedRoomPhoto({
           <div
             className="absolute border-2 border-dashed border-hb-lime bg-hb-lime/10 pointer-events-none"
             style={{
-              left: `${pending.xPct - pending.wPct / 2}%`,
-              top: `${pending.yPct - pending.hPct / 2}%`,
-              width: `${pending.wPct}%`,
-              height: `${pending.hPct}%`,
+              ...(() => {
+                const r = frameRect(pending);
+                return { left: `${r.left}%`, top: `${r.top}%`, width: `${r.width}%`, height: `${r.height}%` };
+              })(),
             }}
           />
         )}
@@ -713,16 +713,17 @@ export default function FocusPage() {
                   const color = f.pin.itemAreaColor ?? (f.pin.itemId ? "#5b8c5a" : "#282c20");
                   const on = sel?.kind === "pin" && sel.pinId === f.pin.id;
                   const identifying = labelingPinIds.includes(f.pin.id);
+                  const r = frameRect(f.box);
                   return (
                     <button
                       key={f.pin.id}
                       type="button"
                       className="absolute border-2 rounded-sm"
                       style={{
-                        left: `${f.box.xPct - f.box.wPct / 2}%`,
-                        top: `${f.box.yPct - f.box.hPct / 2}%`,
-                        width: `${f.box.wPct}%`,
-                        height: `${f.box.hPct}%`,
+                        left: `${r.left}%`,
+                        top: `${r.top}%`,
+                        width: `${r.width}%`,
+                        height: `${r.height}%`,
                         borderColor: on ? "#d2ff00" : color,
                         background: on ? "#d2ff0022" : `${color}22`,
                         borderStyle: f.pin.itemId ? "solid" : "dashed",

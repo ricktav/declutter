@@ -29,7 +29,7 @@ import {
   Home,
 } from "lucide-react";
 
-type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
+import { frameRect, type CropBox } from "@/lib/cropBox";
 
 type Draft = { label: string; item: { id: number; name: string } | null };
 
@@ -930,15 +930,16 @@ export default function AnnotatePage() {
                   // mouse up to the icons never exits the hover region (a gap
                   // there means mouseleave fires before the icons are reached)
                   const TOOLBAR_PAD = 40;
+                  const r = frameRect({ ...box, wPct: w, hPct: h });
                   return (
                     <div
                       key={`frame-${p.id}`}
                       className="absolute cursor-pointer"
                       style={{
-                        left: `${box.xPct - w / 2}%`,
-                        top: `calc(${box.yPct - h / 2}% - ${TOOLBAR_PAD}px)`,
-                        width: `${w}%`,
-                        height: `calc(${h}% + ${TOOLBAR_PAD}px)`,
+                        left: `${r.left}%`,
+                        top: `calc(${r.top}% - ${TOOLBAR_PAD}px)`,
+                        width: `${r.width}%`,
+                        height: `calc(${r.height}% + ${TOOLBAR_PAD}px)`,
                       }}
                       onMouseEnter={() => setHoveredSuggestionId(p.id)}
                       onMouseLeave={() => setHoveredSuggestionId((cur) => (cur === p.id ? null : cur))}
@@ -1017,6 +1018,7 @@ export default function AnnotatePage() {
                 const box = boxFor(p);
                 const w = box.wPct ?? 10;
                 const h = box.hPct ?? 10;
+                const r = frameRect({ ...box, wPct: w, hPct: h });
                 return (
                   <div
                     key={`edit-frame-${p.id}`}
@@ -1024,10 +1026,10 @@ export default function AnnotatePage() {
                     // inside the frame reaches the Photo and moves a pin there
                     className={cn("absolute", mode === "place" && "pointer-events-none")}
                     style={{
-                      left: `${box.xPct - w / 2}%`,
-                      top: `${box.yPct - h / 2}%`,
-                      width: `${w}%`,
-                      height: `${h}%`,
+                      left: `${r.left}%`,
+                      top: `${r.top}%`,
+                      width: `${r.width}%`,
+                      height: `${r.height}%`,
                     }}
                   >
                     {(["tl", "tr", "bl", "br"] as const).map((corner) => (
@@ -1108,10 +1110,10 @@ export default function AnnotatePage() {
                 <div
                   className="absolute border-2 border-dashed border-primary bg-primary/10 pointer-events-none"
                   style={{
-                    left: `${drawingBox.xPct - drawingBox.wPct / 2}%`,
-                    top: `${drawingBox.yPct - drawingBox.hPct / 2}%`,
-                    width: `${drawingBox.wPct}%`,
-                    height: `${drawingBox.hPct}%`,
+                    ...(() => {
+                      const r = frameRect(drawingBox);
+                      return { left: `${r.left}%`, top: `${r.top}%`, width: `${r.width}%`, height: `${r.height}%` };
+                    })(),
                   }}
                 />
               )}

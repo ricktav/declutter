@@ -5,13 +5,7 @@ import { Button } from "@/components/ui/button";
 import { trpc } from "@/providers/trpc";
 import { Loader2 } from "lucide-react";
 
-type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
-
-const DEFAULT_BOX: CropBox = { xPct: 50, yPct: 50, wPct: 40, hPct: 40 };
-
-function boxesEqual(a: CropBox, b: CropBox) {
-  return a.xPct === b.xPct && a.yPct === b.yPct && a.wPct === b.wPct && a.hPct === b.hPct;
-}
+import { DEFAULT_CROP_BOX, boxesEqual, type CropBox } from "@/lib/cropBox";
 
 /**
  * Zoom overlay for a Thing's photo. Cutouts show the original source with
@@ -36,12 +30,12 @@ export function PhotoCropZoom({
     { key: storageKey ?? "" },
     { enabled: !!storageKey && source.data?.available !== true },
   );
-  const [box, setBox] = useState<CropBox>(DEFAULT_BOX);
+  const [box, setBox] = useState<CropBox>(DEFAULT_CROP_BOX);
   const [savedBox, setSavedBox] = useState<CropBox | null>(null);
 
   useEffect(() => {
     if (!source.data?.available) return;
-    const next = source.data.cropBox ?? DEFAULT_BOX;
+    const next = source.data.cropBox ?? DEFAULT_CROP_BOX;
     setBox(next);
     setSavedBox(source.data.cropBox);
   }, [source.data]);

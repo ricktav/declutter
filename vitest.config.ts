@@ -14,7 +14,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["api/**/*.test.ts", "api/**/*.spec.ts"],
+    include: ["api/**/*.test.ts", "api/**/*.spec.ts", "src/lib/**/*.test.ts"],
     globalSetup: ["./api/test/globalSetup.ts"],
     setupFiles: ["./api/test/setup.ts"],
     // all test files share one test database; resetTestDb() in parallel

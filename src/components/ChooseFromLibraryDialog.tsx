@@ -10,7 +10,7 @@ import {
 import { Box } from "@/components/DetectObjects";
 import { Loader2 } from "lucide-react";
 
-type CropBox = { xPct: number; yPct: number; wPct: number; hPct: number };
+import type { CropBox } from "@/lib/cropBox";
 type PhotoSize = "small" | "medium" | "big";
 const SIZE_OPTIONS: { value: PhotoSize; label: string }[] = [
   { value: "small", label: "Small" },
