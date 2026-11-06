@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 import type { ItemPos, PhotoCamera, RoomGeometry } from "@db/schema";
 import { applyStacking } from "@/lib/roomStacking";
 
@@ -59,7 +59,7 @@ const normDeg = (d: number) => ((d % 360) + 360) % 360;
  * onPosChange on pointerup - re-rendering the whole SVG on every pointer
  * move would be the "drag-in-React tax" the rewrite estimate warned about.
  */
-export function RoomPlan2D({
+export const RoomPlan2D = memo(function RoomPlan2D({
   widthM,
   depthM,
   walls,
@@ -136,6 +136,8 @@ export function RoomPlan2D({
 
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  // item id -> its <g>, filled by ref callbacks so a drag finds its group without a DOM query
+  const itemGroupsRef = useRef(new Map<number, SVGGElement>());
   const cutStartRef = useRef<{ xM: number; yM: number } | null>(null);
   const [cutRect, setCutRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const camDragRef = useRef<CameraDrag | null>(null);
@@ -167,8 +169,7 @@ export function RoomPlan2D({
   };
 
   const placeItemGroup = (id: number, p: ItemPos) => {
-    const svg = svgRef.current;
-    const g = svg?.querySelector<SVGGElement>(`g[data-item-id="${id}"]`);
+    const g = itemGroupsRef.current.get(id);
     if (!g) return;
     const x = px(p.xM), y = py(p.yM), w = p.wM * S, d = p.dM * S;
     g.setAttribute("transform", `rotate(${-p.rotDeg} ${x + w / 2} ${y + d / 2})`);
@@ -421,6 +422,10 @@ export function RoomPlan2D({
           <g
             key={it.id}
             data-item-id={it.id}
+            ref={(el) => {
+              if (el) itemGroupsRef.current.set(it.id, el);
+              else itemGroupsRef.current.delete(it.id);
+            }}
             transform={`rotate(${-p.rotDeg} ${x + w / 2} ${y + d / 2})`}
             onPointerDown={(e) => {
               if (floorMode) return;
@@ -588,4 +593,4 @@ export function RoomPlan2D({
       </svg>
     </div>
   );
-}
+});

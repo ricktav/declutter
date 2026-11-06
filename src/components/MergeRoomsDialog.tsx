@@ -64,7 +64,11 @@ export function MergeRoomsDialog({
     return [
       { key: "from" as const, room: from, label: `“${from.name}” (source, will be removed)` },
       { key: "to" as const, room: to, label: `“${to.name}” (survives)` },
-    ];
+    ].map((s) => ({
+      ...s,
+      // built here so RoomPlan2D (memoised) sees the same array until the rooms change
+      planItems: s.room.items.map((it) => ({ id: it.id, name: it.name, pos: it.pos, editable: false })),
+    }));
   }, [from, to]);
 
   return (
@@ -107,7 +111,7 @@ export function MergeRoomsDialog({
                           depthM={s.room.depthM ?? 0}
                           walls={s.room.walls}
                           openings={s.room.openings}
-                          items={s.room.items.map((it) => ({ id: it.id, name: it.name, pos: it.pos, editable: false }))}
+                          items={s.planItems}
                           editable={false}
                         />
                       </div>

@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { useParams, useSearchParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
+import { useStableCallback } from "@/hooks/use-stable-callback";
 import { RoomPlan2D, type CameraMarker, type PlanMove } from "@/components/RoomPlan2D";
 import { ScanDiffList } from "@/components/ScanDiffList";
 import { moveLabel } from "@/lib/scanDiff";
@@ -95,13 +96,18 @@ export default function RoomPlanPage() {
   const [pinName, setPinName] = useState("");
   const [pinAreaId, setPinAreaId] = useState<number | null>(null);
   const selectedItem = room.data?.items.find((it) => it.id === selectedId) ?? null;
-  const planItems =
-    room.data?.items.map((it) => ({
-      id: it.id,
-      name: it.name,
-      pos: it.pos,
-      editable: it.ownerRoomId === id,
-    })) ?? [];
+  const roomData = room.data;
+  // memoised: RoomPlan2D is memo()'d and must see the same array until the room data changes
+  const planItems = useMemo(
+    () =>
+      roomData?.items.map((it) => ({
+        id: it.id,
+        name: it.name,
+        pos: it.pos,
+        editable: it.ownerRoomId === id,
+      })) ?? [],
+    [roomData, id],
+  );
   const areasList = trpc.areas.list.useQuery(undefined, { enabled: pendingPin != null });
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
@@ -130,14 +136,14 @@ export default function RoomPlanPage() {
     if (selectedId != null) utils.items.get.invalidate({ id: selectedId });
   };
 
-  const selectItem = (itemId: number) => {
+  const selectItem = useStableCallback((itemId: number) => {
     setSelectedId(itemId);
     cancelCameraPlace();
     setSelectedCameraId(null);
     setConfirmRemoveCamera(false);
     setAttaching(false);
     setAttachError(null);
-  };
+  });
 
   const cutFromRoom = trpc.rooms.cutFromRoom.useMutation({
     onSuccess: ({ id: newRoomId }) => {
@@ -256,7 +262,7 @@ export default function RoomPlanPage() {
       setPlacingBusy(false);
     }
   };
-  const onPlanClick = (pos: { xM: number; yM: number }) => {
+  const onPlanClick = useStableCallback((pos: { xM: number; yM: number }) => {
     if (placing) {
       placeAt(pos);
       return;
@@ -264,7 +270,7 @@ export default function RoomPlanPage() {
     setPendingPin(pos);
     setPinName("");
     setPinAreaId(null);
-  };
+  });
 
   // ---- Photos on the plan: camera markers -------------------------------
   // A full photo of this room stands on the plan as a camera (dot + view
@@ -315,7 +321,7 @@ export default function RoomPlanPage() {
   const setCamera = trpc.photos.setCamera.useMutation();
   /** Write a camera (null takes it off the plan). The list is updated first
    * so a dragged marker stays where it was dropped; a failure refetches. */
-  const writeCamera = async (photoId: number, camera: PhotoCamera | null) => {
+  const writeCamera = useStableCallback(async (photoId: number, camera: PhotoCamera | null) => {
     setCameraError(null);
     utils.photos.roomPhotos.setData({ roomId: id }, (old) =>
       old?.map((p) => (p.photoId === photoId ? { ...p, camera } : p)),
@@ -331,7 +337,7 @@ export default function RoomPlanPage() {
       void utils.photos.get.invalidate({ id: photoId });
       void utils.items.placement.invalidate();
     }
-  };
+  });
 
   const setPhotoRoom = trpc.photos.setRoom.useMutation({
     onSuccess: (res) => {
@@ -355,7 +361,7 @@ export default function RoomPlanPage() {
   };
   /** The click gives the position; heading, view and height come from the
    * suggestion (the defaults when it failed). */
-  const placeCameraAt = async (at: { xM: number; yM: number }) => {
+  const placeCameraAt = useStableCallback(async (at: { xM: number; yM: number }) => {
     if (!cameraPlacing || cameraBusy || suggestion.isLoading) return;
     const target = cameraPlacing;
     const base = suggestion.data?.camera ?? { xM: at.xM, yM: at.yM, ...CAMERA_DEFAULT };
@@ -373,7 +379,7 @@ export default function RoomPlanPage() {
     } finally {
       setCameraBusy(false);
     }
-  };
+  });
   const suggestForSelected = async () => {
     if (!selectedCamera) return;
     setCameraError(null);
@@ -384,12 +390,12 @@ export default function RoomPlanPage() {
       setCameraError(e instanceof Error ? e.message : String(e));
     }
   };
-  const selectCamera = (photoId: number) => {
+  const selectCamera = useStableCallback((photoId: number) => {
     setSelectedCameraId(photoId);
     setConfirmRemoveCamera(false);
     setCameraError(null);
     setSelectedId(null);
-  };
+  });
   // 3D draws the placed photos only (no ghost), memoised: the 3D scene rebuilds when its cameras change
   const cameras3d = useMemo<CameraMarker[]>(
     () => (roomSized ? onPlanPhotos.map((p) => ({ id: p.photoId, title: photoTitle(p), camera: p.camera! })) : []),
@@ -399,14 +405,29 @@ export default function RoomPlanPage() {
     const p = onPlanPhotos.find((x) => x.photoId === photoId);
     if (p) setZoomPhoto({ storageKey: p.storageKey, title: photoTitle(p) });
   };
-  const cameraMarkers: CameraMarker[] = roomSized
-    ? [
-        ...onPlanPhotos.map((p) => ({ id: p.photoId, title: photoTitle(p), camera: p.camera! })),
-        ...(cameraPlacing && suggestion.data
-          ? [{ id: cameraPlacing.photoId, title: cameraPlacing.title, camera: suggestion.data.camera, ghost: true }]
-          : []),
-      ]
-    : [];
+  const cameraPlacingPhotoId = cameraPlacing?.photoId ?? null;
+  const cameraPlacingTitle = cameraPlacing?.title ?? "";
+  const suggestedCamera = suggestion.data?.camera ?? null;
+  const cameraMarkers = useMemo<CameraMarker[]>(
+    () =>
+      roomSized
+        ? [
+            ...onPlanPhotos.map((p) => ({ id: p.photoId, title: photoTitle(p), camera: p.camera! })),
+            ...(cameraPlacingPhotoId != null && suggestedCamera
+              ? [{ id: cameraPlacingPhotoId, title: cameraPlacingTitle, camera: suggestedCamera, ghost: true }]
+              : []),
+          ]
+        : [],
+    [roomSized, onPlanPhotos, cameraPlacingPhotoId, cameraPlacingTitle, suggestedCamera],
+  );
+
+  // stable identities for RoomPlan2D (memo): they read the latest state through the ref
+  const onPosChange = useStableCallback((itemId: number, pos: ItemPos) => updatePos.mutate({ id: itemId, pos }));
+  const onCutRect = useStableCallback((bounds: { xM: number; yM: number; wM: number; dM: number }) => {
+    setPendingCut(bounds);
+    setCutName("");
+  });
+  const onCameraChange = useStableCallback((photoId: number, camera: PhotoCamera) => void writeCamera(photoId, camera));
 
   const onEscape = useEffectEvent(() => {
     cancelPlace();
@@ -706,19 +727,16 @@ export default function RoomPlanPage() {
                   editable
                   selectedId={selectedId}
                   onSelect={selectItem}
-                  onPosChange={(itemId, pos: ItemPos) => updatePos.mutate({ id: itemId, pos })}
+                  onPosChange={onPosChange}
                   rotationDeg={rotation}
                   cutMode={cutMode}
-                  onCutRect={(bounds) => {
-                    setPendingCut(bounds);
-                    setCutName("");
-                  }}
+                  onCutRect={onCutRect}
                   pinMode={pinMode || placing != null}
                   onPinPlace={onPlanClick}
                   cameras={cameraMarkers}
                   selectedCameraId={selectedCameraId}
                   onSelectCamera={selectCamera}
-                  onCameraChange={(photoId, camera) => void writeCamera(photoId, camera)}
+                  onCameraChange={onCameraChange}
                   cameraMode={cameraPlacing != null}
                   onCameraPlace={placeCameraAt}
                   ghostWalls={diff?.before?.walls ?? null}

@@ -2,6 +2,7 @@ import { lazy, Suspense, useMemo, useState, type MouseEvent } from "react";
 import { Link, useInRouterContext } from "react-router";
 import { Box } from "lucide-react";
 import { trpc } from "@/providers/trpc";
+import { useStableCallback } from "@/hooks/use-stable-callback";
 import { RoomPlan2D } from "@/components/RoomPlan2D";
 import { ZoomOverlay } from "@/components/ZoomOverlay";
 import type { CameraMarker } from "@/components/RoomPlan3D";
@@ -56,7 +57,12 @@ export function ItemRoomPreview({
       ),
     [roomPhotos.data, roomId],
   );
-  const openCamera = onOpenCamera ?? setOpenPhotoId;
+  const openCamera = useStableCallback((photoId: number) => (onOpenCamera ?? setOpenPhotoId)(photoId));
+  const roomData = room.data;
+  const planItems = useMemo(
+    () => roomData?.items.map((it) => ({ id: it.id, name: it.name, pos: it.pos })) ?? [],
+    [roomData],
+  );
   const openPhoto = openPhotoId != null ? roomPhotos.data?.find((p) => p.photoId === openPhotoId) : undefined;
   const full = size === "full";
 
@@ -67,7 +73,6 @@ export function ItemRoomPreview({
   };
 
   if (!room.data) return null;
-  const planItems = room.data.items.map((it) => ({ id: it.id, name: it.name, pos: it.pos }));
 
   const openZoom = (e: MouseEvent) => {
     // double-clicking the tabs or the room link shouldn't open the overlay
