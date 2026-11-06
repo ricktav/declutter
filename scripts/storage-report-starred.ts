@@ -15,7 +15,7 @@ import { readFileSync } from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { normalizeIp } from "../api/lib/servicesFleet.ts";
+import { normalizeIp } from "../api/lib/hostNames.ts";
 import {
   parseMeasureTsv,
   planStarredDirReports,

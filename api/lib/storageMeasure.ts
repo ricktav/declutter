@@ -1,5 +1,5 @@
 import path from "path";
-import { normalizeIp, normHost } from "./servicesFleet";
+import { normalizeIp, normHost } from "./hostNames";
 import { isStorageComputer, machineIdentity, storageViewFlags, type ReportVolume } from "./storage";
 
 /** Same skip list as scripts/storage-report-local.mjs, plus network fs on Linux df -T. */
