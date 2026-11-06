@@ -246,8 +246,8 @@ function FocusSheetBody({
   const update = trpc.items.update.useMutation({ onError: (e) => setError(e.message) });
   const setDecision = trpc.items.setDecision.useMutation({ onError: (e) => setError(e.message) });
   const pinUpdate = trpc.pins.update.useMutation({ onError: (e) => setError(e.message) });
-  const cutout = trpc.photos.createCutout.useMutation({ onError: (e) => setError(e.message) });
-  const busy = create.isPending || update.isPending || setDecision.isPending || pinUpdate.isPending || cutout.isPending;
+  const fileFrame = trpc.photos.fileFrame.useMutation({ onError: (e) => setError(e.message) });
+  const busy = create.isPending || update.isPending || setDecision.isPending || pinUpdate.isPending || fileFrame.isPending;
 
   const admit = async () => {
     setError(null);
@@ -256,25 +256,31 @@ function FocusSheetBody({
       setError("Name is required.");
       return;
     }
-    const created = await create.mutateAsync({
-      ...(areaId != null ? { areaId } : {}),
-      name: trimmed,
-      description: note.trim() || undefined,
-      roomId: placeHere ? roomId : null,
-      suggestLinks: false,
-    });
     if (pin) {
-      await pinUpdate.mutateAsync({ id: pin.id, itemId: created.id, label: trimmed });
-      if (photoId != null) {
-        const box = boxOf(pin);
-        try {
-          await cutout.mutateAsync({ itemId: created.id, sourcePhotoId: photoId, box });
-        } catch {
-          // pin is already linked; a cutout is extra
-        }
-      }
+      // Thing + pin + Decision in one transaction; the cutout is extra
+      // (a failed crop comes back as cutoutError, the pin is already linked)
+      await fileFrame.mutateAsync({
+        sourcePhotoId: photoId ?? pin.photoId,
+        box: boxOf(pin),
+        itemId: null,
+        itemName: trimmed,
+        description: note.trim() || undefined,
+        ...(areaId != null ? { areaId } : {}),
+        roomId: placeHere ? roomId : null,
+        pinId: pin.id,
+        label: trimmed,
+        decision: draftDecision ?? null,
+      });
+    } else {
+      const created = await create.mutateAsync({
+        ...(areaId != null ? { areaId } : {}),
+        name: trimmed,
+        description: note.trim() || undefined,
+        roomId: placeHere ? roomId : null,
+        suggestLinks: false,
+      });
+      if (draftDecision) await setDecision.mutateAsync({ id: created.id, decision: draftDecision });
     }
-    if (draftDecision) await setDecision.mutateAsync({ id: created.id, decision: draftDecision });
     if (placeHere && roomId != null) setLastRoomId(roomId);
     await refresh();
     onClose();

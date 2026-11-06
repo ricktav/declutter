@@ -40,9 +40,6 @@ type Suggestion = {
   state: "open" | "filed";
 };
 
-// Box lives in CropBox.tsx; re-exported for callers that still import it from here.
-export { Box };
-
 export function DetectObjectsModal({
   captureId,
   open,

@@ -4,7 +4,7 @@ import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { ItemPicker } from "@/components/ItemPicker";
 import { AreaPicker } from "@/components/AreaPicker";
-import { Box } from "@/components/DetectObjects";
+import { Box } from "@/components/CropBox";
 import { cn } from "@/lib/utils";
 import {
   framesOnPhoto,
@@ -293,7 +293,8 @@ export default function AnnotatePage() {
   const reposition = trpc.pins.update.useMutation({ onSuccess: (_res, vars) => invalidatePin(vars.id, vars.itemId) });
   const [dragPos, setDragPos] = useState<Record<number, { xPct: number; yPct: number }>>({});
   const dragging = useRef<number | null>(null);
-  const createItem = trpc.items.create.useMutation();
+  // a new Thing from a frame: Thing + confirmed pin + cutout in one call
+  const fileFrame = trpc.photos.fileFrame.useMutation();
   const addItemPhoto = trpc.photos.createCutout.useMutation({
     onSuccess: (res, vars) => {
       if (res.created) {
@@ -664,18 +665,31 @@ export default function AnnotatePage() {
       pending.wPct != null && pending.hPct != null
         ? { xPct: pending.xPct, yPct: pending.yPct, wPct: pending.wPct, hPct: pending.hPct }
         : { xPct: pending.xPct, yPct: pending.yPct, wPct: 20, hPct: 20 };
-    let itemId = linkedItem?.id;
+    const itemId = linkedItem?.id;
     if (!itemId && pendingLabel.trim() && newItemArea !== "") {
-      const res = await createItem.mutateAsync({
+      // a new Thing: the Thing, its confirmed pin (the drawn box, the
+      // cutout's frame) and, best-effort, the cutout in one call; Annotate
+      // keeps its link suggestions
+      const res = await fileFrame.mutateAsync({
+        sourcePhotoId: attId,
+        box,
+        itemId: null,
+        itemName: pendingLabel.trim(),
         areaId: Number(newItemArea),
-        name: pendingLabel.trim(),
         roomId: confirmedRoomId ?? undefined,
+        suggestLinks: true,
       });
-      itemId = res.id;
       utils.items.listByArea.invalidate();
       utils.items.listAll.invalidate();
       utils.areas.list.invalidate();
       utils.rooms.list.invalidate();
+      if (res.createdPhoto) {
+        utils.photos.listForItem.invalidate({ itemId: res.itemId });
+        utils.items.get.invalidate({ id: res.itemId });
+      }
+      await invalidatePin(res.pinId, res.itemId);
+      setPending(null);
+      return;
     }
     // once linked, the item's own name is the label - not the free-text
     // description that found it
@@ -689,7 +703,7 @@ export default function AnnotatePage() {
       label,
       itemId,
     });
-    // whether brand-new or existing, the drawn/adjusted box is already the
+    // for an existing Thing the drawn/adjusted box is already the
     // confirmed photo - no separate "now pick a crop" step. After the pin:
     // createCutout finds it and does not add a second one
     const leavingForItem = backToItem && preselected != null && itemId === preselected.id;
@@ -1359,8 +1373,8 @@ export default function AnnotatePage() {
                   className="h-7 w-7 flex items-center justify-center rounded-full border border-emerald-300 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
                   title="Add this pin"
                   onClick={() => savePending()}
-                  disabled={addPin.isPending || createItem.isPending}>
-                  {addPin.isPending || createItem.isPending ? (
+                  disabled={addPin.isPending || fileFrame.isPending}>
+                  {addPin.isPending || fileFrame.isPending ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Check className="h-3.5 w-3.5" />
