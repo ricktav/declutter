@@ -72,6 +72,8 @@ export function RoomPlan3D({
   const roomGroupRef = useRef<THREE.Group | null>(null);
   const itemMeshesRef = useRef<THREE.Mesh[]>([]);
   const cameraMeshesRef = useRef<THREE.Mesh[]>([]);
+  const selectedCameraIdRef = useRef<number | null>(selectedCameraId);
+  selectedCameraIdRef.current = selectedCameraId;
   const onSelectCameraRef = useRef(onSelectCamera);
   useEffect(() => {
     onSelectCameraRef.current = onSelectCamera;
@@ -287,9 +289,10 @@ export function RoomPlan3D({
       for (const cam of cameras ?? []) {
         const c = cam.camera;
         const heading = THREE.MathUtils.degToRad(c.headingDeg);
-        // the selected camera glows; set here (the room is rebuilt on a new
-        // selection) rather than mutating the meshes from another effect
-        const isSel = cam.id === selectedCameraId;
+        // the selected camera glows; a rebuild (geometry/items changed) reads
+        // the latest selection from a ref, a plain selection change is handled
+        // by the effect below without a rebuild
+        const isSel = cam.id === selectedCameraIdRef.current;
         const mesh = new THREE.Mesh(
           new THREE.ConeGeometry(0.12, 0.3, 12),
           new THREE.MeshStandardMaterial({
@@ -327,7 +330,7 @@ export function RoomPlan3D({
       controls.target.set(0, 0.6, 0);
       controls.update();
     }
-  }, [widthM, depthM, wallHeightM, walls, items, cameras, selectedCameraId]);
+  }, [widthM, depthM, wallHeightM, walls, items, cameras]);
 
   // selection highlight
   useEffect(() => {
@@ -338,6 +341,16 @@ export function RoomPlan3D({
       mat.emissiveIntensity = isSel ? 0.5 : 0;
     }
   }, [selectedId, items]);
+
+  // selected camera glow: materials only, no rebuild
+  useEffect(() => {
+    for (const m of cameraMeshesRef.current) {
+      const mat = m.material as THREE.MeshStandardMaterial;
+      const isSel = m.userData.id === selectedCameraId;
+      mat.emissive.setHex(isSel ? 0xffb37a : 0x000000);
+      mat.emissiveIntensity = isSel ? 0.7 : 0;
+    }
+  }, [selectedCameraId, cameras]);
 
   return (
     <div
