@@ -3,6 +3,7 @@ import SwiftUI
 /// One Place (a room): its 2D / 3D plan from `rooms.get`, or a LiDAR scan when it has none.
 struct RoomDetailView: View {
     @EnvironmentObject private var session: FlowSession
+    @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var uploader: SnapUploader
     @EnvironmentObject private var camera: SnapCamera
     @Environment(\.dismiss) private var dismiss
@@ -126,6 +127,7 @@ struct RoomDetailView: View {
                 }
             )
             .environmentObject(session)
+            .environmentObject(settings)
             .environmentObject(uploader)
             .environmentObject(camera)
         }

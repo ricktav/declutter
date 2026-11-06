@@ -41,6 +41,14 @@
 		A00000000000000000000280 /* RoomPlan.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000080 /* RoomPlan.framework */; };
 		A00000000000000000000281 /* ARKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000081 /* ARKit.framework */; };
 		A00000000000000000000282 /* SceneKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000082 /* SceneKit.framework */; };
+		A00000000000000000000294 /* Model3d.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000093 /* Model3d.swift */; };
+		A00000000000000000000295 /* Model3dViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000094 /* Model3dViewer.swift */; };
+		A00000000000000000000296 /* Model3dSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000095 /* Model3dSceneView.swift */; };
+		A00000000000000000000297 /* Model3dWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000096 /* Model3dWebView.swift */; };
+		A00000000000000000000298 /* Model3dViewer.html in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000097 /* Model3dViewer.html */; };
+		A00000000000000000000299 /* three.module.js in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000098 /* three.module.js */; };
+		A00000000000000000000300 /* three.core.js in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000099 /* three.core.js */; };
+		A00000000000000000000303 /* GLTFKit2 in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000302 /* GLTFKit2 */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -80,6 +88,13 @@
 		A00000000000000000000080 /* RoomPlan.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = RoomPlan.framework; path = System/Library/Frameworks/RoomPlan.framework; sourceTree = SDKROOT; };
 		A00000000000000000000081 /* ARKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ARKit.framework; path = System/Library/Frameworks/ARKit.framework; sourceTree = SDKROOT; };
 		A00000000000000000000082 /* SceneKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SceneKit.framework; path = System/Library/Frameworks/SceneKit.framework; sourceTree = SDKROOT; };
+		A00000000000000000000093 /* Model3d.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model3d.swift; sourceTree = "<group>"; };
+		A00000000000000000000094 /* Model3dViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model3dViewer.swift; sourceTree = "<group>"; };
+		A00000000000000000000095 /* Model3dSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model3dSceneView.swift; sourceTree = "<group>"; };
+		A00000000000000000000096 /* Model3dWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model3dWebView.swift; sourceTree = "<group>"; };
+		A00000000000000000000097 /* Model3dViewer.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Model3dViewer.html; path = Model3dWeb/Model3dViewer.html; sourceTree = "<group>"; };
+		A00000000000000000000098 /* three.module.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = three.module.js; path = Model3dWeb/three.module.js; sourceTree = "<group>"; };
+		A00000000000000000000099 /* three.core.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = three.core.js; path = Model3dWeb/three.core.js; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,6 +105,7 @@
 				A00000000000000000000280 /* RoomPlan.framework in Frameworks */,
 				A00000000000000000000281 /* ARKit.framework in Frameworks */,
 				A00000000000000000000282 /* SceneKit.framework in Frameworks */,
+				A00000000000000000000303 /* GLTFKit2 in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -146,6 +162,13 @@
 				A00000000000000000000090 /* PlanThingSheet.swift */,
 				A00000000000000000000092 /* ThingPhotosStrip.swift */,
 				A00000000000000000000091 /* PhotoCropScreen.swift */,
+				A00000000000000000000093 /* Model3d.swift */,
+				A00000000000000000000094 /* Model3dViewer.swift */,
+				A00000000000000000000095 /* Model3dSceneView.swift */,
+				A00000000000000000000096 /* Model3dWebView.swift */,
+				A00000000000000000000097 /* Model3dViewer.html */,
+				A00000000000000000000098 /* three.module.js */,
+				A00000000000000000000099 /* three.core.js */,
 				A0000000000000000000000A /* Assets.xcassets */,
 				A0000000000000000000000B /* Info.plist */,
 			);
@@ -178,6 +201,9 @@
 			dependencies = (
 			);
 			name = DeclutterFlow;
+			packageProductDependencies = (
+				A00000000000000000000302 /* GLTFKit2 */,
+			);
 			productName = DeclutterFlow;
 			productReference = A00000000000000000000009 /* DeclutterFlow.app */;
 			productType = "com.apple.product-type.application";
@@ -206,6 +232,9 @@
 				Base,
 			);
 			mainGroup = A00000000000000000000006;
+			packageReferences = (
+				A00000000000000000000301 /* XCRemoteSwiftPackageReference "GLTFKit2" */,
+			);
 			productRefGroup = A00000000000000000000007 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -221,6 +250,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				A00000000000000000000014 /* Assets.xcassets in Resources */,
+				A00000000000000000000298 /* Model3dViewer.html in Resources */,
+				A00000000000000000000299 /* three.module.js in Resources */,
+				A00000000000000000000300 /* three.core.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -261,6 +293,10 @@
 				A00000000000000000000290 /* PlanThingSheet.swift in Sources */,
 				A00000000000000000000292 /* ThingPhotosStrip.swift in Sources */,
 				A00000000000000000000291 /* PhotoCropScreen.swift in Sources */,
+				A00000000000000000000294 /* Model3d.swift in Sources */,
+				A00000000000000000000295 /* Model3dViewer.swift in Sources */,
+				A00000000000000000000296 /* Model3dSceneView.swift in Sources */,
+				A00000000000000000000297 /* Model3dWebView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -462,6 +498,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A00000000000000000000301 /* XCRemoteSwiftPackageReference "GLTFKit2" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/warrenm/GLTFKit2.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.5.15;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A00000000000000000000302 /* GLTFKit2 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A00000000000000000000301 /* XCRemoteSwiftPackageReference "GLTFKit2" */;
+			productName = GLTFKit2;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A00000000000000000000001 /* Project object */;
 }

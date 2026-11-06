@@ -9,6 +9,7 @@ private enum FindScope: String, CaseIterable, Identifiable {
 
 struct FindView: View {
     @EnvironmentObject private var session: FlowSession
+    @EnvironmentObject private var settings: SettingsStore
     /// The app's Snap uploader: "Take a Photo of it" on a Place plan uploads through it.
     @EnvironmentObject private var uploader: SnapUploader
     @EnvironmentObject private var camera: SnapCamera
@@ -116,6 +117,7 @@ struct FindView: View {
                                                 .foregroundStyle(FlowTheme.ink)
                                                 .lineLimit(1)
                                             DecisionBadge(decision: it.decision)
+                                            Model3dBadge(visible: it.hasModel3d)
                                         }
                                         Text(FlowLogic.placeLabel(it, houses: session.houses).isEmpty ? "no Place yet" : FlowLogic.placeLabel(it, houses: session.houses))
                                             .font(.system(size: 12))
@@ -137,12 +139,14 @@ struct FindView: View {
         .sheet(item: $open) { item in
             ThingSheet(item: item)
                 .environmentObject(session)
+                .environmentObject(settings)
                 .environmentObject(uploader)
                 .environmentObject(camera)
         }
         .sheet(item: $openPlace) { r in
             RoomDetailView(place: Place(room: r))
                 .environmentObject(session)
+                .environmentObject(settings)
                 .environmentObject(uploader)
                 .environmentObject(camera)
         }
@@ -191,6 +195,7 @@ struct FindView: View {
 
 private struct ThingSheet: View {
     @EnvironmentObject private var session: FlowSession
+    @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var uploader: SnapUploader
     @EnvironmentObject private var camera: SnapCamera
     let item: FlowItem
@@ -222,6 +227,9 @@ private struct ThingSheet: View {
                 }
                 ThingPhotosStrip(itemId: live.id, itemName: live.name, coverKey: live.imageKey, cropCoverRequest: cropCover) {
                     await session.refresh()
+                }
+                if let modelUrl = live.model3dUrl, Model3d.hasUrl(modelUrl), let base = settings.baseURL {
+                    Model3dSection(url: modelUrl, baseURL: base, api: session.api)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where")
@@ -284,6 +292,7 @@ private struct ThingSheet: View {
             if let place {
                 RoomDetailView(place: place)
                     .environmentObject(session)
+                    .environmentObject(settings)
                     .environmentObject(uploader)
                     .environmentObject(camera)
             }

@@ -4,6 +4,7 @@ import SwiftUI
 /// it, or move its box on the 2D plan. `onChanged` reloads the plan and the session.
 struct PlanThingSheet: View {
     @EnvironmentObject private var session: FlowSession
+    @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var uploader: SnapUploader
     /// The app's one camera (ContentView owns it); a second capture session would fight it.
     @EnvironmentObject private var camera: SnapCamera
@@ -68,6 +69,9 @@ struct PlanThingSheet: View {
                 }
                 ThingPhotosStrip(itemId: item.id, itemName: savedName, coverKey: flowItem?.imageKey, cropCoverRequest: cropCover) {
                     await onChanged()
+                }
+                if let modelUrl = flowItem?.model3dUrl ?? item.model3dUrl, Model3d.hasUrl(modelUrl), let base = settings.baseURL {
+                    Model3dSection(url: modelUrl, baseURL: base, api: session.api)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {

@@ -117,11 +117,18 @@ struct FlowItem: Codable, Identifiable, Hashable {
     var imageKey: String?
     var areaName: String?
     var areaSlug: String?
+    /// Stored 3D route (`auto` / `none` / `agent` / `meshy` / `capture`). Optional for old servers.
+    var model3dRoute: String?
+    /// `/uploads/…`, `local/…`, or an http(s) URL to a `.glb` / `.gltf` / `.usdz` / `.js` file.
+    var model3dUrl: String?
+    /// `auto` resolved: Object Capture when the Thing is a favourite, else Meshy.
+    var effectiveModel3dRoute: String?
 
     enum CodingKeys: String, CodingKey {
         case id, areaId, houseId, roomId, parentId, name, description, status, verificationStatus, attributes
         case roomRef = "room"
         case decision, decidedAt, createdAt, updatedAt, archivedAt, imageKey, areaName, areaSlug
+        case model3dRoute, model3dUrl, effectiveModel3dRoute
     }
 
     /// Room name and floor for labels and search.
@@ -392,8 +399,14 @@ struct RoomItem: Codable, Identifiable, Hashable {
     /// The room the Thing is really in. `rooms.get` rolls up Things of child rooms with `pos`
     /// shifted into this room's frame; such a pos must never be saved back.
     var ownerRoomId: Int?
+    var model3dRoute: String?
+    var model3dUrl: String?
+    var effectiveModel3dRoute: String?
 
-    enum CodingKeys: String, CodingKey { case id, name, pos, verificationStatus, status, attributes, ownerRoomId }
+    enum CodingKeys: String, CodingKey {
+        case id, name, pos, verificationStatus, status, attributes, ownerRoomId
+        case model3dRoute, model3dUrl, effectiveModel3dRoute
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -404,6 +417,9 @@ struct RoomItem: Codable, Identifiable, Hashable {
         status = try? c.decodeIfPresent(ItemStatus.self, forKey: .status)
         attributes = try? c.decodeIfPresent([String: AttributeValue].self, forKey: .attributes)
         ownerRoomId = try? c.decodeIfPresent(Int.self, forKey: .ownerRoomId)
+        model3dRoute = try? c.decodeIfPresent(String.self, forKey: .model3dRoute)
+        model3dUrl = try? c.decodeIfPresent(String.self, forKey: .model3dUrl)
+        effectiveModel3dRoute = try? c.decodeIfPresent(String.self, forKey: .effectiveModel3dRoute)
     }
 
     /// True when the Thing sits in a child room of `roomId` (its pos here is shifted).
