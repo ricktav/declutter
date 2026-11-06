@@ -202,7 +202,7 @@ export function DetectObjectsModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="w-screen h-[100dvh] max-w-none sm:max-w-none rounded-none p-4 overflow-y-auto">
+      <DialogContent size="full">
         <DialogHeader>
           <DialogTitle>Detect objects in snap</DialogTitle>
           <p className="text-[12px] text-muted-foreground">

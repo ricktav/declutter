@@ -1,17 +1,6 @@
-import { useEffect, useState } from "react";
 import { trpc } from "@/providers/trpc";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Box } from "@/components/CropBox";
-import { Loader2 } from "lucide-react";
+import { CropDialog } from "@/components/CropDialog";
 import { invalidatePhotoChange } from "@/hooks/use-photo-from-target";
-
-import type { CropBox } from "@/lib/cropBox";
 
 /** Re-crop a cutout from the original photo it came from. */
 export function RecropDialog({
@@ -24,17 +13,12 @@ export function RecropDialog({
   onClose: () => void;
 }) {
   const utils = trpc.useUtils();
-  const [box, setBox] = useState<CropBox>({ xPct: 50, yPct: 50, wPct: 30, hPct: 30 });
 
   const source = trpc.photos.sourcePhoto.useQuery(
     { photoId: photoId ?? 0 },
     { enabled: open && photoId != null },
   );
-
-  useEffect(() => {
-    if (!source.data?.available) return;
-    setBox(source.data.cropBox ?? { xPct: 50, yPct: 50, wPct: 30, hPct: 30 });
-  }, [source.data]);
+  const available = source.data?.available ? source.data : null;
 
   const recrop = trpc.photos.recrop.useMutation({
     onSuccess: () => {
@@ -49,50 +33,19 @@ export function RecropDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="w-screen h-[100dvh] max-w-none sm:max-w-none rounded-none p-4 overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Re-crop from original photo</DialogTitle>
-        </DialogHeader>
-
-        {source.isLoading ? (
-          <div className="py-16 text-center text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin inline mr-1.5" /> Loading original photo…
-          </div>
-        ) : !source.data?.available ? (
-          <div className="py-16 text-center text-[13px] text-muted-foreground">
-            This cutout has no linked source photo — it was likely uploaded directly rather than cropped from a snap, so it can't be re-cropped.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3 items-center">
-            <div className="relative inline-block select-none max-w-full">
-              <img
-                src={source.data.url ?? ""}
-                alt="original"
-                className="block max-h-[calc(100dvh-11rem)] max-w-full w-auto h-auto rounded touch-none"
-                draggable={false}
-              />
-              <Box box={box} color="#7c3aed" onChange={setBox} />
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" variant="ghost" onClick={onClose} disabled={recrop.isPending}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => photoId != null && recrop.mutate({ photoId, box })}
-                disabled={recrop.isPending}
-              >
-                {recrop.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
-                Save crop
-              </Button>
-            </div>
-            {recrop.isError && (
-              <div className="text-[12px] text-destructive">{recrop.error.message}</div>
-            )}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+    <CropDialog
+      open={open}
+      title="Re-crop from original photo"
+      src={available?.url ?? null}
+      loading={source.isLoading}
+      unavailableText="This cutout has no linked source photo — it was likely uploaded directly rather than cropped from a snap, so it can't be re-cropped."
+      initialBox={available?.cropBox ?? { xPct: 50, yPct: 50, wPct: 30, hPct: 30 }}
+      color="#7c3aed"
+      saveLabel="Save crop"
+      saving={recrop.isPending}
+      error={recrop.error?.message ?? null}
+      onSave={(box) => photoId != null && recrop.mutate({ photoId, box })}
+      onClose={onClose}
+    />
   );
 }
