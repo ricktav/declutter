@@ -14,6 +14,7 @@ import { Thumb } from "@/components/Thumb";
 import { EnergySection } from "@/components/EnergySection";
 import { StorageSection } from "@/components/StorageSection";
 import { PhotoCropZoom } from "@/components/PhotoCropZoom";
+import { DecisionButtons } from "@/components/DecisionButtons";
 import { PlaceOnPlanButton } from "@/components/PlaceOnPlanButton";
 import { TagsField, TypeSelect } from "@/components/ItemTaxonomy";
 import { Model3dRouteSelect } from "@/components/Model3dRouteSelect";
@@ -326,6 +327,7 @@ export default function ItemDetail() {
   };
 
   const update = trpc.items.update.useMutation({ onSuccess: invalidate });
+  const setDecision = trpc.items.setDecision.useMutation({ onSuccess: invalidate });
   const setArchived = trpc.items.setArchived.useMutation({ onSuccess: invalidate });
   const setVerification = trpc.items.setVerification.useMutation({ onSuccess: invalidate });
   const remove = trpc.items.remove.useMutation({
@@ -588,6 +590,16 @@ export default function ItemDetail() {
                 update.mutate({ id: itemId, description: e.target.value });
             }}
           />
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <DecisionButtons
+              value={it.decision}
+              disabled={setDecision.isPending}
+              onChange={(d) => setDecision.mutate({ id: itemId, decision: d })}
+            />
+            {it.decision && it.decidedAt && (
+              <span className="text-[12px] text-muted-foreground">decided {timeAgo(it.decidedAt)}</span>
+            )}
+          </div>
           {isMachineItem({
             attributes: it.attributes,
             areaSlug: it.area?.slug,
