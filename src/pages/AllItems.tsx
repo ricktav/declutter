@@ -125,6 +125,7 @@ export default function AllItems() {
       setMoveOpen(false);
       setTopicOpen(false);
       setRowAction(null);
+      setMoveRoomId(null);
     },
   });
   const removeMany = trpc.items.removeMany.useMutation({
@@ -343,7 +344,7 @@ export default function AllItems() {
         busy={updateMany.isPending}
         error={updateMany.isError ? updateMany.error.message : null}
         onPick={(sel) => { setMoveRoomId(sel.roomId); updateMany.mutate({ ids: actionIds, roomId: sel.roomId }); }}
-        onClose={() => { setMoveOpen(false); setRowAction(null); }}
+        onClose={() => { setMoveOpen(false); setRowAction(null); setMoveRoomId(null); }}
       />
 
       <Dialog open={topicOpen || rowAction?.kind === "topic"} onOpenChange={(o) => { if (!o) { setTopicOpen(false); setRowAction(null); } }}>

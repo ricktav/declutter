@@ -45,6 +45,9 @@ export function PlacePickerDialog({
 }) {
   const [house, setHouse] = useState<number | null>(houseId);
   const [room, setRoom] = useState<number | null>(roomId);
+  // switching house clears the room; a placed Thing then needs a room in
+  // the new house, or confirming would silently unplace it
+  const needsRoom = room == null && (!allowNone || (roomId != null && house !== houseId));
 
   // start from the caller's values each time the dialog opens
   useEffect(() => {
@@ -77,13 +80,16 @@ export function PlacePickerDialog({
           </Button>
           <Button
             size="sm"
-            disabled={busy || (!allowNone && room == null)}
+            disabled={busy || needsRoom}
             onClick={() => onPick({ houseId: house, roomId: room })}
           >
             {busy && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
             {confirmLabel}
           </Button>
         </div>
+        {needsRoom && allowNone && !error && (
+          <p className="text-[12px] text-muted-foreground">Pick a room in the new house, or keep the current house to unplace.</p>
+        )}
         {error && <p className="text-[12px] text-destructive">{error}</p>}
       </DialogContent>
     </Dialog>
