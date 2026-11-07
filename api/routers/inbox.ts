@@ -417,7 +417,7 @@ export const inboxRouter = createRouter({
       // placed before triage starts, so triage scopes on the placed Photo; a
       // re-sent file lands on its old capture (createCapture dedups by bytes) and a
       // processed or dismissed one keeps its Photo where it was
-      if (placeRoomId != null && row.status === "pending") await assignCapturePlace(getDb(), [row.id], { roomId: placeRoomId });
+      if (placeRoomId != null && row.status === "pending" && row.kind === "image") await assignCapturePlace(getDb(), [row.id], { roomId: placeRoomId });
       await maybeAutoTriage(row, ctx.houseId);
       return { id: row.id, storageKey: row.storageKey };
     }),
