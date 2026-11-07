@@ -4,7 +4,7 @@
 // aliases all go through these, so each table is written one way.
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { areas, captures, itemLinks, items, photoPins, photos, rooms, type CropBox, type ItemLink, type ItemPos, type Photo, type PhotoCamera } from "@db/schema";
+import { areas, captures, itemLinks, items, photoPins, photos, rooms, type CropBox, type FrameSource, type ItemLink, type ItemPos, type Photo, type PhotoCamera } from "@db/schema";
 import type { getDb } from "../queries/connection";
 import { deleteStoredFile, putFile, readFileBytes, withNewFile } from "./filestore";
 import { sniffMime } from "./sniff";
@@ -13,6 +13,7 @@ import { releaseStoredFiles } from "./entities";
 import { roomSummary } from "./location";
 import { imageSizeFields } from "./imageSize";
 import { cropPercent } from "./crop";
+import { FRAME_QUALITY, registerFrameCandidate, winningPins } from "./frameCandidates";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Pick<Db, "select" | "insert" | "update" | "query">;
@@ -35,57 +36,52 @@ export function isWholeSceneBox(box: { wPct?: number | null; hPct?: number | nul
 }
 
 /** A cutout means its item is in the source photo: make sure that photo
- * carries a confirmed pin for the item, so the item's "Seen in photos"
- * (pins.listForItem) shows it. One pin per (photo, item): an existing one
- * (an AI suggestion, a pin drawn first) is confirmed and keeps its box,
- * unless that box was a whole-scene link and a real crop has arrived. */
+ * carries this source's confirmed candidate, so the item's "Seen in photos"
+ * (pins.listForItem) shows the winning frame. The same source's row is
+ * confirmed and keeps its box, unless that box was a whole-scene link and a
+ * real crop has arrived. Another source's candidate is left as history. */
 export async function ensurePinForCutout(
   tx: Tx,
-  input: { sourcePhotoId: number; itemId: number; box: PinBox; label: string; summary?: string },
+  input: {
+    sourcePhotoId: number;
+    itemId: number;
+    box: PinBox;
+    label: string;
+    summary?: string;
+    /** which writer this frame belongs to; default user (a cutout someone saved) */
+    frameSource?: FrameSource;
+    /** move this source's box to `box` (a Focus frame). Default keeps a real box. */
+    replaceBox?: boolean;
+  },
 ): Promise<{ id: number; created: boolean }> {
-  const existing = await tx.query.photoPins.findFirst({
-    where: and(eq(photoPins.photoId, input.sourcePhotoId), eq(photoPins.itemId, input.itemId)),
+  const frameSource = input.frameSource ?? "user";
+  const { id, created } = await registerFrameCandidate(tx, {
+    photoId: input.sourcePhotoId,
+    itemId: input.itemId,
+    source: frameSource,
+    quality: FRAME_QUALITY[frameSource],
+    xPct: input.box.xPct,
+    yPct: input.box.yPct,
+    wPct: input.box.wPct,
+    hPct: input.box.hPct,
+    label: input.label,
+    origin: "user",
+    status: "confirmed",
+    replaceBox: input.replaceBox ?? false,
+    adoptUnsourced: true,
   });
-  if (existing) {
-    const upgrade = isWholeSceneBox(existing) && !isWholeSceneBox(input.box);
-    if (upgrade) {
-      await tx.update(photoPins).set({
-        status: "confirmed",
-        xPct: input.box.xPct,
-        yPct: input.box.yPct,
-        wPct: input.box.wPct,
-        hPct: input.box.hPct,
-        label: input.label.slice(0, 255),
-      }).where(eq(photoPins.id, existing.id));
-    } else if (existing.status !== "confirmed") {
-      await tx.update(photoPins).set({ status: "confirmed" }).where(eq(photoPins.id, existing.id));
-    }
-    return { id: existing.id, created: false };
+  if (created) {
+    await logEvent(
+      {
+        entityType: "pin",
+        entityId: id,
+        action: "pin-added",
+        summary: input.summary ?? `Pin "${input.label || "untitled"}" added to photo #${input.sourcePhotoId} for the cutout of item #${input.itemId}`,
+      },
+      tx,
+    );
   }
-  const [{ id }] = await tx
-    .insert(photoPins)
-    .values({
-      photoId: input.sourcePhotoId,
-      itemId: input.itemId,
-      xPct: input.box.xPct,
-      yPct: input.box.yPct,
-      wPct: input.box.wPct,
-      hPct: input.box.hPct,
-      label: input.label.slice(0, 255),
-      origin: "user",
-      status: "confirmed",
-    })
-    .$returningId();
-  await logEvent(
-    {
-      entityType: "pin",
-      entityId: id,
-      action: "pin-added",
-      summary: input.summary ?? `Pin "${input.label || "untitled"}" added to photo #${input.sourcePhotoId} for the cutout of item #${input.itemId}`,
-    },
-    tx,
-  );
-  return { id, created: true };
+  return { id, created };
 }
 
 /** Bytes of a source file, or a readable error when it is gone from disk. */
@@ -104,7 +100,7 @@ export async function readSourceBytes(key: string): Promise<Uint8Array> {
  * photos.createCutout and photos.fileFrame both go through this. */
 export async function createCutoutFor(
   db: Db,
-  input: { itemId: number; sourcePhotoId: number; box: CropBox; photoSize: "small" | "medium" | "big" },
+  input: { itemId: number; sourcePhotoId: number; box: CropBox; photoSize: "small" | "medium" | "big"; frameSource?: FrameSource },
 ): Promise<{ id: number; storageKey: string; created: boolean }> {
   const source = await db.query.photos.findFirst({ where: eq(photos.id, input.sourcePhotoId) });
   if (!source) throw new TRPCError({ code: "NOT_FOUND", message: "Source photo not found." });
@@ -121,10 +117,27 @@ export async function createCutoutFor(
   }
 
   // the cutout's item is in the source photo: pin it there too, so the
-  // item's "Seen in photos" shows that photo
+  // item's "Seen in photos" shows that photo. A different source's candidate
+  // already on this photo is left alone — the cutout does not become a second frame.
   const item = await db.query.items.findFirst({ where: eq(items.id, input.itemId) });
   if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Item not found." });
-  const pinFor = { sourcePhotoId: source.id, itemId: input.itemId, box: input.box, label: item.name };
+  const pinFor = {
+    sourcePhotoId: source.id,
+    itemId: input.itemId,
+    box: input.box,
+    label: item.name,
+    frameSource: input.frameSource,
+  };
+  const pinCutout = async (tx: Tx) => {
+    const frameSource = pinFor.frameSource ?? "user";
+    const rows = await tx
+      .select({ source: photoPins.source })
+      .from(photoPins)
+      .where(and(eq(photoPins.photoId, pinFor.sourcePhotoId), eq(photoPins.itemId, pinFor.itemId)));
+    const owns = rows.some((p) => p.source === frameSource || p.source == null);
+    if (rows.length > 0 && !owns) return;
+    await ensurePinForCutout(tx, pinFor);
+  };
 
   // one cutout per item and original photo (a whole Photo of the same capture is not a cutout): pinning again or re-saving does not pile up copies
   if (sourceCaptureId) {
@@ -132,7 +145,7 @@ export async function createCutoutFor(
       where: and(eq(photos.itemId, input.itemId), eq(photos.sourceCaptureId, sourceCaptureId), isNotNull(photos.cropBox)),
     });
     if (dup) {
-      await db.transaction((tx) => ensurePinForCutout(tx, pinFor));
+      await db.transaction((tx) => pinCutout(tx));
       return { id: dup.id, storageKey: dup.storageKey, created: false as const };
     }
   }
@@ -167,7 +180,7 @@ export async function createCutoutFor(
           },
           tx,
         );
-        await ensurePinForCutout(tx, pinFor);
+        await pinCutout(tx);
         return { id, storageKey: saved.key, created: true as const };
       }),
   );
@@ -266,7 +279,8 @@ export async function photosForItem(db: Db, itemId: number): Promise<Array<Photo
     .select()
     .from(photoPins)
     .where(and(eq(photoPins.itemId, itemId), eq(photoPins.status, "confirmed")));
-  const whole = scenePins.filter((p) => isWholeSceneBox(p));
+  // the shared scene follows the winning frame, not a losing whole-scene candidate
+  const whole = winningPins(scenePins).filter((p) => isWholeSceneBox(p));
   const ownIds = new Set(own.map((p) => p.id));
   const sharedIds = [...new Set(whole.map((p) => p.photoId).filter((id) => !ownIds.has(id)))];
   const shared = sharedIds.length ? await db.select().from(photos).where(inArray(photos.id, sharedIds)) : [];

@@ -12,6 +12,7 @@ import { logEvent } from "./events";
 import { setItemLocation } from "./location";
 import { stampIpRefresh } from "./ipRefresh";
 import { createCutoutFor, ensurePinForCutout } from "./photos";
+import { FRAME_QUALITY } from "./frameCandidates";
 import { suggestLinksForNewItem } from "./suggestLinks";
 
 type Db = ReturnType<typeof getDb>;
@@ -143,11 +144,21 @@ export async function fileFrame(db: Db, ctxHouseId: number | null, input: FileFr
           yPct: input.box.yPct,
           wPct: input.box.wPct,
           hPct: input.box.hPct,
+          // a drawn frame with no source yet is Focus; a named source stays
+          source: pin.source ?? "focus",
+          quality: Math.max(pin.quality ?? 0, pin.source === "user" ? FRAME_QUALITY.user : FRAME_QUALITY.focus),
         })
         .where(eq(photoPins.id, pin.id));
       pinId = pin.id;
     } else {
-      ({ id: pinId } = await ensurePinForCutout(tx, { sourcePhotoId: input.sourcePhotoId, itemId, box: input.box, label: name }));
+      ({ id: pinId } = await ensurePinForCutout(tx, {
+        sourcePhotoId: input.sourcePhotoId,
+        itemId,
+        box: input.box,
+        label: name,
+        frameSource: "focus",
+        replaceBox: true,
+      }));
     }
     return { itemId, name, areaId, pinId };
   });
@@ -164,6 +175,7 @@ export async function fileFrame(db: Db, ctxHouseId: number | null, input: FileFr
       sourcePhotoId: input.sourcePhotoId,
       box: input.box,
       photoSize: input.photoSize ?? "big",
+      frameSource: "focus",
     });
     photoId = cut.id;
     createdPhoto = cut.created;

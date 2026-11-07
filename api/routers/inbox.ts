@@ -710,7 +710,13 @@ export const inboxRouter = createRouter({
               },
               tx,
             );
-            await ensurePinForCutout(tx, { sourcePhotoId: locationPhotoId, itemId: targetId, box, label: item?.name ?? input.itemName });
+            await ensurePinForCutout(tx, {
+              sourcePhotoId: locationPhotoId,
+              itemId: targetId,
+              box,
+              label: item?.name ?? input.itemName,
+              frameSource: "inbox",
+            });
           }),
       );
       if (input.markProcessed) {
@@ -828,7 +834,13 @@ export const inboxRouter = createRouter({
                   summary: `Cutout "${it.itemName}" added to item #${itemId} from capture #${cap.id}`,
                   payload: { box: it.box },
                 }, tx);
-                await ensurePinForCutout(tx, { sourcePhotoId: await locationPhoto(), itemId, box: it.box, label: it.itemName });
+                await ensurePinForCutout(tx, {
+                  sourcePhotoId: await locationPhoto(),
+                  itemId,
+                  box: it.box,
+                  label: it.itemName,
+                  frameSource: "inbox",
+                });
               } else if (framed) {
                 // no crop: link the Thing to the capture's location photo
                 // instead of copying the whole scene for each Thing
@@ -838,6 +850,7 @@ export const inboxRouter = createRouter({
                   itemId,
                   box: WHOLE_SCENE_BOX,
                   label: it.itemName,
+                  frameSource: "inbox",
                   summary: `Pin "${it.itemName}" linked to photo #${sourcePhotoId} for item #${itemId} (whole scene)`,
                 });
               } else if (cap.rawText || cap.url || cap.storageKey) {
@@ -873,6 +886,7 @@ export const inboxRouter = createRouter({
                   itemId,
                   box: it.box ?? WHOLE_SCENE_BOX,
                   label: it.itemName,
+                  frameSource: "inbox",
                   summary: `Pin "${it.itemName}" added to photo #${sourcePhotoId} for item #${itemId} from triage`,
                 });
               }

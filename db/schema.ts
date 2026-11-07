@@ -320,9 +320,17 @@ export const itemLinks = mysqlTable(
   ],
 );
 
+// Who proposed a frame. One row per source per Thing on a Photo: a later
+// source adds its own candidate and does not move another source's box.
+// Null on rows written before candidates existed.
+export type FrameSource = "inbox" | "focus" | "batch" | "user";
+
 // ---------------------------------------------------------------------------
 // Photo pins — pins on a photo, optionally linked to an item (replaces
 // photo_annotations; attachmentId is now photoId).
+// Each source (inbox detect, a Focus drawing, the local batch, a user pin)
+// keeps its own candidate. Reads that show one frame pick the winner; the
+// other rows stay as history, including dismissed ones.
 // ---------------------------------------------------------------------------
 export const photoPins = mysqlTable(
   "photo_pins",
@@ -339,6 +347,10 @@ export const photoPins = mysqlTable(
     status: varchar("status", { length: 32 }).$type<"suggested" | "confirmed" | "dismissed">().notNull().default("confirmed"),
     // "needs attention", independent of confirm status - the Map view's focus marker
     flagged: boolean("flagged").notNull().default(false),
+    source: varchar("source", { length: 16 }).$type<FrameSource>(),
+    // Rank used when no confirmed user/focus frame wins outright. A model
+    // confidence is 0–100; a user confirm is 1000. Null on older rows.
+    quality: double("quality"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
   (t) => [index("photo_pins_photo_idx").on(t.photoId), index("photo_pins_item_idx").on(t.itemId)],

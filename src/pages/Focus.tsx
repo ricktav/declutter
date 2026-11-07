@@ -711,6 +711,7 @@ export default function FocusPage() {
                     photoId: activePhotoId,
                     ...box,
                     label: `Frame ${frames.length + 1}`,
+                    source: "focus",
                   });
                 }}
               >
