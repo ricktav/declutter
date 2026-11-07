@@ -51,6 +51,7 @@ export function invalidatePhotoChange(
     utils.items.placement.invalidate(),
     utils.items.placementSummary.invalidate(),
     ...(opts?.itemIds ?? []).map((id) => utils.items.get.invalidate({ id })),
+    ...(opts?.itemIds ?? []).map((id) => utils.pins.forItemPhotos.invalidate({ itemId: id })),
   ];
   if (opts?.photoId != null) all.push(utils.photos.sourcePhoto.invalidate({ photoId: opts.photoId }));
   return Promise.all(all).then(() => undefined);

@@ -295,7 +295,7 @@ export default function AnnotatePage() {
   const [dragPos, setDragPos] = useState<Record<number, { xPct: number; yPct: number }>>({});
   const dragging = useRef<number | null>(null);
   // a new Thing from a frame: Thing + confirmed pin + cutout in one call
-  const fileFrame = trpc.photos.fileFrame.useMutation();
+  const fileFrame = trpc.photos.fileFrame.useMutation({ onError: (e) => setAiError(e.message) });
   const addItemPhoto = trpc.photos.createCutout.useMutation({
     onSuccess: (res, vars) => {
       if (res.created) {

@@ -1343,6 +1343,7 @@ export default function ItemDetail() {
         houseId={it.houseId ?? null}
         roomId={roomId}
         allowNone
+        lockToSession={false}
         confirmLabel="Set Place"
         onPick={(sel) => applyLoc(sel.roomId, sel.houseId)}
         onClose={() => setLocOpen(false)}
