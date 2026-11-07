@@ -136,6 +136,8 @@ export async function fileFrame(db: Db, ctxHouseId: number | null, input: FileFr
   let createdPhoto = false;
   let cutoutError: string | null = null;
   try {
+    // a frame thinner than 1% keeps its Thing and pin but makes no cutout
+    if (input.box.wPct < 1 || input.box.hPct < 1) throw new Error("Frame is too thin to crop (under 1%).");
     const cut = await createCutoutFor(db, {
       itemId: saved.itemId,
       sourcePhotoId: input.sourcePhotoId,

@@ -39,6 +39,14 @@ const cropBoxInput = z.object({
   hPct: z.number().min(1).max(100),
 });
 
+/** fileFrame's frame: like cropBoxInput, but a frame thinner than 1% is
+ * accepted so the Thing and pin are still saved; only its cutout is skipped
+ * (cutoutError). */
+const frameBoxInput = cropBoxInput.extend({
+  wPct: z.number().min(0).max(100),
+  hPct: z.number().min(0).max(100),
+});
+
 /** A camera in its room's frame (same frame as items.pos): heading 0 = +x,
  * counter-clockwise seen from above; the room bounds are checked server-side. */
 const cameraInput = z.object({
@@ -233,7 +241,7 @@ export const photosRouter = createRouter({
     .input(
       z.object({
         sourcePhotoId: z.number(),
-        box: cropBoxInput,
+        box: frameBoxInput,
         itemId: z.number().nullable(),
         itemName: z.string().max(255).optional(),
         description: z.string().optional(),

@@ -42,4 +42,28 @@ describe("pins.forItemPhotos", () => {
     const b = await api.pins.forItemPhotos({ itemId: B });
     expect(b.map((p) => p.photoId)).toEqual([p1, p1, p2]);
   });
+
+  it("starts only from the Thing's confirmed pins: a suggested or dismissed pin adds no Photo", async () => {
+    const db = getTestDb();
+    const [{ id: h }] = await db.insert(houses).values({ name: "A" }).$returningId();
+    const [{ id: areaId }] = await db.insert(areas).values({ slug: "lab", name: "Lab", color: "#123456" }).$returningId();
+    const [{ id: room }] = await db.insert(rooms).values({ houseId: h, name: "Zolder", floor: "ground", source: "manual" }).$returningId();
+    const photo = async (t: string) =>
+      (await db.insert(photos).values({ roomId: room, title: t, storageKey: `local/pins-fip-${t}.jpg` }).$returningId())[0].id;
+    const [{ id: A }] = await db.insert(items).values({ areaId, houseId: h, roomId: room, name: "A" }).$returningId();
+    const [{ id: other }] = await db.insert(items).values({ areaId, houseId: h, roomId: room, name: "Other" }).$returningId();
+    const pin = async (photoId: number, itemId: number, status: "confirmed" | "suggested" | "dismissed") =>
+      db.insert(photoPins).values({ photoId, itemId, xPct: 50, yPct: 50, wPct: 10, hPct: 10, label: "", status });
+    const pConfirmed = await photo("confirmed");
+    const pSuggested = await photo("suggested");
+    const pDismissed = await photo("dismissed");
+    await pin(pConfirmed, A, "confirmed");
+    await pin(pSuggested, A, "suggested");
+    await pin(pSuggested, other, "confirmed");
+    await pin(pDismissed, A, "dismissed");
+    await pin(pDismissed, other, "confirmed");
+
+    const rows = await callerFor(h).pins.forItemPhotos({ itemId: A });
+    expect([...new Set(rows.map((p) => p.photoId))]).toEqual([pConfirmed]);
+  });
 });

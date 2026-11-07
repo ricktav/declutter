@@ -131,13 +131,18 @@ export const pinsRouter = createRouter({
     return pins.filter((p) => p.status !== "dismissed").map((p) => ({ ...p, photo: byId.get(p.photoId) ?? null }));
   }),
 
-  /** A Thing's schematics in one call: every pin on every Photo that has a pin
-   * of itemId and a room, rows as listForRoom plus the Photo's roomId. Photos
+  /** A Thing's schematics in one call: every pin on every Photo that has a
+   * confirmed pin of itemId and a room, rows as listForRoom plus the Photo's roomId. Photos
    * without a room are left out. Same exclusions as listForRoom. Ordered by
    * photo, then pin. */
   forItemPhotos: procedure.input(z.object({ itemId: z.number() })).query(async ({ input }) => {
     const db = getDb();
-    const mine = await db.select({ photoId: photoPins.photoId }).from(photoPins).where(eq(photoPins.itemId, input.itemId));
+    // only a confirmed pin of the Thing makes a card: a suggestion or a
+    // dismissed pin does not say the Thing is on that Photo
+    const mine = await db
+      .select({ photoId: photoPins.photoId })
+      .from(photoPins)
+      .where(and(eq(photoPins.itemId, input.itemId), eq(photoPins.status, "confirmed")));
     const photoIds = [...new Set(mine.map((p) => p.photoId))];
     if (!photoIds.length) return [];
     const pics = await db

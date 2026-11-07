@@ -82,4 +82,14 @@ describe("photos.fileFrame", () => {
     const [pin] = await db.select().from(photoPins).where(eq(photoPins.id, r.pinId));
     expect(pin).toMatchObject({ itemId: r.itemId, status: "confirmed" });
   });
+
+  it("(g) a frame thinner than 1% still saves the Thing and pin; the cutout is skipped", async () => {
+    const { db, api, sourcePhotoId } = await seed();
+    const r = await api.photos.fileFrame({ sourcePhotoId, box: { xPct: 50, yPct: 50, wPct: 10, hPct: 0.5 }, itemId: null, itemName: "Cable" });
+    expect(r).toMatchObject({ createdItem: true, createdPhoto: false, photoId: null });
+    expect(r.cutoutError).not.toBeNull();
+    expect(await db.select().from(items).where(eq(items.id, r.itemId))).toHaveLength(1);
+    const [pin] = await db.select().from(photoPins).where(eq(photoPins.id, r.pinId));
+    expect(pin).toMatchObject({ photoId: sourcePhotoId, itemId: r.itemId, status: "confirmed" });
+  });
 });
