@@ -393,9 +393,16 @@ export const inboxRouter = createRouter({
         storageKey: z.string().startsWith("local/").optional(),
         mimeType: z.string().optional(),
         exifGps: z.object({ lat: z.number(), lng: z.number() }).nullable().optional(),
+        /** where the snap was taken (Workbench); image captures only, ignored otherwise */
+        roomId: z.number().nullable().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      // a note/link/file has no location Photo: its roomId is ignored
+      const placeRoomId = input.kind === "image" && input.storageKey ? (input.roomId ?? null) : null;
+      // refuse an unknown room before anything lands in the inbox
+      if (placeRoomId != null && !(await getDb().query.rooms.findFirst({ where: eq(rooms.id, placeRoomId) })))
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Place not found." });
       const row = await createCapture({
         kind: input.kind,
         rawText: input.rawText,
@@ -407,6 +414,8 @@ export const inboxRouter = createRouter({
         source: "user",
         houseId: ctx.houseId,
       });
+      // placed before triage starts, so triage scopes on the placed Photo
+      if (placeRoomId != null) await assignCapturePlace(getDb(), [row.id], { roomId: placeRoomId });
       await maybeAutoTriage(row, ctx.houseId);
       return { id: row.id, storageKey: row.storageKey };
     }),

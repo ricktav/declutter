@@ -3,6 +3,7 @@ import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Link2, ImagePlus, StickyNote, Loader2 } from "lucide-react";
 import { uploadFile } from "@/lib/upload";
+import { useLastRoomId } from "@/hooks/use-last-room";
 
 /** Frictionless capture: paste text/URL or drop a file — lands in the inbox. */
 export function CaptureBar({ compact = false }: { compact?: boolean }) {
@@ -10,6 +11,7 @@ export function CaptureBar({ compact = false }: { compact?: boolean }) {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
+  const lastRoomId = useLastRoomId();
 
   const create = trpc.inbox.create.useMutation({
     onSuccess: () => {
@@ -30,12 +32,15 @@ export function CaptureBar({ compact = false }: { compact?: boolean }) {
     setUploadError(null);
     try {
       const up = await uploadFile(file, "inbox");
+      const isImage = up.mimeType.startsWith("image/");
       create.mutate({
-        kind: up.mimeType.startsWith("image/") ? "image" : "file",
+        kind: isImage ? "image" : "file",
         fileName: up.fileName,
         storageKey: up.key,
         mimeType: up.mimeType,
         rawText: file.name,
+        // a snap lands where the Workbench last worked; a file has no Place
+        ...(isImage && lastRoomId != null ? { roomId: lastRoomId } : {}),
       });
     } catch (e) {
       setUploadError((e as Error).message);
