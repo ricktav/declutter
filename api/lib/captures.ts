@@ -1,10 +1,14 @@
 import { createHash } from "crypto";
-import { eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 import { getDb } from "../queries/connection";
-import { captures, type Capture } from "@db/schema";
+import { captures, houses, photos, rooms, type Capture } from "@db/schema";
 import { logEvent } from "./events";
 import { putFile, readFileBytes, deleteStoredFile } from "./filestore";
 import { sniffMime } from "./sniff";
+import { ensureLocationPhotoForCapture, setPhotoRoom } from "./photos";
+
+type Db = ReturnType<typeof getDb>;
 
 export type CaptureKind = "note" | "link" | "image" | "file" | "scan" | "voice";
 
@@ -88,4 +92,55 @@ export async function createCapture(input: CreateCaptureInput): Promise<Capture>
   const row = await db.query.captures.findFirst({ where: (c, { eq }) => eq(c.id, id) });
   if (!row) throw new Error("capture insert did not round-trip");
   return row;
+}
+
+/**
+ * Stamp a house and/or Place on captures (inbox.assignPlace, and inbox.create
+ * when a snap arrives with a roomId). Room wins (and sets the house). House
+ * alone leaves the room for later, but drops a location photo's room when that
+ * room lies in another house. Image captures get a location photo in the room
+ * when a room is given. Never reads the session house.
+ */
+export async function assignCapturePlace(
+  db: Db,
+  ids: number[],
+  sel: { houseId?: number | null; roomId?: number | null },
+): Promise<{ count: number; houseId: number; roomId: number | null }> {
+  const room = sel.roomId != null ? await db.query.rooms.findFirst({ where: eq(rooms.id, sel.roomId) }) : undefined;
+  if (sel.roomId != null && !room) throw new TRPCError({ code: "BAD_REQUEST", message: "Place not found." });
+  const houseId = room?.houseId ?? sel.houseId ?? null;
+  if (houseId == null) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a house or a Place." });
+  const [house] = await db.select({ id: houses.id, name: houses.name }).from(houses).where(eq(houses.id, houseId));
+  if (!house) throw new TRPCError({ code: "BAD_REQUEST", message: "House not found." });
+
+  const caps = await db.select().from(captures).where(inArray(captures.id, ids));
+  let count = 0;
+  for (const cap of caps) {
+    if (sel.roomId != null && cap.kind === "image" && cap.storageKey) {
+      const { photoId } = await ensureLocationPhotoForCapture(db, cap.id, sel.roomId);
+      const [photo] = await db.select().from(photos).where(eq(photos.id, photoId));
+      if (photo && photo.roomId !== sel.roomId) await setPhotoRoom(db, { id: photoId, roomId: sel.roomId });
+    } else if (sel.roomId == null) {
+      const [loc] = await db
+        .select({ id: photos.id, roomId: photos.roomId })
+        .from(photos)
+        .where(and(eq(photos.sourceCaptureId, cap.id), isNull(photos.itemId)))
+        .orderBy(asc(photos.id))
+        .limit(1);
+      if (loc?.roomId != null) {
+        const [locRoom] = await db.select({ houseId: rooms.houseId }).from(rooms).where(eq(rooms.id, loc.roomId));
+        if (locRoom && locRoom.houseId !== houseId) await setPhotoRoom(db, { id: loc.id, roomId: null });
+      }
+    }
+    await db.update(captures).set({ houseId }).where(eq(captures.id, cap.id));
+    await logEvent({
+      entityType: "capture",
+      entityId: cap.id,
+      action: "placed",
+      summary: room ? `Capture #${cap.id} Place set to ${room.name}` : `Capture #${cap.id} house set to ${house.name}`,
+      payload: { houseId, roomId: sel.roomId ?? null },
+    });
+    count += 1;
+  }
+  return { count, houseId, roomId: sel.roomId ?? null };
 }

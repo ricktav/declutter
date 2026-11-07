@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { createHash } from "crypto";
-import { eq, desc, isNull, and, inArray, sql, ne, asc } from "drizzle-orm";
+import { eq, desc, isNull, and, inArray, sql, ne } from "drizzle-orm";
 import { generateObject } from "ai";
 import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
@@ -21,13 +21,13 @@ import { releaseStoredFiles } from "../lib/entities";
 import { cropPercent, toThumbnail, normalizeOrientation, forDetectVision } from "../lib/crop";
 import { DETECT_BOX_INSTRUCTIONS, normalizeDetectBox } from "../lib/detectMatch";
 import { imageSizeFields } from "../lib/imageSize";
-import { createCapture } from "../lib/captures";
+import { assignCapturePlace, createCapture } from "../lib/captures";
 import { clearTriageJobState, maybeAutoTriage, triageJobState } from "../lib/jobs";
 import { setItemLocation } from "../lib/location";
 import { captureScope, promptInventory } from "../lib/aiContext";
 import { defaultAreaId } from "../lib/defaultTopic";
 import { stampIpRefresh } from "../lib/ipRefresh";
-import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, setPhotoRoom, WHOLE_SCENE_BOX } from "../lib/photos";
+import { coverPhotos, ensureLocationPhotoForCapture, ensureLocationPhotoInTx, ensurePinForCutout, removeUnfiledCapture, WHOLE_SCENE_BOX } from "../lib/photos";
 
 const detectObjectsSchema = z.object({
   objects: z.array(
@@ -1076,47 +1076,8 @@ export const inboxRouter = createRouter({
         .refine((v) => v.roomId != null || v.houseId != null, { message: "Pick a house or a Place." }),
     )
     .mutation(async ({ input }) => {
-      const db = getDb();
-      const room =
-        input.roomId != null ? await db.query.rooms.findFirst({ where: eq(rooms.id, input.roomId) }) : undefined;
-      if (input.roomId != null && !room) throw new TRPCError({ code: "BAD_REQUEST", message: "Place not found." });
-      const houseId = room?.houseId ?? input.houseId ?? null;
-      if (houseId == null) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick a house or a Place." });
-      const [house] = await db.select({ id: houses.id, name: houses.name }).from(houses).where(eq(houses.id, houseId));
-      if (!house) throw new TRPCError({ code: "BAD_REQUEST", message: "House not found." });
-
-      const caps = await db.select().from(captures).where(inArray(captures.id, input.ids));
-      let count = 0;
-      for (const cap of caps) {
-        if (input.roomId != null && cap.kind === "image" && cap.storageKey) {
-          const { photoId } = await ensureLocationPhotoForCapture(db, cap.id, input.roomId);
-          const [photo] = await db.select().from(photos).where(eq(photos.id, photoId));
-          if (photo && photo.roomId !== input.roomId) await setPhotoRoom(db, { id: photoId, roomId: input.roomId });
-        } else if (input.roomId == null) {
-          const [loc] = await db
-            .select({ id: photos.id, roomId: photos.roomId })
-            .from(photos)
-            .where(and(eq(photos.sourceCaptureId, cap.id), isNull(photos.itemId)))
-            .orderBy(asc(photos.id))
-            .limit(1);
-          if (loc?.roomId != null) {
-            const [locRoom] = await db.select({ houseId: rooms.houseId }).from(rooms).where(eq(rooms.id, loc.roomId));
-            if (locRoom && locRoom.houseId !== houseId) await setPhotoRoom(db, { id: loc.id, roomId: null });
-          }
-        }
-        await db.update(captures).set({ houseId }).where(eq(captures.id, cap.id));
-        await logEvent({
-          entityType: "capture",
-          entityId: cap.id,
-          action: "placed",
-          summary: room
-            ? `Capture #${cap.id} Place set to ${room.name}`
-            : `Capture #${cap.id} house set to ${house.name}`,
-          payload: { houseId, roomId: input.roomId ?? null },
-        });
-        count += 1;
-      }
-      return { ok: true as const, count, houseId, roomId: input.roomId ?? null };
+      const res = await assignCapturePlace(getDb(), input.ids, { houseId: input.houseId, roomId: input.roomId });
+      return { ok: true as const, ...res };
     }),
 
   /** Hard-delete an inbox photo that was never filed as a Photo. */
