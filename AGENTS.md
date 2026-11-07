@@ -94,6 +94,10 @@ CAUTION: Both databases use the same `uploads/` folder. Delete code removes a fi
 ## 5. Product words
 
 - Use five words on every screen: Thing, Place, Photo, Decision, Lens.
+- Topic, Type and Kind are three different things; do not mix them up (decided 2026-11-07):
+  - **Topic** is the screen name for an `areas` row (`items.areaId`, tRPC `areas.*`, URL `/areas/:slug`). It is the flat, required browsing bucket (Computers, Furniture, Things, …) with a colour, an icon and optional `attributeDefs`. Code and routes keep `area`; screens say Topic, never "Kind", "Category" or "Area".
+  - **Type** is `attributes.type`, a node of `TYPE_TREE` in `db/taxonomy.ts`; it says precisely what the Thing is and is hierarchical (`imac` → `desktop` → `computer`). Without it `role` decides (`derivedType`).
+  - **Kind** is not a Thing classification: `attributes.kind` is the service runtime in Systems (node, docker, launchd), `scan_kind` the scanner's polygon kind, and homebase-3d's `category` the RoomPlan category. None of these is shown as a Thing's Topic or Type.
 - The Flow loop is "register all, act later": Snap, then Sort (what is it, is it right, where is it), then Act (keep, sell, donate, toss, later), then Gone.
 - A lens adds its own fields, views and steps for one field of work (first lens: Computer lab). A lens does not copy core data and does not use a second database.
 - Live meter data (DSMR, Home Assistant, Zigbee) is read-only. It does not go through the confirm step.

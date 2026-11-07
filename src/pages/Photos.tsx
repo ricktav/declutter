@@ -527,7 +527,7 @@ export default function PhotosPage() {
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-          Kind
+          Topic
           <select
             className="rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
             value={areaFilter ?? ""}
@@ -549,7 +549,7 @@ export default function PhotosPage() {
             onChange={(e) => setSortBy(e.target.value as SortBy)}
           >
             <option value="location">Place</option>
-            <option value="area">Kind</option>
+            <option value="area">Topic</option>
             <option value="recent">Recently added</option>
           </select>
         </div>

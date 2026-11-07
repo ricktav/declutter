@@ -531,9 +531,9 @@ export default function ItemDetail() {
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <div className="text-[12px] text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
-            <span className="micro-label shrink-0">Kind</span>
+            <span className="micro-label shrink-0">Topic</span>
             <select
-              aria-label="Kind"
+              aria-label="Topic"
               className="h-7 w-52 shrink-0 rounded-md border border-input bg-white px-1.5 text-[12px]"
               value={it.areaId}
               disabled={update.isPending}
@@ -1337,7 +1337,7 @@ export default function ItemDetail() {
       <PlacePickerDialog
         open={locOpen}
         title="Pick Place"
-        description={`Where this Thing sits. Kind (above the name) stays what it is. ${
+        description={`Where this Thing sits. Topic (above the name) stays what it is. ${
           it.room ? `Now: ${it.room.name}` : it.house ? `Unplaced in ${it.house.name}` : "No Place yet"
         }.`}
         houseId={it.houseId ?? null}

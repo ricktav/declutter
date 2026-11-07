@@ -187,7 +187,7 @@ export default function AllItems() {
           />
         </div>
         <label className="text-[12px] text-muted-foreground">
-          Kind
+          Topic
           <select
             className="ml-1.5 rounded-md border border-input bg-white px-2 py-1.5 text-[12px]"
             value={areaId ?? ""}
@@ -241,7 +241,7 @@ export default function AllItems() {
             <FolderInput className="h-3.5 w-3.5 mr-1" /> Move
           </Button>
           <Button size="sm" variant="outline" className="h-7 text-[12px]" onClick={() => { setMoveAreaId(null); setTopicOpen(true); }}>
-            <Tag className="h-3.5 w-3.5 mr-1" /> Kind
+            <Tag className="h-3.5 w-3.5 mr-1" /> Topic
           </Button>
           <label className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
             <Box className="h-3.5 w-3.5" /> 3D
@@ -301,7 +301,7 @@ export default function AllItems() {
                   </th>
                   <th className="w-12" />
                   <SortableTh label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-                  <SortableTh label="Kind" column="topic" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                  <SortableTh label="Topic" column="topic" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   <SortableTh label="Place" column="location" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   <th className="w-36">3D</th>
                   <SortableTh label="Updated" column="updated" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
@@ -436,7 +436,7 @@ function ItemRowView({
       <td>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
           <button type="button" className="text-[11px] text-primary hover:underline" onClick={onMove}>Move</button>
-          <button type="button" className="text-[11px] text-primary hover:underline" onClick={onTopic}>Kind</button>
+          <button type="button" className="text-[11px] text-primary hover:underline" onClick={onTopic}>Topic</button>
           <ConfirmDelete
             trigger={
               <button type="button" className="text-muted-foreground hover:text-destructive" title={`Delete ${it.name}`}>

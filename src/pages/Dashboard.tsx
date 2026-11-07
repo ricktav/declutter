@@ -629,7 +629,7 @@ export default function Dashboard() {
       <div className="grid md:grid-cols-2 gap-6 mt-6">
         <section>
           <div className="flex items-center h-7 mb-2">
-            <h2 className="micro-label text-muted-foreground">Kinds</h2>
+            <h2 className="micro-label text-muted-foreground">Topics</h2>
             <div className="ml-auto"><AddAreaDialog /></div>
           </div>
           <div className="rounded-lg border border-border bg-white divide-y divide-border">

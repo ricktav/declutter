@@ -79,10 +79,10 @@ const GROUPINGS: Grouping[] = [
   },
   {
     id: "topic-floor",
-    label: "Kind → Floor",
-    shortLabel: "Kind · Floor",
+    label: "Topic → Floor",
+    shortLabel: "Topic · Floor",
     level1: (it) => String(it.areaId),
-    level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Kind #${key}`,
+    level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Topic #${key}`,
     level1Color: (key, index, areas) => areas.find((a) => String(a.id) === key)?.color ?? paletteColor(index),
     level1Nav: (key, areas) => {
       const a = areas.find((a) => String(a.id) === key);
@@ -97,7 +97,7 @@ const GROUPINGS: Grouping[] = [
   },
   {
     id: "floor-topic",
-    label: "Floor → Kind",
+    label: "Floor → Topic",
     shortLabel: "Floor",
     level1: (it) => it.room?.floor?.trim() || "No floor",
     level1Label: (key) => key,
@@ -109,10 +109,10 @@ const GROUPINGS: Grouping[] = [
   },
   {
     id: "topic-room",
-    label: "Kind → Place",
-    shortLabel: "Kind · Place",
+    label: "Topic → Place",
+    shortLabel: "Topic · Place",
     level1: (it) => String(it.areaId),
-    level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Kind #${key}`,
+    level1Label: (key, areas) => areas.find((a) => String(a.id) === key)?.name ?? `Topic #${key}`,
     level1Color: (key, index, areas) => areas.find((a) => String(a.id) === key)?.color ?? paletteColor(index),
     level1Nav: (key, areas) => {
       const a = areas.find((a) => String(a.id) === key);
@@ -127,7 +127,7 @@ const GROUPINGS: Grouping[] = [
   },
   {
     id: "room-topic",
-    label: "Place → Kind",
+    label: "Place → Topic",
     shortLabel: "Place",
     level1: roomKey,
     level1Label: (key, _areas, houses, showHouse) => roomKeyLabel(key, houses, showHouse),

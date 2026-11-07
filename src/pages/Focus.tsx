@@ -352,7 +352,7 @@ function FocusSheetBody({
       </label>
 
       <label className="block text-[12px] font-medium">
-        Kind
+        Topic
         <div className="mt-1">
           <AreaPicker value={areaId} onChange={setAreaId} placeholder="Things (optional)" />
         </div>

@@ -589,7 +589,7 @@ export default function SettingsPage() {
         <h2 className="text-sm font-semibold">Houses & Places</h2>
       </div>
       <p className="text-[12px] text-muted-foreground mt-1">
-        Place context lives on Things: <b>house → floor → Place</b>. Kinds say what a Thing is (computers, kitchen, …),
+        Place context lives on Things: <b>house → floor → Place</b>. Topics say what a Thing is (computers, kitchen, …),
         Places say where the Thing physically is.
       </p>
       <div className="mt-3 rounded-lg border border-border bg-white p-4 space-y-3">

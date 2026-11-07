@@ -402,7 +402,7 @@ export default function AreaView() {
   };
 
   if (area.isLoading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
-  if (!area.data) return <div className="p-8 text-sm">Kind not found.</div>;
+  if (!area.data) return <div className="p-8 text-sm">Topic not found.</div>;
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
