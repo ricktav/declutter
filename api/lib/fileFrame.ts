@@ -3,7 +3,7 @@
 // its Decision and a confirmed pin are written in one transaction; the cutout
 // is cropped after the commit and is best-effort (cutoutError reports a
 // failure, the Thing and pin stay). photos.fileFrame; Focus and Annotate.
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { items, photoPins, photos, type CropBox, type ItemDecision } from "@db/schema";
 import type { getDb } from "../queries/connection";
@@ -120,9 +120,30 @@ export async function fileFrame(db: Db, ctxHouseId: number | null, input: FileFr
       if (pin.photoId !== input.sourcePhotoId) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "That pin is on another photo." });
       }
+      // a pin is only re-linked when it is free or already this Thing's:
+      // taking another Thing's pin would silently move that Thing
+      if (pin.itemId != null && pin.itemId !== itemId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "That pin belongs to another Thing." });
+      }
+      // one pin per Thing per Photo, like pins.add onePerThing
+      const other = await tx.query.photoPins.findFirst({
+        where: and(eq(photoPins.photoId, input.sourcePhotoId), eq(photoPins.itemId, itemId), ne(photoPins.id, pin.id)),
+      });
+      if (other) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "That Thing is already pinned on this photo." });
+      }
+      // the frame is the pin: the cutout and the pin show the same box
       await tx
         .update(photoPins)
-        .set({ itemId, label: (input.label ?? name).slice(0, 255), status: "confirmed" })
+        .set({
+          itemId,
+          label: (input.label ?? name).slice(0, 255),
+          status: "confirmed",
+          xPct: input.box.xPct,
+          yPct: input.box.yPct,
+          wPct: input.box.wPct,
+          hPct: input.box.hPct,
+        })
         .where(eq(photoPins.id, pin.id));
       pinId = pin.id;
     } else {

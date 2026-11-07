@@ -177,7 +177,6 @@ function FocusSheetBody({
   pin,
   num,
   roomId,
-  photoId,
   identifying,
   onClose,
   onHide,
@@ -186,7 +185,6 @@ function FocusSheetBody({
   pin: Pin | null;
   num: number | null;
   roomId: number | null;
-  photoId: number | null;
   identifying?: boolean;
   onClose: () => void;
   onHide: () => void;
@@ -260,7 +258,8 @@ function FocusSheetBody({
       // Thing + pin + Decision in one transaction; the cutout is extra
       // (a failed crop comes back as cutoutError, the pin is already linked)
       await fileFrame.mutateAsync({
-        sourcePhotoId: photoId ?? pin.photoId,
+        // the pin's own photo: the server refuses a pin on another photo
+        sourcePhotoId: pin.photoId,
         box: boxOf(pin),
         itemId: null,
         itemName: trimmed,
@@ -905,7 +904,6 @@ export default function FocusPage() {
                 pin={selectedPin}
                 num={selectedNum}
                 roomId={roomId}
-                photoId={activePhotoId}
                 identifying={sel.kind === "pin" && labelingPinIds.includes(sel.pinId)}
                 onClose={() => setSel(null)}
                 onHide={() => {

@@ -92,4 +92,40 @@ describe("photos.fileFrame", () => {
     const [pin] = await db.select().from(photoPins).where(eq(photoPins.id, r.pinId));
     expect(pin).toMatchObject({ photoId: sourcePhotoId, itemId: r.itemId, status: "confirmed" });
   });
+
+  it("(h) a linked pin takes the frame's box", async () => {
+    const { db, api, sourcePhotoId } = await seed();
+    const { id: pinId } = await api.pins.add({ photoId: sourcePhotoId, xPct: 20, yPct: 20, wPct: 10, hPct: 10, label: "?" });
+    const r = await api.photos.fileFrame({ sourcePhotoId, box, itemId: null, itemName: "Mug", pinId });
+    const [pin] = await db.select().from(photoPins).where(eq(photoPins.id, r.pinId));
+    expect(pin).toMatchObject({ xPct: 50, yPct: 50, wPct: 40, hPct: 40, itemId: r.itemId });
+  });
+
+  it("(i) refuses a pin that belongs to another Thing, and a pin on another photo", async () => {
+    const { db, api, areaId, sourcePhotoId, capKey } = await seed();
+    const [{ id: otherId }] = await db.insert(items).values({ areaId, name: "Other" }).$returningId();
+    const { id: otherPin } = await api.pins.add({ photoId: sourcePhotoId, xPct: 20, yPct: 20, wPct: 10, hPct: 10, label: "Other", itemId: otherId });
+    await expect(api.photos.fileFrame({ sourcePhotoId, box, itemId: null, itemName: "Mug", pinId: otherPin })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    const [still] = await db.select().from(photoPins).where(eq(photoPins.id, otherPin));
+    expect(still.itemId).toBe(otherId);
+    expect(await db.select().from(items).where(eq(items.name, "Mug"))).toHaveLength(0);
+
+    const [{ id: cap2 }] = await db.insert(captures).values({ kind: "image", storageKey: capKey }).$returningId();
+    const { photoId: photo2 } = await api.photos.ensureForCapture({ captureId: cap2 });
+    const { id: pinOn2 } = await api.pins.add({ photoId: photo2, xPct: 20, yPct: 20, wPct: 10, hPct: 10, label: "?" });
+    await expect(api.photos.fileFrame({ sourcePhotoId, box, itemId: null, itemName: "Mug", pinId: pinOn2 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+  });
+
+  it("(j) refuses a second pin of the same Thing on the same photo", async () => {
+    const { api, sourcePhotoId } = await seed();
+    const first = await api.photos.fileFrame({ sourcePhotoId, box, itemId: null, itemName: "Mug" });
+    const { id: freePin } = await api.pins.add({ photoId: sourcePhotoId, xPct: 10, yPct: 10, wPct: 5, hPct: 5, label: "?" });
+    await expect(api.photos.fileFrame({ sourcePhotoId, box, itemId: first.itemId, pinId: freePin })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+  });
 });
