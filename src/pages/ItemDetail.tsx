@@ -322,6 +322,7 @@ export default function ItemDetail() {
     utils.items.attributeKeysForTopic.invalidate();
     // the room page's Schema view and the Placement schematics show name, Type, Tags and Topic colour
     utils.pins.listForRoom.invalidate();
+    utils.pins.forItemPhotos.invalidate({ itemId });
   };
 
   const update = trpc.items.update.useMutation({ onSuccess: invalidate });
@@ -1415,6 +1416,7 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
       utils.items.placement.invalidate();
       utils.pins.listForItem.invalidate();
       utils.pins.listForRoom.invalidate();
+      utils.pins.forItemPhotos.invalidate();
     },
   });
   const room = p.roomName ?? (p.roomId != null ? `Place #${p.roomId}` : null);

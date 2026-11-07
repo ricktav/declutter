@@ -279,6 +279,7 @@ export default function AnnotatePage() {
     // Place a Thing's "pinned here / elsewhere" states
     for (const i of ids) utils.pins.listForItem.invalidate({ itemId: i });
     utils.pins.listForRoom.invalidate();
+    utils.pins.forItemPhotos.invalidate();
     return invalidate();
   };
 
