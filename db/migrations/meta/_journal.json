@@ -113,6 +113,13 @@
       "when": 1792751323737,
       "tag": "0015_model3d",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "5",
+      "when": 1794086129898,
+      "tag": "0016_frame-candidates",
+      "breakpoints": true
     }
   ]
 }

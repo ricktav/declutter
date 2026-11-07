@@ -5,7 +5,7 @@
 //
 //   node scripts/batch-detect-local.mjs                  # dry-run, all pending
 //   node scripts/batch-detect-local.mjs --limit 15
-//   node scripts/batch-detect-local.mjs --apply          # write cutouts + detected Things
+//   node scripts/batch-detect-local.mjs --apply          # write cutouts + detected Things + a batch frame candidate
 //   node scripts/batch-detect-local.mjs --apply --no-label
 //   node scripts/batch-detect-local.mjs --model owlvit --no-florence
 //
@@ -32,6 +32,8 @@ import { defaultAreaId } from "../api/lib/defaultTopic.ts";
 import { labelCropWithClaude } from "../api/lib/claudeLabel.ts";
 import { cropPercent } from "../api/lib/crop.ts";
 import { readFileBytes, putFile, uploadsRoot } from "../api/lib/filestore.ts";
+import { batchQuality, registerFrameCandidate, winningPin } from "../api/lib/frameCandidates.ts";
+import { ensureLocationPhotoForCapture } from "../api/lib/photos.ts";
 
 const GENERIC_FALLBACK = [
   "sofa", "couch", "television", "soundbar", "remote control", "lamp",
@@ -65,7 +67,7 @@ Usage:
 
   (default)          Plan only: detect, print, do not write
   --dry-run          Same as default (wins over --apply)
-  --apply            File cutouts / detected Things and mark captures triaged
+  --apply            File cutouts / detected Things, register a batch frame, and mark captures triaged
   --limit N, -n N    First N pending captures with a file
   --no-label         Skip claude -p even with --apply (use detector labels)
   --model owlvit|owlv2|<hf-id>
@@ -206,10 +208,56 @@ async function main() {
     }
 
     if (!cli.apply) {
-      console.log(`  dry-run: would file ${known.length} known cutout(s), ${unknown.length} new Thing(s) at ${placeBit}`);
+      console.log(`  dry-run: would file ${known.length} known cutout(s), ${unknown.length} new Thing(s) at ${placeBit}, each with a batch frame candidate`);
       console.log();
       continue;
     }
+
+    // The candidate hangs on the capture's location Photo. Created when the
+    // snap has none yet. A failure here still files the cutout below.
+    let framePhotoId = loc?.id ?? null;
+    const framePhoto = async () => {
+      if (framePhotoId != null) return framePhotoId;
+      const made = await ensureLocationPhotoForCapture(db, cap.id, place.roomId ?? null);
+      framePhotoId = made.photoId;
+      return framePhotoId;
+    };
+    // Register this detector's box without moving another source's frame.
+    // The cutout is cropped from the winner, so a confirmed user/Focus frame
+    // is what the Thing's photo shows.
+    const frameForCutout = async (itemId, label, box, score) => {
+      try {
+        const photoId = await framePhoto();
+        await db.transaction((tx) =>
+          registerFrameCandidate(tx, {
+            photoId,
+            itemId,
+            source: "batch",
+            quality: batchQuality(score),
+            xPct: box.xPct,
+            yPct: box.yPct,
+            wPct: box.wPct,
+            hPct: box.hPct,
+            label,
+            origin: "ai",
+            status: "suggested",
+            replaceBox: true,
+            adoptUnsourced: true,
+          }),
+        );
+        const rows = await db
+          .select()
+          .from(schema.photoPins)
+          .where(and(eq(schema.photoPins.photoId, photoId), eq(schema.photoPins.itemId, itemId)));
+        const win = winningPin(rows);
+        if (win && win.wPct != null && win.hPct != null && win.wPct >= 1 && win.hPct >= 1) {
+          return { xPct: win.xPct, yPct: win.yPct, wPct: win.wPct, hPct: win.hPct };
+        }
+      } catch (err) {
+        console.log(`  frame not registered: ${err.message ?? err}`);
+      }
+      return box;
+    };
 
     const labeled = cli.label
       ? await withConcurrency(unknown, 4, async (d) => {
@@ -227,7 +275,8 @@ async function main() {
 
     for (const d of known) {
       const item = itemByName.get(d.label);
-      const cropped = await cropPercent(bytes, d.box);
+      const box = await frameForCutout(item.id, item.name, d.box, d.score);
+      const cropped = await cropPercent(bytes, box);
       const saved = await putFile({
         bytes: new Uint8Array(cropped),
         fileName: `items/${item.id}/cutout-${Date.now()}.jpg`,
@@ -241,7 +290,7 @@ async function main() {
         mimeType: "image/jpeg",
         size: saved.size,
         sourceCaptureId: cap.id,
-        cropBox: d.box,
+        cropBox: box,
       });
     }
     for (const d of labeled) {
@@ -256,8 +305,12 @@ async function main() {
           houseId: place.houseId,
         })
         .$returningId();
+      const box = await frameForCutout(itemId, d.claudeLabel, d.box, d.score);
+      const cropped = box.xPct === d.box.xPct && box.yPct === d.box.yPct && box.wPct === d.box.wPct && box.hPct === d.box.hPct
+        ? d.cropped
+        : await cropPercent(bytes, box);
       const saved = await putFile({
-        bytes: new Uint8Array(d.cropped),
+        bytes: new Uint8Array(cropped),
         fileName: `items/${itemId}/cutout-${Date.now()}.jpg`,
         contentType: "image/jpeg",
       });
@@ -269,7 +322,7 @@ async function main() {
         mimeType: "image/jpeg",
         size: saved.size,
         sourceCaptureId: cap.id,
-        cropBox: d.box,
+        cropBox: box,
       });
       console.log(`  filed new item #${itemId}: "${d.claudeLabel}" at ${placeBit} (needs confirmation)`);
     }

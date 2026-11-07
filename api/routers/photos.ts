@@ -31,6 +31,7 @@ import {
 } from "../lib/photos";
 import { roomPhotosFor } from "../lib/placement";
 import { fileFrame } from "../lib/fileFrame";
+import { winningPin } from "../lib/frameCandidates";
 
 const cropBoxInput = z.object({
   xPct: z.number().min(0).max(100),
@@ -195,10 +196,18 @@ export const photosRouter = createRouter({
               .where(and(eq(photos.sourceCaptureId, sourceCaptureId), isNull(photos.itemId)))
               .limit(1);
             if (loc) {
-              await tx
-                .update(photoPins)
-                .set({ xPct: input.box.xPct, yPct: input.box.yPct, wPct: input.box.wPct, hPct: input.box.hPct })
+              // the crop follows the frame that won; other sources keep their boxes
+              const rows = await tx
+                .select()
+                .from(photoPins)
                 .where(and(eq(photoPins.photoId, loc.id), eq(photoPins.itemId, photo.itemId)));
+              const win = winningPin(rows);
+              if (win) {
+                await tx
+                  .update(photoPins)
+                  .set({ xPct: input.box.xPct, yPct: input.box.yPct, wPct: input.box.wPct, hPct: input.box.hPct })
+                  .where(eq(photoPins.id, win.id));
+              }
             }
           }
           await logEvent(

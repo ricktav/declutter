@@ -16,6 +16,7 @@ import { classifyAiError } from "../lib/ai-client";
 import { logEvent } from "../lib/events";
 import { claudeCliObject, isClaudeCliDevMode } from "../lib/claudeCli";
 import { labelCropWithClaude } from "../lib/claudeLabel";
+import { FRAME_QUALITY, pinsForRead, registerFrameCandidate } from "../lib/frameCandidates";
 
 const detectSchema = z.object({
   objects: z.array(
@@ -79,7 +80,9 @@ export const pinsRouter = createRouter({
     .query(async ({ input }) => {
       const db = getDb();
       const pins = await db.select().from(photoPins).where(eq(photoPins.photoId, input.photoId));
-      return (await withPinItems(db, pins, { includeDismissed: input.includeDismissed })).map(({ pin, itemName, itemDescription, itemAreaColor }) => ({
+      // one frame per Thing: the winner, and dismissed candidates only when asked
+      const shown = pinsForRead(pins, input.includeDismissed);
+      return (await withPinItems(db, shown, { includeDismissed: true })).map(({ pin, itemName, itemDescription, itemAreaColor }) => ({
         ...pin,
         itemName,
         itemDescription,
@@ -106,7 +109,7 @@ export const pinsRouter = createRouter({
       .from(photoPins)
       .where(inArray(photoPins.photoId, [...picById.keys()]))
       .orderBy(asc(photoPins.photoId), asc(photoPins.id));
-    return (await withPinItems(db, pins))
+    return (await withPinItems(db, pinsForRead(pins)))
       .filter(({ linked }) => isLivePinThing(linked))
       .map(({ pin, linked, itemName, itemAreaColor }) => {
         const pic = picById.get(pin.photoId)!;
@@ -124,7 +127,7 @@ export const pinsRouter = createRouter({
   /** items pinned anywhere (back-references for the item page) */
   listForItem: procedure.input(z.object({ itemId: z.number() })).query(async ({ input }) => {
     const db = getDb();
-    const pins = await db.select().from(photoPins).where(eq(photoPins.itemId, input.itemId));
+    const pins = pinsForRead(await db.select().from(photoPins).where(eq(photoPins.itemId, input.itemId)));
     const photoIds = [...new Set(pins.map((p) => p.photoId))];
     const pics = photoIds.length ? await db.select().from(photos).where(inArray(photos.id, photoIds)) : [];
     const byId = new Map(pics.map((p) => [p.id, p]));
@@ -156,7 +159,7 @@ export const pinsRouter = createRouter({
       .from(photoPins)
       .where(inArray(photoPins.photoId, [...picById.keys()]))
       .orderBy(asc(photoPins.photoId), asc(photoPins.id));
-    return (await withPinItems(db, pins))
+    return (await withPinItems(db, pinsForRead(pins)))
       .filter(({ linked }) => isLivePinThing(linked))
       .map(({ pin, linked, itemName, itemAreaColor }) => {
         const pic = picById.get(pin.photoId)!;
@@ -172,10 +175,11 @@ export const pinsRouter = createRouter({
       });
   }),
 
-  /** Adds a user pin. With `onePerThing` (Annotate's Place a Thing), a pin
-   * of the same Thing on the same Photo, whatever its status, is moved there
-   * instead: confirmed, its frame kept unless wPct/hPct are given, and
-   * `{ id, existing: true }` returned, as ensurePinForCutout does. */
+  /** Adds a user or Focus pin. With `onePerThing` (Annotate's Place a Thing),
+   * that source's candidate for the same Thing on the same Photo — or a
+   * legacy pin that has no source yet — is moved and confirmed. Its frame
+   * is kept unless wPct/hPct are given, and `{ id, existing: true }` is
+   * returned. Another source's row is not moved. */
   add: procedure
     .input(
       z.object({
@@ -187,27 +191,38 @@ export const pinsRouter = createRouter({
         label: z.string().default(""),
         itemId: z.number().optional(),
         onePerThing: z.boolean().optional(),
+        /** default user. Focus sends focus so a drawing does not take an inbox or batch candidate. */
+        source: z.enum(["inbox", "focus", "batch", "user"]).optional(),
       }),
     )
     .mutation(async ({ input }) => {
       const db = getDb();
+      const source = input.source ?? "user";
       return db.transaction(async (tx) => {
         if (input.onePerThing && input.itemId != null) {
-          const mine = await tx
-            .select()
-            .from(photoPins)
-            .where(and(eq(photoPins.photoId, input.photoId), eq(photoPins.itemId, input.itemId)))
-            .orderBy(asc(photoPins.id))
-            .for("update");
-          const rank = { confirmed: 0, suggested: 1, dismissed: 2 } as const;
-          const existing = [...mine].sort((a, b) => rank[a.status] - rank[b.status])[0];
-          if (existing) {
-            const patch: Partial<typeof photoPins.$inferInsert> = { xPct: input.xPct, yPct: input.yPct, status: "confirmed" };
-            if (input.wPct !== undefined) patch.wPct = input.wPct;
-            if (input.hPct !== undefined) patch.hPct = input.hPct;
-            await tx.update(photoPins).set(patch).where(eq(photoPins.id, existing.id));
-            return { id: existing.id, existing: true };
-          }
+          const { id, created } = await registerFrameCandidate(tx, {
+            photoId: input.photoId,
+            itemId: input.itemId,
+            source,
+            quality: FRAME_QUALITY[source],
+            xPct: input.xPct,
+            yPct: input.yPct,
+            wPct: input.wPct,
+            hPct: input.hPct,
+            label: input.label,
+            origin: "user",
+            status: "confirmed",
+            replaceBox: true,
+            adoptUnsourced: true,
+          });
+          if (!created) return { id, existing: true as const };
+          await logEvent({
+            entityType: "pin",
+            entityId: id,
+            action: "pin-added",
+            summary: `Pin "${input.label || "untitled"}" added to photo #${input.photoId}`,
+          }, tx);
+          return { id, existing: false as const };
         }
         const [{ id }] = await tx
           .insert(photoPins)
@@ -221,6 +236,8 @@ export const pinsRouter = createRouter({
             itemId: input.itemId ?? null,
             origin: "user",
             status: "confirmed",
+            source,
+            quality: FRAME_QUALITY[source],
           })
           .$returningId();
         await logEvent({
@@ -251,6 +268,8 @@ export const pinsRouter = createRouter({
       const { id, ...rest } = input;
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rest)) if (v !== undefined) patch[k] = v;
+      // confirming this candidate outranks other model scores; the row stays
+      if (patch.status === "confirmed") patch.quality = FRAME_QUALITY.confirm;
       await getDb().update(photoPins).set(patch).where(eq(photoPins.id, id));
       return { ok: true };
     }),
@@ -267,12 +286,12 @@ export const pinsRouter = createRouter({
     .mutation(async ({ input }) => {
       const db = getDb();
       if (input.confirm) {
-        const patch: Record<string, unknown> = { status: "confirmed" };
+        const patch: Record<string, unknown> = { status: "confirmed", quality: FRAME_QUALITY.confirm };
         if (input.label !== undefined) patch.label = input.label;
         if (input.itemId !== undefined) patch.itemId = input.itemId;
         await db.update(photoPins).set(patch).where(eq(photoPins.id, input.id));
       } else {
-        // hide the detection; do not delete a saved Thing, photo or file
+        // hide this candidate; the row stays so the other sources' history does too
         await db.update(photoPins).set({ status: "dismissed" }).where(eq(photoPins.id, input.id));
       }
       await logEvent({
@@ -355,18 +374,43 @@ export const pinsRouter = createRouter({
             if (best < 0.5) itemId = null;
             else matched++;
           }
-          await db.insert(photoPins).values({
-            photoId: input.photoId,
-            xPct: box.xPct,
-            yPct: box.yPct,
-            wPct: box.wPct,
-            hPct: box.hPct,
-            label: obj.label,
-            itemId,
-            origin: "ai",
-            status: "suggested",
-          });
-          created++;
+          // a matched Thing updates the inbox candidate only; an unmatched
+          // box is its own suggestion (no Thing to share a frame with yet)
+          if (itemId != null) {
+            const { created: isNew } = await db.transaction((tx) =>
+              registerFrameCandidate(tx, {
+                photoId: input.photoId,
+                itemId,
+                source: "inbox",
+                quality: FRAME_QUALITY.inbox,
+                xPct: box.xPct,
+                yPct: box.yPct,
+                wPct: box.wPct,
+                hPct: box.hPct,
+                label: obj.label,
+                origin: "ai",
+                status: "suggested",
+                replaceBox: true,
+                adoptUnsourced: true,
+              }),
+            );
+            if (isNew) created++;
+          } else {
+            await db.insert(photoPins).values({
+              photoId: input.photoId,
+              xPct: box.xPct,
+              yPct: box.yPct,
+              wPct: box.wPct,
+              hPct: box.hPct,
+              label: obj.label,
+              itemId,
+              origin: "ai",
+              status: "suggested",
+              source: "inbox",
+              quality: FRAME_QUALITY.inbox,
+            });
+            created++;
+          }
         }
         await logEvent({
           entityType: "pin",
