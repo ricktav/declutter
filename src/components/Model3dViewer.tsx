@@ -26,80 +26,26 @@ export function Model3dViewer({ src, className }: Model3dViewerProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [fail, setFail] = useState<{ kind: FailKind; detail?: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  // made once per mount: a new `src` reuses the renderer (and its WebGL context)
+  const stageRef = useRef<{ scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls } | null>(null);
+  // the objects the current `src` added to the scene
+  const loadedRef = useRef<THREE.Object3D[]>([]);
 
   useEffect(() => {
     const el = boxRef.current;
     if (!el) return;
-    let cancelled = false;
-    let renderer: THREE.WebGLRenderer | null = null;
-    let controls: OrbitControls | null = null;
     let raf = 0;
-    let ro: ResizeObserver | null = null;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf4f1ea);
-    const loaded: THREE.Object3D[] = [];
-
-    const failWith = (kind: FailKind, detail?: string) => {
-      if (!cancelled) setFail({ kind, detail });
-    };
-
-    const disposeObject = (obj: THREE.Object3D) => {
-      obj.traverse((node) => {
-        const mesh = node as THREE.Mesh;
-        if (mesh.geometry) mesh.geometry.dispose();
-        const mat = mesh.material;
-        if (!mat) return;
-        const list = Array.isArray(mat) ? mat : [mat];
-        for (const m of list) {
-          const std = m as THREE.MeshStandardMaterial;
-          std.map?.dispose();
-          std.normalMap?.dispose();
-          std.roughnessMap?.dispose();
-          std.metalnessMap?.dispose();
-          std.emissiveMap?.dispose();
-          m.dispose();
-        }
-      });
-    };
-
-    const fit = (camera: THREE.PerspectiveCamera, orbit: OrbitControls, object: THREE.Object3D) => {
-      const box = new THREE.Box3().setFromObject(object);
-      if (box.isEmpty()) return;
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z, 0.05);
-      const fov = (camera.fov * Math.PI) / 180;
-      const dist = (maxDim / (2 * Math.tan(fov / 2))) * 1.7;
-      camera.near = Math.max(dist / 200, 0.01);
-      camera.far = Math.max(dist * 80, 50);
-      camera.position.set(center.x + dist * 0.72, center.y + dist * 0.55, center.z + dist * 0.72);
-      camera.lookAt(center);
-      camera.updateProjectionMatrix();
-      orbit.target.copy(center);
-      orbit.minDistance = maxDim * 0.25;
-      orbit.maxDistance = dist * 10;
-      orbit.update();
-    };
-
-    const show = (object: THREE.Object3D) => {
-      if (cancelled) {
-        disposeObject(object);
-        return;
-      }
-      scene.add(object);
-      loaded.push(object);
-      if (camera && controls) fit(camera, controls, object);
-      setLoading(false);
-    };
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 100);
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     el.appendChild(renderer.domElement);
 
-    controls = new OrbitControls(camera, renderer.domElement);
+    const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.enablePan = true;
@@ -113,7 +59,6 @@ export function Model3dViewer({ src, className }: Model3dViewerProps) {
     scene.add(fill);
 
     const resize = () => {
-      if (!renderer) return;
       const w = el.clientWidth;
       const h = el.clientHeight || w;
       if (w === 0 || h === 0) return;
@@ -122,40 +67,69 @@ export function Model3dViewer({ src, className }: Model3dViewerProps) {
       camera.updateProjectionMatrix();
     };
     resize();
-    ro = new ResizeObserver(resize);
+    const ro = new ResizeObserver(resize);
     ro.observe(el);
 
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      controls?.update();
-      if (renderer) renderer.render(scene, camera);
+      controls.update();
+      renderer.render(scene, camera);
     };
     loop();
 
-    const format = model3dFormatOf(src);
-    void loadObject(src, format)
-      .then(show)
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        if (/unsupport|format/i.test(message)) failWith("unsupported", message);
-        else if (/HTTP|fetch|network|Failed to fetch|CORS/i.test(message)) failWith("unreachable", message);
-        else if (format === "js") failWith("agent", message);
-        else if (format === "usdz") failWith("usdz", message);
-        else failWith("parse", message);
-        if (!cancelled) setLoading(false);
-      });
+    stageRef.current = { scene, camera, controls };
+
+    return () => {
+      stageRef.current = null;
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      controls.dispose();
+      // normally the [src] cleanup has emptied this already
+      clearLoaded(scene, loadedRef.current);
+      renderer.dispose();
+      renderer.domElement.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    let cancelled = false;
+    setFail(null);
+    setLoading(!!src);
+
+    const failWith = (kind: FailKind, detail?: string) => {
+      if (!cancelled) setFail({ kind, detail });
+    };
+
+    if (stage && src) {
+      const format = model3dFormatOf(src);
+      void loadObject(src, format)
+        .then((object) => {
+          // a newer `src` (or unmount) came first: this result is not shown
+          if (cancelled) {
+            disposeObject(object);
+            return;
+          }
+          stage.scene.add(object);
+          loadedRef.current.push(object);
+          fit(stage.camera, stage.controls, object);
+          setLoading(false);
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          if (/unsupport|format/i.test(message)) failWith("unsupported", message);
+          else if (/HTTP|fetch|network|Failed to fetch|CORS/i.test(message)) failWith("unreachable", message);
+          else if (format === "js") failWith("agent", message);
+          else if (format === "usdz") failWith("usdz", message);
+          else failWith("parse", message);
+          if (!cancelled) setLoading(false);
+        });
+    }
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(raf);
-      ro?.disconnect();
-      controls?.dispose();
-      for (const obj of loaded) {
-        scene.remove(obj);
-        disposeObject(obj);
-      }
-      renderer?.dispose();
-      renderer?.domElement.remove();
+      // the previous model leaves the scene (and the GPU) before the next one loads
+      if (stage) clearLoaded(stage.scene, loadedRef.current);
     };
   }, [src]);
 
@@ -193,6 +167,53 @@ export function Model3dViewer({ src, className }: Model3dViewerProps) {
 }
 
 export default Model3dViewer;
+
+function disposeObject(obj: THREE.Object3D) {
+  obj.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const mat = mesh.material;
+    if (!mat) return;
+    const list = Array.isArray(mat) ? mat : [mat];
+    for (const m of list) {
+      const std = m as THREE.MeshStandardMaterial;
+      std.map?.dispose();
+      std.normalMap?.dispose();
+      std.roughnessMap?.dispose();
+      std.metalnessMap?.dispose();
+      std.emissiveMap?.dispose();
+      m.dispose();
+    }
+  });
+}
+
+/** Take every loaded object out of the scene, free its GPU memory, empty the list. */
+function clearLoaded(scene: THREE.Scene, loaded: THREE.Object3D[]) {
+  for (const obj of loaded) {
+    scene.remove(obj);
+    disposeObject(obj);
+  }
+  loaded.length = 0;
+}
+
+function fit(camera: THREE.PerspectiveCamera, orbit: OrbitControls, object: THREE.Object3D) {
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z, 0.05);
+  const fov = (camera.fov * Math.PI) / 180;
+  const dist = (maxDim / (2 * Math.tan(fov / 2))) * 1.7;
+  camera.near = Math.max(dist / 200, 0.01);
+  camera.far = Math.max(dist * 80, 50);
+  camera.position.set(center.x + dist * 0.72, center.y + dist * 0.55, center.z + dist * 0.72);
+  camera.lookAt(center);
+  camera.updateProjectionMatrix();
+  orbit.target.copy(center);
+  orbit.minDistance = maxDim * 0.25;
+  orbit.maxDistance = dist * 10;
+  orbit.update();
+}
 
 async function loadObject(src: string, format: Model3dFormatOrUnknown): Promise<THREE.Object3D> {
   if (format === "unknown") throw new Error("unsupported format");
