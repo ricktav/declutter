@@ -176,12 +176,12 @@ function disposeObject(obj: THREE.Object3D) {
     if (!mat) return;
     const list = Array.isArray(mat) ? mat : [mat];
     for (const m of list) {
-      const std = m as THREE.MeshStandardMaterial;
-      std.map?.dispose();
-      std.normalMap?.dispose();
-      std.roughnessMap?.dispose();
-      std.metalnessMap?.dispose();
-      std.emissiveMap?.dispose();
+      // Every texture slot (map, aoMap, alphaMap, clearcoat…), not a fixed list:
+      // the renderer now outlives the model, so a missed texture would pile up.
+      for (const v of Object.values(m as unknown as Record<string, unknown>)) {
+        const tex = v as THREE.Texture | null | undefined;
+        if (tex && (tex as THREE.Texture).isTexture) tex.dispose();
+      }
       m.dispose();
     }
   });
