@@ -1471,7 +1471,7 @@ function PlacementRows({ p, onPickRoom }: { p: PlacementData; onPickRoom: () => 
                 </div>
               ))}
             </div>
-            <ItemPinSchematics itemId={p.itemId} pins={p.pins} />
+            <ItemPinSchematics itemId={p.itemId} />
           </>
         ) : (
           <>

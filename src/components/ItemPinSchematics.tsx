@@ -9,28 +9,17 @@ import { EMPTY_SCHEMA_FILTER, isFramed, type SchemaPin } from "@/lib/schemaFilte
  * schematic of that Photo: this Thing's block outlined, the others dimmed.
  * A click opens the room page's Schema view with this Thing selected.
  */
-export function ItemPinSchematics({
-  itemId,
-  pins,
-}: {
-  itemId: number;
-  pins: Array<{ photoId: number; roomId: number | null }>;
-}) {
-  const roomIds = [...new Set(pins.map((p) => p.roomId).filter((r): r is number => r != null))];
-  const rooms = trpc.useQueries((t) => roomIds.map((roomId) => t.pins.listForRoom({ roomId })));
-  const photoIds = new Set(pins.map((p) => p.photoId));
+export function ItemPinSchematics({ itemId }: { itemId: number }) {
+  const { data: rows = [] } = trpc.pins.forItemPhotos.useQuery({ itemId });
   const cards: Array<{ photoId: number; roomId: number; title: string | null; storageKey: string; pins: SchemaPin[] }> = [];
-  rooms.forEach((q, i) => {
-    for (const pin of q.data ?? []) {
-      if (!photoIds.has(pin.photoId)) continue;
-      let card = cards.find((c) => c.photoId === pin.photoId);
-      if (!card) {
-        card = { photoId: pin.photoId, roomId: roomIds[i], title: pin.photoTitle, storageKey: pin.photoStorageKey, pins: [] };
-        cards.push(card);
-      }
-      card.pins.push(pin);
+  for (const pin of rows) {
+    let card = cards.find((c) => c.photoId === pin.photoId);
+    if (!card) {
+      card = { photoId: pin.photoId, roomId: pin.roomId, title: pin.photoTitle, storageKey: pin.photoStorageKey, pins: [] };
+      cards.push(card);
     }
-  });
+    card.pins.push(pin);
+  }
   const { byKey } = usePhotoUrls(cards.map((c) => c.storageKey));
   if (!cards.length) return null;
   return (

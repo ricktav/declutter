@@ -5,7 +5,7 @@ import { createRouter, procedure } from "../middleware";
 import { getDb } from "../queries/connection";
 import { photoPins, photos } from "@db/schema";
 import { coverPhotos } from "../lib/photos";
-import { pinItemSummary, roomWithDescendants, withPinItems } from "../lib/pins";
+import { isLivePinThing, pinItemSummary, roomWithDescendants, withPinItems } from "../lib/pins";
 import { photoScope, promptInventory } from "../lib/aiContext";
 import { nameScore } from "../lib/text";
 import { readFileBytes } from "../lib/filestore";
@@ -107,7 +107,7 @@ export const pinsRouter = createRouter({
       .where(inArray(photoPins.photoId, [...picById.keys()]))
       .orderBy(asc(photoPins.photoId), asc(photoPins.id));
     return (await withPinItems(db, pins))
-      .filter(({ linked }) => !linked || (linked.status === "active" && linked.verificationStatus !== "rejected"))
+      .filter(({ linked }) => isLivePinThing(linked))
       .map(({ pin, linked, itemName, itemAreaColor }) => {
         const pic = picById.get(pin.photoId)!;
         return {
@@ -129,6 +129,42 @@ export const pinsRouter = createRouter({
     const pics = photoIds.length ? await db.select().from(photos).where(inArray(photos.id, photoIds)) : [];
     const byId = new Map(pics.map((p) => [p.id, p]));
     return pins.filter((p) => p.status !== "dismissed").map((p) => ({ ...p, photo: byId.get(p.photoId) ?? null }));
+  }),
+
+  /** A Thing's schematics in one call: every pin on every Photo that has a pin
+   * of itemId and a room, rows as listForRoom plus the Photo's roomId. Photos
+   * without a room are left out. Same exclusions as listForRoom. Ordered by
+   * photo, then pin. */
+  forItemPhotos: procedure.input(z.object({ itemId: z.number() })).query(async ({ input }) => {
+    const db = getDb();
+    const mine = await db.select({ photoId: photoPins.photoId }).from(photoPins).where(eq(photoPins.itemId, input.itemId));
+    const photoIds = [...new Set(mine.map((p) => p.photoId))];
+    if (!photoIds.length) return [];
+    const pics = await db
+      .select({ id: photos.id, title: photos.title, storageKey: photos.storageKey, roomId: photos.roomId })
+      .from(photos)
+      .where(inArray(photos.id, photoIds));
+    const picById = new Map(pics.filter((p) => p.roomId != null).map((p) => [p.id, p]));
+    if (!picById.size) return [];
+    const pins = await db
+      .select()
+      .from(photoPins)
+      .where(inArray(photoPins.photoId, [...picById.keys()]))
+      .orderBy(asc(photoPins.photoId), asc(photoPins.id));
+    return (await withPinItems(db, pins))
+      .filter(({ linked }) => isLivePinThing(linked))
+      .map(({ pin, linked, itemName, itemAreaColor }) => {
+        const pic = picById.get(pin.photoId)!;
+        return {
+          photoTitle: pic.title,
+          photoStorageKey: pic.storageKey,
+          roomId: pic.roomId as number,
+          ...pin,
+          itemName,
+          itemAreaColor,
+          item: linked ? pinItemSummary(linked) : null,
+        };
+      });
   }),
 
   /** Adds a user pin. With `onePerThing` (Annotate's Place a Thing), a pin

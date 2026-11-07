@@ -63,6 +63,11 @@ export async function withPinItems(db: Db, pins: PinRow[], opts: { includeDismis
   });
 }
 
+/** A pin shows on a Schema view when it has no Thing, or its Thing is active and not rejected. */
+export function isLivePinThing(linked: ItemRow | null) {
+  return !linked || (linked.status === "active" && linked.verificationStatus !== "rejected");
+}
+
 /** The room and every room cut from it, recursively (the set rooms.get rolls up). */
 export async function roomWithDescendants(db: Db, roomId: number): Promise<number[]> {
   const out = [roomId];
