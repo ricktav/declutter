@@ -1327,12 +1327,11 @@ export default function AnnotatePage() {
                 onSelect={async (item) => {
                   setPendingItem(item);
                   setPendingLabel(item.name);
-                  // an item already pinned elsewhere is worth a second look
-                  // before auto-adding - skip the instant-save and let the
-                  // warning on the chip below surface first
-                  const existing = await utils.pins.listForItem.fetch({ itemId: item.id });
-                  const elsewhere = existing.filter((p) => p.status === "confirmed" && p.photoId !== attId);
-                  if (elsewhere.length === 0) savePending(item);
+                  // One pin per Thing per Photo, any number of Photos: a Thing
+                  // already pinned elsewhere is saved here just the same (2026-11-09,
+                  // Rick). The chip below still shows "Already pinned N× elsewhere"
+                  // so a wrong match is easy to spot and unlink.
+                  savePending(item);
                 }}
                 allowCreate
                 onCreateNew={(name) => {

@@ -198,8 +198,21 @@ function FocusSheetBody({
   const [placeHere, setPlaceHere] = useState(true);
   const [draftDecision, setDraftDecision] = useState<ItemDecision | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [topicHint, setTopicHint] = useState<string | null>(null);
   const seeded = useRef<string | null>(null);
   const nameTouched = useRef(false);
+  // A proposal only: it fills the picker, Save (or Admit) writes it.
+  const suggestTopic = trpc.items.suggestTopic.useMutation({
+    onSuccess: (s) => {
+      if (!s) {
+        setTopicHint("No Topic fits; pick one.");
+        return;
+      }
+      setAreaId(s.areaId);
+      setTopicHint(`${s.name}: ${s.reason}${s.source === "ai" ? " (model)" : ""}`);
+    },
+    onError: (e) => setTopicHint(e.message),
+  });
 
   useEffect(() => {
     const key = sel.kind === "pin" ? `pin:${sel.pinId}:${itemId ?? 0}` : `item:${sel.itemId}`;
@@ -352,7 +365,25 @@ function FocusSheetBody({
       </label>
 
       <label className="block text-[12px] font-medium">
-        Topic
+        <span className="flex items-center gap-1.5">
+          Topic
+          {itemId != null && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-[11px] font-normal text-violet-700 hover:underline disabled:opacity-50"
+              disabled={suggestTopic.isPending}
+              onClick={() => {
+                setTopicHint(null);
+                suggestTopic.mutate({ id: itemId });
+              }}
+              title="Let a rule or the model propose a Topic; you still save"
+            >
+              {suggestTopic.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              Suggest
+            </button>
+          )}
+          {topicHint && <span className="text-[11px] font-normal text-muted-foreground">{topicHint}</span>}
+        </span>
         <div className="mt-1">
           <AreaPicker value={areaId} onChange={setAreaId} placeholder="Things (optional)" />
         </div>
@@ -496,7 +527,7 @@ export default function FocusPage() {
   const itemsById = useMemo(() => new Map((houseItems.data ?? []).map((it) => [it.id, it])), [houseItems.data]);
   const queue = trpc.items.queue.useQuery();
   const needsMe = useMemo(
-    () => (queue.data ? new Set([...queue.data.toCheck, ...queue.data.toDecide]) : null),
+    () => (queue.data ? new Set([...queue.data.toCheck, ...queue.data.toDecide, ...queue.data.toTopic]) : null),
     [queue.data],
   );
   const isUnhandledItem = (it: { id: number }) => needsMe?.has(it.id) ?? true;

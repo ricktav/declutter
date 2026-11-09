@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { areas, captures, items, photos, relations, rooms, type ItemDecision } from "@db/schema";
 import type { getDb } from "../queries/connection";
+import { DEFAULT_TOPIC_SLUG } from "./defaultTopic";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -27,6 +28,9 @@ export const isReal = (it: QueueThing) => it.verificationStatus !== "rejected";
 export const needsCheck = (it: QueueThing) => it.status === "active" && it.verificationStatus === "detected";
 export const needsPlace = (it: QueueThing) =>
   it.status === "active" && isReal(it) && !needsCheck(it) && it.roomId == null;
+/** Still in the default bucket "Things": it has no Topic of its own yet. */
+export const needsTopic = (it: QueueThing) =>
+  it.status === "active" && isReal(it) && !needsCheck(it) && it.areaSlug === DEFAULT_TOPIC_SLUG;
 export function needsDecision(it: QueueThing, now: Date): boolean {
   if (it.status !== "active" || !isReal(it) || needsCheck(it)) return false;
   if (it.decision == null) return true;
@@ -61,6 +65,7 @@ export type ThingQueue = {
   toCheck: number[];
   toPlace: number[];
   toDecide: number[];
+  toTopic: number[];
   lens: { needsRole: number[]; needsBackup: number[] } | null;
 };
 
@@ -75,6 +80,7 @@ export function classify(
     toCheck: scoped.filter(needsCheck).map((it) => it.id),
     toPlace: scoped.filter(needsPlace).map((it) => it.id),
     toDecide: scoped.filter((it) => needsDecision(it, opts.now)).map((it) => it.id),
+    toTopic: scoped.filter(needsTopic).map((it) => it.id),
     lens: lab
       ? {
           needsRole: ready.filter((it) => !role(it)).map((it) => it.id),
@@ -89,7 +95,8 @@ export type QueueScope = { houseId: number | null; roomId?: number | null; lens?
 /**
  * What still needs a person, in one house (null = every house):
  * pending snaps to sort, detected Things to check, Things without a Place,
- * Things to decide (including a "Later" that is due again), and the lens's
+ * Things to decide (including a "Later" that is due again), Things still in
+ * the default Topic "Things" (`toTopic`, the Topic inbox), and the lens's
  * own questions. A snap whose house is unknown counts in every house, since
  * it has to be sorted somewhere.
  */
@@ -136,6 +143,7 @@ export async function queueFor(db: Db, scope: QueueScope, now = new Date()) {
       toCheck: thingQueue.toCheck.length,
       toPlace: thingQueue.toPlace.length,
       toDecide: thingQueue.toDecide.length,
+      toTopic: thingQueue.toTopic.length,
       needsRole: thingQueue.lens?.needsRole.length ?? 0,
       needsBackup: thingQueue.lens?.needsBackup.length ?? 0,
     },

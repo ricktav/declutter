@@ -8,6 +8,7 @@ import { areas, items, itemLinks, relations, tasks, ideaItems, ideas, events, ho
 import { effectiveModel3dRoute, parseModel3dUrl } from "@db/model3d";
 import { logEvent } from "../lib/events";
 import { queueFor, QUEUE_LENSES } from "../lib/queue";
+import { suggestTopic } from "../lib/suggestTopic";
 import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { suggestLinksForNewItem } from "../lib/suggestLinks";
 import { roomSummary, setItemLocation } from "../lib/location";
@@ -70,6 +71,29 @@ export const itemsRouter = createRouter({
         lens: input?.lens ?? null,
       }),
     ),
+
+  /** Propose a Topic for a Thing (normally one in the default bucket "Things"):
+   * a rule from its role, Type or name, else the configured model choosing
+   * among the existing Topics. Never writes; apply with `items.update`.
+   * `null` when nothing fits or no model is configured. */
+  suggestTopic: procedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const [item] = await db
+        .select({ name: items.name, description: items.description, attributes: items.attributes })
+        .from(items)
+        .where(eq(items.id, input.id));
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Thing not found" });
+      const topics = await db
+        .select({ id: areas.id, slug: areas.slug, name: areas.name, description: areas.description })
+        .from(areas)
+        .orderBy(areas.sortOrder, areas.id);
+      return suggestTopic(
+        { name: item.name, description: item.description, attributes: (item.attributes as Record<string, unknown> | null) ?? null },
+        topics,
+      );
+    }),
 
   /** Every active item across every area, for the cross-area browser (search/sort by area or location). */
   listAll: procedure

@@ -27,7 +27,13 @@ describe("classify", () => {
 
   it("ignores rejected and archived Things", () => {
     const q = classify([t(1, { verificationStatus: "rejected", roomId: null }), t(2, { status: "archived", roomId: null })], { now });
-    expect(q).toMatchObject({ toCheck: [], toPlace: [], toDecide: [] });
+    expect(q).toMatchObject({ toCheck: [], toPlace: [], toDecide: [], toTopic: [] });
+  });
+
+  it("lists a Thing in the default Topic until it gets one, but not while it still needs a check", () => {
+    const q = classify([t(1, { areaSlug: "things" }), t(2, { areaSlug: "things", verificationStatus: "detected" }), t(3)], { now });
+    expect(q.toTopic).toEqual([1]);
+    expect(q.toCheck).toEqual([2]);
   });
 
   it("asks for a Place and a Decision independently", () => {
@@ -89,7 +95,7 @@ describe("items.queue", () => {
 
     const q = await callerFor(h1).items.queue();
     expect(q).toMatchObject({ toSort: [inH1, noHouse], toCheck: [], toPlace: [box], toDecide: [lamp], lens: null, laterDays: LATER_DAYS });
-    expect(q.counts).toEqual({ toSort: 2, toCheck: 0, toPlace: 1, toDecide: 1, needsRole: 0, needsBackup: 0 });
+    expect(q.counts).toEqual({ toSort: 2, toCheck: 0, toPlace: 1, toDecide: 1, toTopic: 0, needsRole: 0, needsBackup: 0 });
     expect((await callerFor(h2).items.queue()).toSort).toEqual([noHouse, inH2]);
     expect((await callerFor(null).items.queue()).counts.toCheck).toBe(1);
     expect((await callerFor(h2).items.queue({ houseId: h1 })).toDecide).toEqual([lamp]);

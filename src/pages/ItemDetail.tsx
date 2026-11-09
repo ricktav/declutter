@@ -327,6 +327,11 @@ export default function ItemDetail() {
   };
 
   const update = trpc.items.update.useMutation({ onSuccess: invalidate });
+  // undefined = nothing asked; null = asked, nothing fits; else a proposal awaiting Apply
+  const [topicSuggestion, setTopicSuggestion] = useState<
+    { areaId: number; name: string; reason: string; source: "rule" | "ai" } | null | undefined
+  >(undefined);
+  const suggestTopic = trpc.items.suggestTopic.useMutation({ onSuccess: (s) => setTopicSuggestion(s) });
   const setDecision = trpc.items.setDecision.useMutation({ onSuccess: invalidate });
   const setArchived = trpc.items.setArchived.useMutation({ onSuccess: invalidate });
   const setVerification = trpc.items.setVerification.useMutation({ onSuccess: invalidate });
@@ -555,6 +560,43 @@ export default function ItemDetail() {
               <Link to={`/areas/${it.area.slug}`} className="hover:underline shrink-0">
                 Open
               </Link>
+            )}
+            {topicSuggestion === undefined ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-violet-700 hover:underline shrink-0 disabled:opacity-50"
+                disabled={suggestTopic.isPending || update.isPending}
+                onClick={() => suggestTopic.mutate({ id: itemId })}
+                title="Let a rule or the model propose a Topic; you apply it"
+              >
+                {suggestTopic.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                Suggest
+              </button>
+            ) : topicSuggestion === null ? (
+              <span className="shrink-0">No Topic fits.</span>
+            ) : topicSuggestion.areaId === it.areaId ? (
+              <span className="shrink-0">Already {topicSuggestion.name}.</span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 shrink-0">
+                <span>
+                  → <span className="font-medium text-foreground">{topicSuggestion.name}</span> ({topicSuggestion.reason}
+                  {topicSuggestion.source === "ai" ? ", model" : ""})
+                </span>
+                <Button
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  disabled={update.isPending}
+                  onClick={() => {
+                    update.mutate({ id: itemId, areaId: topicSuggestion.areaId });
+                    setTopicSuggestion(undefined);
+                  }}
+                >
+                  Apply
+                </Button>
+                <button type="button" className="hover:underline" onClick={() => setTopicSuggestion(undefined)}>
+                  No
+                </button>
+              </span>
             )}
             <span className="shrink-0">/ Thing #{it.id}</span>
             <TypeSelect
