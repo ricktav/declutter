@@ -49,7 +49,7 @@ import type { AttributeDef, Model3dRoute } from "@db/schema";
 import { model3dRouteLabel } from "@db/model3d";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../api/router";
-import { IDENTITY_KIND_LABELS, identityKind } from "../../api/lib/identityAttrs";
+import { IDENTITY_KIND_LABELS, identityKind, isIpPrefixOnly } from "../../api/lib/identityAttrs";
 import { IP_REFRESHED_AT, ipRefreshedAt, isIpRecent } from "../../api/lib/ipRefresh";
 import { IpFreshDot } from "@/components/IpFreshDot";
 import { RatingStars } from "@/components/RatingStars";
@@ -470,9 +470,10 @@ export default function ItemDetail() {
   };
 
   const saveAttrs = () => {
+    // an IP left at its "10.50.0." prefill was never typed: drop it instead of saving a half address
     const cleaned = Object.fromEntries(
       Object.entries(attrDraft)
-        .filter(([, v]) => v !== "")
+        .filter(([k, v]) => v !== "" && !(identityKind(k) === "ip" && isIpPrefixOnly(v)))
         .map(([k, v]) => [k, isJsonListAttr(k) ? compactJsonList(v) : v]),
     );
     update.mutate({ id: itemId, attributes: cleaned });

@@ -38,6 +38,13 @@ function isStale(measuredAt: Date | string): boolean {
   return t != null && Date.now() - t > STALE_MS;
 }
 
+/** "not reported since 2 Nov": HomeBase never deletes a volume, so a collector that stopped seeing it shows here. */
+export function notReportedLabel(measuredAt: Date | string | null | undefined): string | null {
+  const t = measuredAtMs(measuredAt);
+  if (t == null || Date.now() - t <= STALE_MS) return null;
+  return `not reported since ${new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+}
+
 /** Scanned within the stale window: the collector has seen this volume recently. */
 export function isRecentlyScanned(measuredAt: Date | string | null | undefined): boolean {
   const t = measuredAtMs(measuredAt);
@@ -207,7 +214,7 @@ export function DeviceBlock({
                 onClick={() => onSelectVolume(seg.volume.id)}
                 className={cn("relative h-full shrink-0 border-r border-white/70 text-left outline-none", selectedVolumeId === seg.volume.id && "ring-2 ring-inset ring-black", isStale(seg.volume.measuredAt) && "opacity-60")}
                 style={{ width: `${seg.widthPct}%`, minWidth: 4, background: seg.volume.dataRole ? ROLE_COLORS[seg.volume.dataRole] : "#9ca3af" }}
-                title={`${seg.volume.label ?? seg.volume.mountPoint} · ${formatBytes(seg.volume.usedBytes)} used of ${formatBytes(seg.volume.capacityBytes)}${seg.volume.container ? ` (shared by container ${seg.volume.container})` : ""}${seg.volume.dataRole ? ` · ${seg.volume.dataRole}` : " · no data role"}${isStale(seg.volume.measuredAt) ? " · stale" : isRecentlyScanned(seg.volume.measuredAt) ? " · recently scanned" : ""}`}
+                title={`${seg.volume.label ?? seg.volume.mountPoint} · ${formatBytes(seg.volume.usedBytes)} used of ${formatBytes(seg.volume.capacityBytes)}${seg.volume.container ? ` (shared by container ${seg.volume.container})` : ""}${seg.volume.dataRole ? ` · ${seg.volume.dataRole}` : " · no data role"}${notReportedLabel(seg.volume.measuredAt) ? ` · ${notReportedLabel(seg.volume.measuredAt)}` : isRecentlyScanned(seg.volume.measuredAt) ? " · recently scanned" : ""}`}
               >
                 {isRecentlyScanned(seg.volume.measuredAt) && <ScanDot className="absolute right-0.5 top-0.5" />}
                 <span className="absolute inset-x-1 bottom-0.5 truncate text-[10px] leading-none text-white">{seg.volume.label ?? seg.volume.mountPoint}</span>
@@ -218,6 +225,11 @@ export function DeviceBlock({
       </div>
       <div className="flex min-h-[1.25rem] flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
         <span>{measureCaption(device)}</span>
+        {device.volumes.filter((v) => notReportedLabel(v.measuredAt)).length > 0 && (
+          <span className="rounded border border-amber-300 bg-amber-50 px-1 py-px text-[10px] text-amber-800" title="HomeBase never deletes a volume; remove it yourself if the disk is gone">
+            {device.volumes.filter((v) => notReportedLabel(v.measuredAt)).length} not reported in 7+ days
+          </span>
+        )}
         {backsUp.map((b) => (
           <span key={b.relationId} className="rounded-full px-1.5 py-px text-[10px] text-white" style={{ background: ROLE_COLORS.backup }}>
             backs up {b.name}

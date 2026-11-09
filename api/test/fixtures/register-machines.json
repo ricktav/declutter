@@ -1,0 +1,328 @@
+{
+  "generated_at": "2026-11-09T13:42:02",
+  "machines": [
+    {
+      "id": 10,
+      "canonical": "dockermac",
+      "kind": null,
+      "model": "Macmini5,1",
+      "hw_serial": "C07HJ1FEDJD0",
+      "hw_uuid": "c9f9059a-b336-0056-a7d9-20c61a27dad8",
+      "location": "Routerruimte",
+      "lifecycle": "actief",
+      "lifecycle_since": null,
+      "note": null,
+      "created_at": "2026-10-22 21:27:39",
+      "aliases": [
+        "dm1",
+        "docker-host",
+        "host-10",
+        "dockermac (Mac Mini)"
+      ],
+      "devices": [
+        {
+          "id": 50,
+          "name": "dockermac (Mac Mini)",
+          "ip": "10.50.0.10",
+          "mac": "40:6c:8f:22:ce:57",
+          "location": "Routerruimte",
+          "static_ip": 1
+        }
+      ],
+      "status": {
+        "live_ips": [
+          "10.50.0.10"
+        ],
+        "reserved_ips": [
+          "10.50.0.10"
+        ],
+        "last_seen": "2026-11-09T13:40:51"
+      },
+      "fleet": [
+        {
+          "aliases": [
+            "dm1",
+            "dockermac"
+          ],
+          "hostname": "10.50.0.10",
+          "user": "rick"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "canonical": "iMac-Clawd",
+      "kind": null,
+      "model": null,
+      "hw_serial": null,
+      "hw_uuid": null,
+      "location": null,
+      "lifecycle": "weg",
+      "lifecycle_since": "2026-10-24",
+      "note": null,
+      "created_at": "2026-10-22 21:27:39",
+      "aliases": [],
+      "devices": [],
+      "status": {
+        "live_ips": [],
+        "reserved_ips": [],
+        "last_seen": null
+      },
+      "fleet": []
+    },
+    {
+      "id": 18,
+      "canonical": "imac27-ben",
+      "kind": null,
+      "model": "iMac13,2",
+      "hw_serial": "C02KGM1LDNCV",
+      "hw_uuid": "41ddd4d7-c235-5159-a238-a106487253db",
+      "location": "Onbekend",
+      "lifecycle": "actief",
+      "lifecycle_since": null,
+      "note": null,
+      "created_at": "2026-10-22 21:27:39",
+      "aliases": [
+        "iMac-Clawd",
+        "iMac-Clawd.home",
+        "imac27-lan",
+        "iMac 27 Ben",
+        "iMac 27 Ben — LAN"
+      ],
+      "devices": [
+        {
+          "id": 59,
+          "name": "iMac-Clawd.home",
+          "ip": "10.50.0.158",
+          "mac": "ec:35:86:41:08:22",
+          "location": null,
+          "static_ip": 1
+        },
+        {
+          "id": 71,
+          "name": "iMac 27 Ben — LAN",
+          "ip": "10.50.0.236",
+          "mac": "10:dd:b1:c3:ae:a5",
+          "location": "Onbekend",
+          "static_ip": 0
+        }
+      ],
+      "status": {
+        "live_ips": [
+          "10.50.0.236"
+        ],
+        "reserved_ips": [
+          "10.50.0.158",
+          "10.50.0.236"
+        ],
+        "last_seen": "2026-11-09T13:40:51"
+      },
+      "fleet": [
+        {
+          "aliases": [
+            "omarchy",
+            "imac27-ben"
+          ],
+          "hostname": "10.50.0.236",
+          "user": "rt"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "canonical": "macmini-m4",
+      "kind": null,
+      "model": "Mac16,10",
+      "hw_serial": "J5T940JGFV",
+      "hw_uuid": "514B5BA0-7158-53DB-9F16-9AAE09CB2E03",
+      "location": "Onbekend",
+      "lifecycle": "actief",
+      "lifecycle_since": null,
+      "note": null,
+      "created_at": "2026-10-22 21:27:39",
+      "aliases": [
+        "mm4",
+        "mini",
+        "macmini-m4 — wifi",
+        "macmini-m4 — LAN"
+      ],
+      "devices": [
+        {
+          "id": 64,
+          "name": "macmini-m4",
+          "ip": "10.50.0.102",
+          "mac": "7a:42:cb:64:af:90",
+          "location": "Onbekend",
+          "static_ip": 0
+        },
+        {
+          "id": 75,
+          "name": "macmini-m4 — wifi",
+          "ip": "10.50.0.102",
+          "mac": "1c:f6:4c:53:96:71",
+          "location": null,
+          "static_ip": 0
+        },
+        {
+          "id": 76,
+          "name": "macmini-m4 — LAN",
+          "ip": "10.50.0.247",
+          "mac": "1c:f6:4c:58:32:e8",
+          "location": null,
+          "static_ip": 0
+        }
+      ],
+      "status": {
+        "live_ips": [
+          "10.50.0.102"
+        ],
+        "reserved_ips": [
+          "10.50.0.102",
+          "10.50.0.247"
+        ],
+        "last_seen": "2026-11-09T13:40:51"
+      },
+      "fleet": [
+        {
+          "aliases": [
+            "mini",
+            "macmini-m4"
+          ],
+          "hostname": "10.50.0.102",
+          "user": "rick"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "canonical": "mba-m4",
+      "kind": null,
+      "model": "Mac16,13",
+      "hw_serial": "KTXGGVWFM4",
+      "hw_uuid": "DB42F2F5-4EEA-55FD-9A57-10106FB780C9",
+      "location": "Eetkamer",
+      "lifecycle": "actief",
+      "lifecycle_since": null,
+      "note": null,
+      "created_at": "2026-10-22 21:27:39",
+      "aliases": [
+        "Macbook Air M4 - 16GB",
+        "air-m4"
+      ],
+      "devices": [
+        {
+          "id": 60,
+          "name": "Macbook Air M4 - 16GB",
+          "ip": "10.50.0.106",
+          "mac": "1c:f6:4c:92:c5:45",
+          "location": "Eetkamer",
+          "static_ip": 1
+        }
+      ],
+      "status": {
+        "live_ips": [
+          "10.50.0.106"
+        ],
+        "reserved_ips": [
+          "10.50.0.106"
+        ],
+        "last_seen": "2026-11-09T13:40:51"
+      },
+      "fleet": [
+        {
+          "aliases": [
+            "mba-m4"
+          ],
+          "hostname": "10.50.0.106",
+          "user": "rick"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "canonical": "pi-zigbee",
+      "kind": null,
+      "model": "Raspberry Pi 4 Model B Rev 1.2",
+      "hw_serial": "10000000a27ab190",
+      "hw_uuid": null,
+      "location": "Begane grond",
+      "lifecycle": "actief",
+      "lifecycle_since": null,
+      "note": null,
+      "created_at": "2026-10-22 21:27:39",
+      "aliases": [
+        "zigbee2mqtt",
+        "z2m-pi",
+        "pi-zigbee — LAN"
+      ],
+      "devices": [
+        {
+          "id": 1,
+          "name": "zigbee2mqtt",
+          "ip": "10.50.0.105",
+          "mac": "dc:a6:32:67:29:5e",
+          "location": "Begane grond",
+          "static_ip": 1
+        },
+        {
+          "id": 91,
+          "name": "pi-zigbee — LAN",
+          "ip": "10.50.0.242",
+          "mac": "dc:a6:32:67:29:5d",
+          "location": null,
+          "static_ip": 0
+        }
+      ],
+      "status": {
+        "live_ips": [
+          "10.50.0.105",
+          "10.50.0.242"
+        ],
+        "reserved_ips": [
+          "10.50.0.105",
+          "10.50.0.242"
+        ],
+        "last_seen": "2026-11-09T13:40:51"
+      },
+      "fleet": []
+    },
+    {
+      "id": 11,
+      "canonical": "TavServ",
+      "kind": null,
+      "model": null,
+      "hw_serial": null,
+      "hw_uuid": null,
+      "location": "Kantoor",
+      "lifecycle": "actief",
+      "lifecycle_since": null,
+      "note": null,
+      "created_at": "2026-10-22 21:27:39",
+      "aliases": [
+        "synology-nas",
+        "nas",
+        "Synology NAS"
+      ],
+      "devices": [
+        {
+          "id": 51,
+          "name": "Synology NAS",
+          "ip": "10.50.0.115",
+          "mac": "00:11:32:0b:67:84",
+          "location": "Kantoor",
+          "static_ip": 1
+        }
+      ],
+      "status": {
+        "live_ips": [
+          "10.50.0.115"
+        ],
+        "reserved_ips": [
+          "10.50.0.115"
+        ],
+        "last_seen": "2026-11-09T13:40:51"
+      },
+      "fleet": []
+    }
+  ]
+}

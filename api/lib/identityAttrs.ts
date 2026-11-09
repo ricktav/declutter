@@ -47,9 +47,16 @@ export function identityEntries(attrs: Record<string, unknown> | null | undefine
     const value = rawVal == null ? "" : String(rawVal);
     const normalized = normalizeIdentityValue(kind, value);
     if (!normalized) continue;
+    // "10.50.0." is the prefill for a new IP, not an address: never a clash
+    if (kind === "ip" && isIpPrefixOnly(value)) continue;
     out.push({ kind, key: rawKey.trim(), value, normalized });
   }
   return out;
+}
+
+/** A bare /24 prefix such as `10.50.0.`: the typing aid ItemDetail prefills, not an address. */
+export function isIpPrefixOnly(value: string): boolean {
+  return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.$/.test(value.trim());
 }
 
 /** Most common IPv4 /24 prefix (`10.50.0.`), so a new IP only needs the last octet. */

@@ -18,6 +18,7 @@ import { itemLinksRouter } from "./routers/itemLinks";
 import { storageRouter } from "./routers/storage";
 import { energyRouter } from "./routers/energy";
 import { servicesRouter } from "./routers/services";
+import { machinesRouter } from "./routers/machines";
 
 export const appRouter = createRouter({
   ping: procedure.query(() => ({ ok: true, ts: Date.now() })),
@@ -40,6 +41,7 @@ export const appRouter = createRouter({
   storage: storageRouter,
   energy: energyRouter,
   services: servicesRouter,
+  machines: machinesRouter,
 });
 
 export type AppRouter = typeof appRouter;

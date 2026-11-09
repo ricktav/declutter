@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router";
 import { Eye, EyeOff, HardDrive, ListTodo, Server, Star, X } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useHouse } from "@/context/house";
-import { DeviceBlock, ROLE_COLORS, UnlinkedDisksRow, formatBytes, isRecentlyScanned } from "@/components/storage/Blocks";
+import { DeviceBlock, ROLE_COLORS, UnlinkedDisksRow, formatBytes, isRecentlyScanned, notReportedLabel } from "@/components/storage/Blocks";
 import { cn } from "@/lib/utils";
 import { usePersistedState } from "@/hooks/use-persisted-state";
 
@@ -402,6 +402,11 @@ export default function StoragePage() {
                   <div className="text-[12px] text-muted-foreground">
                     {dirs.data.volume.itemName} · {dirs.data.volume.mountPoint} · {formatBytes(dirs.data.volume.usedBytes)} of {formatBytes(dirs.data.volume.capacityBytes)} · measured {new Date(dirs.data.volume.measuredAt).toLocaleString()}
                   </div>
+                  {notReportedLabel(dirs.data.volume.measuredAt) && (
+                    <div className="mt-1 inline-block rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800">
+                      {notReportedLabel(dirs.data.volume.measuredAt)} · no collector sees this volume any more; HomeBase keeps it until you remove it below
+                    </div>
+                  )}
                 </div>
                 <button type="button" onClick={() => select(null)} aria-label="Close" className="rounded p-1 hover:bg-accent/40"><X className="h-4 w-4" /></button>
               </div>
