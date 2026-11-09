@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily machine-register import on macmini-m4 (07:30 local, before the
+     services collectors at 07:40 so they match on fresh identities).
+     Runs scripts/machines-import-register.mjs with --apply only: strong
+     matches (serial, machine.id, MAC) are written, hostname/IP matches are
+     listed in the log and wait for a manual `--apply --accept-weak`.
+     Install:
+       cp scripts/launchd/nl.homebase.machines-import-register.plist ~/Library/LaunchAgents/
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/nl.homebase.machines-import-register.plist
+     Run once now: launchctl kickstart gui/$(id -u)/nl.homebase.machines-import-register -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>nl.homebase.machines-import-register</string>
+  <key>WorkingDirectory</key>
+  <string>/Volumes/T7/declutter</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>scripts/machines-import-register.mjs</string>
+    <string>--apply</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOMEBASE_BASE</key>
+    <string>http://127.0.0.1:3001</string>
+    <key>REGISTER_URL</key>
+    <string>http://10.50.0.10:8888/api/machines</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>TZ</key>
+    <string>Europe/Amsterdam</string>
+    <key>NODE_NO_WARNINGS</key>
+    <string>1</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/ricktav/Library/Logs/homebase-machines-register.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ricktav/Library/Logs/homebase-machines-register.log</string>
+  <key>Nice</key>
+  <integer>10</integer>
+</dict>
+</plist>
