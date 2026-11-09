@@ -9,6 +9,7 @@ import { effectiveModel3dRoute, parseModel3dUrl } from "@db/model3d";
 import { logEvent } from "../lib/events";
 import { queueFor, QUEUE_LENSES } from "../lib/queue";
 import { suggestTopic } from "../lib/suggestTopic";
+import { ClaudeCliError } from "../lib/claudeCli";
 import { deleteItemTx, releaseStoredFiles } from "../lib/entities";
 import { suggestLinksForNewItem } from "../lib/suggestLinks";
 import { roomSummary, setItemLocation } from "../lib/location";
@@ -73,9 +74,9 @@ export const itemsRouter = createRouter({
     ),
 
   /** Propose a Topic for a Thing (normally one in the default bucket "Things"):
-   * a rule from its role, Type or name, else the configured model choosing
-   * among the existing Topics. Never writes; apply with `items.update`.
-   * `null` when nothing fits or no model is configured. */
+   * a rule from its role, Type or name, else `claude -p` choosing among the
+   * existing Topics. Never writes; apply with `items.update`. `null` when
+   * nothing fits; PRECONDITION_FAILED when the CLI is missing or fails. */
   suggestTopic: procedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
@@ -89,10 +90,15 @@ export const itemsRouter = createRouter({
         .select({ id: areas.id, slug: areas.slug, name: areas.name, description: areas.description })
         .from(areas)
         .orderBy(areas.sortOrder, areas.id);
-      return suggestTopic(
-        { name: item.name, description: item.description, attributes: (item.attributes as Record<string, unknown> | null) ?? null },
-        topics,
-      );
+      try {
+        return await suggestTopic(
+          { name: item.name, description: item.description, attributes: (item.attributes as Record<string, unknown> | null) ?? null },
+          topics,
+        );
+      } catch (err) {
+        if (err instanceof ClaudeCliError) throw new TRPCError({ code: "PRECONDITION_FAILED", message: err.message });
+        throw err;
+      }
     }),
 
   /** Every active item across every area, for the cross-area browser (search/sort by area or location). */

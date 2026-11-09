@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { generateObject } from "ai";
 import { isNetworkRole, isPeripheralRole, MACHINE_ROLES, normRole, TYPE_TREE } from "@db/taxonomy";
-import { getModel } from "./ai";
+import { claudeCliObject, ClaudeCliError } from "./claudeCli";
 import { DEFAULT_TOPIC_SLUG } from "./defaultTopic";
 
 /**
@@ -10,9 +9,11 @@ import { DEFAULT_TOPIC_SLUG } from "./defaultTopic";
  * Two steps, cheapest first. A rule decides when the Thing's `role` or `type`
  * says what it is, or when a word of its name ends in a known head noun
  * ("laptoptas" is a bag, "hoekslaapbank" a sofa, "nachtkastje" a cabinet).
- * Only when no rule fires is the configured model asked, with the Topics that
- * exist as the only allowed answers; a missing or failing provider gives null.
- * Nothing here writes: the caller applies a suggestion with `items.update`.
+ * Only when no rule fires is the Claude Code CLI (`claude -p`, like frame
+ * labelling; never the API provider from Settings) asked, with the Topics that
+ * exist as the only allowed answers. A CLI that is missing, not signed in or
+ * answers badly throws ClaudeCliError so the screen can say so; "none" gives
+ * null. Nothing here writes: the caller applies a suggestion with `items.update`.
  */
 
 export type TopicCandidate = { id: number; slug: string; name: string; description: string | null };
@@ -174,14 +175,11 @@ export function ruleTopicSlug(facts: ThingFacts, slugs: ReadonlySet<string>): { 
 }
 
 const aiSchema = z.object({ slug: z.string(), reason: z.string().max(200) });
+type AiAnswer = z.infer<typeof aiSchema>;
+/** The model step; swapped in tests so they never spawn `claude`. */
+export type AskModel = (prompt: string) => Promise<AiAnswer>;
 
-async function aiTopicSlug(facts: ThingFacts, candidates: TopicCandidate[]): Promise<{ slug: string; reason: string } | null> {
-  let model: Awaited<ReturnType<typeof getModel>>;
-  try {
-    model = await getModel();
-  } catch {
-    return null;
-  }
+export function topicPrompt(facts: ThingFacts, candidates: TopicCandidate[]): string {
   const attrs = facts.attributes ?? {};
   const lines = [
     `Thing: ${facts.name}`,
@@ -191,33 +189,46 @@ async function aiTopicSlug(facts: ThingFacts, candidates: TopicCandidate[]): Pro
     typeof attrs.brand === "string" ? `Brand: ${attrs.brand}` : null,
     typeof attrs.tags === "string" ? `Tags: ${attrs.tags}` : null,
   ].filter(Boolean);
-  const prompt = [
+  return [
     "Pick the one Topic (browsing bucket) for this household Thing. Names may be Dutch.",
-    "Answer with the Topic's slug exactly as listed, and one short reason. Use slug \"none\" when none fits.",
+    'Answer with the Topic\'s slug exactly as listed, and one short reason. Use slug "none" when none fits.',
     "",
     ...lines,
     "",
     "Topics:",
     ...candidates.map((c) => `- ${c.slug}: ${c.name}${c.description ? ` — ${c.description}` : ""}`),
   ].join("\n");
-  try {
-    const { object } = await generateObject({ model, schema: aiSchema, prompt });
-    const slug = object.slug.trim().toLowerCase();
-    if (!candidates.some((c) => c.slug === slug)) return null;
-    return { slug, reason: object.reason.trim() || "model" };
-  } catch {
-    return null;
-  }
 }
 
-export async function suggestTopic(facts: ThingFacts, topics: TopicCandidate[]): Promise<TopicSuggestion | null> {
+const askClaudeCli: AskModel = (prompt) =>
+  claudeCliObject({ textPrompt: prompt, jsonShape: '{ "slug": string, "reason": string }', schema: aiSchema });
+
+async function aiTopicSlug(
+  facts: ThingFacts,
+  candidates: TopicCandidate[],
+  ask: AskModel,
+): Promise<{ slug: string; reason: string } | null> {
+  const answer = await ask(topicPrompt(facts, candidates));
+  const slug = answer.slug.trim().toLowerCase();
+  if (slug === "none") return null;
+  if (!candidates.some((c) => c.slug === slug)) {
+    throw new ClaudeCliError(`claude -p answered with a Topic that does not exist: "${answer.slug}"`);
+  }
+  return { slug, reason: answer.reason.trim() || "model" };
+}
+
+export async function suggestTopic(
+  facts: ThingFacts,
+  topics: TopicCandidate[],
+  ask: AskModel = askClaudeCli,
+): Promise<TopicSuggestion | null> {
   const candidates = topics.filter((t) => t.slug !== DEFAULT_TOPIC_SLUG);
   if (!candidates.length) return null;
   const slugs = new Set(candidates.map((c) => c.slug));
   const bySlug = new Map(candidates.map((c) => [c.slug, c]));
   const rule = ruleTopicSlug(facts, slugs);
   const hit = rule ? { ...rule, source: "rule" as const } : null;
-  const ai = hit ? null : await aiTopicSlug(facts, candidates);
+  const ai = hit ? null : await aiTopicSlug(facts, candidates, ask);
   const pick = hit ?? (ai ? { ...ai, source: "ai" as const } : null);
   if (!pick) return null;
   const topic = bySlug.get(pick.slug)!;

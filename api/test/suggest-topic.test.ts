@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { areas, houses, items } from "@db/schema";
-import { ruleTopicSlug, suggestTopic, type TopicCandidate } from "../lib/suggestTopic";
+import { ruleTopicSlug, suggestTopic, type AskModel, type TopicCandidate } from "../lib/suggestTopic";
+import { ClaudeCliError } from "../lib/claudeCli";
 import { getTestDb, resetTestDb } from "./db";
 import { callerFor } from "./caller";
 
@@ -59,9 +60,25 @@ describe("suggestTopic", () => {
     });
   });
 
-  it("is null without a rule hit when no model is configured (the test environment)", async () => {
-    expect(await suggestTopic({ name: "Xyzzy" }, topics)).toBeNull();
-    expect(await suggestTopic({ name: "Eiken eettafel" }, topics.slice(0, 1))).toBeNull();
+  it("asks the model only when no rule fires, takes its slug, and reports a bad answer", async () => {
+    const asked: string[] = [];
+    const says = (slug: string): AskModel => async (prompt) => {
+      asked.push(prompt);
+      return { slug, reason: "looks like it" };
+    };
+    expect(await suggestTopic({ name: "Eiken eettafel" }, topics, says("furniture"))).toMatchObject({ source: "rule" });
+    expect(asked).toEqual([]);
+    expect(await suggestTopic({ name: "Xyzzy" }, topics, says("furniture"))).toEqual({
+      areaId: 2, slug: "furniture", name: "Furniture", reason: "looks like it", source: "ai",
+    });
+    expect(asked[0]).toContain("Thing: Xyzzy");
+    expect(asked[0]).toContain("- furniture: Furniture");
+    expect(asked[0]).not.toContain("things");
+    expect(await suggestTopic({ name: "Xyzzy" }, topics, says("none"))).toBeNull();
+    await expect(suggestTopic({ name: "Xyzzy" }, topics, says("kitchen"))).rejects.toBeInstanceOf(ClaudeCliError);
+    const broken: AskModel = async () => { throw new ClaudeCliError("The `claude` CLI isn't installed or isn't on PATH."); };
+    await expect(suggestTopic({ name: "Xyzzy" }, topics, broken)).rejects.toThrow(/CLI/);
+    expect(await suggestTopic({ name: "Eiken eettafel" }, topics.slice(0, 1), says("furniture"))).toBeNull();
   });
 });
 

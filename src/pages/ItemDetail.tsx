@@ -331,7 +331,14 @@ export default function ItemDetail() {
   const [topicSuggestion, setTopicSuggestion] = useState<
     { areaId: number; name: string; reason: string; source: "rule" | "ai" } | null | undefined
   >(undefined);
-  const suggestTopic = trpc.items.suggestTopic.useMutation({ onSuccess: (s) => setTopicSuggestion(s) });
+  const [topicError, setTopicError] = useState<string | null>(null);
+  const suggestTopic = trpc.items.suggestTopic.useMutation({
+    onSuccess: (s) => {
+      setTopicError(null);
+      setTopicSuggestion(s);
+    },
+    onError: (e) => setTopicError(e.message),
+  });
   const setDecision = trpc.items.setDecision.useMutation({ onSuccess: invalidate });
   const setArchived = trpc.items.setArchived.useMutation({ onSuccess: invalidate });
   const setVerification = trpc.items.setVerification.useMutation({ onSuccess: invalidate });
@@ -598,6 +605,7 @@ export default function ItemDetail() {
                 </button>
               </span>
             )}
+            {topicError && <span className="text-destructive shrink-0">{topicError}</span>}
             <span className="shrink-0">/ Thing #{it.id}</span>
             <TypeSelect
               attributes={it.attributes}
